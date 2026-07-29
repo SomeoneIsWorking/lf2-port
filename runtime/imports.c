@@ -332,6 +332,8 @@ static void h_fopen(void)
                                  : fopen(host_path(ARG(0)), mode);
     if (!fh) { ret_cdecl(0); return; }
     const uint32_t tok = file_token(fh);
+    if (getenv("LF2_STR_DEBUG"))
+        fprintf(stderr, "fopen[%08x] %s (%s)\n", tok, host_path(ARG(0)), mode);
     ret_cdecl(tok);
 }
 
@@ -421,90 +423,102 @@ static void h_fprintf(void)
 
 
 /* ---- scanf family ----
- * Directives are executed one at a time against the host, so the host does the stream
- * positioning and the numeric parsing; only the destination store is ours. Literal and
- * whitespace runs are passed through so they still have to match. */
-static int scan_directive(FILE *fh, const char **cur, const char *spec, char conv,
-                          uint32_t out, int suppress)
+ * Splitting the format into directives and calling the host once per directive does NOT
+ * have the same semantics as one atomic scanf: matching failures, pushback and the
+ * return value all behave differently at directive boundaries. So the whole format is
+ * handed to the host in a single call with host-side storage, and the results are copied
+ * into guest memory afterwards. The host then defines the semantics exactly.
+ */
+enum { SCAN_MAX = 12, SCAN_SLOT = 512 };
+
+typedef struct {
+    char conv;
+    int  suppressed;
+    uint32_t out;                 /* guest destination */
+} ScanArg;
+
+/* Walk the format, recording each conversion. Returns the count, or -1 if unsupported. */
+static int scan_parse(const char *fmt, uint32_t argp, ScanArg *args)
 {
-    char sp[64];
-    snprintf(sp, sizeof sp, "%s%%n", spec);
-    int consumed = -1, got = 0;
-
-    if (conv == 0 || suppress) {                 /* literal run, or assignment-suppressed */
-        if (fh) { if (fscanf(fh, spec) == EOF) return -1; }
-        else {
-            if (sscanf(*cur, sp, &consumed) == EOF) return -1;
-            if (consumed >= 0) *cur += consumed;
-        }
-        return 0;
+    int n = 0;
+    for (const char *f = fmt; *f; f++) {
+        if (*f != '%') continue;
+        f++;
+        if (*f == '%') continue;
+        int suppressed = 0;
+        if (*f == '*') { suppressed = 1; f++; }
+        while (*f && !strchr("diouxXcsfgeEnp[", *f)) f++;
+        if (!*f) break;
+        if (*f == '[' || *f == 'n' || *f == 'p') return -1;   /* not used by this game */
+        if (n >= SCAN_MAX) return -1;
+        args[n].conv = *f;
+        args[n].suppressed = suppressed;
+        args[n].out = suppressed ? 0 : LD32(argp);
+        if (!suppressed) argp += 4;
+        n++;
     }
-
-    switch (conv) {
-    case 'd': case 'i': case 'u': case 'x': case 'X': case 'o': {
-        int v = 0;
-        got = fh ? fscanf(fh, spec, &v) : sscanf(*cur, sp, &v, &consumed);
-        if (got >= 1) ST32(out, (uint32_t)v);
-        break;
-    }
-    case 'f': case 'g': case 'e': {
-        float v = 0;
-        got = fh ? fscanf(fh, spec, &v) : sscanf(*cur, sp, &v, &consumed);
-        if (got >= 1) { uint32_t b; __builtin_memcpy(&b, &v, 4); ST32(out, b); }
-        break;
-    }
-    case 'l': return -2;                          /* %lf and friends: not used here */
-    case 's': case 'c': {
-        char buf[512] = {0};
-        got = fh ? fscanf(fh, spec, buf) : sscanf(*cur, sp, buf, &consumed);
-        if (got >= 1) {
-            size_t n = strlen(buf);
-            if (getenv("LF2_STR_DEBUG"))
-                fprintf(stderr, "  %%s -> %08x len=%zu tok=[%.20s]\n", out, n, buf);
-            memcpy(g_mem + out, buf, n);
-            if (conv == 's') ST8(out + (uint32_t)n, 0);
-        }
-        break;
-    }
-    default: return -2;
-    }
-    if (!fh && consumed >= 0) *cur += consumed;
-    return got >= 1 ? 1 : (got == EOF ? -1 : 0);
+    return n;
 }
 
-static int gscan(FILE *fh, const char *start, const char *fmt, uint32_t argp)
+/* Copy one converted value from host storage into guest memory. */
+static void scan_store(const ScanArg *a, const void *slot)
 {
-    const char *cur = start;
-    int assigned = 0;
-
-    for (const char *f = fmt; *f;) {
-        if (*f != '%') {                          /* literal / whitespace run */
-            char lit[128]; int n = 0;
-            while (*f && *f != '%' && n < 120) lit[n++] = *f++;
-            lit[n] = 0;
-            if (scan_directive(fh, &cur, lit, 0, 0, 1) < 0) return assigned ? assigned : -1;
-            continue;
-        }
-        char spec[64]; int n = 0;
-        spec[n++] = *f++;
-        int suppress = 0;
-        if (*f == '*') { suppress = 1; spec[n++] = *f++; }
-        while (*f && !strchr("diouxXcsfgeE%", *f) && n < 60) spec[n++] = *f++;
-        if (!*f) break;
-        const char conv = *f;
-        spec[n++] = *f++;
-        spec[n] = 0;
-        if (conv == '%') { continue; }
-
-        uint32_t out = 0;
-        if (!suppress) { out = LD32(argp); argp += 4; }
-        const int r = scan_directive(fh, &cur, spec, conv, out, suppress);
-        if (r == -2) { fprintf(stderr, "unsupported scanf conversion '%s'\n", spec); abort(); }
-        if (r < 0) return assigned ? assigned : -1;
-        if (r == 0) break;
-        assigned += !suppress;
+    switch (a->conv) {
+    case 'd': case 'i': case 'u': case 'o': case 'x': case 'X':
+        ST32(a->out, (uint32_t)*(const int *)slot);
+        break;
+    case 'f': case 'g': case 'e': case 'E': {
+        uint32_t bits;
+        __builtin_memcpy(&bits, slot, 4);
+        ST32(a->out, bits);
+        break;
     }
-    return assigned;
+    case 'c':
+        ST8(a->out, *(const uint8_t *)slot);
+        break;
+    case 's': {
+        const char *str = slot;
+        const size_t len = strlen(str);
+        memcpy(g_mem + a->out, str, len + 1);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static int gscan(FILE *fh, const char *input, const char *fmt, uint32_t argp)
+{
+    ScanArg args[SCAN_MAX];
+    const int nargs = scan_parse(fmt, argp, args);
+    if (nargs < 0) {
+        fprintf(stderr, "unsupported scanf format \"%s\"\n", fmt);
+        abort();
+    }
+
+    /* One slot per conversion, each big enough for any of them. Extra pointers beyond
+     * what the format consumes are simply ignored by the host. */
+    static char slots[SCAN_MAX][SCAN_SLOT];
+    memset(slots, 0, sizeof slots);
+    void *p[SCAN_MAX];
+    for (int i = 0; i < SCAN_MAX; i++) p[i] = slots[i];
+
+    const int got = fh
+        ? fscanf(fh, fmt, p[0], p[1], p[2], p[3], p[4], p[5],
+                 p[6], p[7], p[8], p[9], p[10], p[11])
+        : sscanf(input, fmt, p[0], p[1], p[2], p[3], p[4], p[5],
+                 p[6], p[7], p[8], p[9], p[10], p[11]);
+
+    if (got <= 0) return got;
+
+    /* The host filled the first `got` NON-suppressed conversions, in order. */
+    int filled = 0;
+    for (int i = 0; i < nargs && filled < got; i++) {
+        if (args[i].suppressed) continue;
+        scan_store(&args[i], slots[i]);
+        filled++;
+    }
+    return got;
 }
 
 static void h_fscanf(void)
@@ -512,7 +526,7 @@ static void h_fscanf(void)
     FILE *fh = file_of(ARG(0));
     const int n = fh ? gscan(fh, NULL, gstr(ARG(1)), R(ESP) + 4 + 8) : -1;
     if (getenv("LF2_STR_DEBUG")) {
-        fprintf(stderr, "fscanf -> %d fmt=\"", n);
+        fprintf(stderr, "fscanf[%08x] -> %d fmt=\"", ARG(0), n);
         for (const char *c = gstr(ARG(1)); *c; c++)
             fputs(*c == '\n' ? "\\n" : *c == '\r' ? "\\r" : (char[]){*c, 0}, stderr);
         fprintf(stderr, "\"\n");
