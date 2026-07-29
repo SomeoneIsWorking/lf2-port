@@ -272,12 +272,19 @@ static void h_StretchBlt(void)
 
     uint32_t dpix; int dwid, dhei, dpitch;
     if (!ddraw_surface_info(hdst, &dpix, &dwid, &dhei, &dpitch) || dw <= 0 || dh <= 0) {
+        static long n;
+        if (++n % 200 == 1)
+            fprintf(stderr, "stretchblt: dest %08x is not a surface (#%ld, %dx%d)\n",
+                    hdst, n, dw, dh);
         ret_stdcall(11, 0);
         return;
     }
     const uint32_t si = hsrc - H_DC;
     Bitmap *b = (si < (uint32_t)ndcs) ? bitmap_of(dc_bitmap[si]) : NULL;
-    if (!b || sw <= 0 || sh <= 0) { ret_stdcall(11, 0); return; }
+    if (!b || sw <= 0 || sh <= 0) {
+        { static long f; if (++f % 200 == 1) fprintf(stderr, "stretchblt FAILED #%ld src_dc=%08x bitmap=%s\n", f, hsrc, b ? "ok" : "none"); }
+        ret_stdcall(11, 0); return;
+    }
 
     for (int y = 0; y < dh; y++) {
         const int ty = dy + y;
@@ -295,6 +302,7 @@ static void h_StretchBlt(void)
         }
     }
     ddraw_surface_present(hdst);
+    { static long n; if (++n % 200 == 1) fprintf(stderr, "stretchblt #%ld %dx%d -> %dx%d\n", n, sw, sh, dw, dh); }
     ret_stdcall(11, 1);
 }
 
