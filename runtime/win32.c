@@ -310,6 +310,9 @@ static void h_DispatchMessageA(void)
 {
     const uint32_t p = ARG(0);
     const uint32_t msg = LD32(p + 4);
+    if (getenv("LF2_MSG_DEBUG"))
+        fprintf(stderr, "dispatch msg=%04x wparam=%08x lparam=%08x wndproc=%08x\n",
+                msg, LD32(p + 8), LD32(p + 12), hw.wndproc);
     if (msg && hw.wndproc) {
         const uint32_t args[4] = { LD32(p), msg, LD32(p + 8), LD32(p + 12) };
         guest_call(hw.wndproc, args, 4);
