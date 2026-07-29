@@ -139,9 +139,21 @@ first act is a gate:
 Watching `00458440` shows it set to 1 early in the run by `fn_00401250`, so the gate is
 open and the handler is reached — the game is not in a disabled-input mode.
 
-So: messages arrive, the queue is correct, the cadence is sane, the handler runs, and its
-enabling condition holds. Whatever prevents selection lies inside that handler's own logic
-past the gate, which is where to look next.
+Past the gate the handler calls `004031d0` with the virtual-key code, on the object at
+`00458440`. Watching that call shows the key arriving:
+
+```
+enter 004031d0 from 0043b549  ecx=00458440  args: 00000065 ...
+```
+
+`0x65` is exactly the key sent, and the call count matches the number of presses. **So the
+key is delivered all the way into the game's own input object.** Every stage of the input
+path is now verified by measurement rather than inference.
+
+The menu still does not respond, and a sweep of plausible keys — arrow down, Enter, numpad
+2/5/0, space, F2 — changes nothing. Since delivery is proven, what remains is on the
+consuming side: whatever reads the queue on `00458440` and decides what a menu keystroke
+means. Finding its readers is the next step.
 
 ## Debug switches
 
