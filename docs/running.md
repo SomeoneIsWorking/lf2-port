@@ -84,9 +84,21 @@ advertisement panel on the right, not the menu text at roughly x 300–500. LF2'
 entries are selected with the player-1 controls from `data/control.txt`, which default to
 the numpad.
 
-So the open question is keyboard timing, not mouse position. Scripted keys are reported
-held for 120 ms; if the game samples on a slower cadence, or wants a transition it can
-observe across two polls, that window may simply be missed.
+The game **never calls `GetKeyState`** — polling it produced no hits at all — so keyboard
+input must travel entirely as `WM_KEYDOWN`/`WM_KEYUP` messages.
+
+Scripted keys now count pumps rather than milliseconds (a wall-clock window is missed
+whenever no pump lands inside it) and the transitions demonstrably fire:
+
+```
+autokey vk=65 down (pump 60)
+autokey vk=65 up   (pump 68)
+```
+
+**But those messages never leave the queue.** The dispatch log shows only the startup
+messages and thousands of empty ones, so `push_message` runs and `next_queued_message`
+does not hand the result back. That is a defect in the port's own message plumbing, not
+timing and not the game — and it is the next thing to fix.
 
 ## Debug switches
 
