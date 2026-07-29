@@ -74,6 +74,16 @@ void op_cmps(int size, int repe);
 void op_scas(int size, int repe);
 void op_cpuid(void);
 
+/* Function-entry tracing. Off unless the generated code is built with LF2_FN_TRACE,
+ * so the normal build pays nothing; the ring is dumped alongside the call trace when a
+ * dispatch fails, which gives the path into a fault rather than just its location. */
+#ifdef LF2_FN_TRACE
+void fn_enter(uint32_t addr);
+#define FN_ENTER(a) fn_enter(a)
+#else
+#define FN_ENTER(a) ((void)0)
+#endif
+
 /* Instructions the lifter does not emit yet. Aborts loudly rather than silently doing
  * nothing -- a no-op here would look like a working port that quietly computes garbage. */
 #define TODO(what)                                                                      \
