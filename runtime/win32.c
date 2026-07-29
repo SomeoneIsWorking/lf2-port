@@ -299,6 +299,13 @@ static int next_queued_message(uint32_t p, int remove)
 static void h_PeekMessageA(void)
 {
     hostwin_pump();
+    if (getenv("LF2_MSG_DEBUG")) {
+        static uint8_t seen[8];
+        const uint32_t f = ARG(4) & 7;
+        if (!seen[f]) { seen[f] = 1;
+            fprintf(stderr, "PeekMessage flags=%u hwnd=%08x filter=%u..%u\n",
+                    ARG(4), ARG(1), ARG(2), ARG(3)); }
+    }
     if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(5, 1); return; }
     if (next_queued_message(ARG(0), (int)(ARG(4) & 1))) { ret_stdcall(5, 1); return; }
     ret_stdcall(5, 0);

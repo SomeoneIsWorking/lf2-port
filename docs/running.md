@@ -101,11 +101,16 @@ should have returned. Fixing that made the whole startup sequence arrive — `WM
 `WM_ACTIVATE` and `WM_SHOWWINDOW` had all been disappearing — and key messages now reach
 the window procedure.
 
-**The menu still does not respond**, and there is a clear symptom to chase: the same
-`WM_KEYDOWN` is dispatched about 2400 times in a short run. It is being redelivered rather
-than consumed, so the remove semantics are now wrong in the other direction. A game seeing
-one endless keypress instead of a press followed by a release would behave exactly like
-this. Establishing which `PeekMessage` flags the game actually passes is the next step.
+**The menu still does not respond.** The game peeks only with `PM_NOREMOVE` — logging the
+flag shows it never once passes `PM_REMOVE` — so it relies entirely on `GetMessage` to
+consume, the usual "peek to test, get to fetch" loop. The port implements that contract
+now, yet the same `WM_KEYDOWN` is dispatched around 2400 times in a short run, so
+something in the peek/get interaction still redelivers rather than consumes.
+
+Note also that the pump counter driving `LF2_AUTOKEY` advances once per `PeekMessage`, and
+the game peeks thousands of times a second. The hold and gap defaults are therefore far
+shorter in real time than they look, which is worth accounting for when reading any test
+that uses them.
 
 ## Debug switches
 
