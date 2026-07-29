@@ -272,7 +272,10 @@ static void queue_startup_messages(void)
     }
 }
 
-static int next_queued_message(uint32_t p)
+/* PeekMessage's last argument decides whether the message is consumed: PM_NOREMOVE (0)
+ * leaves it queued. Always removing means a game that peeks before calling GetMessage
+ * loses the message entirely -- the peek eats it and the Get returns nothing. */
+static int next_queued_message(uint32_t p, int remove)
 {
     if (startup_head >= startup_count && ring_head != ring_tail) {
         ST32(p, hw.hwnd);
@@ -280,7 +283,7 @@ static int next_queued_message(uint32_t p)
         ST32(p + 8, msg_ring[ring_head].wparam);
         ST32(p + 12, msg_ring[ring_head].lparam);
         ST32(p + 16, 0); ST32(p + 20, 0); ST32(p + 24, 0);
-        ring_head = (ring_head + 1) % MSG_RING;
+        if (remove) ring_head = (ring_head + 1) % MSG_RING;
         return 1;
     }
     if (startup_head >= startup_count) return 0;
@@ -289,7 +292,7 @@ static int next_queued_message(uint32_t p)
     ST32(p + 8, startup_queue[startup_head].wparam);
     ST32(p + 12, startup_queue[startup_head].lparam);
     ST32(p + 16, 0); ST32(p + 20, 0); ST32(p + 24, 0);
-    startup_head++;
+    if (remove) startup_head++;
     return 1;
 }
 
@@ -297,7 +300,7 @@ static void h_PeekMessageA(void)
 {
     hostwin_pump();
     if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(5, 1); return; }
-    if (next_queued_message(ARG(0))) { ret_stdcall(5, 1); return; }
+    if (next_queued_message(ARG(0), (int)(ARG(4) & 1))) { ret_stdcall(5, 1); return; }
     ret_stdcall(5, 0);
 }
 
@@ -305,7 +308,7 @@ static void h_GetMessageA(void)
 {
     hostwin_pump();
     if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(4, 0); return; }
-    if (next_queued_message(ARG(0))) { ret_stdcall(4, 1); return; }
+    if (next_queued_message(ARG(0), 1)) { ret_stdcall(4, 1); return; }
     fill_msg(ARG(0), 0);
     ret_stdcall(4, 1);
 }
