@@ -271,6 +271,15 @@ void dump_trace(void)
     fprintf(stderr, "regs:");
     for (int i = 0; i < 8; i++) fprintf(stderr, " %s=%08x", RN[i], R(i));
     fprintf(stderr, "\n");
+    /* Raw stack around ESP: hand-computing frame offsets from the disassembly has been
+     * unreliable, and the actual bytes settle which slot the guest read. */
+    fprintf(stderr, "stack:\n");
+    for (int row = -2; row < 10; row++) {
+        const uint32_t a = R(ESP) + (uint32_t)(row * 16);
+        fprintf(stderr, "  %08x:", a);
+        for (int i = 0; i < 4; i++) fprintf(stderr, " %08x", LD32(a + (uint32_t)i * 4));
+        fprintf(stderr, "%s\n", row == 0 ? "   <- esp" : "");
+    }
     dump_fn_trace();
     fprintf(stderr, "recent calls (newest last):");
     for (unsigned i = 0; i < TRACE_N; i++) {
