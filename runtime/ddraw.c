@@ -170,16 +170,21 @@ static void read_rect(uint32_t p, int *l, int *t, int *r, int *b, int dw, int dh
     *r = (int)LD32(p + 8); *b = (int)LD32(p + 12);
 }
 
-static void blit(Surface *d, int dx, int dy, Surface *s, int sx, int sy, int w, int h,
+/* DirectDraw stretches when the destination rectangle differs in size from the source,
+ * and a NULL source rectangle means the whole surface. Copying 1:1 and ignoring the
+ * destination extent draws the wrong part of the source wherever the game scales. */
+static void blit(Surface *d, int dx, int dy, int dw, int dh,
+                 Surface *s, int sx, int sy, int sw, int sh,
                  int keyed, uint32_t klo, uint32_t khi)
 {
-    for (int y = 0; y < h; y++) {
-        const int syy = sy + y, dyy = dy + y;
+    if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+    for (int y = 0; y < dh; y++) {
+        const int syy = sy + (int)((int64_t)y * sh / dh), dyy = dy + y;
         if (syy < 0 || syy >= s->h || dyy < 0 || dyy >= d->h) continue;
         const uint32_t *sp = (const uint32_t *)(g_mem + s->pixels + (size_t)syy * (size_t)s->pitch);
         uint32_t *dp = (uint32_t *)(g_mem + d->pixels + (size_t)dyy * (size_t)d->pitch);
-        for (int x = 0; x < w; x++) {
-            const int sxx = sx + x, dxx = dx + x;
+        for (int x = 0; x < dw; x++) {
+            const int sxx = sx + (int)((int64_t)x * sw / dw), dxx = dx + x;
             if (sxx < 0 || sxx >= s->w || dxx < 0 || dxx >= d->w) continue;
             const uint32_t v = sp[sxx] & 0x00ffffffu;
             if (keyed && v >= (klo & 0x00ffffffu) && v <= (khi & 0x00ffffffu)) continue;
@@ -214,12 +219,19 @@ static void surf_Blt(uint32_t self)
         return;
     }
 
+    if (getenv("LF2_BLT_ALL")) {
+        static long n;
+        if (++n <= 24)
+            fprintf(stderr, "blt#%ld dst=%08x(%dx%d) rect=(%d,%d)-(%d,%d) src=%08x flags=%08x\n",
+                    n, self, d->w, d->h, dl, dt, dr, db, srcobj, flags);
+    }
     Surface *s = srcobj ? com_host(srcobj) : NULL;
     if (s) {
         int sl, st_, sr, sb;
         read_rect(srect, &sl, &st_, &sr, &sb, s->w, s->h);
         const int keyed = (flags & DDBLT_KEYSRC) && s->has_key;
-        blit(d, dl, dt, s, sl, st_, sr - sl, sb - st_, keyed, s->key_lo, s->key_hi);
+        blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
+             keyed, s->key_lo, s->key_hi);
     }
     if (d->primary) {
         if (getenv("LF2_BLT_DEBUG")) {
@@ -241,8 +253,8 @@ static void surf_BltFast(uint32_t self)
     if (s) {
         int sl, st_, sr, sb;
         read_rect(srect, &sl, &st_, &sr, &sb, s->w, s->h);
-        blit(d, dx, dy, s, sl, st_, sr - sl, sb - st_, (flags & 1) && s->has_key,
-             s->key_lo, s->key_hi);
+        blit(d, dx, dy, sr - sl, sb - st_, s, sl, st_, sr - sl, sb - st_,
+             (flags & 1) && s->has_key, s->key_lo, s->key_hi);
     }
     if (d->primary) present_primary();
     com_ret(6, DD_OK);
