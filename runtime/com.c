@@ -78,7 +78,7 @@ void com_call(uint32_t sentinel)
     if (getenv("LF2_COM_TRACE"))
     {
         const char *mn = com_class[iface].mname[m];
-        if (mn) fprintf(stderr, "TRACE %s::%s\n", com_class[iface].name, mn);
+        if (mn) fprintf(stderr, "TRACE %s::%s this=%08x\n", com_class[iface].name, mn, LD32(R(ESP) + 4));
         else    fprintf(stderr, "TRACE %s::[%d]\n", com_class[iface].name, m);
     }
     com_cur_iface = iface;
