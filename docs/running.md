@@ -52,10 +52,15 @@ For checking the port without a human at the keyboard:
 LF2's menu is driven by the player-1 controls from `data/control.txt`, not by Enter — the
 defaults are the numpad, so `LF2_AUTOKEY=65` is player 1's attack.
 
-**This does not yet advance past the menu**, and the reason is not established. Two
-candidates, not separated: the game may want a press-to-release transition rather than a
-held state, or it may take menu input from `WM_KEYDOWN` messages, which the port does not
-deliver — only the startup batch is queued.
+**This does not yet advance past the menu.** Two hypotheses have been tried and both
+failed: the port now delivers `WM_KEYDOWN`/`WM_KEYUP` from real key events *and* scripted
+keys generate the same messages, so neither the polling path nor the message path is the
+missing piece.
+
+The remaining lead is the mouse. A cursor is drawn on the menu in both this port and a
+real run, and the port delivers no mouse position or button messages whatsoever —
+`WM_MOUSEMOVE`, `WM_LBUTTONDOWN` and `SetCursorPos`/`GetCursorPos` are all absent. That is
+the next thing to try.
 
 ## Debug switches
 
