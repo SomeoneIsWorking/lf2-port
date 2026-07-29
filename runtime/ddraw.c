@@ -29,6 +29,7 @@ typedef struct {
     int      has_key;
     uint32_t key_lo, key_hi;
     uint32_t palette;       /* guest object address of the attached palette, 0 if none */
+    uint32_t attached;      /* back buffer handed out by GetAttachedSurface */
 } Surface;
 
 typedef struct { uint32_t entries[256]; } Palette;
@@ -265,6 +266,51 @@ static void surf_ReleaseDC(uint32_t self)
     com_ret(2, DD_OK);
 }
 
+/* Methods with out-parameters MUST write them. Returning S_OK and leaving the caller's
+ * pointer untouched hands the game uninitialised memory it then calls through -- the
+ * failure surfaces much later as a call to a garbage address. */
+static void surf_GetAttachedSurface(uint32_t self)
+{
+    Surface *s = com_host(self);
+    if (!s->attached) {
+        Surface *b = SDL_calloc(1, sizeof *b);
+        b->w = s->w; b->h = s->h; b->pitch = s->pitch;
+        b->pixels = vram_alloc((uint32_t)b->pitch * (uint32_t)b->h);
+        memset(g_mem + b->pixels, 0, (size_t)b->pitch * (size_t)b->h);
+        s->attached = com_create(IF_SURFACE, b);
+    }
+    if (ARG(2)) ST32(ARG(2), s->attached);
+    com_ret(3, DD_OK);
+}
+
+static void surf_GetCaps(uint32_t self)
+{
+    Surface *s = com_host(self);
+    if (ARG(1)) ST32(ARG(1), s->primary ? DDSCAPS_PRIMARYSURFACE : 0x40u /* OFFSCREENPLAIN */);
+    com_ret(2, DD_OK);
+}
+
+static void surf_GetClipper(uint32_t self)
+{
+    (void)self;
+    if (ARG(1)) ST32(ARG(1), 0);
+    com_ret(2, E_FAIL);            /* DDERR_NOCLIPPERATTACHED */
+}
+
+static void surf_GetColorKey(uint32_t self)
+{
+    Surface *s = com_host(self);
+    if (ARG(2)) { ST32(ARG(2), s->key_lo); ST32(ARG(2) + 4, s->key_hi); }
+    com_ret(3, DD_OK);
+}
+
+static void surf_GetPalette(uint32_t self)
+{
+    Surface *s = com_host(self);
+    if (ARG(1)) ST32(ARG(1), s->palette);
+    com_ret(2, s->palette ? DD_OK : E_FAIL);
+}
+
 static void surf_ret_ok1(uint32_t self) { (void)self; com_ret(1, DD_OK); }
 static void surf_ret_ok2(uint32_t self) { (void)self; com_ret(2, DD_OK); }
 static void surf_ret_ok3(uint32_t self) { (void)self; com_ret(3, DD_OK); }
@@ -346,6 +392,36 @@ static void dd_SetDisplayMode(uint32_t self)
     com_ret(4, DD_OK);
 }
 static void dd_WaitForVerticalBlank(uint32_t self) { (void)self; com_ret(3, DD_OK); }
+static void dd_GetCaps(uint32_t self)
+{
+    (void)self;
+    /* Both structures are optional; zero them apart from the leading dwSize. */
+    for (int i = 0; i < 2; i++) {
+        const uint32_t p = ARG((unsigned)i + 1);
+        if (!p) continue;
+        const uint32_t size = LD32(p);
+        for (uint32_t o = 4; o < (size ? size : 316u); o += 4) ST32(p + o, 0);
+    }
+    com_ret(3, DD_OK);
+}
+
+static void dd_GetDisplayMode(uint32_t self)
+{
+    (void)self;
+    const uint32_t desc = ARG(1);
+    if (desc) {
+        ST32(desc + SD_SIZE, SD_BYTES);
+        ST32(desc + SD_FLAGS, DDSD_HEIGHT | DDSD_WIDTH | DDSD_PITCH | DDSD_PIXELFORMAT);
+        ST32(desc + SD_HEIGHT, (uint32_t)hw.height);
+        ST32(desc + SD_WIDTH, (uint32_t)hw.width);
+        ST32(desc + SD_PITCH, (uint32_t)((hw.width + 3) & ~3));
+        ST32(desc + SD_PIXELFORMAT, 32);
+        ST32(desc + SD_PIXELFORMAT + 4, 0x20);
+        ST32(desc + SD_PIXELFORMAT + 12, 8);
+    }
+    com_ret(2, DD_OK);
+}
+
 static void dd_ret_ok1(uint32_t self) { (void)self; com_ret(1, DD_OK); }
 static void dd_ret_ok2(uint32_t self) { (void)self; com_ret(2, DD_OK); }
 static void dd_ret_ok3(uint32_t self) { (void)self; com_ret(3, DD_OK); }
@@ -395,8 +471,8 @@ void ddraw_register(void)
     c->method[5] = dd_CreatePalette;
     c->method[6] = dd_CreateSurface;
     c->method[10] = dd_ret_ok1;              /* FlipToGDISurface */
-    c->method[11] = dd_ret_ok3;              /* GetCaps(driver, hel) */
-    c->method[12] = dd_ret_ok2;              /* GetDisplayMode */
+    c->method[11] = dd_GetCaps;
+    c->method[12] = dd_GetDisplayMode;
     c->method[18] = dd_ret_ok2;              /* Initialize */
     c->method[19] = dd_ret_ok1;              /* RestoreDisplayMode */
     c->method[20] = dd_SetCooperativeLevel;
@@ -412,8 +488,11 @@ void ddraw_register(void)
     c->method[5] = surf_Blt;
     c->method[7] = surf_BltFast;
     c->method[11] = surf_Flip;
-    c->method[12] = surf_ret_ok3;            /* GetAttachedSurface */
-    c->method[14] = surf_ret_ok2;            /* GetCaps */
+    c->method[12] = surf_GetAttachedSurface;
+    c->method[14] = surf_GetCaps;
+    c->method[15] = surf_GetClipper;
+    c->method[16] = surf_GetColorKey;
+    c->method[20] = surf_GetPalette;
     c->method[17] = surf_GetDC;
     c->method[21] = surf_GetPixelFormat;
     c->method[22] = surf_GetSurfaceDesc;

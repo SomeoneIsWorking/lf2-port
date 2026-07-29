@@ -475,6 +475,27 @@ static void h_time64(void)
 }
 static void h_exit(void) { exit((int)ARG(0)); }
 
+/* MultiByteToWideChar(CodePage, dwFlags, src, cbSrc, dst, cchDst).
+ * Six parameters -- popping the wrong number leaks guest stack on every call, which
+ * shows up much later as a POP taking a return address. */
+static void h_MultiByteToWideChar(void)
+{
+    const uint32_t src = ARG(2), dst = ARG(4);
+    const int32_t cb = (int32_t)ARG(3);
+    const uint32_t cch = ARG(5);
+
+    uint32_t n = 0;
+    if (cb < 0) { while (LD8(src + n)) n++; n++; }    /* -1: NUL-terminated, NUL included */
+    else n = (uint32_t)cb;
+
+    if (cch == 0) { ret_stdcall(6, n); return; }      /* size query */
+
+    uint32_t written = 0;
+    for (; written < n && written < cch; written++)
+        ST16(dst + written * 2, LD8(src + written));  /* the game's text is 8-bit */
+    ret_stdcall(6, written);
+}
+
 static void h_localtime64(void)
 {
     /* MSVC struct tm: nine ints. Returned in a static guest buffer, as the CRT does. */
@@ -679,7 +700,7 @@ static const struct { const char *dll, *name; Handler fn; } TABLE[] = {
     { "KERNEL32.dll", "lstrlenA",                h_lstrlenA },
     { "KERNEL32.dll", "OutputDebugStringA",      h_OutputDebugStringA },
     { "KERNEL32.dll", "Sleep",                   h_ret0_1 },
-    { "KERNEL32.dll", "MultiByteToWideChar",     h_ret1_2 },
+    { "KERNEL32.dll", "MultiByteToWideChar",     h_MultiByteToWideChar },
     { "KERNEL32.dll", "CreateFileA",             h_CreateFileA },
     { "KERNEL32.dll", "WriteFile",               h_WriteFile },
     { "KERNEL32.dll", "CloseHandle",             h_CloseHandle },
