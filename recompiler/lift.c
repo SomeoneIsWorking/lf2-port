@@ -639,6 +639,7 @@ static void lift_function(FILE *o, const Func *f)
     cur_n = n;
 
     fprintf(o, "\nvoid fn_%08x(void)\n{\n", f->addr);
+    fprintf(o, "    FN_ENTER(0x%xu);\n", f->addr);
     for (int i = 0; i < n; i++) {
         if (is_target[i]) fprintf(o, "L_%08x:\n", addrs[i]);
         fprintf(o, "    ");

@@ -38,6 +38,10 @@ add_executable(lf2
     runtime/dshow.c
     runtime/main.c)
 target_include_directories(lf2 PRIVATE runtime)
+option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
+if(LF2_FN_TRACE)
+    target_compile_definitions(lf2 PRIVATE LF2_FN_TRACE)
+endif()
 
 find_package(SDL3 REQUIRED CONFIG)
 target_link_libraries(lf2 PRIVATE SDL3::SDL3)

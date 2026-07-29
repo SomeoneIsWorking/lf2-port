@@ -212,12 +212,49 @@ enum { TRACE_N = 24 };
 static uint32_t trace[TRACE_N], trace_esp[TRACE_N];
 static unsigned trace_pos;
 
+enum { FN_TRACE_N = 40 };
+static uint32_t fn_ring[FN_TRACE_N];
+static unsigned fn_pos;
+
+void fn_enter(uint32_t addr)
+{
+    fn_ring[fn_pos % FN_TRACE_N] = addr;
+    fn_pos++;
+
+    /* LF2_FN_WATCH=<hex addr>: dump the caller and stack arguments on entry. The hook
+     * runs before the prologue, so [ESP] is the return address and args follow it. */
+    static uint32_t watch;
+    static int armed;
+    if (!armed) {
+        const char *w = getenv("LF2_FN_WATCH");
+        watch = w ? (uint32_t)strtoul(w, NULL, 16) : 0;
+        armed = 1;
+    }
+    if (watch && addr == watch) {
+        fprintf(stderr, "enter %08x from %08x  ecx=%08x args:", addr, LD32(R(ESP)), R(ECX));
+        for (int i = 0; i < 6; i++) fprintf(stderr, " %08x", LD32(R(ESP) + 4 + 4 * (unsigned)i));
+        fprintf(stderr, "\n");
+    }
+}
+
+static void dump_fn_trace(void)
+{
+    if (!fn_pos) return;
+    fprintf(stderr, "guest functions entered (newest last):");
+    for (unsigned i = 0; i < FN_TRACE_N; i++) {
+        uint32_t a = fn_ring[(fn_pos + i) % FN_TRACE_N];
+        if (a) fprintf(stderr, " %08x", a);
+    }
+    fprintf(stderr, "\n");
+}
+
 static void dump_trace(void)
 {
     static const char *RN[8] = { "eax","ecx","edx","ebx","esp","ebp","esi","edi" };
     fprintf(stderr, "regs:");
     for (int i = 0; i < 8; i++) fprintf(stderr, " %s=%08x", RN[i], R(i));
     fprintf(stderr, "\n");
+    dump_fn_trace();
     fprintf(stderr, "recent calls (newest last):");
     for (unsigned i = 0; i < TRACE_N; i++) {
         unsigned k = (trace_pos + i) % TRACE_N;
