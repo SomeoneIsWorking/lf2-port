@@ -58,20 +58,26 @@ failed: the port now delivers `WM_KEYDOWN`/`WM_KEYUP` from real key events *and*
 keys generate the same messages, so neither the polling path nor the message path is the
 missing piece.
 
-Mouse input is implemented — motion and buttons are delivered as `WM_MOUSEMOVE`,
-`WM_LBUTTONDOWN`/`UP`, and `GetKeyState` answers `VK_LBUTTON` — but **it is not confirmed
-to reach the game**.
+Mouse input **is confirmed to reach the game**, established by logging what the window
+procedure is actually handed (`LF2_MSG_DEBUG`) rather than inferring from the screen:
 
-A cursor was seen to move in one run, which looked like proof at the time. A controlled
-calibration afterwards did not reproduce it: sending a known position does not put the
-game's cursor there. That single screenshot was not evidence, and the earlier claim based
-on it was wrong.
+```
+dispatch msg=0200 wparam=00000000 lparam=00e801ae wndproc=0043b3d0
+```
 
-What is actually established: the game imports no `GetCursorPos`, so the lParam of
-`WM_MOUSEMOVE` is the only channel it has for pointer position, and the port now sends it.
-Whether the game consumes it is open. The next step is to instrument the game's own
-WNDPROC dispatch — log every message actually handed to it — rather than inferring from
-what appears on screen.
+`0x01ae`/`0x00e8` is x=430, y=232 — exactly what was sent. Over a run the procedure
+receives `WM_MOUSEMOVE`, `WM_LBUTTONDOWN` and `WM_LBUTTONUP` along with the startup
+`WM_MOVE` and `WM_ACTIVATEAPP`.
+
+(An earlier note here claimed this was unconfirmed, after a calibration failed to show the
+cursor moving. That was the wrong conclusion from the wrong instrument — the screen was
+never the place to look.)
+
+**The game still does not select a menu item.** With delivery proven, the remaining
+candidates are the coordinates themselves — whether (430,232) is actually over "game
+start" in the game's coordinate space — and whether the menu needs hover state built up
+from more `WM_MOUSEMOVE` traffic than the throttle currently sends. Finding the game's own
+hit-test rectangles would settle it.
 
 ## Debug switches
 
