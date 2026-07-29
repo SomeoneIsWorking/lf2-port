@@ -181,6 +181,14 @@ int main(void)
             want.eflags = 0x202;
 
             uint32_t index_val = 0;
+            if (k->is_string) {
+                /* Source and destination are placed apart so a REP MOVS does not overlap
+                 * itself, and both stay inside the filled scratch span. ECX is kept small
+                 * so a repeated op cannot run off the end. */
+                want.r[6] = SCRATCH - 512;          /* ESI */
+                want.r[7] = SCRATCH + 512;          /* EDI */
+                want.r[1] = 1 + rnd() % 8;          /* ECX */
+            }
             if (k->uses_memory) {
                 /* Solve the base so the effective address lands on the scratch area
                  * whatever displacement the encoding carries -- displacements here run to
@@ -204,6 +212,10 @@ int main(void)
 
             State got = want;
             if (k->uses_memory) got.r[k->base_reg] = mem_base + want.r[k->base_reg];
+            if (k->is_string) {
+                got.r[6] = mem_base + want.r[6];
+                got.r[7] = mem_base + want.r[7];
+            }
             stub(&got);
             memcpy(after_host, g_mem + SCRATCH - SCRATCH_SPAN / 2, SCRATCH_SPAN);
 
@@ -256,7 +268,11 @@ int main(void)
                 if (i == 4) continue;
                 /* The base register holds a host address on one side by construction. */
                 if (k->uses_memory && i == k->base_reg) continue;
-                const uint32_t mine = (i == k->addr_reg) ? cpu.r[i] + mem_base : cpu.r[i];
+                /* ESI/EDI hold host addresses on one side by construction, and the string
+                 * ops only advance them, so the offset survives and can be compensated. */
+                uint32_t mine = cpu.r[i];
+                if (i == k->addr_reg) mine += mem_base;
+                if (k->is_string && (i == 6 || i == 7)) mine += mem_base;
                 if (mine != got.r[i]) {
                     failed++;
                     if (reported < 15) {

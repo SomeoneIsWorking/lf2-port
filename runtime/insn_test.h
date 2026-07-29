@@ -15,6 +15,7 @@ typedef struct {
     int32_t     disp;          /* displacement baked into the encoding */
     int         scale;         /* index scale */
     int         is_x87;
+    int         is_string;     /* addresses through ESI/EDI */
 } InsnCase;
 
 extern const InsnCase insn_cases[];
