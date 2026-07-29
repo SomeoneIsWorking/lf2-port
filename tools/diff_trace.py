@@ -71,6 +71,7 @@ def from_mine(path):
         if not line.startswith("TRACE "):
             continue
         call = line.split(None, 1)[1].strip()
+        call = call.split(' this=')[0]      # the object address is not comparable
         if call.startswith(DDRAW_IFACES):
             seq.append(call)
     return seq

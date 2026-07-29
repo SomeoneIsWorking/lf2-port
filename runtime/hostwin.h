@@ -16,6 +16,6 @@ typedef struct {
 
 extern HostWin hw;
 void hostwin_pump(void);
-void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int h);
+void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int h, int src_pitch);
 
 #endif

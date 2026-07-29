@@ -49,10 +49,27 @@ static uint32_t vram_alloc(uint32_t n)
     return p;
 }
 
+/* The game never creates a DirectDraw palette -- it queries GetPixelFormat and adapts.
+ * Surfaces are therefore 32-bit XRGB, and the 8-bit bitmaps are converted through their
+ * own palette when GDI blits them in, which is what GDI does on Windows. */
+static void write_pixelformat(uint32_t pf)
+{
+    if (!pf) return;
+    ST32(pf, 32);                    /* dwSize */
+    ST32(pf + 4, 0x40);              /* DDPF_RGB */
+    ST32(pf + 12, 32);               /* bit count */
+    ST32(pf + 16, 0x00ff0000);       /* R */
+    ST32(pf + 20, 0x0000ff00);       /* G */
+    ST32(pf + 24, 0x000000ff);       /* B */
+    ST32(pf + 28, 0);
+}
+
 /* ---- presentation ---- */
 
-void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int h)
+void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int h, int src_pitch)
 {
+    static long frames;
+    if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
     if (!hw.renderer) return;
     if (!hw.texture) {
         hw.texture = SDL_CreateTexture(hw.renderer, SDL_PIXELFORMAT_XRGB8888,
@@ -64,8 +81,9 @@ void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int
     if (SDL_LockTexture(hw.texture, NULL, &dst, &pitch)) {
         for (int y = 0; y < h; y++) {
             uint32_t *row = (uint32_t *)((uint8_t *)dst + (size_t)y * (size_t)pitch);
-            const uint8_t *src = indexed + (size_t)y * (size_t)w;
-            for (int x = 0; x < w; x++) row[x] = palette[src[x]];
+            /* Rows are src_pitch apart, not width apart. */
+            const uint32_t *src = (const uint32_t *)(indexed + (size_t)y * (size_t)src_pitch);
+            memcpy(row, src, (size_t)w * 4);
         }
         SDL_UnlockTexture(hw.texture);
     }
@@ -78,15 +96,7 @@ static void present_primary(void)
 {
     if (!primary_surface) return;
     Surface *s = com_host(primary_surface);
-    static uint32_t grey[256];
-    const uint32_t *pal = grey;
-    if (active_palette) {
-        Palette *p = com_host(active_palette);
-        if (p) pal = p->entries;
-    } else {
-        for (int i = 0; i < 256; i++) grey[i] = (uint32_t)(i * 0x010101u);
-    }
-    hostwin_present(g_mem + s->pixels, pal, s->w, s->h);
+    hostwin_present(g_mem + s->pixels, NULL, s->w, s->h, s->pitch);
 }
 
 /* ---- IDirectDrawPalette ---- */
@@ -127,9 +137,7 @@ static void surf_Lock(uint32_t self)
     ST32(desc + SD_WIDTH, (uint32_t)s->w);
     ST32(desc + SD_PITCH, (uint32_t)s->pitch);
     ST32(desc + SD_SURFACE, s->pixels);
-    ST32(desc + SD_PIXELFORMAT, 32);
-    ST32(desc + SD_PIXELFORMAT + 4, 0x20);      /* DDPF_RGB */
-    ST32(desc + SD_PIXELFORMAT + 12, 8);        /* 8 bpp */
+    write_pixelformat(desc + SD_PIXELFORMAT);
     com_ret(5, DD_OK);
 }
 
@@ -150,9 +158,7 @@ static void surf_GetSurfaceDesc(uint32_t self)
     ST32(desc + SD_WIDTH, (uint32_t)s->w);
     ST32(desc + SD_PITCH, (uint32_t)s->pitch);
     ST32(desc + SD_SURFACE, s->pixels);
-    ST32(desc + SD_PIXELFORMAT, 32);
-    ST32(desc + SD_PIXELFORMAT + 4, 0x20);
-    ST32(desc + SD_PIXELFORMAT + 12, 8);
+    write_pixelformat(desc + SD_PIXELFORMAT);
     ST32(desc + SD_CAPS, s->primary ? DDSCAPS_PRIMARYSURFACE : 0);
     com_ret(2, DD_OK);
 }
@@ -170,13 +176,13 @@ static void blit(Surface *d, int dx, int dy, Surface *s, int sx, int sy, int w, 
     for (int y = 0; y < h; y++) {
         const int syy = sy + y, dyy = dy + y;
         if (syy < 0 || syy >= s->h || dyy < 0 || dyy >= d->h) continue;
-        const uint8_t *sp = g_mem + s->pixels + (size_t)syy * (size_t)s->pitch;
-        uint8_t *dp = g_mem + d->pixels + (size_t)dyy * (size_t)d->pitch;
+        const uint32_t *sp = (const uint32_t *)(g_mem + s->pixels + (size_t)syy * (size_t)s->pitch);
+        uint32_t *dp = (uint32_t *)(g_mem + d->pixels + (size_t)dyy * (size_t)d->pitch);
         for (int x = 0; x < w; x++) {
             const int sxx = sx + x, dxx = dx + x;
             if (sxx < 0 || sxx >= s->w || dxx < 0 || dxx >= d->w) continue;
-            const uint8_t v = sp[sxx];
-            if (keyed && v >= klo && v <= khi) continue;
+            const uint32_t v = sp[sxx] & 0x00ffffffu;
+            if (keyed && v >= (klo & 0x00ffffffu) && v <= (khi & 0x00ffffffu)) continue;
             dp[dxx] = v;
         }
     }
@@ -198,10 +204,11 @@ static void surf_Blt(uint32_t self)
 
     if (flags & DDBLT_COLORFILL) {
         const uint32_t fill = ARG(5) ? LD32(ARG(5) + 16) : 0;   /* DDBLTFX.dwFillColor */
-        for (int y = dt; y < db && y < d->h; y++)
-            if (y >= 0)
-                memset(g_mem + d->pixels + (size_t)y * (size_t)d->pitch + (size_t)(dl < 0 ? 0 : dl),
-                       (int)fill, (size_t)((dr - dl) < 0 ? 0 : (dr - dl)));
+        for (int y = dt; y < db && y < d->h; y++) {
+            if (y < 0) continue;
+            uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
+            for (int x = dl < 0 ? 0 : dl; x < dr && x < d->w; x++) row[x] = fill & 0x00ffffffu;
+        }
         if (d->primary) present_primary();
         com_ret(6, DD_OK);
         return;
@@ -324,8 +331,7 @@ static void surf_ret_ok3(uint32_t self) { (void)self; com_ret(3, DD_OK); }
 static void surf_GetPixelFormat(uint32_t self)
 {
     (void)self;
-    const uint32_t pf = ARG(1);
-    ST32(pf, 32); ST32(pf + 4, 0x20); ST32(pf + 12, 8);
+    write_pixelformat(ARG(1));
     com_ret(2, DD_OK);
 }
 
@@ -335,7 +341,7 @@ static uint32_t make_surface(int w, int h, int primary)
 {
     Surface *s = SDL_calloc(1, sizeof *s);
     s->w = w; s->h = h;
-    s->pitch = (w + 3) & ~3;
+    s->pitch = w * 4;
     s->pixels = vram_alloc((uint32_t)s->pitch * (uint32_t)h);
     s->primary = primary;
     memset(g_mem + s->pixels, 0, (size_t)s->pitch * (size_t)h);
@@ -421,9 +427,7 @@ static void dd_GetDisplayMode(uint32_t self)
         ST32(desc + SD_HEIGHT, (uint32_t)hw.height);
         ST32(desc + SD_WIDTH, (uint32_t)hw.width);
         ST32(desc + SD_PITCH, (uint32_t)((hw.width + 3) & ~3));
-        ST32(desc + SD_PIXELFORMAT, 32);
-        ST32(desc + SD_PIXELFORMAT + 4, 0x20);
-        ST32(desc + SD_PIXELFORMAT + 12, 8);
+        write_pixelformat(desc + SD_PIXELFORMAT);
     }
     com_ret(2, DD_OK);
 }
