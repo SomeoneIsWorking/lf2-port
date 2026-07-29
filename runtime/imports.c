@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <strings.h>
 
 #define ARG(n) LD32(R(ESP) + 4 + 4 * (n))
 
@@ -226,9 +228,65 @@ static FILE *file_of(uint32_t tok)
 
 static const char *gstr(uint32_t p) { return (const char *)(g_mem + p); }
 
+/* ---- path translation ----
+ * The game stores Windows paths ("data\\m_ok.wav"). Backslashes become slashes, and if
+ * that still misses we retry component-by-component case-insensitively, because the
+ * original filesystem was case-insensitive and the data files are not consistent. */
+static int find_ci(const char *dir, const char *want, char *out, size_t cap)
+{
+    DIR *d = opendir(dir[0] ? dir : ".");
+    if (!d) return 0;
+    struct dirent *e;
+    int found = 0;
+    while ((e = readdir(d))) {
+        if (strcasecmp(e->d_name, want) == 0) {
+            snprintf(out, cap, "%s", e->d_name);
+            found = 1;
+            break;
+        }
+    }
+    closedir(d);
+    return found;
+}
+
+static const char *host_path(uint32_t guest_str)
+{
+    static char path[1024];
+    const char *src = (const char *)(g_mem + guest_str);
+    size_t n = 0;
+    for (; src[n] && n + 1 < sizeof path; n++) path[n] = (src[n] == '\\') ? '/' : src[n];
+    path[n] = 0;
+
+    if (access(path, F_OK) == 0) return path;
+
+    /* Rebuild the path one component at a time, matching case-insensitively. */
+    char built[1024] = "";
+    char work[1024];
+    snprintf(work, sizeof work, "%s", path);
+    char *save = NULL;
+    for (char *tok = strtok_r(work, "/", &save); tok; tok = strtok_r(NULL, "/", &save)) {
+        char match[256];
+        char probe[1024];
+        snprintf(probe, sizeof probe, "%s%s", built, tok);
+        if (access(probe, F_OK) == 0) {
+            snprintf(built + strlen(built), sizeof built - strlen(built), "%s/", tok);
+            continue;
+        }
+        char dir[1024];
+        snprintf(dir, sizeof dir, "%s", built[0] ? built : ".");
+        if (!find_ci(dir, tok, match, sizeof match)) return path;   /* give up, report original */
+        snprintf(built + strlen(built), sizeof built - strlen(built), "%s/", match);
+    }
+    n = strlen(built);
+    if (n && built[n - 1] == '/') built[n - 1] = 0;
+    snprintf(path, sizeof path, "%s", built);
+    return path;
+}
+
+
 static void h_fopen(void)
 {
-    FILE *fh = fopen(gstr(ARG(0)), gstr(ARG(1)));
+    FILE *fh = fopen(host_path(ARG(0)), gstr(ARG(1)));
     ret_cdecl(fh ? file_token(fh) : 0);
 }
 
@@ -307,6 +365,105 @@ static void h_fprintf(void)
     ret_cdecl((uint32_t)n);
 }
 
+
+/* ---- scanf family ----
+ * Directives are executed one at a time against the host, so the host does the stream
+ * positioning and the numeric parsing; only the destination store is ours. Literal and
+ * whitespace runs are passed through so they still have to match. */
+static int scan_directive(FILE *fh, const char **cur, const char *spec, char conv,
+                          uint32_t out, int suppress)
+{
+    char sp[64];
+    snprintf(sp, sizeof sp, "%s%%n", spec);
+    int consumed = -1, got = 0;
+
+    if (conv == 0 || suppress) {                 /* literal run, or assignment-suppressed */
+        if (fh) { if (fscanf(fh, spec) == EOF) return -1; }
+        else {
+            if (sscanf(*cur, sp, &consumed) == EOF) return -1;
+            if (consumed >= 0) *cur += consumed;
+        }
+        return 0;
+    }
+
+    switch (conv) {
+    case 'd': case 'i': case 'u': case 'x': case 'X': case 'o': {
+        int v = 0;
+        got = fh ? fscanf(fh, spec, &v) : sscanf(*cur, sp, &v, &consumed);
+        if (got >= 1) ST32(out, (uint32_t)v);
+        break;
+    }
+    case 'f': case 'g': case 'e': {
+        float v = 0;
+        got = fh ? fscanf(fh, spec, &v) : sscanf(*cur, sp, &v, &consumed);
+        if (got >= 1) { uint32_t b; __builtin_memcpy(&b, &v, 4); ST32(out, b); }
+        break;
+    }
+    case 'l': return -2;                          /* %lf and friends: not used here */
+    case 's': case 'c': {
+        char buf[512] = {0};
+        got = fh ? fscanf(fh, spec, buf) : sscanf(*cur, sp, buf, &consumed);
+        if (got >= 1) {
+            size_t n = strlen(buf);
+            memcpy(g_mem + out, buf, n);
+            if (conv == 's') ST8(out + (uint32_t)n, 0);
+        }
+        break;
+    }
+    default: return -2;
+    }
+    if (!fh && consumed >= 0) *cur += consumed;
+    return got >= 1 ? 1 : (got == EOF ? -1 : 0);
+}
+
+static int gscan(FILE *fh, const char *start, const char *fmt, uint32_t argp)
+{
+    const char *cur = start;
+    int assigned = 0;
+
+    for (const char *f = fmt; *f;) {
+        if (*f != '%') {                          /* literal / whitespace run */
+            char lit[128]; int n = 0;
+            while (*f && *f != '%' && n < 120) lit[n++] = *f++;
+            lit[n] = 0;
+            if (scan_directive(fh, &cur, lit, 0, 0, 1) < 0) return assigned ? assigned : -1;
+            continue;
+        }
+        char spec[64]; int n = 0;
+        spec[n++] = *f++;
+        int suppress = 0;
+        if (*f == '*') { suppress = 1; spec[n++] = *f++; }
+        while (*f && !strchr("diouxXcsfgeE%", *f) && n < 60) spec[n++] = *f++;
+        if (!*f) break;
+        const char conv = *f;
+        spec[n++] = *f++;
+        spec[n] = 0;
+        if (conv == '%') { continue; }
+
+        uint32_t out = 0;
+        if (!suppress) { out = LD32(argp); argp += 4; }
+        const int r = scan_directive(fh, &cur, spec, conv, out, suppress);
+        if (r == -2) { fprintf(stderr, "unsupported scanf conversion '%s'\n", spec); abort(); }
+        if (r < 0) return assigned ? assigned : -1;
+        if (r == 0) break;
+        assigned += !suppress;
+    }
+    return assigned;
+}
+
+static void h_fscanf(void)
+{
+    FILE *fh = file_of(ARG(0));
+    const int n = fh ? gscan(fh, NULL, gstr(ARG(1)), R(ESP) + 4 + 8) : -1;
+    ret_cdecl((uint32_t)n);
+}
+
+static void h_sscanf(void)
+{
+    const int n = gscan(NULL, gstr(ARG(0)), gstr(ARG(1)), R(ESP) + 4 + 8);
+    ret_cdecl((uint32_t)n);
+}
+
 static void h_rand(void)  { ret_cdecl((uint32_t)(rand() & 0x7fff)); }
 static void h_srand(void) { srand(ARG(0)); ret_cdecl(0); }
 static void h_time64(void)
@@ -317,12 +474,110 @@ static void h_time64(void)
     R(ESP) += 4;
 }
 static void h_exit(void) { exit((int)ARG(0)); }
+
+static void h_localtime64(void)
+{
+    /* MSVC struct tm: nine ints. Returned in a static guest buffer, as the CRT does. */
+    static uint32_t buf;
+    if (!buf) buf = guest_alloc(36);
+    int64_t t = (int64_t)LD32(ARG(0)) | ((int64_t)LD32(ARG(0) + 4) << 32);
+    time_t tt = (time_t)t;
+    struct tm *g = localtime(&tt);
+    const int v[9] = { g->tm_sec, g->tm_min, g->tm_hour, g->tm_mday,
+                       g->tm_mon, g->tm_year, g->tm_wday, g->tm_yday, g->tm_isdst };
+    for (int i = 0; i < 9; i++) ST32(buf + (uint32_t)i * 4, (uint32_t)v[i]);
+    ret_cdecl(buf);
+}
 static void h_getcwd(void)
 {
     if (ARG(0) && getcwd((char *)(g_mem + ARG(0)), ARG(1))) ret_cdecl(ARG(0));
     else ret_cdecl(0);
 }
 static void h_chdir(void) { ret_cdecl((uint32_t)chdir(gstr(ARG(0)))); }
+
+
+/* ---- MMIO ----
+ * The game reads its WAVs through the RIFF chunk API rather than plain fread.
+ * MMCKINFO is { ckid, cksize, fccType, dwDataOffset, dwFlags }. */
+enum { MMIO_FINDCHUNK = 0x0010, MMIO_FINDRIFF = 0x0020, MMIO_FINDLIST = 0x0040 };
+enum { MMSYSERR_NOERROR = 0, MMIOERR_CHUNKNOTFOUND = 261 };
+
+static void h_mmioOpenA(void)
+{
+    FILE *fh = fopen(host_path(ARG(0)), "rb");
+    ret_stdcall(3, fh ? file_token(fh) : 0);
+}
+
+static void h_mmioClose(void)
+{
+    FILE *fh = file_of(ARG(0));
+    if (fh) { fclose(fh); files[ARG(0) - 0xFE000000u] = NULL; }
+    ret_stdcall(2, 0);
+}
+
+static void h_mmioRead(void)
+{
+    FILE *fh = file_of(ARG(0));
+    long n = fh ? (long)fread(g_mem + ARG(1), 1, ARG(2), fh) : -1;
+    ret_stdcall(3, (uint32_t)n);
+}
+
+static void h_mmioDescend(void)
+{
+    FILE *fh = file_of(ARG(0));
+    const uint32_t ck = ARG(1), flags = ARG(3);
+    if (!fh) { ret_stdcall(4, MMIOERR_CHUNKNOTFOUND); return; }
+
+    const uint32_t want = (flags & (MMIO_FINDRIFF | MMIO_FINDLIST | MMIO_FINDCHUNK))
+                        ? LD32(ck + ((flags & MMIO_FINDCHUNK) ? 0 : 8)) : 0;
+
+    for (;;) {
+        uint8_t hdr[8];
+        if (fread(hdr, 1, 8, fh) != 8) { ret_stdcall(4, MMIOERR_CHUNKNOTFOUND); return; }
+        const uint32_t id = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8)
+                          | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
+        const uint32_t size = (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8)
+                            | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
+
+        uint32_t type = 0;
+        const int is_container = (flags & (MMIO_FINDRIFF | MMIO_FINDLIST)) != 0;
+        if (is_container) {
+            uint8_t t[4];
+            if (fread(t, 1, 4, fh) != 4) { ret_stdcall(4, MMIOERR_CHUNKNOTFOUND); return; }
+            type = (uint32_t)t[0] | ((uint32_t)t[1] << 8)
+                 | ((uint32_t)t[2] << 16) | ((uint32_t)t[3] << 24);
+        }
+
+        const uint32_t data_off = (uint32_t)ftell(fh);
+        const uint32_t match = is_container ? type : id;
+        if (!want || match == want) {
+            ST32(ck, id);
+            ST32(ck + 4, size);
+            ST32(ck + 8, type);
+            ST32(ck + 12, data_off);
+            ST32(ck + 16, 0);
+            ret_stdcall(4, MMSYSERR_NOERROR);
+            return;
+        }
+        /* Not the chunk asked for: skip its body (chunks are word-aligned) and retry. */
+        const long skip = (long)size - (is_container ? 4 : 0);
+        if (fseek(fh, skip + (skip & 1), SEEK_CUR) != 0) {
+            ret_stdcall(4, MMIOERR_CHUNKNOTFOUND);
+            return;
+        }
+    }
+}
+
+static void h_mmioAscend(void)
+{
+    FILE *fh = file_of(ARG(0));
+    const uint32_t ck = ARG(1);
+    if (fh) {
+        const uint32_t end = LD32(ck + 12) + LD32(ck + 4);
+        fseek(fh, (long)(end + (end & 1)), SEEK_SET);
+    }
+    ret_stdcall(3, MMSYSERR_NOERROR);
+}
 
 static void h_timeGetTime(void)
 {
@@ -412,13 +667,21 @@ static const struct { const char *dll, *name; Handler fn; } TABLE[] = {
     { "MSVCR80.dll", "feof",                h_feof },
     { "MSVCR80.dll", "fprintf",             h_fprintf },
     { "MSVCR80.dll", "sprintf",             h_sprintf },
+    { "MSVCR80.dll", "fscanf",              h_fscanf },
+    { "MSVCR80.dll", "sscanf",              h_sscanf },
     { "MSVCR80.dll", "rand",                h_rand },
     { "MSVCR80.dll", "srand",               h_srand },
     { "MSVCR80.dll", "_time64",             h_time64 },
+    { "MSVCR80.dll", "_localtime64",        h_localtime64 },
     { "MSVCR80.dll", "_getcwd",             h_getcwd },
     { "MSVCR80.dll", "_chdir",              h_chdir },
 
     { "WINMM.dll", "timeGetTime",      h_timeGetTime },
+    { "WINMM.dll", "mmioOpenA",        h_mmioOpenA },
+    { "WINMM.dll", "mmioClose",        h_mmioClose },
+    { "WINMM.dll", "mmioRead",         h_mmioRead },
+    { "WINMM.dll", "mmioDescend",      h_mmioDescend },
+    { "WINMM.dll", "mmioAscend",       h_mmioAscend },
     { "WINMM.dll", "joyGetNumDevs",    h_joyGetNumDevs },
     { "WINMM.dll", "joyGetDevCapsA",   h_joyGetDevCaps },
     { "WINMM.dll", "joyGetDevCapsW",   h_joyGetDevCaps },

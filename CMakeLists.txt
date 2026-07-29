@@ -30,5 +30,12 @@ add_executable(lf2
     ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
     runtime/guest.c
     runtime/imports.c
+    runtime/com.c
+    runtime/win32.c
+    runtime/ddraw.c
+    runtime/dsound.c
     runtime/main.c)
 target_include_directories(lf2 PRIVATE runtime)
+
+find_package(SDL3 REQUIRED CONFIG)
+target_link_libraries(lf2 PRIVATE SDL3::SDL3)
