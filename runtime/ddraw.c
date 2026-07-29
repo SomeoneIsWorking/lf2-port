@@ -187,6 +187,12 @@ static void surf_Blt(uint32_t self)
     Surface *d = com_host(self);
     const uint32_t drect = ARG(1), srcobj = ARG(2), srect = ARG(3), flags = ARG(4);
 
+    /* Value-level trace: the call sequence already matches the oracle, so the next
+     * signal is the arguments. Flags are comparable across runs; pointers are not. */
+    if (getenv("LF2_COM_TRACE"))
+        fprintf(stderr, "ARG Blt flags=0x%x dst=%s src=%s\n", flags,
+                drect ? "rect" : "null", srcobj ? "surf" : "null");
+
     int dl, dt, dr, db;
     read_rect(drect, &dl, &dt, &dr, &db, d->w, d->h);
 
