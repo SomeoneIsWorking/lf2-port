@@ -17,3 +17,18 @@ add_test(NAME decoder_corpus
 
 add_executable(lift recompiler/lift.c)
 target_link_libraries(lift PRIVATE x86_decode)
+
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
+    COMMAND lift ${CMAKE_SOURCE_DIR}/game/lf2.exe ${CMAKE_SOURCE_DIR}/re/entries.tsv
+                 ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
+    DEPENDS lift ${CMAKE_SOURCE_DIR}/re/entries.tsv
+    COMMENT "Recompiling lf2.exe -> C")
+
+add_executable(lf2
+    ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
+    runtime/guest.c
+    runtime/imports.c
+    runtime/main.c)
+target_include_directories(lf2 PRIVATE runtime)

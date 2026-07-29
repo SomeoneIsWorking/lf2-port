@@ -53,6 +53,15 @@ int  flag_pf(void);
 uint32_t flags_pack(void);      /* PUSHFD */
 void     flags_unpack(uint32_t);/* POPFD  */
 
+typedef struct { uint32_t addr; void (*fn)(void); } GuestFunc;
+extern const GuestFunc g_funcs[];
+extern const int g_nfuncs;
+
+/* Imported functions get a sentinel address written into their IAT slot, so an
+ * indirect call through the IAT lands in dispatch() with something we can name. */
+enum { IMPORT_SENTINEL = 0xF0000000u };
+void host_import(uint32_t sentinel);
+
 void guest_init(void);
 void guest_load_image(const char *exe_path);
 void dispatch(uint32_t target);  /* indirect call/jump */
