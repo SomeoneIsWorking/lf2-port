@@ -385,15 +385,69 @@ static void h_StretchBlt(void)
 static void h_DeleteObject(void) { ret_stdcall(1, 1); }
 static void h_DeleteDC(void)     { ret_stdcall(1, 1); }
 static void h_SetBkColor(void)   { ret_stdcall(2, 0); }
-static void h_SetTextColor(void) { ret_stdcall(2, 0); }
+static uint32_t text_colour = 0x00ffffffu;   /* COLORREF is 0x00BBGGRR */
 
+static void h_SetTextColor(void)
+{
+    const uint32_t ref = ARG(1);
+    text_colour = ((ref & 0xff) << 16) | (ref & 0xff00) | ((ref >> 16) & 0xff);
+    ret_stdcall(2, 0);
+}
+
+/* Text, through SDL's built-in debug font.
+ *
+ * The binary imports no CreateFont, so the game draws with the device context's default
+ * font -- there is no font of its own to reproduce here. SDL rasterises an 8x8 face with
+ * no font file, so the string is drawn white onto a scratch surface and used as a mask to
+ * stamp the current text colour into the DirectDraw surface. That keeps both the colour
+ * and the see-through behaviour right without pulling in a font library.
+ */
 static void h_TextOutA(void)
 {
-    static int warned;
-    if (!warned) {
-        fprintf(stderr, "note: GDI TextOutA not implemented -- some text will be missing\n");
-        warned = 1;
+    const uint32_t hdc = ARG(0), str = ARG(3);
+    const int x = (int)ARG(1), y = (int)ARG(2);
+    int len = (int)ARG(4);
+
+    uint32_t dpix; int dwid, dhei, dpitch;
+    if (!ddraw_surface_info(hdc, &dpix, &dwid, &dhei, &dpitch) || len <= 0 || !str) {
+        ret_stdcall(5, 1);
+        return;
     }
+    if (len > 512) len = 512;
+
+    char text[513];
+    for (int i = 0; i < len; i++) text[i] = (char)LD8(str + (uint32_t)i);
+    text[len] = 0;
+
+    const int w = len * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE;
+    const int h = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE;
+    SDL_Surface *scratch = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_XRGB8888);
+    if (!scratch) { ret_stdcall(5, 1); return; }
+    SDL_Renderer *r = SDL_CreateSoftwareRenderer(scratch);
+    if (!r) { SDL_DestroySurface(scratch); ret_stdcall(5, 1); return; }
+
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
+    SDL_RenderClear(r);
+    SDL_SetRenderDrawColor(r, 255, 255, 255, 255);
+    SDL_RenderDebugText(r, 0, 0, text);
+    SDL_RenderPresent(r);
+
+    for (int ty = 0; ty < h; ty++) {
+        const int dy = y + ty;
+        if (dy < 0 || dy >= dhei) continue;
+        uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
+        const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels
+                                                 + (size_t)ty * (size_t)scratch->pitch);
+        for (int tx = 0; tx < w; tx++) {
+            const int dx = x + tx;
+            if (dx < 0 || dx >= dwid) continue;
+            if (row[tx] & 0x00ffffffu) dst[dx] = text_colour;
+        }
+    }
+
+    SDL_DestroyRenderer(r);
+    SDL_DestroySurface(scratch);
+    ddraw_surface_present(hdc);
     ret_stdcall(5, 1);
 }
 
