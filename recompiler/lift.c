@@ -724,7 +724,6 @@ static int testable(const x86_insn *in)
     }
     if (in->map != 1) return 0;
 
-    if (op >= 0xD8 && op <= 0xDF) return 0;              /* x87 has its own state */
     if (op >= 0xA0 && op <= 0xAF) return 0;              /* moffs and string ops */
     if (op == 0xE8 || op == 0xE9 || op == 0xEB) return 0;
     if (op >= 0x70 && op <= 0x7F) return 0;
@@ -840,8 +839,9 @@ static void gen_insn_test(const char *tsv, const char *out)
         const int addr_reg = (insn.map == 1 && insn.opcode == 0x8D)
                            ? (int)((insn.modrm >> 3) & 7) : -1;
         const int scale = insn.has_sib ? (1 << (insn.sib >> 6)) : 1;
-        fprintf(o, "}, case_%d, %d, %d, %d, %d, %d, %d },\n",
-                idx++, mem, base, index, addr_reg, (int)insn.disp, scale);
+        const int is_x87 = (insn.map == 1 && insn.opcode >= 0xD8 && insn.opcode <= 0xDF);
+        fprintf(o, "}, case_%d, %d, %d, %d, %d, %d, %d, %d },\n",
+                idx++, mem, base, index, addr_reg, (int)insn.disp, scale, is_x87);
     }
     fprintf(o, "};\nconst int insn_ncases = %d;\n", idx);
     fclose(o);
