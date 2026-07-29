@@ -20,7 +20,13 @@ HostWin hw;
 static void queue_startup_messages(void);
 static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam);
 static uint32_t scancode_to_vk(SDL_Scancode sc);
-enum { WM_KEYDOWN_FWD = 0x0100, WM_KEYUP_FWD = 0x0101 };
+static uint32_t mouse_lparam(float wx, float wy);
+
+enum { WM_KEYDOWN_FWD = 0x0100, WM_KEYUP_FWD = 0x0101,
+       WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202,
+       WM_RBUTTONDOWN = 0x0204, WM_RBUTTONUP = 0x0205 };
+
+static int mouse_left_down, mouse_right_down;
 void gamepad_handle_event(const SDL_Event *e);
 
 /* ---- window ---- */
@@ -111,6 +117,44 @@ static int autokey_pressed(uint32_t vk);
 
 /* Scripted keys must also arrive as messages, or they only exercise the polling path and
  * tell us nothing about code that reacts to WM_KEYDOWN. */
+/* Scripted pointer, the mouse counterpart of LF2_AUTOKEY:
+ *   LF2_AUTOCLICK=<x>,<y>   move there and click on the same schedule as LF2_AUTOKEY. */
+static int autoclick_state(int *x, int *y)
+{
+    const char *spec = getenv("LF2_AUTOCLICK");
+    if (!spec) return 0;
+    *x = (int)strtol(spec, (char **)&spec, 10);
+    while (*spec == ',' || *spec == ' ') spec++;
+    *y = (int)strtol(spec, NULL, 10);
+
+    static uint64_t start_ms;
+    if (!start_ms) start_ms = SDL_GetTicks();
+    const char *s_env = getenv("LF2_AUTOKEY_START");
+    const char *e_env = getenv("LF2_AUTOKEY_EVERY");
+    const uint64_t begin = s_env ? (uint64_t)strtoul(s_env, NULL, 10) : 6000;
+    const uint64_t every = e_env ? (uint64_t)strtoul(e_env, NULL, 10) : 2500;
+
+    const uint64_t now = SDL_GetTicks() - start_ms;
+    if (now < begin) return 0;
+    return ((now - begin) % every) < 150;          /* button held briefly */
+}
+
+static void pump_autoclick(void)
+{
+    int x = 0, y = 0;
+    static int was_down, announced;
+    const int down = autoclick_state(&x, &y);
+    if (!getenv("LF2_AUTOCLICK")) return;
+
+    const uint32_t lp = ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
+    if (!announced) { push_message(WM_MOUSEMOVE, 0, lp); announced = 1; }
+    if (down == was_down) return;
+    was_down = down;
+    mouse_left_down = down;
+    push_message(WM_MOUSEMOVE, down ? 1 : 0, lp);
+    push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
+}
+
 static void pump_autokey_messages(void)
 {
     if (!getenv("LF2_AUTOKEY")) return;
@@ -126,6 +170,7 @@ static void pump_autokey_messages(void)
 void hostwin_pump(void)
 {
     pump_autokey_messages();
+    pump_autoclick();
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         gamepad_handle_event(&e);          /* controllers may come and go at any time */
@@ -136,6 +181,20 @@ void hostwin_pump(void)
         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_RETURN &&
             (e.key.mod & SDL_KMOD_ALT)) { toggle_fullscreen(); continue; }
 
+        if (e.type == SDL_EVENT_MOUSE_MOTION)
+            push_message(WM_MOUSEMOVE, (uint32_t)(mouse_left_down ? 1 : 0),
+                         mouse_lparam(e.motion.x, e.motion.y));
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+            const int down = (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+            const uint32_t lp = mouse_lparam(e.button.x, e.button.y);
+            if (e.button.button == SDL_BUTTON_LEFT) {
+                mouse_left_down = down;
+                push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
+            } else if (e.button.button == SDL_BUTTON_RIGHT) {
+                mouse_right_down = down;
+                push_message(down ? WM_RBUTTONDOWN : WM_RBUTTONUP, down ? 2 : 0, lp);
+            }
+        }
         if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) {
             const uint32_t vk = scancode_to_vk(e.key.scancode);
             if (vk) push_message(e.type == SDL_EVENT_KEY_DOWN ? WM_KEYDOWN_FWD : WM_KEYUP_FWD,
@@ -157,7 +216,10 @@ enum { WM_QUIT = 0x0012, WM_MOVE = 0x0003, WM_SIZE = 0x0005,
 /* Key messages. The port previously delivered only the startup batch, so the game never
  * saw a keystroke as an event -- it could poll GetKeyState but nothing that reacts to
  * WM_KEYDOWN would ever fire. */
-enum { WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_CHAR = 0x0102, MSG_RING = 64 };
+/* The game imports no GetCursorPos, so the only way it can learn where the pointer is is
+ * the lParam of WM_MOUSEMOVE. Coordinates go in the game's own 794x550 space, not the
+ * window's, because the renderer letterboxes. */
+enum { WM_CHAR = 0x0102, MSG_RING = 64 };
 
 static struct { uint32_t msg, wparam, lparam; } msg_ring[MSG_RING];
 static int ring_head, ring_tail;
@@ -347,9 +409,19 @@ static int autokey_pressed(uint32_t vk)
     return 0;
 }
 
+static uint32_t mouse_lparam(float wx, float wy)
+{
+    float lx = wx, ly = wy;
+    if (hw.renderer) SDL_RenderCoordinatesFromWindow(hw.renderer, wx, wy, &lx, &ly);
+    const int x = (int)lx, y = (int)ly;
+    return ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
+}
+
 static void h_GetKeyState(void)
 {
     hostwin_pump();
+    if (ARG(0) == 0x01) { ret_stdcall(1, mouse_left_down ? 0xFF80u : 0u); return; }
+    if (ARG(0) == 0x02) { ret_stdcall(1, mouse_right_down ? 0xFF80u : 0u); return; }
     if (autokey_pressed(ARG(0))) { ret_stdcall(1, 0xFF80u); return; }
     const SDL_Scancode sc = vk_to_scancode(ARG(0));
     int n = 0;

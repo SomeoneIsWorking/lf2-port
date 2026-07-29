@@ -48,6 +48,7 @@ For checking the port without a human at the keyboard:
 | `LF2_AUTOKEY=<vk>[,<vk>...]` | press each virtual key in turn, held 120 ms |
 | `LF2_AUTOKEY_START=<ms>` | when to begin (default 6000) |
 | `LF2_AUTOKEY_EVERY=<ms>` | gap between presses (default 2500) |
+| `LF2_AUTOCLICK=<x>,<y>` | move the pointer there in game coordinates and click on the same schedule |
 
 LF2's menu is driven by the player-1 controls from `data/control.txt`, not by Enter — the
 defaults are the numpad, so `LF2_AUTOKEY=65` is player 1's attack.
@@ -57,10 +58,17 @@ failed: the port now delivers `WM_KEYDOWN`/`WM_KEYUP` from real key events *and*
 keys generate the same messages, so neither the polling path nor the message path is the
 missing piece.
 
-The remaining lead is the mouse. A cursor is drawn on the menu in both this port and a
-real run, and the port delivers no mouse position or button messages whatsoever —
-`WM_MOUSEMOVE`, `WM_LBUTTONDOWN` and `SetCursorPos`/`GetCursorPos` are all absent. That is
-the next thing to try.
+Mouse input is now implemented and **demonstrably reaches the game**: sending
+`WM_MOUSEMOVE` makes it redraw its cursor at the new position, which it did not do before.
+The game imports no `GetCursorPos`, so that lParam is the only way it can learn where the
+pointer is.
+
+Selection still does not fire. The cursor also lands lower than the coordinate asked for,
+so the window-to-game coordinate mapping is suspect — `SDL_RenderCoordinatesFromWindow`
+accounts for letterboxing, but the game renders into a 794x550 surface that is itself
+being presented into a window of a different aspect. Getting that mapping exactly right
+is the next step, since a click that lands on the wrong row would look exactly like a
+click that does nothing.
 
 ## Debug switches
 
