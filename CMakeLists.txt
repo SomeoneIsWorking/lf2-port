@@ -29,6 +29,7 @@ add_custom_command(
 add_executable(lf2
     ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
     runtime/guest.c
+    runtime/flags.c
     runtime/imports.c
     runtime/com.c
     runtime/win32.c
@@ -40,3 +41,7 @@ target_include_directories(lf2 PRIVATE runtime)
 
 find_package(SDL3 REQUIRED CONFIG)
 target_link_libraries(lf2 PRIVATE SDL3::SDL3)
+
+add_executable(test_flags runtime/test_flags.c runtime/flags.c)
+target_include_directories(test_flags PRIVATE runtime)
+add_test(NAME flags COMMAND test_flags)
