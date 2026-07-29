@@ -247,6 +247,10 @@ static void bind_imports(uint8_t *file, uint32_t base, uint32_t pe)
 
 typedef void (*Handler)(void);
 Handler host_lookup(const char *dll, const char *name);
+Handler win32_lookup(const char *dll, const char *name);
+Handler gfx_lookup(const char *dll, const char *name);
+Handler dsound_lookup(const char *dll, const char *name);
+void com_call(uint32_t sentinel);
 
 void host_import(uint32_t sentinel)
 {
@@ -256,6 +260,9 @@ void host_import(uint32_t sentinel)
         abort();
     }
     Handler h = host_lookup(imports[i].dll, imports[i].name);
+    if (!h) h = win32_lookup(imports[i].dll, imports[i].name);
+    if (!h) h = gfx_lookup(imports[i].dll, imports[i].name);
+    if (!h) h = dsound_lookup(imports[i].dll, imports[i].name);
     if (!h) {
         fprintf(stderr, "unimplemented import: %s.%s\n", imports[i].dll, imports[i].name);
         abort();
@@ -269,12 +276,33 @@ static int cmp_addr(const void *k, const void *e)
     return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/* Ring of recent dispatch targets, dumped when a call fails -- an indirect call to a
+ * bad address otherwise gives no clue where it came from. */
+enum { TRACE_N = 24 };
+static uint32_t trace[TRACE_N];
+static unsigned trace_pos;
+
+static void dump_trace(void)
+{
+    fprintf(stderr, "recent calls (newest last):");
+    for (unsigned i = 0; i < TRACE_N; i++) {
+        uint32_t t = trace[(trace_pos + i) % TRACE_N];
+        if (t) fprintf(stderr, " %08x", t);
+    }
+    fprintf(stderr, "\n");
+}
+
 void dispatch(uint32_t target)
 {
+    trace[trace_pos % TRACE_N] = target;
+    trace_pos++;
+
+    if (target >= 0xF1000000u && target < 0xF2000000u) { com_call(target); return; }
     if (target >= IMPORT_SENTINEL) { host_import(target); return; }
     const GuestFunc *f = bsearch(&target, g_funcs, (size_t)g_nfuncs, sizeof g_funcs[0], cmp_addr);
     if (!f) {
         fprintf(stderr, "indirect call to unknown address %08x\n", target);
+        dump_trace();
         abort();
     }
     cpu.eip = target;
