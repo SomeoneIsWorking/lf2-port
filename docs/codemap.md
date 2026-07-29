@@ -21,7 +21,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Controllers | `runtime/gamepad.c` | **done** | SDL3 gamepad; auto-detect and hotswap (untested on hardware) |
 | Input path | `runtime/win32.c` | **done** | keyboard and mouse verified into game state; menu navigates |
 | Window modes | `runtime/win32.c` | **done** | windowed / borderless / fullscreen, Alt+Enter toggle |
-| Netplay | — | **dropped** | stock lockstep netcode not ported; replace later |
+| Netplay | `runtime/wsock.c` | **stubbed** | reports started-but-no-network, which the game handles |
 | Startup crash | `docs/current-crash.md` | **fixed** | function-end detection; see doc |
 | Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **wip** | main menu renders natively; some background regions still blank |
 
