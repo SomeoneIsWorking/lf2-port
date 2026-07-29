@@ -20,7 +20,8 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Runtime (SDL3) | — | **planned** | video / audio / input / Win32 shim |
 | Overrides | — | **planned** | controller hotplug, borderless |
 | Netplay | — | **dropped** | stock lockstep netcode not ported; replace later |
-| Startup crash | `docs/current-crash.md` | **open** | bounded to one caller passing a bad surface pointer |
+| Startup crash | `docs/current-crash.md` | **fixed** | function-end detection; see doc |
+| Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **wip** | main menu renders natively; some background regions still blank |
 
 ## The binary
 
