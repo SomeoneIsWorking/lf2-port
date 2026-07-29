@@ -303,6 +303,35 @@ static int emit_string(FILE *o, const x86_insn *in)
     }
 }
 
+/* ---------- jump tables ----------
+ * A switch compiles to `JMP dword ptr [reg*4 + table]`, and the entries are labels inside
+ * the same function, not function entries -- dispatching on them fails. The table is read
+ * from the image at generation time and turned into a switch over gotos. */
+enum { JT_MAX = 256 };
+
+static int jump_table_targets(const x86_insn *in, uint32_t lo, uint32_t hi,
+                              uint32_t *out, int max)
+{
+    if (in->map != 1 || in->opcode != 0xFF) return 0;
+    if (((in->modrm >> 3) & 7) != 4) return 0;                   /* /4 = JMP r/m */
+    if ((in->modrm >> 6) != 0 || (in->modrm & 7) != 4) return 0; /* needs a SIB */
+    if (!in->has_sib || (in->sib & 7) != 5) return 0;            /* base is the disp32 */
+    if ((in->sib >> 6) != 2) return 0;                           /* scale 4 */
+
+    const uint32_t table = (uint32_t)in->disp;
+    int n = 0;
+    while (n < max) {
+        const uint8_t *e = guest_ptr(table + (uint32_t)n * 4);
+        if (!e) break;
+        const uint32_t t = (uint32_t)e[0] | ((uint32_t)e[1] << 8)
+                         | ((uint32_t)e[2] << 16) | ((uint32_t)e[3] << 24);
+        if (t < lo || t >= hi) break;              /* left the function: end of table */
+        out[n++] = t;
+    }
+    return n;
+}
+
+
 /* ---------- instruction emission ---------- */
 
 /* Emit one instruction. Returns 1 if lifted, 0 if it fell through to a TODO. */
@@ -579,8 +608,23 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
             if (g == 6) { rm_read(a, sizeof a, in, 4); fprintf(o, "PUSH32(%s);", a); return 1; }
             if (g == 2) { rm_read(a, sizeof a, in, 4);
                           fprintf(o, "PUSH32(0x%xu); dispatch(%s);", next, a); return 1; }
-            if (g == 4) { rm_read(a, sizeof a, in, 4);
-                          fprintf(o, "dispatch(%s); return;", a); return 1; }
+            if (g == 4) {
+                rm_read(a, sizeof a, in, 4);
+                uint32_t jt[JT_MAX];
+                const int njt = jump_table_targets(in, cur_lo, cur_hi, jt, JT_MAX);
+                if (njt > 0) {
+                    fprintf(o, "{ uint32_t _t = %s; switch (_t) {", a);
+                    for (int k = 0; k < njt; k++) {
+                        int dup = 0;
+                        for (int j = 0; j < k; j++) if (jt[j] == jt[k]) { dup = 1; break; }
+                        if (!dup) fprintf(o, " case 0x%xu: goto L_%08x;", jt[k], jt[k]);
+                    }
+                    fprintf(o, " default: dispatch(_t); return; } }");
+                    return 1;
+                }
+                fprintf(o, "dispatch(%s); return;", a);
+                return 1;
+            }
             if (g == 0 || g == 1) {
                 rm_read(a, sizeof a, in, 4);
                 fprintf(o, "{ uint32_t _a=%s,_r=_a%s1; FLAGS(%s,4,_a,1,_r); ",
@@ -734,7 +778,14 @@ static void lift_function(FILE *o, const Func *f)
         if (in->map == 1 && (in->opcode == 0xE9 || in->opcode == 0xEB ||
                              (in->opcode >= 0x70 && in->opcode <= 0x7F))) branch = 1;
         if (in->map == 2 && in->opcode >= 0x80 && in->opcode <= 0x8F) branch = 1;
-        if (!branch) continue;
+        if (!branch) {
+            uint32_t jt[JT_MAX];
+            const int njt = jump_table_targets(in, cur_lo, cur_hi, jt, JT_MAX);
+            for (int k = 0; k < njt; k++)
+                for (int j = 0; j < n; j++)
+                    if (addrs[j] == jt[k]) { is_target[j] = 1; break; }
+            continue;
+        }
         t = (uint32_t)(next + (int32_t)in->imm);
         for (int j = 0; j < n; j++) if (addrs[j] == t) { is_target[j] = 1; break; }
     }

@@ -17,6 +17,8 @@ static void ret_stdcall(int nargs, uint32_t value)
 
 HostWin hw;
 
+static void queue_startup_messages(void);
+
 /* ---- window ---- */
 
 static void h_RegisterClassA(void)
@@ -44,12 +46,15 @@ static void h_CreateWindowExA(void)
     SDL_SetRenderLogicalPresentation(hw.renderer, hw.width, hw.height,
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
     hw.hwnd = 0x00010000;
+    queue_startup_messages();
     ret_stdcall(12, hw.hwnd);
 }
 
 static void h_GetClientRect(void)
 {
     uint32_t r = ARG(1);
+    if (getenv("LF2_BLT_DEBUG"))
+        fprintf(stderr, "GetClientRect -> %08x (%dx%d)\n", r, hw.width, hw.height);
     ST32(r, 0); ST32(r + 4, 0);
     ST32(r + 8, (uint32_t)hw.width); ST32(r + 12, (uint32_t)hw.height);
     ret_stdcall(2, 1);
@@ -87,12 +92,51 @@ static void fill_msg(uint32_t p, uint32_t msg)
     ST32(p + 16, 0); ST32(p + 20, 0); ST32(p + 24, 0);
 }
 
-enum { WM_QUIT = 0x0012 };
+enum { WM_QUIT = 0x0012, WM_MOVE = 0x0003, WM_SIZE = 0x0005,
+       WM_ACTIVATE = 0x0006, WM_ACTIVATEAPP = 0x001C, WM_SHOWWINDOW = 0x0018 };
+
+/* A real window receives these as it is created and shown, and the game acts on them --
+ * its WNDPROC is where it works out the rectangle it blits the back buffer into. With no
+ * messages ever delivered that rectangle stayed (0,0,0,0), so the final blit to the
+ * primary copied nothing. */
+static struct { uint32_t msg, wparam, lparam; } startup_queue[8];
+static int startup_head, startup_count;
+
+static void queue_startup_messages(void)
+{
+    const uint32_t size_lparam = ((uint32_t)hw.height << 16) | (uint32_t)hw.width;
+    const struct { uint32_t m, w, l; } msgs[] = {
+        { WM_SHOWWINDOW,  1, 0 },
+        { WM_MOVE,        0, 0 },
+        { WM_SIZE,        0, size_lparam },   /* SIZE_RESTORED */
+        { WM_ACTIVATEAPP, 1, 0 },
+        { WM_ACTIVATE,    1, 0 },             /* WA_ACTIVE */
+    };
+    for (unsigned i = 0; i < sizeof msgs / sizeof msgs[0]; i++) {
+        startup_queue[startup_count].msg = msgs[i].m;
+        startup_queue[startup_count].wparam = msgs[i].w;
+        startup_queue[startup_count].lparam = msgs[i].l;
+        startup_count++;
+    }
+}
+
+static int next_startup_message(uint32_t p)
+{
+    if (startup_head >= startup_count) return 0;
+    ST32(p, hw.hwnd);
+    ST32(p + 4, startup_queue[startup_head].msg);
+    ST32(p + 8, startup_queue[startup_head].wparam);
+    ST32(p + 12, startup_queue[startup_head].lparam);
+    ST32(p + 16, 0); ST32(p + 20, 0); ST32(p + 24, 0);
+    startup_head++;
+    return 1;
+}
 
 static void h_PeekMessageA(void)
 {
     hostwin_pump();
     if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(5, 1); return; }
+    if (next_startup_message(ARG(0))) { ret_stdcall(5, 1); return; }
     ret_stdcall(5, 0);
 }
 
@@ -100,6 +144,7 @@ static void h_GetMessageA(void)
 {
     hostwin_pump();
     if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(4, 0); return; }
+    if (next_startup_message(ARG(0))) { ret_stdcall(4, 1); return; }
     fill_msg(ARG(0), 0);
     ret_stdcall(4, 1);
 }
@@ -176,7 +221,13 @@ static void h_SetRect(void)
     ST32(r, ARG(1)); ST32(r + 4, ARG(2)); ST32(r + 8, ARG(3)); ST32(r + 12, ARG(4));
     ret_stdcall(5, 1);
 }
-static void h_ClientToScreen(void) { ret_stdcall(2, 1); }
+static void h_ClientToScreen(void)
+{
+    if (getenv("LF2_BLT_DEBUG"))
+        fprintf(stderr, "ClientToScreen pt=%08x (%d,%d)\n", ARG(1),
+                (int)LD32(ARG(1)), (int)LD32(ARG(1) + 4));
+    ret_stdcall(2, 1);
+}
 
 static void h_u0_1(void) { ret_stdcall(1, 0); }
 static void h_u1_1(void) { ret_stdcall(1, 1); }
