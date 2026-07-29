@@ -146,8 +146,17 @@ static void pump_autoclick(void)
     const int down = autoclick_state(&x, &y);
     if (!getenv("LF2_AUTOCLICK")) return;
 
+    /* Resend periodically rather than once: a single move pushed before the game starts
+     * draining its queue is simply lost. Every pump is far too often -- that floods the
+     * ring and starves the render loop -- so this repeats at a slow interval. */
     const uint32_t lp = ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
-    if (!announced) { push_message(WM_MOUSEMOVE, 0, lp); announced = 1; }
+    static uint64_t last_sent;
+    const uint64_t now_ms = SDL_GetTicks();
+    if (!announced || now_ms - last_sent > 500) {
+        push_message(WM_MOUSEMOVE, (uint32_t)(down ? 1 : 0), lp);
+        last_sent = now_ms;
+        announced = 1;
+    }
     if (down == was_down) return;
     was_down = down;
     mouse_left_down = down;

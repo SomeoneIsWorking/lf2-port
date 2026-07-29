@@ -58,17 +58,20 @@ failed: the port now delivers `WM_KEYDOWN`/`WM_KEYUP` from real key events *and*
 keys generate the same messages, so neither the polling path nor the message path is the
 missing piece.
 
-Mouse input is now implemented and **demonstrably reaches the game**: sending
-`WM_MOUSEMOVE` makes it redraw its cursor at the new position, which it did not do before.
-The game imports no `GetCursorPos`, so that lParam is the only way it can learn where the
-pointer is.
+Mouse input is implemented — motion and buttons are delivered as `WM_MOUSEMOVE`,
+`WM_LBUTTONDOWN`/`UP`, and `GetKeyState` answers `VK_LBUTTON` — but **it is not confirmed
+to reach the game**.
 
-Selection still does not fire. The cursor also lands lower than the coordinate asked for,
-so the window-to-game coordinate mapping is suspect — `SDL_RenderCoordinatesFromWindow`
-accounts for letterboxing, but the game renders into a 794x550 surface that is itself
-being presented into a window of a different aspect. Getting that mapping exactly right
-is the next step, since a click that lands on the wrong row would look exactly like a
-click that does nothing.
+A cursor was seen to move in one run, which looked like proof at the time. A controlled
+calibration afterwards did not reproduce it: sending a known position does not put the
+game's cursor there. That single screenshot was not evidence, and the earlier claim based
+on it was wrong.
+
+What is actually established: the game imports no `GetCursorPos`, so the lParam of
+`WM_MOUSEMOVE` is the only channel it has for pointer position, and the port now sends it.
+Whether the game consumes it is open. The next step is to instrument the game's own
+WNDPROC dispatch — log every message actually handed to it — rather than inferring from
+what appears on screen.
 
 ## Debug switches
 
