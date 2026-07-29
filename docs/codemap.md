@@ -12,7 +12,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Installer unpacking | `tools/unpack_installer.py`, `tools/extract_game.py` | **done** | 690 files reconstructed; verified by booting the game from the output |
 | Ghidra recon | `tools/ghidra/ListFunctions.java`, `re/functions.tsv` | **done** | 352 functions, 93.6% of `.text` |
 | Wine oracle | `scratch/wineprefix` | **done** | boots headless under Xvfb to the main menu |
-| Boundary tracer | — | **planned** | log every DDraw/DSound/winmm/USER32 call the game makes |
+| Boundary tracer | `docs/platform-boundary.md` | **done** | Wine debug channels; relay tracing proven useless (see doc) |
 | Recompiler (x86 → C) | — | **planned** | test-first; decoder before lifter |
 | Runtime (SDL3) | — | **planned** | video / audio / input / Win32 shim |
 | Overrides | — | **planned** | controller hotplug, borderless |
