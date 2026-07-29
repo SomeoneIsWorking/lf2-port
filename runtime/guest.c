@@ -159,6 +159,25 @@ void watch_sample(const char *where, uint32_t ctx);
 void watch_arm(uint32_t a);
 extern int esp_log_active;
 
+/* LF2_DUMP_MEM=addr:count -- print guest dwords once, for reading the game's own tables. */
+void dump_mem_once(void)
+{
+    static int done;
+    const char *spec = getenv("LF2_DUMP_MEM");
+    if (done || !spec) return;
+    done = 1;
+    while (spec && *spec) {
+        char *e;
+        const uint32_t a = (uint32_t)strtoul(spec, &e, 16);
+        unsigned n = (*e == ':') ? (unsigned)strtoul(e + 1, &e, 10) : 8;
+        fprintf(stderr, "mem %08x:", a);
+        for (unsigned i = 0; i < n; i++) fprintf(stderr, " %d", (int)LD32(a + i * 4));
+        fprintf(stderr, "\n");
+        while (*e == ',' || *e == ' ') e++;
+        spec = *e ? e : NULL;
+    }
+}
+
 void probe(uint32_t addr)
 {
     fprintf(stderr, "PROBE %08x esp=%08x ebp=%08x\n", addr, R(ESP), R(EBP));

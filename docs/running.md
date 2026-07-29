@@ -151,9 +151,21 @@ key is delivered all the way into the game's own input object.** Every stage of 
 path is now verified by measurement rather than inference.
 
 The menu still does not respond, and a sweep of plausible keys — arrow down, Enter, numpad
-2/5/0, space, F2 — changes nothing. Since delivery is proven, what remains is on the
-consuming side: whatever reads the queue on `00458440` and decides what a menu keystroke
-means. Finding its readers is the next step.
+2/5/0, space, F2 — changes nothing.
+
+Two candidate consumers have been examined and neither is the menu:
+
+- **The key queue at `00458440` is never read.** Only four instructions reference it: the
+  enable check, the push from the window procedure, the write that enables it, and a
+  10-byte constructor thunk. Nothing drains it, so it is most likely the buffer behind
+  LF2's replay recording rather than live input.
+- **The rectangle hit-test at `00424064`** tests both mouse axes against arrays at
+  `00453c08` (y), `00453f70` (width) and `00453ce0` (height). Dumping them gives
+  y=422, w=132, h=32 — which is exactly the advertisement layout in `data/ad0.txt`
+  (`ba 0 422 132 32`). That code drives the ad strip, not the menu.
+
+So the mechanism the menu actually uses for input is still unidentified. `LF2_DUMP_MEM`
+was added for this kind of question and makes the game's own tables readable directly.
 
 ## Debug switches
 
