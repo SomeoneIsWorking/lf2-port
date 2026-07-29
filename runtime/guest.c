@@ -233,10 +233,15 @@ enum { FN_TRACE_N = 40 };
 static uint32_t fn_ring[FN_TRACE_N];
 static unsigned fn_pos;
 
+/* Sampling the watch at every function entry rather than only at indirect calls: a
+ * value written and consumed between two indirect calls is invisible otherwise. */
+void watch_sample(const char *where, uint32_t ctx);
+
 void fn_enter(uint32_t addr)
 {
     fn_ring[fn_pos % FN_TRACE_N] = addr;
     fn_pos++;
+    watch_sample("fn", addr);
 
     /* LF2_FN_WATCH=<hex addr>: dump the caller and stack arguments on entry. The hook
      * runs before the prologue, so [ESP] is the return address and args follow it. */
@@ -280,6 +285,16 @@ void dump_trace(void)
         for (int i = 0; i < 4; i++) fprintf(stderr, " %08x", LD32(a + (uint32_t)i * 4));
         fprintf(stderr, "%s\n", row == 0 ? "   <- esp" : "");
     }
+    /* Where does the bad value actually live? Scan the stack rather than deriving the
+     * frame offset from the disassembly, which has been wrong more than once. */
+    {
+        const uint32_t bad = LD32(R(ESP) + 4);
+        fprintf(stderr, "occurrences of %08x on the stack:", bad);
+        int hits = 0;
+        for (uint32_t a = STACK_TOP - STACK_SIZE; a < STACK_TOP && hits < 12; a += 4)
+            if (LD32(a) == bad) { fprintf(stderr, " %08x", a); hits++; }
+        fprintf(stderr, "%s\n", hits ? "" : " none");
+    }
     dump_fn_trace();
     fprintf(stderr, "recent calls (newest last):");
     for (unsigned i = 0; i < TRACE_N; i++) {
@@ -303,6 +318,29 @@ void stack_check(uint32_t esp_at_entry, uint32_t fn)
             fn, (int)(R(ESP) - esp_at_entry));
 }
 
+void watch_sample(const char *where, uint32_t ctx)
+{
+    static uint32_t addr, val, target;
+    static int armed;
+    if (!armed) {
+        const char *w = getenv("LF2_WATCH");
+        const char *t = getenv("LF2_WATCH_VAL");
+        addr = w ? (uint32_t)strtoul(w, NULL, 16) : 0;
+        target = t ? (uint32_t)strtoul(t, NULL, 16) : 0;
+        if (addr) val = LD32(addr);
+        armed = 1;
+    }
+    if (!addr) return;
+    const uint32_t now = LD32(addr);
+    if (now == val) return;
+    if (!target || now == target) {
+        fprintf(stderr, "WATCH %08x: %08x -> %08x at %s %08x (esp=%08x)\n",
+                addr, val, now, where, ctx, R(ESP));
+        dump_fn_trace();
+    }
+    val = now;
+}
+
 void dispatch(uint32_t target)
 {
     /* ESP must stay inside the stack. A wrong stdcall pop count walks it out of the
@@ -320,7 +358,15 @@ void dispatch(uint32_t target)
             watch_armed = 1;
             fprintf(stderr, "watching %08x = %08x\n", watch_addr, watch_val);
         }
-        if (watch_armed && LD32(watch_addr) != watch_val) {
+        static uint32_t watch_target;
+        static int target_set;
+        if (!target_set) {
+            const char *t = getenv("LF2_WATCH_VAL");
+            watch_target = t ? (uint32_t)strtoul(t, NULL, 16) : 0;
+            target_set = 1;
+        }
+        if (watch_armed && LD32(watch_addr) != watch_val &&
+            (!watch_target || LD32(watch_addr) == watch_target)) {
             fprintf(stderr, "WATCH %08x changed %08x -> %08x; now calling %08x, ret %08x\n",
                     watch_addr, watch_val, LD32(watch_addr), target, LD32(R(ESP)));
             watch_val = LD32(watch_addr);
