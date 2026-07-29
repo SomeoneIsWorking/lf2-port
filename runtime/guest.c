@@ -155,6 +155,7 @@ static unsigned fn_pos;
  * value written and consumed between two indirect calls is invisible otherwise. */
 void watch_sample(const char *where, uint32_t ctx);
 void watch_arm(uint32_t a);
+extern int esp_log_active;
 
 void fn_enter(uint32_t addr)
 {
@@ -175,6 +176,7 @@ void fn_enter(uint32_t addr)
      * prologue, so ESP still points at the return address and the offset is relative to
      * that. This is how a clobbered local gets attributed to its writer. */
     if (watch && addr == watch) {
+        if (getenv("LF2_ESP_LOG")) esp_log_active = 1;
         const char *rel = getenv("LF2_WATCH_REL");
         if (rel) {
             const long off = strtol(rel, NULL, 0);
@@ -305,8 +307,23 @@ void watch_sample(const char *where, uint32_t ctx)
     val = now;
 }
 
+/* Set once the function under investigation is entered, so the ESP log covers only its
+ * execution instead of the whole run. */
+int esp_log_active;
+
 void dispatch(uint32_t target)
 {
+    /* Host handlers pop their own stdcall arguments, so the delta across one is the only
+     * place a wrong count can show. Guest functions are already covered by STACK_CHECK. */
+    if (esp_log_active && target >= 0xF0000000u) {
+        const uint32_t before = R(ESP);
+        if (target >= 0xF1000000u && target < 0xF2000000u) com_call(target);
+        else host_import(target);
+        fprintf(stderr, "ESP %08x -> %08x (%+d) %08x\n",
+                before, R(ESP), (int)(R(ESP) - before), target);
+        return;
+    }
+
     /* ESP must stay inside the stack. A wrong stdcall pop count walks it out of the
      * region, and the next CALL then writes its return address over whatever is there
      * -- which is how a corrupted import table showed up far from the real fault. */

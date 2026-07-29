@@ -43,10 +43,31 @@ Two things follow, and they explain why this hid for so long:
    so an import or COM method popping the wrong number of stdcall arguments displaces the
    caller's ESP silently.
 
-The COM method argument counts are hand-written per interface and are the prime suspect;
-the import arities were at least cross-checked against the game's own call sites.
+### Host-handler arity was the obvious suspect, and it is not the cause
 
-Next: log ESP at every host call made during this function and find the discontinuity.
+Measured rather than assumed: ESP was logged either side of all 533 host calls made
+during this function's execution (`LF2_FN_WATCH=4246b0 LF2_ESP_LOG=1`). Every delta is
+correct.
+
+| Delta | Meaning | Examples |
+|---|---|---|
+| `+48` | 11 args | `StretchBlt` |
+| `+28` | 6 slots | `Blt` (5 + `this`), `LoadImageA` |
+| `+24` | 5 args | `TextOutA` |
+| `+16` | 3 slots | `GetObjectA`, `SetColorKey` |
+| `+12` | 2 slots | `GetDC`, `ReleaseDC`, `SelectObject`, `SetBkColor` |
+| `+8` | 1 slot | `lstrlenA`, `EnterCriticalSection`, `Restore` |
+| `+4` | cdecl, caller pops | `memset`, `operator new`, `fscanf`, `feof`, `fopen`, `fgets` |
+
+Each `+4` was checked against the import table to confirm it really is a cdecl CRT
+function rather than a stdcall one mislabelled.
+
+So no host handler displaces ESP here. Whatever moves it is in the recompiled code
+itself, or the displacement reading is wrong and the read at `004274da` belongs to a
+different frame than the prologue store.
+
+Next: confirm the displacement directly by logging ESP at both `004246fd` and `004274da`
+in the generated code, rather than inferring it from addresses.
 
 ## Where the bad value comes from (superseded — see above)
 
