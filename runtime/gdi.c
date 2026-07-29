@@ -284,14 +284,14 @@ static void h_StretchBlt(void)
         if (ty < 0 || ty >= dhei) continue;
         const int by = sy + (int)((int64_t)y * sh / dh);
         if (by < 0 || by >= b->h) continue;
-        uint8_t *dst = g_mem + dpix + (size_t)ty * (size_t)dpitch;
+        uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)ty * (size_t)dpitch);
         const uint8_t *src = b->pixels + (size_t)by * (size_t)b->pitch;
         for (int x = 0; x < dw; x++) {
             const int tx = dx + x;
             if (tx < 0 || tx >= dwid) continue;
             const int bx = sx + (int)((int64_t)x * sw / dw);
             if (bx < 0 || bx >= b->w) continue;
-            dst[tx] = src[bx];
+            dst[tx] = b->pal[src[bx]];      /* index -> XRGB via the bitmap's palette */
         }
     }
     ddraw_surface_present(hdst);
