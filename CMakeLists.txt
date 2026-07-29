@@ -54,3 +54,15 @@ target_link_libraries(lf2 PRIVATE SDL3::SDL3)
 add_executable(test_flags runtime/test_flags.c runtime/flags.c)
 target_include_directories(test_flags PRIVATE runtime)
 add_test(NAME flags COMMAND test_flags)
+
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/gen/insn_cases.c
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
+    COMMAND lift --insn-test ${CMAKE_SOURCE_DIR}/re/instructions.tsv
+                 ${CMAKE_BINARY_DIR}/gen/insn_cases.c
+    DEPENDS lift ${CMAKE_SOURCE_DIR}/re/instructions.tsv
+    COMMENT "Generating instruction differential cases")
+
+add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c runtime/test_insn.c runtime/flags.c)
+target_include_directories(test_insn PRIVATE runtime)
+add_test(NAME instructions COMMAND test_insn)
