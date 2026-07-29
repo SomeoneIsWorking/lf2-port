@@ -66,8 +66,23 @@ a diagonal shear), and surfaces were 8-bit indexed on a false assumption — the
 creates a palette, it queries `GetPixelFormat` and adapts, so surfaces are now 32-bit XRGB
 with GDI converting the 8-bit bitmaps through their own palettes.
 
-**Open: sprite content is garbled.** The 26 sprite-sheet surfaces each get a
-`GetDC`/`ReleaseDC` pair, but only **one** `StretchBlt` happens in the whole run (a
-794x550 background copy) and there are **no** `Lock` calls at all. `StretchBlt` is the only
-blit entry point the binary imports, so how the sheets are filled is not yet identified.
-That is the next thing to establish.
+**Resolved.** The bitmaps are RLE8-compressed and the loader read them as raw rows. Their
+headers declare far more pixels than the files hold, so the read produced garbage and then
+ran out partway down. Implemented RLE8 for both the file and resource paths, and the menu
+renders.
+
+Two claims made along the way were wrong, both from bad measurement rather than bad
+reasoning about the code:
+
+- "only one StretchBlt happens" — the counter logged every 200th call, so `#1` meant the
+  first, not the only. There are 26, one per sheet.
+- "the default SDL driver presents nothing" — SDL selects its Wayland backend whenever a
+  compositor is reachable, so the window was opening on the real desktop while the capture
+  photographed an empty Xvfb. Not a port defect at all. See `docs/running.md`.
+
+## Still open
+
+- Some background regions render black; the sheets themselves all decode correctly, so
+  this is compositing rather than loading.
+- GDI `TextOutA` draws nothing, so text drawn through GDI is missing. The menu's own text
+  is bitmap art and does appear.
