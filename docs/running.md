@@ -95,10 +95,17 @@ autokey vk=65 down (pump 60)
 autokey vk=65 up   (pump 68)
 ```
 
-**But those messages never leave the queue.** The dispatch log shows only the startup
-messages and thousands of empty ones, so `push_message` runs and `next_queued_message`
-does not hand the result back. That is a defect in the port's own message plumbing, not
-timing and not the game — and it is the next thing to fix.
+`PeekMessageA` was ignoring its remove flag. `PM_NOREMOVE` (0) means peek *without*
+consuming, and always removing meant a peek silently ate messages a later `GetMessage`
+should have returned. Fixing that made the whole startup sequence arrive — `WM_SIZE`,
+`WM_ACTIVATE` and `WM_SHOWWINDOW` had all been disappearing — and key messages now reach
+the window procedure.
+
+**The menu still does not respond**, and there is a clear symptom to chase: the same
+`WM_KEYDOWN` is dispatched about 2400 times in a short run. It is being redelivered rather
+than consumed, so the remove semantics are now wrong in the other direction. A game seeing
+one endless keypress instead of a press followed by a release would behave exactly like
+this. Establishing which `PeekMessage` flags the game actually passes is the next step.
 
 ## Debug switches
 
