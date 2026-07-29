@@ -56,6 +56,9 @@ static const uint8_t EPILOGUE[] = {
 
 typedef void (*Stub)(State *);
 
+/* Scratch sits mid-mapping so a signed displacement in either direction stays inside. */
+enum { GUEST_SIZE = 16u << 20, SCRATCH = 8u << 20, SCRATCH_SPAN = 4096 };
+
 static uint8_t *page;
 
 static Stub build(const uint8_t *insn, unsigned len)
@@ -84,14 +87,17 @@ int main(void)
                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (page == MAP_FAILED) { perror("mmap"); return 2; }
 
-    /* Register-only forms should never touch memory, but map the whole space anyway so a
-     * stray access reports a mismatch instead of killing the harness. */
-    g_mem = mmap(NULL, 0x100000000ull, PROT_READ | PROT_WRITE,
-                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    /* Guest memory must sit in the low 4 GB for the memory cases: the host executes the
+     * instruction with a 32-bit base register, so it needs g_mem + guest_addr to fit in
+     * one. MAP_32BIT guarantees that. Both sides then address the identical bytes. */
+    g_mem = mmap(NULL, GUEST_SIZE, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
     if (g_mem == MAP_FAILED) { perror("mmap guest"); return 2; }
+    const uint32_t mem_base = (uint32_t)(uintptr_t)g_mem;
 
     enum { ROUNDS = 8 };
     long checked = 0, failed = 0, reported = 0;
+    static uint8_t before[SCRATCH_SPAN], after_host[SCRATCH_SPAN];
 
     for (int c = 0; c < insn_ncases; c++) {
         const InsnCase *k = &insn_cases[c];
@@ -109,25 +115,58 @@ int main(void)
             want.r[4] = 0;                              /* ESP unused */
             want.eflags = 0x202;
 
+            uint32_t index_val = 0;
+            if (k->uses_memory) {
+                /* Solve the base so the effective address lands on the scratch area
+                 * whatever displacement the encoding carries -- displacements here run to
+                 * tens of megabytes, far outside any fixed window. */
+                if (k->index_reg >= 0) index_val = rnd() % 16;
+                want.r[k->base_reg] =
+                    (uint32_t)(SCRATCH - (uint32_t)k->disp - index_val * (uint32_t)k->scale);
+                if (k->index_reg >= 0 && k->index_reg != k->base_reg)
+                    want.r[k->index_reg] = index_val;
+            }
+
+            /* Same starting bytes for both runs. */
+            for (uint32_t i = 0; i < SCRATCH_SPAN; i += 4)
+                ST32(SCRATCH - SCRATCH_SPAN / 2 + i, rnd());
+            memcpy(before, g_mem + SCRATCH - SCRATCH_SPAN / 2, SCRATCH_SPAN);
+
+            State got = want;
+            if (k->uses_memory) got.r[k->base_reg] = mem_base + want.r[k->base_reg];
+            stub(&got);
+            memcpy(after_host, g_mem + SCRATCH - SCRATCH_SPAN / 2, SCRATCH_SPAN);
+
+            memcpy(g_mem + SCRATCH - SCRATCH_SPAN / 2, before, SCRATCH_SPAN);
             memset(&cpu, 0, sizeof cpu);
             for (int i = 0; i < 8; i++) cpu.r[i] = want.r[i];
             /* Both sides must start from the same flag state, or SETcc and ADC/SBB
              * disagree before the instruction under test has done anything. */
             flags_unpack(want.eflags);
-
-            State got = want;
-            stub(&got);
             k->lifted();
 
             checked++;
+            if (memcmp(after_host, g_mem + SCRATCH - SCRATCH_SPAN / 2, SCRATCH_SPAN) != 0) {
+                failed++;
+                if (reported < 15) {
+                    fprintf(stderr, "%-10s bytes=", k->mnemonic);
+                    for (unsigned b = 0; b < k->len; b++) fprintf(stderr, "%02x", k->bytes[b]);
+                    fprintf(stderr, "  memory differs\n");
+                    reported++;
+                }
+                continue;
+            }
             for (int i = 0; i < 8; i++) {
                 if (i == 4) continue;
-                if (cpu.r[i] != got.r[i]) {
+                /* The base register holds a host address on one side by construction. */
+                if (k->uses_memory && i == k->base_reg) continue;
+                const uint32_t mine = (i == k->addr_reg) ? cpu.r[i] + mem_base : cpu.r[i];
+                if (mine != got.r[i]) {
                     failed++;
                     if (reported < 15) {
                         fprintf(stderr, "%-10s bytes=", k->mnemonic);
                         for (unsigned b = 0; b < k->len; b++) fprintf(stderr, "%02x", k->bytes[b]);
-                        fprintf(stderr, "  reg%d: cpu=%08x host=%08x\n", i, cpu.r[i], got.r[i]);
+                        fprintf(stderr, "  reg%d: cpu=%08x host=%08x\n", i, mine, got.r[i]);
                         reported++;
                     }
                     break;

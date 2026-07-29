@@ -579,6 +579,17 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
             const int size = (op & 1) ? 2 : 1;
             rm_read(a, sizeof a, in, size);
             const uint8_t reg = (in->modrm >> 3) & 7;
+            /* With the operand-size prefix the destination is 16-bit, so the upper half
+             * of the register is preserved rather than cleared. */
+            if (osize == 2) {
+                if (op < 0xBE)
+                    fprintf(o, "%s = (%s & ~0xffffu) | ((uint32_t)(%s) & 0xffffu);",
+                            REG32[reg], REG32[reg], a);
+                else
+                    fprintf(o, "%s = (%s & ~0xffffu) | ((uint32_t)(int32_t)(int%d_t)(%s) & 0xffffu);",
+                            REG32[reg], REG32[reg], size * 8, a);
+                return 1;
+            }
             if (op < 0xBE) fprintf(o, "%s = (uint32_t)(%s);", REG32[reg], a);
             else fprintf(o, "%s = (uint32_t)(int32_t)(int%d_t)(%s);", REG32[reg], size * 8, a);
             return 1;
@@ -680,11 +691,29 @@ static int testable(const x86_insn *in)
      * mod=00 rm=101 means absolute disp32 in 32-bit code but RIP-relative in long mode,
      * so the host would execute something entirely different. */
     if (!in->has_modrm && in->map == 2) return 0;
-    if (in->has_modrm && (in->modrm >> 6) != 3) return 0;
 
-    /* Anything naming ESP: the harness runs on the host stack. */
+    if (in->has_modrm && (in->modrm >> 6) != 3) {
+        const uint8_t mod = in->modrm >> 6, rm = in->modrm & 7;
+        /* mod=00 rm=101 is absolute disp32 in 32-bit code and RIP-relative in long mode,
+         * so the host would address something else entirely. */
+        if (mod == 0 && rm == 5) return 0;
+        if (in->has_sib) {
+            if ((in->sib & 7) == 5 && mod == 0) return 0;   /* no base register */
+            if (((in->sib >> 3) & 7) == 4) { /* no index: fine */ }
+        }
+        /* The address registers must not be ESP, which the harness cannot hand over. */
+        if (!in->has_sib && rm == 4) return 0;
+        /* Base and index being the same register defeats the harness: it offsets that
+         * register by the mapping base, which then gets multiplied by the scale too. */
+        if (in->has_sib && (in->sib & 7) == ((in->sib >> 3) & 7)) return 0;
+        if (in->has_sib && ((in->sib & 7) == 4 || ((in->sib >> 3) & 7) == 4)) {
+            if ((in->sib & 7) == 4) return 0;
+        }
+    }
+
+    /* Anything naming ESP as a data operand. */
     if (in->has_modrm) {
-        if ((in->modrm & 7) == 4) return 0;
+        if ((in->modrm >> 6) == 3 && (in->modrm & 7) == 4) return 0;
         if (((in->modrm >> 3) & 7) == 4) return 0;
     }
 
@@ -793,9 +822,26 @@ static void gen_insn_test(const char *tsv, const char *out)
         if (dup) continue;
         snprintf(seen[nseen++], 32, "%s", f4);
 
+        int base = -1, index = -1, mem = 0;
+        if (insn.has_modrm && (insn.modrm >> 6) != 3) {
+            mem = 1;
+            if (insn.has_sib) {
+                base = insn.sib & 7;
+                if (((insn.sib >> 3) & 7) != 4) index = (insn.sib >> 3) & 7;
+            } else {
+                base = insn.modrm & 7;
+            }
+        }
         fprintf(o, "    { \"%s\", %u, { ", f3, (unsigned)n);
         for (size_t i = 0; i < n; i++) fprintf(o, "0x%02x, ", bytes[i]);
-        fprintf(o, "}, case_%d },\n", idx++);
+        /* LEA puts the computed ADDRESS in a register, so that register holds a guest
+         * address on one side and a host address on the other; the harness must add the
+         * mapping base rather than skip it. */
+        const int addr_reg = (insn.map == 1 && insn.opcode == 0x8D)
+                           ? (int)((insn.modrm >> 3) & 7) : -1;
+        const int scale = insn.has_sib ? (1 << (insn.sib >> 6)) : 1;
+        fprintf(o, "}, case_%d, %d, %d, %d, %d, %d, %d },\n",
+                idx++, mem, base, index, addr_reg, (int)insn.disp, scale);
     }
     fprintf(o, "};\nconst int insn_ncases = %d;\n", idx);
     fclose(o);
