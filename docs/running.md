@@ -164,8 +164,19 @@ Two candidate consumers have been examined and neither is the menu:
   y=422, w=132, h=32 — which is exactly the advertisement layout in `data/ad0.txt`
   (`ba 0 422 132 32`). That code drives the ad strip, not the menu.
 
-So the mechanism the menu actually uses for input is still unidentified. `LF2_DUMP_MEM`
-was added for this kind of question and makes the game's own tables readable directly.
+- **The `WM_KEYDOWN` route is text entry.** `004031d0`, the function the handler passes the
+  key to, accepts space, period, letters and digits and appends them to a string buffer.
+  It is for typing a name, not for menu navigation — which is consistent with nothing ever
+  draining the queue.
+
+So the mechanism the menu actually uses is still unidentified. What is known: the menu is
+drawn by `fn_004246b0` (found by tracing which guest address issues the menu panel's
+blit), and that same function contains mouse hit-tests, but the ones examined so far cover
+the advertisement strip and the "Update on" button in the top-right, not the menu entries.
+
+`LF2_DUMP_MEM` and `LF2_FIND_BLT` were added for this kind of question — the latter reports
+which guest address issued a blit with a given destination rectangle, which is how
+`fn_004246b0` was identified as the menu's renderer.
 
 ## Debug switches
 

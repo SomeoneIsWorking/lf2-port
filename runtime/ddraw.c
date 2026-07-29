@@ -254,6 +254,17 @@ static void surf_Blt(uint32_t self)
                         n, dl, dt, dr, db, srcobj, srect ? "" : "NULL", _sl, _st, _sr, _sb);
             }
     }
+    if (getenv("LF2_FIND_BLT")) {
+        static int done;
+        const char *want = getenv("LF2_FIND_BLT");
+        int wx = 0, wy = 0;
+        sscanf(want, "%d,%d", &wx, &wy);
+        if (!done && dl == wx && dt == wy) {
+            fprintf(stderr, "blt (%d,%d)-(%d,%d) issued from guest %08x\n",
+                    dl, dt, dr, db, LD32(R(ESP)));
+            done = 1;
+        }
+    }
     Surface *s = srcobj ? com_host(srcobj) : NULL;
     if (s) {
         int sl, st_, sr, sb;
