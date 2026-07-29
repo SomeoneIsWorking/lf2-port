@@ -724,7 +724,9 @@ static int testable(const x86_insn *in)
     }
     if (in->map != 1) return 0;
 
-    if (op >= 0xA0 && op <= 0xAF) return 0;              /* moffs and string ops */
+    if (op >= 0xA0 && op <= 0xA3) return 0;              /* MOV moffs: no ModRM, absolute */
+    /* String ops are testable: they address through ESI/EDI, which the harness can
+     * offset the same way it offsets a ModRM base. */
     if (op == 0xE8 || op == 0xE9 || op == 0xEB) return 0;
     if (op >= 0x70 && op <= 0x7F) return 0;
     if (op == 0xC2 || op == 0xC3 || op == 0xC9) return 0;
@@ -840,8 +842,11 @@ static void gen_insn_test(const char *tsv, const char *out)
                            ? (int)((insn.modrm >> 3) & 7) : -1;
         const int scale = insn.has_sib ? (1 << (insn.sib >> 6)) : 1;
         const int is_x87 = (insn.map == 1 && insn.opcode >= 0xD8 && insn.opcode <= 0xDF);
-        fprintf(o, "}, case_%d, %d, %d, %d, %d, %d, %d, %d },\n",
-                idx++, mem, base, index, addr_reg, (int)insn.disp, scale, is_x87);
+        const int is_str = (insn.map == 1 &&
+                            ((insn.opcode >= 0xA4 && insn.opcode <= 0xA7) ||
+                             (insn.opcode >= 0xAA && insn.opcode <= 0xAF)));
+        fprintf(o, "}, case_%d, %d, %d, %d, %d, %d, %d, %d, %d },\n",
+                idx++, mem, base, index, addr_reg, (int)insn.disp, scale, is_x87, is_str);
     }
     fprintf(o, "};\nconst int insn_ncases = %d;\n", idx);
     fclose(o);
