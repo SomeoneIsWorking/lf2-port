@@ -226,9 +226,47 @@ static SDL_Scancode vk_to_scancode(uint32_t vk)
     }
 }
 
+/* Scripted input, for verifying the port without a human at the keyboard.
+ *
+ *   LF2_AUTOKEY=<vk>[,<vk>...]   press each virtual key in turn
+ *   LF2_AUTOKEY_START=<ms>       when to begin (default 6000)
+ *   LF2_AUTOKEY_EVERY=<ms>       gap between presses (default 2500)
+ *
+ * Each key is reported held for 120 ms, which is long enough for a frame-polled menu to
+ * see it and short enough not to auto-repeat. */
+static int autokey_pressed(uint32_t vk)
+{
+    const char *script = getenv("LF2_AUTOKEY");
+    if (!script) return 0;
+
+    static uint64_t start_ms;
+    if (!start_ms) start_ms = SDL_GetTicks();
+    const char *s_env = getenv("LF2_AUTOKEY_START");
+    const char *e_env = getenv("LF2_AUTOKEY_EVERY");
+    const uint64_t begin = s_env ? (uint64_t)strtoul(s_env, NULL, 10) : 6000;
+    const uint64_t every = e_env ? (uint64_t)strtoul(e_env, NULL, 10) : 2500;
+
+    const uint64_t now = SDL_GetTicks() - start_ms;
+    if (now < begin) return 0;
+    const uint64_t elapsed = now - begin;
+    const uint64_t index = elapsed / every;
+    if (elapsed % every > 120) return 0;              /* held briefly */
+
+    unsigned n = 0;
+    for (const char *c = script; *c; ) {
+        const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
+        if (n == index % 64 && key == vk) return 1;
+        n++;
+        while (*c == ',' || *c == ' ') c++;
+        if (n > 64) break;
+    }
+    return 0;
+}
+
 static void h_GetKeyState(void)
 {
     hostwin_pump();
+    if (autokey_pressed(ARG(0))) { ret_stdcall(1, 0xFF80u); return; }
     const SDL_Scancode sc = vk_to_scancode(ARG(0));
     int n = 0;
     const bool *state = SDL_GetKeyboardState(&n);
