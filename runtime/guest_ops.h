@@ -98,6 +98,16 @@ void stack_check(uint32_t esp_at_entry, uint32_t fn);
 #define STACK_CHECK(e, fn) ((void)0)
 #endif
 
+/* Reaching the end of a lifted function without executing a RET means the body ran past
+ * where the decoder stopped. That used to return silently, leaving the caller with the
+ * callee's frame still on the stack. It must be loud. */
+#define FELL_OFF_END(fn)                                                                \
+    do {                                                                                \
+        fprintf(stderr, "fell off the end of fn_%08x -- body extends past the decoded "  \
+                        "range\n", (unsigned)(fn));                                     \
+        abort();                                                                        \
+    } while (0)
+
 /* Emitted only at addresses named by LF2_PROBE when the code was generated. */
 void probe(uint32_t addr);
 #define PROBE(a) probe(a)

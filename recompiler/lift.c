@@ -668,28 +668,40 @@ static void lift_function(FILE *o, const Func *f)
      * defines, which aborts at runtime if that path is ever taken. */
     cur_hi = f->addr + f->size;
 
-    /* Ghidra's sizes are occasionally a couple of bytes short, leaving a trailing
-     * instruction undecoded; a branch to it then has no label and gets emitted as a tail
-     * call to an address nothing defines. Extend only as far as an actual branch target
-     * requires -- blanket-extending to the next entry decodes inter-function padding and
-     * data as if it were code. */
+    /* Ghidra's declared sizes are not reliable: a body can continue past the end it
+     * reports, and derive_entries may have planted a synthetic entry mid-body, so neither
+     * the size nor the next entry marks the real end. Follow the control flow instead:
+     * keep going while the code falls through, and stop only once past the declared end,
+     * after a terminator, with no forward branch still pointing further on. INT3 padding
+     * ends it unconditionally.
+     *
+     * Getting this wrong is not cosmetic. If the emitted body stops early, control runs
+     * off the end of the generated function and returns with the frame still allocated. */
     {
-        uint32_t va = f->addr, furthest = cur_hi;
-        while (va < cur_hi) {
+        const uint32_t declared_end = f->addr + f->size;
+        uint32_t va = f->addr, furthest = 0;
+        int terminated = 0;
+        while (va < f->addr + 0x8000) {
             const uint8_t *p = guest_ptr(va);
+            if (!p) break;
+            if (*p == 0xCC && va >= declared_end) break;      /* padding */
             x86_insn in;
-            if (!p || !x86_decode(p, 16, &in)) break;
+            if (!x86_decode(p, 16, &in)) break;
             const uint32_t next = va + in.length;
-            int branch = (in.map == 1 && (in.opcode == 0xE9 || in.opcode == 0xEB ||
-                                          (in.opcode >= 0x70 && in.opcode <= 0x7F))) ||
-                         (in.map == 2 && in.opcode >= 0x80 && in.opcode <= 0x8F);
-            if (branch) {
+
+            const int uncond_jmp = (in.map == 1 && (in.opcode == 0xE9 || in.opcode == 0xEB));
+            const int is_ret = (in.map == 1 && (in.opcode == 0xC2 || in.opcode == 0xC3));
+            const int cond = (in.map == 1 && in.opcode >= 0x70 && in.opcode <= 0x7F) ||
+                             (in.map == 2 && in.opcode >= 0x80 && in.opcode <= 0x8F);
+            if (uncond_jmp || cond) {
                 const uint32_t t = (uint32_t)(next + (int32_t)in.imm);
-                if (t >= cur_hi && t < cur_hi + 64 && t > furthest) furthest = t;
+                if (t > furthest && t < f->addr + 0x8000) furthest = t;
             }
+            terminated = uncond_jmp || is_ret;
             va = next;
+            if (va >= declared_end && terminated && va > furthest) break;
         }
-        if (furthest > cur_hi) cur_hi = furthest + 16;
+        if (va > cur_hi) cur_hi = va;
     }
 
     static uint32_t addrs[MAX_INSNS];
@@ -746,7 +758,7 @@ static void lift_function(FILE *o, const Func *f)
         }
         fprintf(o, "\n");
     }
-    fprintf(o, "}\n");
+    fprintf(o, "    FELL_OFF_END(0x%xu);\n}\n", f->addr);
 }
 
 /* ---- instruction differential test generator ----
