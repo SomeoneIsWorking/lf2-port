@@ -169,10 +169,24 @@ Two candidate consumers have been examined and neither is the menu:
   It is for typing a name, not for menu navigation — which is consistent with nothing ever
   draining the queue.
 
-So the mechanism the menu actually uses is still unidentified. What is known: the menu is
-drawn by `fn_004246b0` (found by tracing which guest address issues the menu panel's
-blit), and that same function contains mouse hit-tests, but the ones examined so far cover
-the advertisement strip and the "Update on" button in the top-right, not the menu entries.
+**Resolved: the menu is mouse-driven, and the port navigates it.** The hit-test is at
+`00427df5` inside `fn_004246b0`:
+
+```
+MOV ECX,[004546f0]      ; mouse x
+CMP ECX,0x104 / 0x223   ; x within 260..547
+MOV ECX,[00453cdc]      ; mouse y
+CMP ECX,0x112 / 0x12c   ; y 274..300  -> entry 1
+CMP ECX,0x131 / 0x14a   ; y 305..330  -> entry 2
+```
+
+Clicking inside a real band switches screens — `LF2_AUTOCLICK=400,287` reaches the control
+settings page, which renders correctly with its four keyboard panels, control labels and
+buttons.
+
+Earlier attempts clicked at y=232, which is above the first band entirely, so nothing
+happened. Coordinates estimated from a screenshot were never going to work; the game's own
+comparison constants were the answer.
 
 `LF2_DUMP_MEM` and `LF2_FIND_BLT` were added for this kind of question — the latter reports
 which guest address issued a blit with a given destination rectangle, which is how

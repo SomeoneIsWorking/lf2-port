@@ -19,6 +19,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Runtime | `runtime/guest.h`, `runtime/guest_ops.h` | **wip** | CPU state, lazy flags, memory; no host backend yet |
 | Runtime (SDL3) | — | **planned** | video / audio / input / Win32 shim |
 | Controllers | `runtime/gamepad.c` | **done** | SDL3 gamepad; auto-detect and hotswap (untested on hardware) |
+| Input path | `runtime/win32.c` | **done** | keyboard and mouse verified into game state; menu navigates |
 | Window modes | `runtime/win32.c` | **done** | windowed / borderless / fullscreen, Alt+Enter toggle |
 | Netplay | — | **dropped** | stock lockstep netcode not ported; replace later |
 | Startup crash | `docs/current-crash.md` | **fixed** | function-end detection; see doc |
