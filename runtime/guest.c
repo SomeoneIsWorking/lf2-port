@@ -27,6 +27,15 @@ void guest_init(void)
     cpu.st_top = 0;
     R(ESP) = STACK_TOP;
     R(EBP) = STACK_TOP;
+
+    /* Minimal TIB. The SEH chain head must terminate properly or the CRT prologues
+     * build their frames from garbage. */
+    ST32(TIB_BASE + 0x00, 0xFFFFFFFFu);          /* ExceptionList: end of chain */
+    ST32(TIB_BASE + 0x04, STACK_TOP);            /* StackBase */
+    ST32(TIB_BASE + 0x08, STACK_TOP - STACK_SIZE); /* StackLimit */
+    ST32(TIB_BASE + 0x18, TIB_BASE);             /* Self */
+    ST32(TIB_BASE + 0x24, 0x5678);               /* thread id */
+    ST32(TIB_BASE + 0x30, TIB_BASE + 0x1000);    /* PEB */
 }
 
 void guest_load_image(const char *exe_path)
@@ -245,7 +254,7 @@ void fn_enter(uint32_t addr)
     }
 }
 
-static void dump_fn_trace(void)
+void dump_fn_trace(void)
 {
     if (!fn_pos) return;
     fprintf(stderr, "guest functions entered (newest last):");
@@ -256,7 +265,7 @@ static void dump_fn_trace(void)
     fprintf(stderr, "\n");
 }
 
-static void dump_trace(void)
+void dump_trace(void)
 {
     static const char *RN[8] = { "eax","ecx","edx","ebx","esp","ebp","esi","edi" };
     fprintf(stderr, "regs:");
@@ -269,6 +278,20 @@ static void dump_trace(void)
         if (trace[k]) fprintf(stderr, " %08x(esp=%08x)", trace[k], trace_esp[k]);
     }
     fprintf(stderr, "\n");
+}
+
+void stack_check(uint32_t esp_at_entry, uint32_t fn)
+{
+    if (R(ESP) == esp_at_entry) return;
+    /* Report each offending function once and keep going: the first imbalance is not
+     * necessarily the damaging one, and the set is more informative than the earliest. */
+    enum { SEEN_MAX = 64 };
+    static uint32_t seen[SEEN_MAX];
+    static int nseen;
+    for (int i = 0; i < nseen; i++) if (seen[i] == fn) return;
+    if (nseen < SEEN_MAX) seen[nseen++] = fn;
+    fprintf(stderr, "STACK IMBALANCE fn_%08x: %+d bytes\n",
+            fn, (int)(R(ESP) - esp_at_entry));
 }
 
 void dispatch(uint32_t target)
