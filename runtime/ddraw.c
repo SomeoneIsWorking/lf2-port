@@ -193,9 +193,33 @@ static void blit(Surface *d, int dx, int dy, int dw, int dh,
     }
 }
 
+static void dump_surface(uint32_t obj, const char *tag)
+{
+    Surface *s = com_host(obj);
+    if (!s) return;
+    char path[160];
+    snprintf(path, sizeof path, "./scratch/dump_%s.ppm", tag);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fprintf(f, "P6\n%d %d\n255\n", s->w, s->h);
+    for (int y = 0; y < s->h; y++) {
+        const uint32_t *r = (const uint32_t *)(g_mem + s->pixels + (size_t)y * (size_t)s->pitch);
+        for (int x = 0; x < s->w; x++) {
+            const uint8_t px[3] = { (uint8_t)(r[x] >> 16), (uint8_t)(r[x] >> 8), (uint8_t)r[x] };
+            fwrite(px, 1, 3, f);
+        }
+    }
+    fclose(f);
+}
+
 static void surf_Blt(uint32_t self)
 {
     Surface *d = com_host(self);
+    if (getenv("LF2_DUMP_SRC")) {
+        static int done;
+        const uint32_t want = (uint32_t)strtoul(getenv("LF2_DUMP_SRC"), NULL, 16);
+        if (!done && ARG(2) == want) { dump_surface(want, "src"); done = 1; }
+    }
     const uint32_t drect = ARG(1), srcobj = ARG(2), srect = ARG(3), flags = ARG(4);
 
     /* Value-level trace: the call sequence already matches the oracle, so the next
@@ -222,8 +246,13 @@ static void surf_Blt(uint32_t self)
     if (getenv("LF2_BLT_ALL")) {
         static long n;
         if (++n <= 24)
-            fprintf(stderr, "blt#%ld dst=%08x(%dx%d) rect=(%d,%d)-(%d,%d) src=%08x flags=%08x\n",
-                    n, self, d->w, d->h, dl, dt, dr, db, srcobj, flags);
+            {
+                int _sl = -1, _st = -1, _sr = -1, _sb = -1;
+                if (srcobj) { Surface *_s = com_host(srcobj);
+                              read_rect(srect, &_sl, &_st, &_sr, &_sb, _s->w, _s->h); }
+                fprintf(stderr, "blt#%ld dst=(%d,%d)-(%d,%d) src=%08x srect=%s(%d,%d)-(%d,%d)\n",
+                        n, dl, dt, dr, db, srcobj, srect ? "" : "NULL", _sl, _st, _sr, _sb);
+            }
     }
     Surface *s = srcobj ? com_host(srcobj) : NULL;
     if (s) {
