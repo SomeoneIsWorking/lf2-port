@@ -288,16 +288,63 @@ static const char *host_path(uint32_t guest_str)
 
 const char *host_path_of(uint32_t g) { return host_path(g); }
 
+/* Text-mode translation.
+ *
+ * MSVC's CRT opens files in TEXT mode unless the mode string says "b", and translates
+ * CRLF to LF on the way in. Linux does no such thing, so every line the game read
+ * carried a trailing \r it does not expect -- enough to send a parse down a branch the
+ * real program never takes. The file is slurped, translated, and handed back as an
+ * in-memory stream so fscanf/fgets see what they would see on Windows. */
+static char *text_buf[MAX_FILES];
+
+static FILE *open_translated(const char *path)
+{
+    FILE *raw = fopen(path, "rb");
+    if (!raw) return NULL;
+    fseek(raw, 0, SEEK_END);
+    long n = ftell(raw);
+    rewind(raw);
+    if (n < 0) { fclose(raw); return NULL; }
+
+    char *buf = malloc((size_t)n + 1);
+    const size_t got = fread(buf, 1, (size_t)n, raw);
+    fclose(raw);
+
+    size_t out = 0;
+    for (size_t i = 0; i < got; i++) {
+        if (buf[i] == '\r' && i + 1 < got && buf[i + 1] == '\n') continue;
+        buf[out++] = buf[i];
+    }
+    buf[out] = 0;
+
+    FILE *fh = fmemopen(buf, out, "r");
+    if (!fh) { free(buf); return NULL; }
+    return fh;
+}
+
 static void h_fopen(void)
 {
-    FILE *fh = fopen(host_path(ARG(0)), gstr(ARG(1)));
-    ret_cdecl(fh ? file_token(fh) : 0);
+    const char *mode = gstr(ARG(1));
+    const int text = !strchr(mode, 'b');
+    const int reading = !strchr(mode, 'w') && !strchr(mode, 'a');
+
+    FILE *fh = (text && reading) ? open_translated(host_path(ARG(0)))
+                                 : fopen(host_path(ARG(0)), mode);
+    if (!fh) { ret_cdecl(0); return; }
+    const uint32_t tok = file_token(fh);
+    ret_cdecl(tok);
 }
 
 static void h_fclose(void)
 {
     FILE *fh = file_of(ARG(0));
-    if (fh) { fclose(fh); files[ARG(0) - 0xFE000000u] = NULL; }
+    if (fh) {
+        const uint32_t i = ARG(0) - 0xFE000000u;
+        fclose(fh);
+        files[i] = NULL;
+        free(text_buf[i]);
+        text_buf[i] = NULL;
+    }
     ret_cdecl(0);
 }
 
@@ -356,6 +403,9 @@ static void h_sprintf(void)
 {
     char buf[4096];
     int n = gformat(buf, sizeof buf, gstr(ARG(1)), R(ESP) + 4 + 8);
+    if (getenv("LF2_STR_DEBUG"))
+        fprintf(stderr, "sprintf -> %08x (%d bytes) fmt=\"%s\" out=\"%.60s\"\n",
+                ARG(0), n, gstr(ARG(1)), buf);
     memcpy(g_mem + ARG(0), buf, (size_t)n + 1);
     ret_cdecl((uint32_t)n);
 }
@@ -409,6 +459,8 @@ static int scan_directive(FILE *fh, const char **cur, const char *spec, char con
         got = fh ? fscanf(fh, spec, buf) : sscanf(*cur, sp, buf, &consumed);
         if (got >= 1) {
             size_t n = strlen(buf);
+            if (getenv("LF2_STR_DEBUG"))
+                fprintf(stderr, "  %%s -> %08x len=%zu tok=[%.20s]\n", out, n, buf);
             memcpy(g_mem + out, buf, n);
             if (conv == 's') ST8(out + (uint32_t)n, 0);
         }
@@ -459,6 +511,12 @@ static void h_fscanf(void)
 {
     FILE *fh = file_of(ARG(0));
     const int n = fh ? gscan(fh, NULL, gstr(ARG(1)), R(ESP) + 4 + 8) : -1;
+    if (getenv("LF2_STR_DEBUG")) {
+        fprintf(stderr, "fscanf -> %d fmt=\"", n);
+        for (const char *c = gstr(ARG(1)); *c; c++)
+            fputs(*c == '\n' ? "\\n" : *c == '\r' ? "\\r" : (char[]){*c, 0}, stderr);
+        fprintf(stderr, "\"\n");
+    }
     ret_cdecl((uint32_t)n);
 }
 
