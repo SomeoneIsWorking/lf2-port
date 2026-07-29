@@ -1,0 +1,5 @@
+# Upstream installer and everything extracted from it — never commit game assets.
+LF2_v2.0a.exe
+game/
+scratch/
+__pycache__/
