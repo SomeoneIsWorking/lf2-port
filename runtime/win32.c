@@ -18,6 +18,9 @@ static void ret_stdcall(int nargs, uint32_t value)
 HostWin hw;
 
 static void queue_startup_messages(void);
+static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam);
+static uint32_t scancode_to_vk(SDL_Scancode sc);
+enum { WM_KEYDOWN_FWD = 0x0100, WM_KEYUP_FWD = 0x0101 };
 void gamepad_handle_event(const SDL_Event *e);
 
 /* ---- window ---- */
@@ -104,8 +107,25 @@ static void h_GetSystemMetrics(void)
  * input path. */
 static int quit_posted;
 
+static int autokey_pressed(uint32_t vk);
+
+/* Scripted keys must also arrive as messages, or they only exercise the polling path and
+ * tell us nothing about code that reacts to WM_KEYDOWN. */
+static void pump_autokey_messages(void)
+{
+    if (!getenv("LF2_AUTOKEY")) return;
+    static uint8_t was_down[256];
+    for (uint32_t vk = 0; vk < 256; vk++) {
+        const uint8_t now = autokey_pressed(vk) ? 1 : 0;
+        if (now == was_down[vk]) continue;
+        was_down[vk] = now;
+        push_message(now ? WM_KEYDOWN_FWD : WM_KEYUP_FWD, vk, 1);
+    }
+}
+
 void hostwin_pump(void)
 {
+    pump_autokey_messages();
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         gamepad_handle_event(&e);          /* controllers may come and go at any time */
@@ -114,7 +134,13 @@ void hostwin_pump(void)
             (e.key.mod & SDL_KMOD_SHIFT)) quit_posted = 1;
         /* Alt+Enter is what players expect, and the game cannot ask for it itself. */
         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_RETURN &&
-            (e.key.mod & SDL_KMOD_ALT)) toggle_fullscreen();
+            (e.key.mod & SDL_KMOD_ALT)) { toggle_fullscreen(); continue; }
+
+        if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) {
+            const uint32_t vk = scancode_to_vk(e.key.scancode);
+            if (vk) push_message(e.type == SDL_EVENT_KEY_DOWN ? WM_KEYDOWN_FWD : WM_KEYUP_FWD,
+                                 vk, 1);
+        }
     }
 }
 
@@ -127,6 +153,24 @@ static void fill_msg(uint32_t p, uint32_t msg)
 
 enum { WM_QUIT = 0x0012, WM_MOVE = 0x0003, WM_SIZE = 0x0005,
        WM_ACTIVATE = 0x0006, WM_ACTIVATEAPP = 0x001C, WM_SHOWWINDOW = 0x0018 };
+
+/* Key messages. The port previously delivered only the startup batch, so the game never
+ * saw a keystroke as an event -- it could poll GetKeyState but nothing that reacts to
+ * WM_KEYDOWN would ever fire. */
+enum { WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_CHAR = 0x0102, MSG_RING = 64 };
+
+static struct { uint32_t msg, wparam, lparam; } msg_ring[MSG_RING];
+static int ring_head, ring_tail;
+
+static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam)
+{
+    const int next = (ring_tail + 1) % MSG_RING;
+    if (next == ring_head) return;              /* full: drop rather than overwrite */
+    msg_ring[ring_tail].msg = msg;
+    msg_ring[ring_tail].wparam = wparam;
+    msg_ring[ring_tail].lparam = lparam;
+    ring_tail = next;
+}
 
 /* A real window receives these as it is created and shown, and the game acts on them --
  * its WNDPROC is where it works out the rectangle it blits the back buffer into. With no
@@ -153,8 +197,17 @@ static void queue_startup_messages(void)
     }
 }
 
-static int next_startup_message(uint32_t p)
+static int next_queued_message(uint32_t p)
 {
+    if (startup_head >= startup_count && ring_head != ring_tail) {
+        ST32(p, hw.hwnd);
+        ST32(p + 4, msg_ring[ring_head].msg);
+        ST32(p + 8, msg_ring[ring_head].wparam);
+        ST32(p + 12, msg_ring[ring_head].lparam);
+        ST32(p + 16, 0); ST32(p + 20, 0); ST32(p + 24, 0);
+        ring_head = (ring_head + 1) % MSG_RING;
+        return 1;
+    }
     if (startup_head >= startup_count) return 0;
     ST32(p, hw.hwnd);
     ST32(p + 4, startup_queue[startup_head].msg);
@@ -169,7 +222,7 @@ static void h_PeekMessageA(void)
 {
     hostwin_pump();
     if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(5, 1); return; }
-    if (next_startup_message(ARG(0))) { ret_stdcall(5, 1); return; }
+    if (next_queued_message(ARG(0))) { ret_stdcall(5, 1); return; }
     ret_stdcall(5, 0);
 }
 
@@ -177,7 +230,7 @@ static void h_GetMessageA(void)
 {
     hostwin_pump();
     if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(4, 0); return; }
-    if (next_startup_message(ARG(0))) { ret_stdcall(4, 1); return; }
+    if (next_queued_message(ARG(0))) { ret_stdcall(4, 1); return; }
     fill_msg(ARG(0), 0);
     ret_stdcall(4, 1);
 }
@@ -195,6 +248,37 @@ static void h_DispatchMessageA(void)
 
 /* ---- keyboard ----
  * Virtual-key codes the game polls, mapped to SDL scancodes. */
+/* The inverse of vk_to_scancode, for turning SDL key events into window messages. */
+static uint32_t scancode_to_vk(SDL_Scancode sc)
+{
+    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z)
+        return (uint32_t)('A' + (sc - SDL_SCANCODE_A));
+    if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9)
+        return (uint32_t)('1' + (sc - SDL_SCANCODE_1));
+    if (sc >= SDL_SCANCODE_KP_1 && sc <= SDL_SCANCODE_KP_9)
+        return 0x61 + (uint32_t)(sc - SDL_SCANCODE_KP_1);
+    switch (sc) {
+    case SDL_SCANCODE_0:      return '0';
+    case SDL_SCANCODE_KP_0:   return 0x60;
+    case SDL_SCANCODE_LEFT:   return 0x25;
+    case SDL_SCANCODE_UP:     return 0x26;
+    case SDL_SCANCODE_RIGHT:  return 0x27;
+    case SDL_SCANCODE_DOWN:   return 0x28;
+    case SDL_SCANCODE_RETURN: return 0x0D;
+    case SDL_SCANCODE_ESCAPE: return 0x1B;
+    case SDL_SCANCODE_SPACE:  return 0x20;
+    case SDL_SCANCODE_LSHIFT: case SDL_SCANCODE_RSHIFT: return 0x10;
+    case SDL_SCANCODE_LCTRL:  case SDL_SCANCODE_RCTRL:  return 0x11;
+    case SDL_SCANCODE_LALT:   case SDL_SCANCODE_RALT:   return 0x12;
+    case SDL_SCANCODE_TAB:    return 0x09;
+    case SDL_SCANCODE_DELETE: return 0x2E;
+    case SDL_SCANCODE_F1: case SDL_SCANCODE_F2: case SDL_SCANCODE_F3:
+    case SDL_SCANCODE_F4: case SDL_SCANCODE_F5: case SDL_SCANCODE_F6:
+        return 0x70 + (uint32_t)(sc - SDL_SCANCODE_F1);
+    default: return 0;
+    }
+}
+
 static SDL_Scancode vk_to_scancode(uint32_t vk)
 {
     if (vk >= 'A' && vk <= 'Z') return (SDL_Scancode)(SDL_SCANCODE_A + (vk - 'A'));
