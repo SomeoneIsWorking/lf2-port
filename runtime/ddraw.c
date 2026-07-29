@@ -457,6 +457,34 @@ static void clip_GetClipList(uint32_t self)
 
 /* ---- registration ---- */
 
+/* Method names, so the call trace can be diffed against Wine's ddraw channel. */
+static const char *DD_NAMES[23] = {
+    "QueryInterface", "AddRef", "Release", "Compact", "CreateClipper", "CreatePalette",
+    "CreateSurface", "DuplicateSurface", "EnumDisplayModes", "EnumSurfaces",
+    "FlipToGDISurface", "GetCaps", "GetDisplayMode", "GetFourCCCodes", "GetGDISurface",
+    "GetMonitorFrequency", "GetScanLine", "GetVerticalBlankStatus", "Initialize",
+    "RestoreDisplayMode", "SetCooperativeLevel", "SetDisplayMode", "WaitForVerticalBlank",
+};
+static const char *SURF_NAMES[36] = {
+    "QueryInterface", "AddRef", "Release", "AddAttachedSurface", "AddOverlayDirtyRect",
+    "Blt", "BltBatch", "BltFast", "DeleteAttachedSurface", "EnumAttachedSurfaces",
+    "EnumOverlayZOrders", "Flip", "GetAttachedSurface", "GetBltStatus", "GetCaps",
+    "GetClipper", "GetColorKey", "GetDC", "GetFlipStatus", "GetOverlayPosition",
+    "GetPalette", "GetPixelFormat", "GetSurfaceDesc", "Initialize", "IsLost", "Lock",
+    "ReleaseDC", "Restore", "SetClipper", "SetColorKey", "SetOverlayPosition",
+    "SetPalette", "Unlock", "UpdateOverlay", "UpdateOverlayDisplay", "UpdateOverlayZOrder",
+};
+static const char *CLIP_NAMES[9] = {
+    "QueryInterface", "AddRef", "Release", "GetClipList", "GetHWnd", "Initialize",
+    "IsClipListChanged", "SetClipList", "SetHWnd",
+};
+static const char *PAL_NAMES[7] = {
+    "QueryInterface", "AddRef", "Release", "GetCaps", "GetEntries", "Initialize",
+    "SetEntries",
+};
+
+static void ddraw_name_tables(void);
+
 void ddraw_register(void)
 {
     ComClass *c;
@@ -505,6 +533,9 @@ void ddraw_register(void)
     c->method[31] = surf_SetPalette;
     c->method[32] = surf_Unlock;
 
+    for (int i = 0; i < 23; i++) com_class[IF_DDRAW].mname[i] = DD_NAMES[i];
+    for (int i = 0; i < 36; i++) com_class[IF_SURFACE].mname[i] = SURF_NAMES[i];
+
     c = &com_class[IF_CLIPPER];
     c->name = "IDirectDrawClipper";
     c->nmethods = 9;
@@ -528,6 +559,14 @@ void ddraw_register(void)
     c->method[4] = pal_GetEntries;
     c->method[5] = dd_ret_ok4;               /* Initialize(dd, flags, table) */
     c->method[6] = pal_SetEntries;
+
+    ddraw_name_tables();
+}
+
+static void ddraw_name_tables(void)
+{
+    for (int i = 0; i < 9; i++) com_class[IF_CLIPPER].mname[i] = CLIP_NAMES[i];
+    for (int i = 0; i < 7; i++) com_class[IF_PALETTE].mname[i] = PAL_NAMES[i];
 }
 
 /* DirectDrawCreate(guid, ppDD, outer) */
