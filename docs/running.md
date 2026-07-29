@@ -39,6 +39,24 @@ can express.
 **Alt+Enter** toggles fullscreen at any time. Rendering always happens at 794x550 and is
 letterboxed to whatever the window becomes, so the game never sees a different resolution.
 
+## Scripted input
+
+For checking the port without a human at the keyboard:
+
+| Variable | Effect |
+|---|---|
+| `LF2_AUTOKEY=<vk>[,<vk>...]` | press each virtual key in turn, held 120 ms |
+| `LF2_AUTOKEY_START=<ms>` | when to begin (default 6000) |
+| `LF2_AUTOKEY_EVERY=<ms>` | gap between presses (default 2500) |
+
+LF2's menu is driven by the player-1 controls from `data/control.txt`, not by Enter — the
+defaults are the numpad, so `LF2_AUTOKEY=65` is player 1's attack.
+
+**This does not yet advance past the menu**, and the reason is not established. Two
+candidates, not separated: the game may want a press-to-release transition rather than a
+held state, or it may take menu input from `WM_KEYDOWN` messages, which the port does not
+deliver — only the startup batch is queued.
+
 ## Debug switches
 
 All are environment variables read at run time, and all are off by default.
