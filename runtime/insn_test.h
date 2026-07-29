@@ -14,6 +14,7 @@ typedef struct {
     int         addr_reg;      /* register receiving a computed address (LEA), or -1 */
     int32_t     disp;          /* displacement baked into the encoding */
     int         scale;         /* index scale */
+    int         is_x87;
 } InsnCase;
 
 extern const InsnCase insn_cases[];

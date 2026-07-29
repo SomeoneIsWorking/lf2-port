@@ -17,7 +17,16 @@
 Cpu cpu;
 uint8_t *g_mem;
 
-typedef struct { uint32_t r[8]; uint32_t eflags; } State;
+/* Layout is fixed: the stub addresses the FPU areas by displacement from the state
+ * pointer, so these offsets are baked into its machine code below. */
+typedef struct {
+    uint32_t r[8];          /* 0x00 */
+    uint32_t eflags;        /* 0x20 */
+    uint32_t pad[7];        /* 0x24 */
+    uint8_t  fpu_in[108];   /* 0x40 */
+    uint8_t  pad2[4];
+    uint8_t  fpu_out[108];  /* 0xB0 */
+} State;
 
 /* System V: the state pointer arrives in RDI. ESP (index 4) is deliberately not loaded
  * or stored -- the stub runs on the host stack. */
@@ -36,6 +45,10 @@ static const uint8_t PROLOGUE[] = {
     0x41, 0x8B, 0x74, 0x24, 0x18,       /* mov esi, [r12+0x18] */
     0x41, 0x8B, 0x7C, 0x24, 0x1C,       /* mov edi, [r12+0x1C] */
 };
+
+/* x87 variants: restore the FPU before the instruction, save it after. */
+static const uint8_t FRSTOR_IN[]  = { 0x41, 0xDD, 0xA4, 0x24, 0x40, 0x00, 0x00, 0x00 };
+static const uint8_t FNSAVE_OUT[] = { 0x41, 0xDD, 0xB4, 0x24, 0xB0, 0x00, 0x00, 0x00 };
 
 static const uint8_t EPILOGUE[] = {
     0x41, 0x89, 0x44, 0x24, 0x00,       /* mov [r12+0x00], eax */
@@ -61,14 +74,56 @@ enum { GUEST_SIZE = 16u << 20, SCRATCH = 8u << 20, SCRATCH_SPAN = 4096 };
 
 static uint8_t *page;
 
-static Stub build(const uint8_t *insn, unsigned len)
+static Stub build(const uint8_t *insn, unsigned len, int x87)
 {
     size_t n = 0;
     memcpy(page + n, PROLOGUE, sizeof PROLOGUE); n += sizeof PROLOGUE;
+    if (x87) { memcpy(page + n, FRSTOR_IN, sizeof FRSTOR_IN); n += sizeof FRSTOR_IN; }
     memcpy(page + n, insn, len);                 n += len;
+    if (x87) { memcpy(page + n, FNSAVE_OUT, sizeof FNSAVE_OUT); n += sizeof FNSAVE_OUT; }
     memcpy(page + n, EPILOGUE, sizeof EPILOGUE);
     __builtin___clear_cache((char *)page, (char *)page + 4096);
     return (Stub)page;
+}
+
+/* ---- x87 state ----
+ * FNSAVE's 32-bit layout: control word at 0, status at 4, tag at 8, then the eight
+ * physical registers as 80-bit values from offset 28. ST(i) is physical R[(TOP+i) & 7],
+ * with TOP in status bits 11..13.
+ *
+ * The control word is seeded to 53-bit precision, which is what MSVC's CRT sets. If that
+ * is right, x87 arithmetic rounds to double at every step and the lifter's host `double`
+ * should agree EXACTLY -- so this also settles an assumption recorded in
+ * docs/isa-scope.md rather than leaving it asserted. */
+enum { FPU_CW_PC53 = 0x027F };
+
+/* Start half-full: TOP = 4 with four valid registers below it. Marking all eight valid
+ * makes every push a stack OVERFLOW, and the CPU then yields an indefinite instead of
+ * the loaded value -- which looks exactly like a lifter bug. */
+enum { FPU_TOP = 4, FPU_LIVE = 4 };
+
+static void fpu_state_init(uint8_t *area, const double *st)
+{
+    memset(area, 0, 108);
+    area[0] = FPU_CW_PC53 & 0xff;
+    area[1] = (FPU_CW_PC53 >> 8) & 0xff;
+    const uint16_t sw = (uint16_t)(FPU_TOP << 11);   /* TOP is bits 11..13 */
+    area[4] = (uint8_t)(sw & 0xff);
+    area[5] = (uint8_t)(sw >> 8);
+    area[8] = 0xFF; area[9] = 0x00;           /* R0..R3 empty, R4..R7 valid */
+    for (int i = 0; i < FPU_LIVE; i++) {
+        long double v = (long double)st[i];
+        memcpy(area + 28 + ((FPU_TOP + i) & 7) * 10, &v, 10);
+    }
+}
+
+static double fpu_state_get(const uint8_t *area, int i)
+{
+    const unsigned sw = (unsigned)area[4] | ((unsigned)area[5] << 8);
+    const int top = (int)((sw >> 11) & 7);
+    long double v = 0;
+    memcpy(&v, area + 28 + ((top + i) & 7) * 10, 10);
+    return (double)v;
 }
 
 /* Deterministic pseudo-random inputs, so a failure is reproducible. */
@@ -99,15 +154,25 @@ int main(void)
     long checked = 0, failed = 0, reported = 0;
     static uint8_t before[SCRATCH_SPAN], after_host[SCRATCH_SPAN];
 
+    /* The x87 path is not trustworthy yet: setting up a believable FPU state through
+     * FRSTOR has already produced three harness bugs of its own (all registers marked
+     * valid making every push an overflow, a mis-encoded TOP field, and a writeback that
+     * still yields zero). Until it is validated by a negative control like the integer
+     * path, it stays off -- a test that reports failures it cannot stand behind is worse
+     * than no test. Set LF2_INSN_X87=1 to work on it. */
+    const int want_x87 = getenv("LF2_INSN_X87") != NULL;
+    long skipped_x87 = 0;
+
     for (int c = 0; c < insn_ncases; c++) {
         const InsnCase *k = &insn_cases[c];
+        if (k->is_x87 && !want_x87) { skipped_x87++; continue; }
         if (getenv("LF2_INSN_VERBOSE")) {
             fprintf(stderr, "case %d %s ", c, k->mnemonic);
             for (unsigned b = 0; b < k->len; b++) fprintf(stderr, "%02x", k->bytes[b]);
             fprintf(stderr, "\n");
             fflush(stderr);
         }
-        Stub stub = build(k->bytes, k->len);
+        Stub stub = build(k->bytes, k->len, k->is_x87);
 
         for (int r = 0; r < ROUNDS; r++) {
             State want;
@@ -132,6 +197,11 @@ int main(void)
                 ST32(SCRATCH - SCRATCH_SPAN / 2 + i, rnd());
             memcpy(before, g_mem + SCRATCH - SCRATCH_SPAN / 2, SCRATCH_SPAN);
 
+            double st_in[8];
+            for (int i = 0; i < 8; i++)
+                st_in[i] = (double)(int32_t)rnd() / 65536.0;
+            if (k->is_x87) fpu_state_init(want.fpu_in, st_in);
+
             State got = want;
             if (k->uses_memory) got.r[k->base_reg] = mem_base + want.r[k->base_reg];
             stub(&got);
@@ -143,7 +213,33 @@ int main(void)
             /* Both sides must start from the same flag state, or SETcc and ADC/SBB
              * disagree before the instruction under test has done anything. */
             flags_unpack(want.eflags);
+            if (k->is_x87) {
+                cpu.st_top = FPU_TOP;
+                for (int i = 0; i < FPU_LIVE; i++) cpu.st[(FPU_TOP + i) & 7] = st_in[i];
+            }
             k->lifted();
+
+            if (k->is_x87) {
+                int bad = -1;
+                /* Only the live part of the stack is meaningful; slots beyond it hold
+                 * whatever was there before. */
+                for (int i = 0; i < FPU_LIVE; i++) {
+                    const double host_v = fpu_state_get(got.fpu_out, i);
+                    const double mine_v = FST(i);
+                    if (memcmp(&host_v, &mine_v, sizeof host_v) != 0) { bad = i; break; }
+                }
+                if (bad >= 0) {
+                    failed++;
+                    if (reported < 15) {
+                        fprintf(stderr, "%-10s bytes=", k->mnemonic);
+                        for (unsigned b = 0; b < k->len; b++) fprintf(stderr, "%02x", k->bytes[b]);
+                        fprintf(stderr, "  st(%d): cpu=%.17g host=%.17g\n",
+                                bad, FST(bad), fpu_state_get(got.fpu_out, bad));
+                        reported++;
+                    }
+                    continue;
+                }
+            }
 
             checked++;
             if (memcmp(after_host, g_mem + SCRATCH - SCRATCH_SPAN / 2, SCRATCH_SPAN) != 0) {
@@ -175,7 +271,8 @@ int main(void)
         }
     }
 
-    printf("\n%d cases x %d rounds = %ld checks, %ld mismatches\n",
-           insn_ncases, ROUNDS, checked, failed);
+    printf("\n%d cases x %d rounds = %ld checks, %ld mismatches"
+           " (%ld x87 cases skipped -- harness not yet validated)\n",
+           insn_ncases, ROUNDS, checked, failed, skipped_x87);
     return failed ? 1 : 0;
 }
