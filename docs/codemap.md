@@ -24,7 +24,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Netplay | `runtime/wsock.c` | **stubbed** | reports started-but-no-network, which the game handles |
 | Startup crash | `docs/current-crash.md` | **fixed** | function-end detection; see doc |
 | Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **wip** | menus and screens render; GDI TextOutA unimplemented, so GDI-drawn text is missing |
-| Game flow | — | **wip** | loads all character data; navigates title, mode select and VS setup |
+| Game flow | — | **wip** | reaches character selection: title, mode select, VS setup, players joined |
 
 ## The binary
 
