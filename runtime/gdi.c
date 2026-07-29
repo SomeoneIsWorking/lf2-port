@@ -217,7 +217,10 @@ static void h_LoadImageA(void)
         if (rva) b = dib_load(IMAGE_BASE + rva);
     }
     if (!b) {
-        fprintf(stderr, "LoadImage: cannot load %s\n", (const char *)(g_mem + name));
+        /* Expected: the game probes for an override file first so users can replace
+         * artwork, then asks for the resource of the same name. Only noisy on request. */
+        if (getenv("LF2_RSRC_DEBUG"))
+            fprintf(stderr, "LoadImage: cannot load %s\n", (const char *)(g_mem + name));
         ret_stdcall(6, 0);
         return;
     }
