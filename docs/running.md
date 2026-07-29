@@ -123,10 +123,25 @@ get, and the game peeks thousands of times a second, so the pump-counted key was
 about a hundred times a second. Scripted keys are back on a wall clock and now produce
 about 7 press/release pairs in 14 seconds.
 
-**The menu still does not respond.** Ruled out: message delivery, queue semantics, the
-peek/get contract, key cadence, and mouse position. What has not been examined is what the
-game does with `WM_KEYDOWN` once its window procedure has it — the handler is reached via
-the jump table at `0043b417`, and reading that path is the next step.
+**The menu still does not respond**, and the delivery side is now fully accounted for.
+
+Following `WM_KEYDOWN` through the window procedure: it falls in the `0x20 < msg < 0x200`
+branch to `0043b4fd`, which indexes a second jump table at `0043b512` covering messages
+`0x100`–`0x112`. The entry for `WM_KEYDOWN` resolves to the handler at `0043b531`, whose
+first act is a gate:
+
+```
+0043b531  MOV EBP,0x1
+0043b536  CMP dword ptr [0x00458440],EBP   ; input enabled?
+0043b53c  JNZ 0x0043b549                   ; if not, skip the key handling
+```
+
+Watching `00458440` shows it set to 1 early in the run by `fn_00401250`, so the gate is
+open and the handler is reached — the game is not in a disabled-input mode.
+
+So: messages arrive, the queue is correct, the cadence is sane, the handler runs, and its
+enabling condition holds. Whatever prevents selection lies inside that handler's own logic
+past the gate, which is where to look next.
 
 ## Debug switches
 
