@@ -73,11 +73,20 @@ receives `WM_MOUSEMOVE`, `WM_LBUTTONDOWN` and `WM_LBUTTONUP` along with the star
 cursor moving. That was the wrong conclusion from the wrong instrument — the screen was
 never the place to look.)
 
-**The game still does not select a menu item.** With delivery proven, the remaining
-candidates are the coordinates themselves — whether (430,232) is actually over "game
-start" in the game's coordinate space — and whether the menu needs hover state built up
-from more `WM_MOUSEMOVE` traffic than the throttle currently sends. Finding the game's own
-hit-test rectangles would settle it.
+Delivery is confirmed all the way into the game's own state, not just to the window
+procedure. The handler at `0043b8af` stores the pointer in two globals — x at `004546f0`,
+y at `00453cdc` — and watching the first shows it take the value `0x1ae` (430), exactly
+what was sent.
+
+**The game still does not select a menu item.** The mouse is probably not how it is done:
+every hit-test against `004546f0` compares x against 0x24e–0x2d5 (590–725), which is the
+advertisement panel on the right, not the menu text at roughly x 300–500. LF2's menu
+entries are selected with the player-1 controls from `data/control.txt`, which default to
+the numpad.
+
+So the open question is keyboard timing, not mouse position. Scripted keys are reported
+held for 120 ms; if the game samples on a slower cadence, or wants a transition it can
+observe across two polls, that window may simply be missed.
 
 ## Debug switches
 
