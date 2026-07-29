@@ -45,6 +45,42 @@ static Bitmap *bitmap_of(uint32_t h)
     return i < (uint32_t)nbitmaps ? bitmaps[i] : NULL;
 }
 
+/* RLE8, which is what the game's bitmaps actually use -- their headers declare far more
+ * pixels than the file contains, and reading them as raw rows yields garbage that then
+ * runs out partway down.
+ *
+ * Pairs of (count, value): a non-zero count repeats value. A zero count is an escape --
+ * 0 ends the line, 1 ends the bitmap, 2 is a delta, and 3 or more introduces that many
+ * literal bytes padded to a word boundary. Output is written top-down here; the caller
+ * has already accounted for the bottom-up flip. */
+static void rle8_decode(const uint8_t *src, size_t n, Bitmap *b, int flip)
+{
+    size_t i = 0;
+    int x = 0, y = 0;
+    while (i + 1 < n && y < b->h) {
+        const uint8_t count = src[i], value = src[i + 1];
+        i += 2;
+        if (count) {
+            for (int k = 0; k < count && x < b->w; k++, x++)
+                b->pixels[(size_t)(flip ? b->h - 1 - y : y) * (size_t)b->pitch + (size_t)x] = value;
+            continue;
+        }
+        if (value == 0) { x = 0; y++; continue; }          /* end of line */
+        if (value == 1) break;                              /* end of bitmap */
+        if (value == 2) {                                   /* delta */
+            if (i + 1 >= n) break;
+            x += src[i]; y += src[i + 1];
+            i += 2;
+            continue;
+        }
+        for (int k = 0; k < value && i < n; k++, i++, x++) { /* absolute run */
+            if (x < b->w && y < b->h)
+                b->pixels[(size_t)(flip ? b->h - 1 - y : y) * (size_t)b->pitch + (size_t)x] = src[i];
+        }
+        if (value & 1) i++;                                 /* pad to a word */
+    }
+}
+
 /* Load a Windows BMP. Rows are stored bottom-up and padded to four bytes. */
 static Bitmap *bmp_load(const char *path)
 {
@@ -62,6 +98,8 @@ static Bitmap *bmp_load(const char *path)
     const int32_t h = (int32_t)((uint32_t)hdr[22] | ((uint32_t)hdr[23] << 8)
                      | ((uint32_t)hdr[24] << 16) | ((uint32_t)hdr[25] << 24));
     const int bpp = (int)((uint32_t)hdr[28] | ((uint32_t)hdr[29] << 8));
+    const uint32_t compression = (uint32_t)hdr[30] | ((uint32_t)hdr[31] << 8)
+                               | ((uint32_t)hdr[32] << 16) | ((uint32_t)hdr[33] << 24);
     const uint32_t clr_used = (uint32_t)hdr[46] | ((uint32_t)hdr[47] << 8)
                             | ((uint32_t)hdr[48] << 16) | ((uint32_t)hdr[49] << 24);
     if (bpp != 8 || w <= 0) { fclose(fh); return NULL; }
@@ -82,9 +120,22 @@ static Bitmap *bmp_load(const char *path)
         b->pal[i] = ((uint32_t)e[2] << 16) | ((uint32_t)e[1] << 8) | e[0];
     }
 
+    fseek(fh, 0, SEEK_END);
+    const long file_size = ftell(fh);
+    fseek(fh, (long)data_off, SEEK_SET);
+
+    if (compression == 1) {                                 /* BI_RLE8 */
+        const size_t n = (size_t)(file_size - (long)data_off);
+        uint8_t *raw = SDL_malloc(n);
+        const size_t got = fread(raw, 1, n, fh);
+        rle8_decode(raw, got, b, flip);
+        SDL_free(raw);
+        fclose(fh);
+        return b;
+    }
+
     const size_t src_pitch = ((size_t)w + 3u) & ~3u;
     uint8_t *row = SDL_malloc(src_pitch);
-    fseek(fh, (long)data_off, SEEK_SET);
     for (int y = 0; y < rows; y++) {
         if (fread(row, 1, src_pitch, fh) != src_pitch) break;
         memcpy(b->pixels + (size_t)(flip ? rows - 1 - y : y) * (size_t)w, row, (size_t)w);
@@ -188,6 +239,14 @@ static Bitmap *dib_load(uint32_t p)
                   | ((uint32_t)LD8(pal + i * 4 + 1) << 8) | LD8(pal + i * 4);
 
     const uint32_t bits = pal + ncolours * 4;
+    const uint32_t compression = LD32(p + 16);
+
+    if (compression == 1) {                                 /* BI_RLE8 */
+        const uint32_t n = LD32(p + 20) ? LD32(p + 20) : 0x100000u;   /* biSizeImage */
+        rle8_decode(g_mem + bits, n, b, flip);
+        return b;
+    }
+
     const size_t src_pitch = ((size_t)w + 3u) & ~3u;
     for (int y = 0; y < rows; y++) {
         const uint32_t src = bits + (uint32_t)((size_t)y * src_pitch);
@@ -301,8 +360,25 @@ static void h_StretchBlt(void)
             dst[tx] = b->pal[src[bx]];      /* index -> XRGB via the bitmap's palette */
         }
     }
+    if (getenv("LF2_DUMP_SURF")) {
+        static int n;
+        char path[128];
+        snprintf(path, sizeof path, "./scratch/surf_%02d.ppm", n++);
+        FILE *f = fopen(path, "wb");
+        if (f) {
+            fprintf(f, "P6\n%d %d\n255\n", dwid, dhei);
+            for (int y = 0; y < dhei; y++) {
+                const uint32_t *r = (const uint32_t *)(g_mem + dpix + (size_t)y * (size_t)dpitch);
+                for (int x = 0; x < dwid; x++) {
+                    const uint8_t px[3] = { (uint8_t)(r[x] >> 16), (uint8_t)(r[x] >> 8), (uint8_t)r[x] };
+                    fwrite(px, 1, 3, f);
+                }
+            }
+            fclose(f);
+        }
+    }
     ddraw_surface_present(hdst);
-    { static long n; if (++n % 200 == 1) fprintf(stderr, "stretchblt #%ld %dx%d -> %dx%d\n", n, sw, sh, dw, dh); }
+    { static long n; if (getenv("LF2_RSRC_DEBUG")) fprintf(stderr, "stretchblt #%ld %dx%d -> %dx%d\n", ++n, sw, sh, dw, dh); }
     ret_stdcall(11, 1);
 }
 
