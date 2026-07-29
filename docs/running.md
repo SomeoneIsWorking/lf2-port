@@ -171,10 +171,16 @@ Two candidate consumers have been examined and neither is the menu:
   called. The chain right after it comparing wParam against `0x4c`, `0x46` and `0x32` is
   the "LF2" cheat-code detector.
 
-  **Open:** watching `keystate[0x65]` (`004553dd`) shows only the startup fill to `0x75`,
-  never the `0x64` a keypress should write — even though the handler provably runs and the
-  key provably reaches the text buffer two instructions earlier. Something about that store
-  is not taking effect, and it is the most concrete open lead.
+  **The store works.** Probing `0043b557` shows it executing once per keypress with
+  `ebx=0x65` (the virtual key) and `edx=0x64` (the value), writing to `004553dd` exactly as
+  the disassembly says. An earlier note here called it broken because a memory watch never
+  saw `0x64` — but the game clears the array every frame, and a watch that only reports
+  differences between samples cannot see a value that goes `0x75` to `0x64` and back
+  between two of them. The instrument was wrong, not the port.
+
+So the input path is verified at every layer: SDL event, message queue, `PeekMessage`/
+`GetMessage`, `DispatchMessage`, two jump tables, the enable gate, and finally the game's
+own key-state array. Whatever keeps the VS-mode overlay up is past all of that.
 
 - **The `WM_KEYDOWN` route is also text entry.** `004031d0`, the function the handler passes the
   key to, accepts space, period, letters and digits and appends them to a string buffer.
