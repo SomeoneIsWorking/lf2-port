@@ -349,6 +349,7 @@ static void dd_WaitForVerticalBlank(uint32_t self) { (void)self; com_ret(3, DD_O
 static void dd_ret_ok1(uint32_t self) { (void)self; com_ret(1, DD_OK); }
 static void dd_ret_ok2(uint32_t self) { (void)self; com_ret(2, DD_OK); }
 static void dd_ret_ok3(uint32_t self) { (void)self; com_ret(3, DD_OK); }
+static void dd_ret_ok4(uint32_t self) { (void)self; com_ret(4, DD_OK); }
 
 static void obj_QueryInterface(uint32_t self)
 {
@@ -394,7 +395,7 @@ void ddraw_register(void)
     c->method[5] = dd_CreatePalette;
     c->method[6] = dd_CreateSurface;
     c->method[10] = dd_ret_ok1;              /* FlipToGDISurface */
-    c->method[11] = dd_ret_ok2;              /* GetCaps */
+    c->method[11] = dd_ret_ok3;              /* GetCaps(driver, hel) */
     c->method[12] = dd_ret_ok2;              /* GetDisplayMode */
     c->method[18] = dd_ret_ok2;              /* Initialize */
     c->method[19] = dd_ret_ok1;              /* RestoreDisplayMode */
@@ -446,7 +447,7 @@ void ddraw_register(void)
     c->method[2] = obj_Release;
     c->method[3] = dd_ret_ok2;               /* GetCaps */
     c->method[4] = pal_GetEntries;
-    c->method[5] = dd_ret_ok3;               /* Initialize */
+    c->method[5] = dd_ret_ok4;               /* Initialize(dd, flags, table) */
     c->method[6] = pal_SetEntries;
 }
 

@@ -579,6 +579,62 @@ static void h_mmioAscend(void)
     ret_stdcall(3, MMSYSERR_NOERROR);
 }
 
+
+/* ---- Win32 file API ----
+ * The import table has CreateFileA/WriteFile/CloseHandle but no ReadFile, so this path
+ * is write-only: settings and recorded matches. */
+static void h_CreateFileA(void)
+{
+    const uint32_t access = ARG(1), disp = ARG(4);
+    const char *mode = (access & 0x40000000u) ? ((disp == 2 /*CREATE_ALWAYS*/) ? "wb" : "r+b")
+                                              : "rb";
+    FILE *fh = fopen(host_path(ARG(0)), mode);
+    if (!fh && (access & 0x40000000u)) fh = fopen(host_path(ARG(0)), "wb");
+    ret_stdcall(7, fh ? file_token(fh) : 0xFFFFFFFFu);   /* INVALID_HANDLE_VALUE */
+}
+
+static void h_WriteFile(void)
+{
+    FILE *fh = file_of(ARG(0));
+    size_t n = fh ? fwrite(g_mem + ARG(1), 1, ARG(2), fh) : 0;
+    if (ARG(3)) ST32(ARG(3), (uint32_t)n);
+    ret_stdcall(5, fh ? 1 : 0);
+}
+
+static void h_CloseHandle(void)
+{
+    FILE *fh = file_of(ARG(0));
+    if (fh) { fclose(fh); files[ARG(0) - 0xFE000000u] = NULL; }
+    ret_stdcall(1, 1);
+}
+
+static void h_GetLocalTime(void)
+{
+    time_t t = time(NULL);
+    struct tm *g = localtime(&t);
+    const uint32_t p = ARG(0);
+    const uint16_t v[8] = { (uint16_t)(g->tm_year + 1900), (uint16_t)(g->tm_mon + 1),
+                            (uint16_t)g->tm_wday, (uint16_t)g->tm_mday,
+                            (uint16_t)g->tm_hour, (uint16_t)g->tm_min,
+                            (uint16_t)g->tm_sec, 0 };
+    for (int i = 0; i < 8; i++) ST16(p + (uint32_t)i * 2, v[i]);
+    ret_stdcall(1, 0);
+}
+
+/* Netplay is out of scope, and the thread this creates is the network thread. It is not
+ * started: running it inline would block the caller, and the game must not observe a
+ * silently-succeeding thread that never runs, so this is logged. */
+static void h_CreateThread(void)
+{
+    static int warned;
+    if (!warned) {
+        fprintf(stderr, "note: CreateThread ignored (netplay is not ported)\n");
+        warned = 1;
+    }
+    if (ARG(5)) ST32(ARG(5), 0);
+    ret_stdcall(6, 0xFD000001u);
+}
+
 static void h_timeGetTime(void)
 {
     struct timespec ts;
@@ -624,6 +680,12 @@ static const struct { const char *dll, *name; Handler fn; } TABLE[] = {
     { "KERNEL32.dll", "OutputDebugStringA",      h_OutputDebugStringA },
     { "KERNEL32.dll", "Sleep",                   h_ret0_1 },
     { "KERNEL32.dll", "MultiByteToWideChar",     h_ret1_2 },
+    { "KERNEL32.dll", "CreateFileA",             h_CreateFileA },
+    { "KERNEL32.dll", "WriteFile",               h_WriteFile },
+    { "KERNEL32.dll", "CloseHandle",             h_CloseHandle },
+    { "KERNEL32.dll", "GetLocalTime",            h_GetLocalTime },
+    { "KERNEL32.dll", "CreateThread",            h_CreateThread },
+    { "KERNEL32.dll", "TerminateProcess",        h_ret0_2 },
 
     { "MSVCR80.dll", "__getmainargs",       h_getmainargs },
     { "MSVCR80.dll", "_initterm",           h_initterm },

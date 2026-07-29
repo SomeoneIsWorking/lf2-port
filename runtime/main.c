@@ -3,7 +3,7 @@
 
 void ddraw_register(void);
 void dsound_register(void);
-void comstub_register(void);
+void dshow_register(void);
 
 #include <stdio.h>
 
@@ -16,7 +16,7 @@ int main(int argc, char **argv)
     guest_init();
     ddraw_register();
     dsound_register();
-    comstub_register();
+    dshow_register();
     com_init();
     guest_load_image(exe);
     printf("image loaded, %d functions, entering at %08x\n", g_nfuncs, ENTRY);

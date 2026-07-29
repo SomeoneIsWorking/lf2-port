@@ -34,6 +34,7 @@ add_executable(lf2
     runtime/win32.c
     runtime/ddraw.c
     runtime/dsound.c
+    runtime/dshow.c
     runtime/main.c)
 target_include_directories(lf2 PRIVATE runtime)
 

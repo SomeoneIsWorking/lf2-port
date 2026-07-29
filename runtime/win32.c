@@ -192,9 +192,22 @@ static void h_CoInitialize(void)   { ret_stdcall(1, 0); }
  * A generic COM stub is NOT viable here: stdcall methods pop their own arguments and
  * the count varies per method, so a one-size handler corrupts the guest stack. The
  * real interfaces have to be declared with their true signatures. */
-static void h_CoCreateInstance(void) { ST32(ARG(4), 0); ret_stdcall(5, E_NOINTERFACE); }
+uint32_t dshow_create_graph(void);
 
-void comstub_register(void) { }
+static void h_CoCreateInstance(void)
+{
+    /* CLSID_FilterGraph {e436ebb3-...}: the game's background-music path. */
+    const uint32_t clsid = ARG(0);
+    if (clsid && LD32(clsid) == 0xe436ebb3u) {
+        ST32(ARG(4), dshow_create_graph());
+        ret_stdcall(5, DD_OK);
+        return;
+    }
+    ST32(ARG(4), 0);
+    ret_stdcall(5, E_NOINTERFACE);
+}
+
+
 
 
 /* ---- GDI ----

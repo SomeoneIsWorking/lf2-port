@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 ComClass com_class[IF_COUNT];
+int com_cur_iface, com_cur_method;
 
 enum { MAX_OBJECTS = 512 };
 static struct { uint32_t self; void *host; int iface; } objects[MAX_OBJECTS];
@@ -46,6 +47,10 @@ uint32_t com_create(int iface, void *host)
     objects[nobjects].host = host;
     objects[nobjects].iface = iface;
     nobjects++;
+    if (getenv("LF2_COM_TRACE"))
+        fprintf(stderr, "com_create #%d %s -> %08x (vtbl %08x)\n",
+                nobjects - 1, com_class[iface].name ? com_class[iface].name : "?",
+                self, vtable_addr[iface]);
     return self;
 }
 
@@ -70,6 +75,8 @@ void com_call(uint32_t sentinel)
                 iface < IF_COUNT && com_class[iface].name ? com_class[iface].name : "?", m);
         abort();
     }
+    com_cur_iface = iface;
+    com_cur_method = m;
     const uint32_t self = LD32(R(ESP) + 4);
     com_class[iface].method[m](self);
 }
