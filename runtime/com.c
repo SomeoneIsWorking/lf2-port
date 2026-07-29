@@ -75,6 +75,9 @@ void com_call(uint32_t sentinel)
                 iface < IF_COUNT && com_class[iface].name ? com_class[iface].name : "?", m);
         abort();
     }
+    if (getenv("LF2_COM_TRACE"))
+        fprintf(stderr, "  %s::[%d] this=%08x\n",
+                com_class[iface].name ? com_class[iface].name : "?", m, LD32(R(ESP) + 4));
     com_cur_iface = iface;
     com_cur_method = m;
     const uint32_t self = LD32(R(ESP) + 4);

@@ -214,6 +214,10 @@ static unsigned trace_pos;
 
 static void dump_trace(void)
 {
+    static const char *RN[8] = { "eax","ecx","edx","ebx","esp","ebp","esi","edi" };
+    fprintf(stderr, "regs:");
+    for (int i = 0; i < 8; i++) fprintf(stderr, " %s=%08x", RN[i], R(i));
+    fprintf(stderr, "\n");
     fprintf(stderr, "recent calls (newest last):");
     for (unsigned i = 0; i < TRACE_N; i++) {
         unsigned k = (trace_pos + i) % TRACE_N;
