@@ -68,16 +68,56 @@ or two specific flags, which lazy evaluation handles directly.
 No privileged instructions, no self-modifying-code indicators, no `INT` beyond CRT
 scaffolding.
 
-## Open question — x87 precision strategy
+## Decided — x87 precision: use host `double`
 
-Not yet decided, and it should be decided on evidence rather than by default:
+Measured rather than assumed. Every x87 instruction was classified by its memory-operand
+width (escape byte + ModRM `reg` field):
 
-1. **Host `double` (64-bit)** — fast and simple, but diverges from 80-bit intermediates.
-2. **Software 80-bit** — faithful, considerably slower.
-3. **Host `long double`** — on x86-64 Linux/macOS this *is* 80-bit, but on **ARM64
-   (Apple Silicon) it is 128-bit quad**, which is a different result again.
+| Operand | Count |
+|---|---|
+| `m64fp` (double) — `FSTP` 554, `FLD` 468, arith 299, `FST` 109 | **1430** |
+| `m32int` (`FILD`) | 186 |
+| `m32fp` (float) | **5** |
+| `m80fp` (extended) | **0** |
+| register-only forms (`FXCH`, `FLDZ`, `FCHS`, `FADDP` …) | 650 |
 
-Option 3 looks free but silently changes behaviour on exactly the platform we most want
-to support. Measure whether LF2's gameplay is actually sensitive to this before choosing
-— the game is a 2D fighter with integer-ish positions, so it may not be, but that must
-be shown rather than hoped.
+Three facts settle it:
+
+1. **The game's own storage format is already `double`.** 1430 of 1623 memory operands are
+   `m64fp`; `m32fp` appears 5 times in the whole binary.
+2. **No value at 80-bit precision ever reaches memory** — zero `m80fp` loads or stores. So
+   no *observable* game state carries extended precision; 80 bits exists only transiently
+   inside the FPU register stack, and every store rounds to `double`.
+3. **No transcendentals.** The full x87 set is `FADD FADDP FCHS FCOM FCOMP FCOMPP FDIV
+   FDIVP FDIVR FDIVRP FILD FISTP FLD FLD1 FLDZ FMUL FMULP FNSTSW FST FSTP FSUB FSUBP
+   FSUBR FSUBRP FXCH` — arithmetic, compares and moves only. There is no `FSQRT`, `FSIN`,
+   `FCOS`, `FPATAN` or `F2XM1`, which is where x87-vs-libm divergence usually bites. That
+   entire class of bug cannot occur here.
+
+Additionally there is **no `FLDCW`/`FNSTCW`/`FNINIT` anywhere in `.text`** — the game never
+touches the x87 control word, so precision control is whatever `MSVCR80`'s startup leaves
+it at.
+
+**This also retires the `long double` option outright.** Since the game stores `double`,
+matching x87 exactly would need true 80-bit semantics — and `long double` is 128-bit quad
+on ARM64, which is *more* precise than x87 and diverges just as surely. It is not the
+portable-faithful choice anywhere except x86-64.
+
+### Residual risk, and what would falsify this
+
+Divergence remains possible only *within* a single register-resident chain: a multi-step
+expression evaluated at extended precision and rounded once, versus rounded at each step
+in `double`. With 1430 memory operands against 650 register-only ops, chains are short.
+
+Two things are **assumed, not proven**:
+
+- that `MSVCR80` initialises x87 precision control to 53-bit (MSVC's documented default,
+  unlike glibc which leaves it at 64-bit). If true, every x87 op already rounds to a
+  53-bit mantissa and host `double` is **bit-exact**, not merely close. **Not yet verified
+  at runtime.**
+- that the 15-bit x87 exponent range never matters. Only reachable via intermediate
+  overflow/underflow beyond `double`'s range — implausible for 2D fighter coordinates.
+
+**Falsifier:** a differential run against the Wine oracle showing float state diverging.
+Check this once the harness can compare state; if it fires, the fallback is software
+80-bit for the affected functions only, not globally.
