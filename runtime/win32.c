@@ -27,6 +27,7 @@ enum { WM_KEYDOWN_FWD = 0x0100, WM_KEYUP_FWD = 0x0101,
        WM_RBUTTONDOWN = 0x0204, WM_RBUTTONUP = 0x0205 };
 
 static int mouse_left_down, mouse_right_down;
+static unsigned autokey_pumps;
 void gamepad_handle_event(const SDL_Event *e);
 
 /* ---- window ---- */
@@ -172,12 +173,15 @@ static void pump_autokey_messages(void)
         const uint8_t now = autokey_pressed(vk) ? 1 : 0;
         if (now == was_down[vk]) continue;
         was_down[vk] = now;
+        if (getenv("LF2_MSG_DEBUG"))
+            fprintf(stderr, "autokey vk=%02x %s (pump %u)\n", vk, now ? "down" : "up", autokey_pumps);
         push_message(now ? WM_KEYDOWN_FWD : WM_KEYUP_FWD, vk, 1);
     }
 }
 
 void hostwin_pump(void)
 {
+    autokey_pumps++;
     pump_autokey_messages();
     pump_autoclick();
     SDL_Event e;
@@ -392,31 +396,47 @@ static SDL_Scancode vk_to_scancode(uint32_t vk)
  *
  * Each key is reported held for 120 ms, which is long enough for a frame-polled menu to
  * see it and short enough not to auto-repeat. */
+/* Scripted keys, counted in PUMPS rather than milliseconds.
+ *
+ * A wall-clock press window is unreliable: the game pumps messages once a frame, and if
+ * no pump lands inside the window the press is never observed at all. Counting pumps
+ * guarantees both the down and the up transition are seen.
+ *
+ *   LF2_AUTOKEY=<vk>[,<vk>...]  cycle through these keys
+ *   LF2_AUTOKEY_HOLD=<pumps>    pumps to hold each key (default 8)
+ *   LF2_AUTOKEY_GAP=<pumps>     pumps between presses (default 60)
+ */
 static int autokey_pressed(uint32_t vk)
 {
     const char *script = getenv("LF2_AUTOKEY");
     if (!script) return 0;
 
-    static uint64_t start_ms;
-    if (!start_ms) start_ms = SDL_GetTicks();
-    const char *s_env = getenv("LF2_AUTOKEY_START");
-    const char *e_env = getenv("LF2_AUTOKEY_EVERY");
-    const uint64_t begin = s_env ? (uint64_t)strtoul(s_env, NULL, 10) : 6000;
-    const uint64_t every = e_env ? (uint64_t)strtoul(e_env, NULL, 10) : 2500;
+    const char *h = getenv("LF2_AUTOKEY_HOLD");
+    const char *g = getenv("LF2_AUTOKEY_GAP");
+    const unsigned hold = h ? (unsigned)strtoul(h, NULL, 10) : 8;
+    const unsigned gap  = g ? (unsigned)strtoul(g, NULL, 10) : 60;
+    const unsigned cycle = hold + gap;
+    if (autokey_pumps < gap) return 0;                  /* settle before starting */
 
-    const uint64_t now = SDL_GetTicks() - start_ms;
-    if (now < begin) return 0;
-    const uint64_t elapsed = now - begin;
-    const uint64_t index = elapsed / every;
-    if (elapsed % every > 120) return 0;              /* held briefly */
+    const unsigned phase = (autokey_pumps - gap) % cycle;
+    if (phase >= hold) return 0;
+    const unsigned index = (autokey_pumps - gap) / cycle;
 
     unsigned n = 0;
     for (const char *c = script; *c; ) {
         const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
-        if (n == index % 64 && key == vk) return 1;
-        n++;
         while (*c == ',' || *c == ' ') c++;
-        if (n > 64) break;
+        n++;
+        if (!*c) break;
+    }
+    if (!n) return 0;
+
+    unsigned want = index % n, i = 0;
+    for (const char *c = script; *c; ) {
+        const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
+        if (i == want) return key == vk;
+        i++;
+        while (*c == ',' || *c == ' ') c++;
     }
     return 0;
 }
@@ -432,6 +452,11 @@ static uint32_t mouse_lparam(float wx, float wy)
 static void h_GetKeyState(void)
 {
     hostwin_pump();
+    if (getenv("LF2_KEY_DEBUG")) {
+        static uint8_t seen[256];
+        if (!seen[ARG(0) & 0xff]) { seen[ARG(0) & 0xff] = 1;
+            fprintf(stderr, "GetKeyState polls vk=0x%02x\n", ARG(0)); }
+    }
     if (ARG(0) == 0x01) { ret_stdcall(1, mouse_left_down ? 0xFF80u : 0u); return; }
     if (ARG(0) == 0x02) { ret_stdcall(1, mouse_right_down ? 0xFF80u : 0u); return; }
     if (autokey_pressed(ARG(0))) { ret_stdcall(1, 0xFF80u); return; }
