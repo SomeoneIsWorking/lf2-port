@@ -36,6 +36,7 @@ add_executable(lf2
     runtime/ddraw.c
     runtime/dsound.c
     runtime/dshow.c
+    runtime/gdi.c
     runtime/main.c)
 target_include_directories(lf2 PRIVATE runtime)
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)

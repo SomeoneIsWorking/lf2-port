@@ -210,46 +210,6 @@ static void h_CoCreateInstance(void)
 
 
 
-/* ---- GDI ----
- * DirectDraw's GetDC hands back the surface object itself, so a "DC" here is either a
- * surface or one of these memory DCs. Text rendering is not implemented yet: TextOutA
- * is a visible gap, logged once, not silently dropped. */
-static uint32_t gdi_bk, gdi_fg;
-
-static void h_CreateCompatibleDC(void) { ret_stdcall(1, 0xD0000001u); }
-static void h_DeleteDC(void)     { ret_stdcall(1, 1); }
-static void h_DeleteObject(void) { ret_stdcall(1, 1); }
-static void h_SelectObject(void) { ret_stdcall(2, 0); }
-static void h_SetBkColor(void)   { gdi_bk = ARG(1); ret_stdcall(2, 0); }
-static void h_SetTextColor(void) { gdi_fg = ARG(1); ret_stdcall(2, 0); }
-
-static void h_GetObjectA(void)
-{
-    /* BITMAP: bmType, bmWidth, bmHeight, bmWidthBytes, bmPlanes, bmBitsPixel, bmBits */
-    const uint32_t out = ARG(2);
-    if (out && ARG(1) >= 24) {
-        ST32(out, 0);
-        ST32(out + 4, (uint32_t)hw.width);
-        ST32(out + 8, (uint32_t)hw.height);
-        ST32(out + 12, (uint32_t)((hw.width + 3) & ~3));
-        ST32(out + 16, 1);
-        ST32(out + 20, 8);
-    }
-    ret_stdcall(3, 24);
-}
-
-static void h_TextOutA(void)
-{
-    static int warned;
-    if (!warned) {
-        fprintf(stderr, "note: GDI TextOutA not implemented -- some text will be missing\n");
-        warned = 1;
-    }
-    ret_stdcall(5, 1);
-}
-
-static void h_StretchBlt(void) { ret_stdcall(11, 1); }
-
 typedef void (*Handler)(void);
 
 Handler win32_lookup(const char *dll, const char *name)
@@ -276,20 +236,11 @@ Handler win32_lookup(const char *dll, const char *name)
         { "USER32.dll", "DestroyWindow",     h_u1_1 },
         { "USER32.dll", "LoadCursorA",       h_u1_2 },
         { "USER32.dll", "LoadIconA",         h_u1_2 },
-        { "USER32.dll", "LoadImageA",        h_u1_6 },
+
         { "USER32.dll", "SetCursor",         h_u1_1 },
         { "ole32.dll",  "CoInitialize",      h_CoInitialize },
         { "ole32.dll",  "CoCreateInstance",  h_CoCreateInstance },
         { "SHELL32.dll", "ShellExecuteA",    h_u1_6 },
-        { "GDI32.dll", "CreateCompatibleDC", h_CreateCompatibleDC },
-        { "GDI32.dll", "DeleteDC",           h_DeleteDC },
-        { "GDI32.dll", "DeleteObject",       h_DeleteObject },
-        { "GDI32.dll", "SelectObject",       h_SelectObject },
-        { "GDI32.dll", "GetObjectA",         h_GetObjectA },
-        { "GDI32.dll", "SetBkColor",         h_SetBkColor },
-        { "GDI32.dll", "SetTextColor",       h_SetTextColor },
-        { "GDI32.dll", "TextOutA",           h_TextOutA },
-        { "GDI32.dll", "StretchBlt",         h_StretchBlt },
     };
     for (size_t i = 0; i < sizeof T / sizeof T[0]; i++)
         if (strcmp(T[i].dll, dll) == 0 && strcmp(T[i].name, name) == 0) return T[i].fn;
