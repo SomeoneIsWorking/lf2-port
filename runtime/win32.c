@@ -181,7 +181,6 @@ static void pump_autokey_messages(void)
 
 void hostwin_pump(void)
 {
-    autokey_pumps++;
     pump_autokey_messages();
     pump_autoclick();
     SDL_Event e;
@@ -400,50 +399,47 @@ static SDL_Scancode vk_to_scancode(uint32_t vk)
     }
 }
 
-/* Scripted input, for verifying the port without a human at the keyboard.
+/* Scripted keys, on a wall clock.
  *
- *   LF2_AUTOKEY=<vk>[,<vk>...]   press each virtual key in turn
- *   LF2_AUTOKEY_START=<ms>       when to begin (default 6000)
- *   LF2_AUTOKEY_EVERY=<ms>       gap between presses (default 2500)
- *
- * Each key is reported held for 120 ms, which is long enough for a frame-polled menu to
- * see it and short enough not to auto-repeat. */
-/* Scripted keys, counted in PUMPS rather than milliseconds.
- *
- * A wall-clock press window is unreliable: the game pumps messages once a frame, and if
- * no pump lands inside the window the press is never observed at all. Counting pumps
- * guarantees both the down and the up transition are seen.
+ * An earlier version counted pumps, which was wrong: hostwin_pump runs on every
+ * PeekMessage as well as every GetMessage, and the game peeks thousands of times a
+ * second, so "hold 8 pumps" lasted well under a millisecond and cycled the key roughly a
+ * hundred times a second. No menu can read that as discrete presses.
  *
  *   LF2_AUTOKEY=<vk>[,<vk>...]  cycle through these keys
- *   LF2_AUTOKEY_HOLD=<pumps>    pumps to hold each key (default 8)
- *   LF2_AUTOKEY_GAP=<pumps>     pumps between presses (default 60)
+ *   LF2_AUTOKEY_HOLD=<ms>       how long each press is held (default 150)
+ *   LF2_AUTOKEY_EVERY=<ms>      gap between presses (default 1200)
+ *   LF2_AUTOKEY_START=<ms>      when to begin (default 6000)
  */
 static int autokey_pressed(uint32_t vk)
 {
     const char *script = getenv("LF2_AUTOKEY");
     if (!script) return 0;
 
-    const char *h = getenv("LF2_AUTOKEY_HOLD");
-    const char *g = getenv("LF2_AUTOKEY_GAP");
-    const unsigned hold = h ? (unsigned)strtoul(h, NULL, 10) : 8;
-    const unsigned gap  = g ? (unsigned)strtoul(g, NULL, 10) : 60;
-    const unsigned cycle = hold + gap;
-    if (autokey_pumps < gap) return 0;                  /* settle before starting */
+    static uint64_t base_ms;
+    if (!base_ms) base_ms = SDL_GetTicks();
+    const char *s_env = getenv("LF2_AUTOKEY_START");
+    const char *e_env = getenv("LF2_AUTOKEY_EVERY");
+    const char *h_env = getenv("LF2_AUTOKEY_HOLD");
+    const uint64_t begin = s_env ? strtoull(s_env, NULL, 10) : 6000;
+    const uint64_t every = e_env ? strtoull(e_env, NULL, 10) : 1200;
+    const uint64_t hold  = h_env ? strtoull(h_env, NULL, 10) : 150;
 
-    const unsigned phase = (autokey_pumps - gap) % cycle;
-    if (phase >= hold) return 0;
-    const unsigned index = (autokey_pumps - gap) / cycle;
+    const uint64_t now = SDL_GetTicks() - base_ms;
+    if (now < begin) return 0;
+    const uint64_t elapsed = now - begin;
+    if (elapsed % every >= hold) return 0;
 
-    unsigned n = 0;
+    unsigned count = 0;
     for (const char *c = script; *c; ) {
-        const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
+        (void)strtoul(c, (char **)&c, 16);
+        count++;
         while (*c == ',' || *c == ' ') c++;
-        n++;
-        if (!*c) break;
     }
-    if (!n) return 0;
+    if (!count) return 0;
 
-    unsigned want = index % n, i = 0;
+    const unsigned want = (unsigned)((elapsed / every) % count);
+    unsigned i = 0;
     for (const char *c = script; *c; ) {
         const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
         if (i == want) return key == vk;
