@@ -107,10 +107,26 @@ consume, the usual "peek to test, get to fetch" loop. The port implements that c
 now, yet the same `WM_KEYDOWN` is dispatched around 2400 times in a short run, so
 something in the peek/get interaction still redelivers rather than consumes.
 
-Note also that the pump counter driving `LF2_AUTOKEY` advances once per `PeekMessage`, and
-the game peeks thousands of times a second. The hold and gap defaults are therefore far
-shorter in real time than they look, which is worth accounting for when reading any test
-that uses them.
+The queue itself is provably correct. Logging peeks against gets (`LF2_QUEUE_DEBUG`) shows
+clean alternation — each message peeked once without removal, then fetched once and
+removed, with the ring advancing properly:
+
+```
+PEEK msg=0100 remove=0 ring=[0,1)
+GET  msg=0100 remove=1 ring=[0,1)
+PEEK msg=0101 remove=0 ring=[1,2)
+GET  msg=0101 remove=1 ring=[1,2)
+```
+
+The ~2400 figure was never redelivery: `hostwin_pump` runs on every peek as well as every
+get, and the game peeks thousands of times a second, so the pump-counted key was cycling
+about a hundred times a second. Scripted keys are back on a wall clock and now produce
+about 7 press/release pairs in 14 seconds.
+
+**The menu still does not respond.** Ruled out: message delivery, queue semantics, the
+peek/get contract, key cadence, and mouse position. What has not been examined is what the
+game does with `WM_KEYDOWN` once its window procedure has it — the handler is reached via
+the jump table at `0043b417`, and reading that path is the next step.
 
 ## Debug switches
 
