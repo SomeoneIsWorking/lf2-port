@@ -27,6 +27,7 @@ typedef struct {
     const char *name;
     int         nmethods;
     ComMethod   method[64];
+    const char *mname[64];   /* method names, for the oracle-comparable trace */
 } ComClass;
 
 extern ComClass com_class[IF_COUNT];
