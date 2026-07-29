@@ -279,22 +279,52 @@ static int cmp_addr(const void *k, const void *e)
 /* Ring of recent dispatch targets, dumped when a call fails -- an indirect call to a
  * bad address otherwise gives no clue where it came from. */
 enum { TRACE_N = 24 };
-static uint32_t trace[TRACE_N];
+static uint32_t trace[TRACE_N], trace_esp[TRACE_N];
 static unsigned trace_pos;
 
 static void dump_trace(void)
 {
     fprintf(stderr, "recent calls (newest last):");
     for (unsigned i = 0; i < TRACE_N; i++) {
-        uint32_t t = trace[(trace_pos + i) % TRACE_N];
-        if (t) fprintf(stderr, " %08x", t);
+        unsigned k = (trace_pos + i) % TRACE_N;
+        if (trace[k]) fprintf(stderr, " %08x(esp=%08x)", trace[k], trace_esp[k]);
     }
     fprintf(stderr, "\n");
 }
 
 void dispatch(uint32_t target)
 {
+    /* ESP must stay inside the stack. A wrong stdcall pop count walks it out of the
+     * region, and the next CALL then writes its return address over whatever is there
+     * -- which is how a corrupted import table showed up far from the real fault. */
+    /* Watchpoint: report the first time the watched dword changes, with the guest
+     * return address of the call we are in -- that localises the writer. */
+    {
+        static uint32_t watch_addr, watch_val;
+        static int watch_armed;
+        const char *w = getenv("LF2_WATCH");
+        if (w && !watch_armed) {
+            watch_addr = (uint32_t)strtoul(w, NULL, 16);
+            watch_val = LD32(watch_addr);
+            watch_armed = 1;
+            fprintf(stderr, "watching %08x = %08x\n", watch_addr, watch_val);
+        }
+        if (watch_armed && LD32(watch_addr) != watch_val) {
+            fprintf(stderr, "WATCH %08x changed %08x -> %08x; now calling %08x, ret %08x\n",
+                    watch_addr, watch_val, LD32(watch_addr), target, LD32(R(ESP)));
+            watch_val = LD32(watch_addr);
+            dump_trace();
+        }
+    }
+
+    if (R(ESP) < STACK_TOP - STACK_SIZE || R(ESP) > STACK_TOP) {
+        fprintf(stderr, "ESP out of range: %08x calling %08x from guest %08x\n",
+                R(ESP), target, LD32(R(ESP)));
+        dump_trace();
+        abort();
+    }
     trace[trace_pos % TRACE_N] = target;
+    trace_esp[trace_pos % TRACE_N] = R(ESP);
     trace_pos++;
 
     if (target >= 0xF1000000u && target < 0xF2000000u) { com_call(target); return; }
