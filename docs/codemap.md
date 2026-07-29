@@ -15,7 +15,8 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Boundary tracer | `docs/platform-boundary.md` | **done** | Wine debug channels; relay tracing proven useless (see doc) |
 | ISA scoping | `docs/isa-scope.md`, `re/instructions.tsv` | **done** | 70,508 instructions, only 92 mnemonics; top 50 cover 99.5% |
 | Recompiler: decoder | `recompiler/x86_decode.c` | **done** | length-exact on all 70,508 instructions; negative-control validated |
-| Recompiler: lifter (x86 → C) | — | **planned** | next; x87 precision strategy undecided (see isa-scope) |
+| Recompiler: lifter (x86 → C) | `recompiler/lift.c` | **wip** | 96.25% of instructions lifted; output compiles; x87 + string ops remain |
+| Runtime | `runtime/guest.h`, `runtime/guest_ops.h` | **wip** | CPU state, lazy flags, memory; no host backend yet |
 | Runtime (SDL3) | — | **planned** | video / audio / input / Win32 shim |
 | Overrides | — | **planned** | controller hotplug, borderless |
 | Netplay | — | **dropped** | stock lockstep netcode not ported; replace later |

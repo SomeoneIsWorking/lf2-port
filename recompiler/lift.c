@@ -1,0 +1,550 @@
+/* x86 -> C lifter.
+ *
+ * Reads lf2.exe and the Ghidra function list, decodes each function with x86_decode,
+ * and emits one C function per guest function. Instructions we don't handle yet emit a
+ * TODO marker so the output still compiles and coverage is measurable.
+ *
+ * Usage: lift <lf2.exe> <functions.tsv> <out.c> */
+#include "x86_decode.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+enum { IMAGE_BASE = 0x400000, MAX_FUNCS = 4096, MAX_INSNS = 8192 };
+
+typedef struct { uint32_t addr, size; } Func;
+
+static uint8_t *image;          /* the whole file */
+static uint32_t text_rva, text_size, text_off;
+static Func funcs[MAX_FUNCS];
+static int nfuncs;
+
+static uint32_t cur_lo, cur_hi;   /* bounds of the function being lifted */
+static const uint32_t *cur_addrs; /* decoded instruction addresses in this function */
+static int cur_n;
+
+/* A branch target only gets a label if it is a real decoded instruction boundary.
+ * Inline data (jump tables) can desync decoding, leaving targets with no instruction. */
+static int has_label(uint32_t t)
+{
+    for (int i = 0; i < cur_n; i++) if (cur_addrs[i] == t) return 1;
+    return 0;
+}
+
+static long lifted, todo;
+static long todo_by_op[512];
+
+/* ---------- PE ---------- */
+
+static void load_pe(const char *path)
+{
+    FILE *fh = fopen(path, "rb");
+    if (!fh) { perror(path); exit(2); }
+    fseek(fh, 0, SEEK_END);
+    long n = ftell(fh);
+    rewind(fh);
+    image = malloc((size_t)n);
+    if (fread(image, 1, (size_t)n, fh) != (size_t)n) { fprintf(stderr, "short read\n"); exit(2); }
+    fclose(fh);
+
+    uint32_t pe = *(uint32_t *)(image + 0x3C);
+    uint16_t nsec = *(uint16_t *)(image + pe + 6);
+    uint16_t optsz = *(uint16_t *)(image + pe + 20);
+    uint8_t *sec = image + pe + 24 + optsz;
+    for (int i = 0; i < nsec; i++) {
+        uint8_t *s = sec + i * 40;
+        if (memcmp(s, ".text", 5) == 0) {
+            text_rva  = *(uint32_t *)(s + 12);
+            text_size = *(uint32_t *)(s + 8);
+            text_off  = *(uint32_t *)(s + 20);
+        }
+    }
+}
+
+static const uint8_t *guest_ptr(uint32_t va)
+{
+    uint32_t rva = va - IMAGE_BASE;
+    if (rva < text_rva || rva >= text_rva + text_size) return NULL;
+    return image + text_off + (rva - text_rva);
+}
+
+static int is_func(uint32_t va)
+{
+    for (int i = 0; i < nfuncs; i++) if (funcs[i].addr == va) return 1;
+    return 0;
+}
+
+/* ---------- operand emitters ---------- */
+
+static const char *REG32[8] = { "R(EAX)", "R(ECX)", "R(EDX)", "R(EBX)",
+                                "R(ESP)", "R(EBP)", "R(ESI)", "R(EDI)" };
+
+/* Effective address expression for a ModRM that references memory.
+ * Returns a bare expression with no surrounding parentheses -- callers wrap it. */
+static void ea(char *buf, size_t n, const x86_insn *in)
+{
+    const uint8_t mod = in->modrm >> 6, rm = in->modrm & 7;
+    if (mod == 0 && rm == 5) { snprintf(buf, n, "0x%xu", (unsigned)in->disp); return; }
+
+    char base[64] = "", index[64] = "";
+    if (in->has_sib) {
+        const uint8_t b = in->sib & 7, x = (in->sib >> 3) & 7, scale = 1u << (in->sib >> 6);
+        if (!(mod == 0 && b == 5)) snprintf(base, sizeof base, "%s", REG32[b]);
+        if (x != 4) snprintf(index, sizeof index, " + %s*%u", REG32[x], scale);
+    } else {
+        snprintf(base, sizeof base, "%s", REG32[rm]);
+    }
+
+    char disp[32] = "";
+    if (in->disp_size) snprintf(disp, sizeof disp, " + %d", in->disp);
+    snprintf(buf, n, "%s%s%s", base[0] ? base : "0u", index, disp);
+}
+
+/* r/m operand as an rvalue and as an assignment target. */
+static void rm_read(char *buf, size_t n, const x86_insn *in, int size)
+{
+    if ((in->modrm >> 6) == 3) {
+        const uint8_t rm = in->modrm & 7;
+        if (size == 4) snprintf(buf, n, "%s", REG32[rm]);
+        else if (size == 1) snprintf(buf, n, "GETR8(%u)", rm);
+        else snprintf(buf, n, "(uint16_t)%s", REG32[rm]);
+        return;
+    }
+    char a[128]; ea(a, sizeof a, in);
+    snprintf(buf, n, "LD%d(%s)", size * 8, a);
+}
+
+static void rm_write(FILE *o, const x86_insn *in, int size, const char *value)
+{
+    if ((in->modrm >> 6) == 3) {
+        const uint8_t rm = in->modrm & 7;
+        if (size == 4)      fprintf(o, "%s = %s;", REG32[rm], value);
+        else if (size == 1) fprintf(o, "SETR8(%u, %s);", rm, value);
+        else                fprintf(o, "%s = (%s & ~0xffffu) | ((%s) & 0xffffu);",
+                                    REG32[rm], REG32[rm], value);
+        return;
+    }
+    char a[128]; ea(a, sizeof a, in);
+    fprintf(o, "ST%d(%s, %s);", size * 8, a, value);
+}
+
+static const char *reg_operand(const x86_insn *in, int size, char *buf, size_t n)
+{
+    const uint8_t reg = (in->modrm >> 3) & 7;
+    if (size == 4)      snprintf(buf, n, "%s", REG32[reg]);
+    else if (size == 1) snprintf(buf, n, "GETR8(%u)", reg);
+    else                snprintf(buf, n, "(uint16_t)%s", REG32[reg]);
+    return buf;
+}
+
+static const char *CC[16] = { "flag_of()", "!flag_of()", "flag_cf()", "!flag_cf()",
+    "flag_zf()", "!flag_zf()", "(flag_cf()||flag_zf())", "!(flag_cf()||flag_zf())",
+    "flag_sf()", "!flag_sf()", "flag_pf()", "!flag_pf()",
+    "(flag_sf()!=flag_of())", "(flag_sf()==flag_of())",
+    "(flag_zf()||flag_sf()!=flag_of())", "(!flag_zf()&&flag_sf()==flag_of())" };
+
+/* arithmetic group 0..7 = ADD OR ADC SBB AND SUB XOR CMP */
+static const char *ALU_C[8]  = { "+", "|", "+", "-", "&", "-", "^", "-" };
+static const char *ALU_F[8]  = { "F_ADD", "F_LOGIC", "F_ADD", "F_SUB",
+                                 "F_LOGIC", "F_SUB", "F_LOGIC", "F_SUB" };
+
+/* ---------- instruction emission ---------- */
+
+/* Emit one instruction. Returns 1 if lifted, 0 if it fell through to a TODO. */
+static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
+{
+    const uint8_t op = in->opcode;
+    const int osize = (in->prefixes & X86_PFX_OPSIZE) ? 2 : 4;
+    char a[160], b[160];
+
+    if (in->map == 1) {
+        /* ALU r/m,r and r,r/m and al/eax,imm */
+        if (op < 0x40 && (op & 7) <= 5 && op != 0x0F &&
+            !(op == 0x0F) && ((op & 7) != 6) && ((op & 7) != 7)) {
+            const int g = op >> 3;
+            const int size = (op & 1) ? osize : 1;
+            const int is_cmp = (g == 7), is_test = 0;
+            (void)is_test;
+            if ((op & 7) <= 1) {                      /* r/m op= r */
+                rm_read(a, sizeof a, in, size);
+                reg_operand(in, size, b, sizeof b);
+                fprintf(o, "{ uint32_t _a=%s, _b=%s, _r=_a %s _b; FLAGS(%s,%d,_a,_b,_r); ",
+                        a, b, ALU_C[g], ALU_F[g], size);
+                if (!is_cmp) rm_write(o, in, size, "_r");
+                fprintf(o, " }");
+                return 1;
+            }
+            if ((op & 7) <= 3) {                      /* r op= r/m */
+                reg_operand(in, size, a, sizeof a);
+                rm_read(b, sizeof b, in, size);
+                fprintf(o, "{ uint32_t _a=%s, _b=%s, _r=_a %s _b; FLAGS(%s,%d,_a,_b,_r); ",
+                        a, b, ALU_C[g], ALU_F[g], size);
+                if (!is_cmp) {
+                    const uint8_t reg = (in->modrm >> 3) & 7;
+                    if (size == 4) fprintf(o, "%s = _r;", REG32[reg]);
+                    else if (size == 1) fprintf(o, "SETR8(%u, _r);", reg);
+                }
+                fprintf(o, " }");
+                return 1;
+            }
+            /* AL/eAX, imm */
+            const int size2 = (op & 1) ? osize : 1;
+            fprintf(o, "{ uint32_t _a=%s, _b=0x%xu, _r=_a %s _b; FLAGS(%s,%d,_a,_b,_r); ",
+                    size2 == 1 ? "GETR8(0)" : "R(EAX)", (unsigned)in->imm, ALU_C[g],
+                    ALU_F[g], size2);
+            if (!is_cmp) fprintf(o, size2 == 1 ? "SETR8(0, _r);" : "R(EAX) = _r;");
+            fprintf(o, " }");
+            return 1;
+        }
+
+        switch (op) {
+        case 0x50: case 0x51: case 0x52: case 0x53:
+        case 0x54: case 0x55: case 0x56: case 0x57:
+            fprintf(o, "PUSH32(%s);", REG32[op - 0x50]); return 1;
+        case 0x58: case 0x59: case 0x5A: case 0x5B:
+        case 0x5C: case 0x5D: case 0x5E: case 0x5F:
+            fprintf(o, "%s = POP32();", REG32[op - 0x58]); return 1;
+        case 0x68: fprintf(o, "PUSH32(0x%xu);", (unsigned)in->imm); return 1;
+        case 0x6A: fprintf(o, "PUSH32(0x%xu);", (unsigned)in->imm); return 1;
+
+        case 0x88: case 0x89: {
+            const int size = (op & 1) ? osize : 1;
+            reg_operand(in, size, b, sizeof b);
+            rm_write(o, in, size, b);
+            return 1;
+        }
+        case 0x8A: case 0x8B: {
+            const int size = (op & 1) ? osize : 1;
+            rm_read(a, sizeof a, in, size);
+            const uint8_t reg = (in->modrm >> 3) & 7;
+            if (size == 4)      fprintf(o, "%s = %s;", REG32[reg], a);
+            else if (size == 1) fprintf(o, "SETR8(%u, %s);", reg, a);
+            else fprintf(o, "%s = (%s & ~0xffffu) | (%s);", REG32[reg], REG32[reg], a);
+            return 1;
+        }
+        case 0x8D: {                                   /* LEA */
+            char addr[128]; ea(addr, sizeof addr, in);
+            fprintf(o, "%s = %s;", REG32[(in->modrm >> 3) & 7], addr);
+            return 1;
+        }
+        case 0x8F: rm_write(o, in, 4, "POP32()"); return 1;
+
+        case 0x90: fprintf(o, "/* nop */"); return 1;
+
+        case 0xB0: case 0xB1: case 0xB2: case 0xB3:
+        case 0xB4: case 0xB5: case 0xB6: case 0xB7:
+            fprintf(o, "SETR8(%u, 0x%xu);", op - 0xB0, (unsigned)in->imm); return 1;
+        case 0xB8: case 0xB9: case 0xBA: case 0xBB:
+        case 0xBC: case 0xBD: case 0xBE: case 0xBF:
+            fprintf(o, "%s = 0x%xu;", REG32[op - 0xB8], (unsigned)in->imm); return 1;
+
+        case 0x80: case 0x81: case 0x83: {             /* ALU r/m, imm */
+            const int g = (in->modrm >> 3) & 7;
+            const int size = (op == 0x80) ? 1 : osize;
+            rm_read(a, sizeof a, in, size);
+            fprintf(o, "{ uint32_t _a=%s, _b=0x%xu, _r=_a %s _b; FLAGS(%s,%d,_a,_b,_r); ",
+                    a, (unsigned)in->imm, ALU_C[g], ALU_F[g], size);
+            if (g != 7) rm_write(o, in, size, "_r");
+            fprintf(o, " }");
+            return 1;
+        }
+        case 0x84: case 0x85: {                        /* TEST r/m, r */
+            const int size = (op & 1) ? osize : 1;
+            rm_read(a, sizeof a, in, size);
+            reg_operand(in, size, b, sizeof b);
+            fprintf(o, "{ uint32_t _a=%s,_b=%s; FLAGS(F_LOGIC,%d,_a,_b,_a & _b); }", a, b, size);
+            return 1;
+        }
+        case 0xA8: case 0xA9: {
+            const int size = (op & 1) ? osize : 1;
+            fprintf(o, "{ uint32_t _a=%s,_b=0x%xu; FLAGS(F_LOGIC,%d,_a,_b,_a & _b); }",
+                    size == 1 ? "GETR8(0)" : "R(EAX)", (unsigned)in->imm, size);
+            return 1;
+        }
+
+        case 0xC6: case 0xC7: {
+            const int size = (op & 1) ? osize : 1;
+            char v[32]; snprintf(v, sizeof v, "0x%xu", (unsigned)in->imm);
+            rm_write(o, in, size, v);
+            return 1;
+        }
+
+        case 0xA0: case 0xA1:                          /* MOV AL/eAX, moffs */
+            if (op == 0xA0) fprintf(o, "SETR8(0, LD8(0x%xu));", (unsigned)in->imm);
+            else            fprintf(o, "R(EAX) = LD32(0x%xu);", (unsigned)in->imm);
+            return 1;
+        case 0xA2: case 0xA3:                          /* MOV moffs, AL/eAX */
+            if (op == 0xA2) fprintf(o, "ST8(0x%xu, GETR8(0));", (unsigned)in->imm);
+            else            fprintf(o, "ST32(0x%xu, R(EAX));", (unsigned)in->imm);
+            return 1;
+
+        case 0x69: case 0x6B: {                        /* IMUL r32, r/m32, imm */
+            rm_read(a, sizeof a, in, 4);
+            const uint8_t reg = (in->modrm >> 3) & 7;
+            fprintf(o, "%s = (uint32_t)((int32_t)(%s) * %d);", REG32[reg], a, (int)in->imm);
+            return 1;
+        }
+        case 0x86: case 0x87: {                        /* XCHG */
+            const int size = (op & 1) ? osize : 1;
+            rm_read(a, sizeof a, in, size);
+            reg_operand(in, size, b, sizeof b);
+            fprintf(o, "{ uint32_t _t=%s; ", a);
+            rm_write(o, in, size, b);
+            const uint8_t reg = (in->modrm >> 3) & 7;
+            if (size == 4) fprintf(o, " %s = _t; }", REG32[reg]);
+            else           fprintf(o, " SETR8(%u, _t); }", reg);
+            return 1;
+        }
+
+        case 0xC0: case 0xC1: case 0xD0: case 0xD1: case 0xD2: case 0xD3: {
+            const int g = (in->modrm >> 3) & 7;
+            const int size = (op & 1) ? osize : 1;
+            char cnt[32];
+            if (op == 0xC0 || op == 0xC1) snprintf(cnt, sizeof cnt, "%u", (unsigned)(in->imm & 31));
+            else if (op == 0xD0 || op == 0xD1) snprintf(cnt, sizeof cnt, "1");
+            else snprintf(cnt, sizeof cnt, "(GETR8(1) & 31)");
+            rm_read(a, sizeof a, in, size);
+            const char *fn = (g == 4 || g == 6) ? "shl" : (g == 5) ? "shr" : (g == 7) ? "sar"
+                           : (g == 0) ? "rol" : (g == 1) ? "ror" : NULL;
+            if (!fn) break;                            /* RCL/RCR: not seen in this binary */
+            fprintf(o, "{ uint32_t _r = op_%s%d(%s, %s); ", fn, size * 8, a, cnt);
+            rm_write(o, in, size, "_r");
+            fprintf(o, " }");
+            return 1;
+        }
+
+        case 0xF6: case 0xF7: {
+            const int g = (in->modrm >> 3) & 7;
+            const int size = (op & 1) ? osize : 1;
+            rm_read(a, sizeof a, in, size);
+            switch (g) {
+            case 0: case 1:                            /* TEST r/m, imm */
+                fprintf(o, "{ uint32_t _a=%s,_b=0x%xu; FLAGS(F_LOGIC,%d,_a,_b,_a & _b); }",
+                        a, (unsigned)in->imm, size);
+                return 1;
+            case 2:                                    /* NOT */
+                fprintf(o, "{ uint32_t _r = ~(uint32_t)(%s); ", a);
+                rm_write(o, in, size, "_r"); fprintf(o, " }"); return 1;
+            case 3:                                    /* NEG */
+                fprintf(o, "{ uint32_t _a=%s,_r=0u-_a; FLAGS(F_SUB,%d,0u,_a,_r); ", a, size);
+                rm_write(o, in, size, "_r"); fprintf(o, " }"); return 1;
+            case 4:                                    /* MUL */
+                if (size != 4) break;
+                fprintf(o, "{ uint64_t _p=(uint64_t)R(EAX)*(uint64_t)(%s); "
+                           "R(EAX)=(uint32_t)_p; R(EDX)=(uint32_t)(_p>>32); }", a);
+                return 1;
+            case 5:                                    /* IMUL */
+                if (size != 4) break;
+                fprintf(o, "{ int64_t _p=(int64_t)(int32_t)R(EAX)*(int64_t)(int32_t)(%s); "
+                           "R(EAX)=(uint32_t)_p; R(EDX)=(uint32_t)((uint64_t)_p>>32); }", a);
+                return 1;
+            case 6:                                    /* DIV */
+                if (size != 4) break;
+                fprintf(o, "{ uint64_t _n=((uint64_t)R(EDX)<<32)|R(EAX); uint32_t _d=%s; "
+                           "R(EAX)=(uint32_t)(_n/_d); R(EDX)=(uint32_t)(_n%%_d); }", a);
+                return 1;
+            case 7:                                    /* IDIV */
+                if (size != 4) break;
+                fprintf(o, "{ int64_t _n=(int64_t)(((uint64_t)R(EDX)<<32)|R(EAX)); "
+                           "int32_t _d=(int32_t)(%s); "
+                           "R(EAX)=(uint32_t)(int32_t)(_n/_d); R(EDX)=(uint32_t)(int32_t)(_n%%_d); }", a);
+                return 1;
+            default: break;
+            }
+            break;
+        }
+
+        case 0x98: fprintf(o, "R(EAX) = (uint32_t)(int32_t)(int16_t)R(EAX);"); return 1;
+        case 0x99: fprintf(o, "R(EDX) = (uint32_t)((int32_t)R(EAX) >> 31);"); return 1;
+        case 0xC9: fprintf(o, "R(ESP) = R(EBP); R(EBP) = POP32();"); return 1;
+
+        case 0x40: case 0x41: case 0x42: case 0x43:
+        case 0x44: case 0x45: case 0x46: case 0x47:
+            fprintf(o, "{ uint32_t _a=%s,_r=_a+1; FLAGS(F_INC,4,_a,1,_r); %s=_r; }",
+                    REG32[op - 0x40], REG32[op - 0x40]); return 1;
+        case 0x48: case 0x49: case 0x4A: case 0x4B:
+        case 0x4C: case 0x4D: case 0x4E: case 0x4F:
+            fprintf(o, "{ uint32_t _a=%s,_r=_a-1; FLAGS(F_DEC,4,_a,1,_r); %s=_r; }",
+                    REG32[op - 0x48], REG32[op - 0x48]); return 1;
+
+        case 0xE8: {                                   /* CALL rel32 */
+            uint32_t t = (uint32_t)(next + (int32_t)in->imm);
+            fprintf(o, "PUSH32(0x%xu); ", next);
+            if (is_func(t)) fprintf(o, "fn_%08x();", t);
+            else            fprintf(o, "dispatch(0x%xu);", t);
+            return 1;
+        }
+        case 0xE9: case 0xEB: {                        /* JMP rel */
+            uint32_t t = (uint32_t)(next + (int32_t)in->imm);
+            if (t >= cur_lo && t < cur_hi && has_label(t)) fprintf(o, "goto L_%08x;", t);
+            else if (is_func(t))           fprintf(o, "fn_%08x(); return;", t);
+            else                           fprintf(o, "dispatch(0x%xu); return;", t);
+            return 1;
+        }
+        case 0xC3: fprintf(o, "R(ESP) += 4; return;"); return 1;
+        case 0xC2: fprintf(o, "R(ESP) += %u; return;", 4u + (unsigned)in->imm); return 1;
+
+        case 0xFF: {
+            const int g = (in->modrm >> 3) & 7;
+            if (g == 6) { rm_read(a, sizeof a, in, 4); fprintf(o, "PUSH32(%s);", a); return 1; }
+            if (g == 2) { rm_read(a, sizeof a, in, 4);
+                          fprintf(o, "PUSH32(0x%xu); dispatch(%s);", next, a); return 1; }
+            if (g == 4) { rm_read(a, sizeof a, in, 4);
+                          fprintf(o, "dispatch(%s); return;", a); return 1; }
+            if (g == 0 || g == 1) {
+                rm_read(a, sizeof a, in, 4);
+                fprintf(o, "{ uint32_t _a=%s,_r=_a%s1; FLAGS(%s,4,_a,1,_r); ",
+                        a, g == 0 ? "+" : "-", g == 0 ? "F_INC" : "F_DEC");
+                rm_write(o, in, 4, "_r");
+                fprintf(o, " }");
+                return 1;
+            }
+            break;
+        }
+        default: break;
+        }
+
+        if (op >= 0x70 && op <= 0x7F) {                /* Jcc rel8 */
+            uint32_t t = (uint32_t)(next + (int32_t)in->imm);
+            if (t >= cur_lo && t < cur_hi && has_label(t)) fprintf(o, "if (%s) goto L_%08x;", CC[op - 0x70], t);
+            else fprintf(o, "if (%s) { dispatch(0x%xu); return; }", CC[op - 0x70], t);
+            return 1;
+        }
+    } else if (in->map == 2) {
+        if (op >= 0x80 && op <= 0x8F) {                /* Jcc rel32 */
+            uint32_t t = (uint32_t)(next + (int32_t)in->imm);
+            if (t >= cur_lo && t < cur_hi && has_label(t)) fprintf(o, "if (%s) goto L_%08x;", CC[op - 0x80], t);
+            else fprintf(o, "if (%s) { dispatch(0x%xu); return; }", CC[op - 0x80], t);
+            return 1;
+        }
+        if (op >= 0x90 && op <= 0x9F) {                /* SETcc */
+            char v[64]; snprintf(v, sizeof v, "(%s) ? 1u : 0u", CC[op - 0x90]);
+            rm_write(o, in, 1, v);
+            return 1;
+        }
+        if (op == 0xB6 || op == 0xB7 || op == 0xBE || op == 0xBF) {  /* MOVZX / MOVSX */
+            const int size = (op & 1) ? 2 : 1;
+            rm_read(a, sizeof a, in, size);
+            const uint8_t reg = (in->modrm >> 3) & 7;
+            if (op < 0xBE) fprintf(o, "%s = (uint32_t)(%s);", REG32[reg], a);
+            else fprintf(o, "%s = (uint32_t)(int32_t)(int%d_t)(%s);", REG32[reg], size * 8, a);
+            return 1;
+        }
+        if (op == 0xAF) {                               /* IMUL r32, r/m32 */
+            rm_read(a, sizeof a, in, 4);
+            const uint8_t reg = (in->modrm >> 3) & 7;
+            fprintf(o, "%s = (uint32_t)((int32_t)%s * (int32_t)(%s));", REG32[reg], REG32[reg], a);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* ---------- per-function driver ---------- */
+
+static void lift_function(FILE *o, const Func *f)
+{
+    const uint8_t *code = guest_ptr(f->addr);
+    if (!code) return;
+
+    cur_lo = f->addr;
+    cur_hi = f->addr + f->size;
+
+    static uint32_t addrs[MAX_INSNS];
+    static x86_insn insns[MAX_INSNS];
+    static uint8_t is_target[MAX_INSNS];
+    int n = 0;
+
+    uint32_t va = f->addr;
+    while (va < f->addr + f->size && n < MAX_INSNS) {
+        const uint8_t *p = guest_ptr(va);
+        if (!p) break;
+        x86_insn in;
+        size_t avail = f->addr + f->size - va;
+        if (!x86_decode(p, avail < 16 ? avail : 16, &in)) break;
+        addrs[n] = va;
+        insns[n] = in;
+        va += in.length;
+        n++;
+    }
+
+    /* mark intra-function branch targets so we only emit labels that are used */
+    memset(is_target, 0, sizeof(uint8_t) * (size_t)n);
+    for (int i = 0; i < n; i++) {
+        const x86_insn *in = &insns[i];
+        uint32_t next = addrs[i] + in->length, t = 0;
+        int branch = 0;
+        if (in->map == 1 && (in->opcode == 0xE9 || in->opcode == 0xEB ||
+                             (in->opcode >= 0x70 && in->opcode <= 0x7F))) branch = 1;
+        if (in->map == 2 && in->opcode >= 0x80 && in->opcode <= 0x8F) branch = 1;
+        if (!branch) continue;
+        t = (uint32_t)(next + (int32_t)in->imm);
+        for (int j = 0; j < n; j++) if (addrs[j] == t) { is_target[j] = 1; break; }
+    }
+
+    cur_addrs = addrs;
+    cur_n = n;
+
+    fprintf(o, "\nvoid fn_%08x(void)\n{\n", f->addr);
+    for (int i = 0; i < n; i++) {
+        if (is_target[i]) fprintf(o, "L_%08x:\n", addrs[i]);
+        fprintf(o, "    ");
+        if (emit_insn(o, &insns[i], addrs[i], addrs[i] + insns[i].length)) {
+            lifted++;
+        } else {
+            todo++;
+            todo_by_op[insns[i].map == 2 ? 256 + insns[i].opcode : insns[i].opcode]++;
+            fprintf(o, "TODO(\"%02x%s\");", insns[i].opcode, insns[i].map == 2 ? " 0f" : "");
+        }
+        fprintf(o, "\n");
+    }
+    fprintf(o, "}\n");
+}
+
+int main(int argc, char **argv)
+{
+    if (argc != 4) {
+        fprintf(stderr, "usage: %s <lf2.exe> <functions.tsv> <out.c>\n", argv[0]);
+        return 2;
+    }
+    load_pe(argv[1]);
+
+    FILE *fl = fopen(argv[2], "r");
+    if (!fl) { perror(argv[2]); return 2; }
+    char line[512];
+    while (fgets(line, sizeof line, fl) && nfuncs < MAX_FUNCS) {
+        uint32_t addr = (uint32_t)strtoul(line, NULL, 16);
+        char *tab = strchr(line, '\t');
+        if (!tab) continue;
+        uint32_t size = (uint32_t)strtoul(tab + 1, NULL, 10);
+        if (!addr || !size) continue;
+        funcs[nfuncs].addr = addr;
+        funcs[nfuncs].size = size;
+        nfuncs++;
+    }
+    fclose(fl);
+
+    FILE *o = fopen(argv[3], "w");
+    if (!o) { perror(argv[3]); return 2; }
+    fprintf(o, "/* generated by recompiler/lift.c -- do not edit */\n");
+    fprintf(o, "#include \"guest.h\"\n#include \"guest_ops.h\"\n");
+    for (int i = 0; i < nfuncs; i++) fprintf(o, "void fn_%08x(void);\n", funcs[i].addr);
+    for (int i = 0; i < nfuncs; i++) lift_function(o, &funcs[i]);
+    fclose(o);
+
+    const long total = lifted + todo;
+    printf("%d functions, %ld instructions: %ld lifted (%.2f%%), %ld TODO\n",
+           nfuncs, total, lifted, total ? lifted * 100.0 / (double)total : 0.0, todo);
+
+    printf("top unhandled:");
+    for (int round = 0; round < 12; round++) {
+        int best = -1;
+        for (int i = 0; i < 512; i++) if (todo_by_op[i] && (best < 0 || todo_by_op[i] > todo_by_op[best])) best = i;
+        if (best < 0) break;
+        printf(" %s%02x(%ld)", best >= 256 ? "0f" : "", best & 0xff, todo_by_op[best]);
+        todo_by_op[best] = 0;
+    }
+    printf("\n");
+    return 0;
+}

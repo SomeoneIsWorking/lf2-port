@@ -14,3 +14,6 @@ target_link_libraries(test_corpus PRIVATE x86_decode)
 enable_testing()
 add_test(NAME decoder_corpus
          COMMAND test_corpus ${CMAKE_SOURCE_DIR}/re/instructions.tsv)
+
+add_executable(lift recompiler/lift.c)
+target_link_libraries(lift PRIVATE x86_decode)
