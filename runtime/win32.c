@@ -18,6 +18,7 @@ static void ret_stdcall(int nargs, uint32_t value)
 HostWin hw;
 
 static void queue_startup_messages(void);
+void gamepad_handle_event(const SDL_Event *e);
 
 /* ---- window ---- */
 
@@ -79,6 +80,7 @@ void hostwin_pump(void)
 {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
+        gamepad_handle_event(&e);          /* controllers may come and go at any time */
         if (e.type == SDL_EVENT_QUIT) quit_posted = 1;
         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE &&
             (e.key.mod & SDL_KMOD_SHIFT)) quit_posted = 1;
