@@ -314,6 +314,8 @@ static void h_PeekMessageA(void)
 static void h_GetMessageA(void)
 {
     hostwin_pump();
+    if (getenv("LF2_MSG_DEBUG")) { static long n; if (++n % 500 == 1)
+        fprintf(stderr, "GetMessage call #%ld\n", n); }
     if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(4, 0); return; }
     if (next_queued_message(ARG(0), 1)) { ret_stdcall(4, 1); return; }
     fill_msg(ARG(0), 0);
