@@ -21,7 +21,34 @@ CALL EAX                                        -> call to 0
 `0x6f666e69` is the ASCII bytes `info`. The *source* surface in the same call is a valid
 object, so exactly one pointer is wrong.
 
-## Where the bad value comes from
+## The pointer is not corrupted — ESP is displaced
+
+**This supersedes the "clobbered pointer" reading below.** Watching the actual stack slot
+settles it:
+
+- `fn_004246b0` is entered with parameter 0 = `30000390`, the correct surface.
+- The prologue stores it at `[ESP+0x20]`, which resolves to `002ff9e8`.
+- That address is written **once** and **never changes** for the rest of the run.
+- The bad `0x6f666e69` bytes live at `002ff7ac` and below — *lower* addresses.
+
+So the read at `004274da` is not reading a corrupted value; it is reading the **wrong
+address**, roughly `0x218` bytes below where the compiler placed the slot. ESP is
+displaced inside the function.
+
+Two things follow, and they explain why this hid for so long:
+
+1. The stack-balance assertion cannot catch it. It fires at a function's `RET`, and this
+   function never reaches its `RET` — it faults first.
+2. Host handlers are not covered by that assertion at all. Only guest functions carry it,
+   so an import or COM method popping the wrong number of stdcall arguments displaces the
+   caller's ESP silently.
+
+The COM method argument counts are hand-written per interface and are the prime suspect;
+the import arities were at least cross-checked against the game's own call sites.
+
+Next: log ESP at every host call made during this function and find the discontinuity.
+
+## Where the bad value comes from (superseded — see above)
 
 Established by following the value, not by inspection — every frame offset derived by hand
 during this investigation turned out wrong.

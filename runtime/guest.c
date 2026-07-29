@@ -154,6 +154,7 @@ static unsigned fn_pos;
 /* Sampling the watch at every function entry rather than only at indirect calls: a
  * value written and consumed between two indirect calls is invisible otherwise. */
 void watch_sample(const char *where, uint32_t ctx);
+void watch_arm(uint32_t a);
 
 void fn_enter(uint32_t addr)
 {
@@ -169,6 +170,16 @@ void fn_enter(uint32_t addr)
         const char *w = getenv("LF2_FN_WATCH");
         watch = w ? (uint32_t)strtoul(w, NULL, 16) : 0;
         armed = 1;
+    }
+    /* Arm the memory watch on a slot in this function's frame. fn_enter runs before the
+     * prologue, so ESP still points at the return address and the offset is relative to
+     * that. This is how a clobbered local gets attributed to its writer. */
+    if (watch && addr == watch) {
+        const char *rel = getenv("LF2_WATCH_REL");
+        if (rel) {
+            const long off = strtol(rel, NULL, 0);
+            watch_arm((uint32_t)((int64_t)R(ESP) + off));
+        }
     }
     if (watch && addr == watch) {
         fprintf(stderr, "enter %08x from %08x  ecx=%08x args:", addr, LD32(R(ESP)), R(ECX));
@@ -251,10 +262,30 @@ void stack_check(uint32_t esp_at_entry, uint32_t fn)
             fn, (int)(R(ESP) - esp_at_entry));
 }
 
+static uint32_t w_addr, w_val, w_target;
+static int w_armed;
+
+void watch_arm(uint32_t a)
+{
+    w_addr = a;
+    w_val = LD32(a);
+    w_armed = 1;
+    fprintf(stderr, "watch armed at %08x = %08x\n", a, w_val);
+}
+
 void watch_sample(const char *where, uint32_t ctx)
 {
     static uint32_t addr, val, target;
     static int armed;
+    if (w_armed) {
+        const uint32_t now = LD32(w_addr);
+        if (now != w_val) {
+            fprintf(stderr, "SLOT %08x: %08x -> %08x at %s %08x\n",
+                    w_addr, w_val, now, where, ctx);
+            w_val = now;
+        }
+        return;
+    }
     if (!armed) {
         const char *w = getenv("LF2_WATCH");
         const char *t = getenv("LF2_WATCH_VAL");
