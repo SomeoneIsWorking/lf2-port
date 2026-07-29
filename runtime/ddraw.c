@@ -455,6 +455,23 @@ static void clip_GetClipList(uint32_t self)
     com_ret(4, DD_OK);
 }
 
+/* Lets the GDI layer draw into a surface: DirectDraw's GetDC hands the surface object
+ * itself back as a device context, so StretchBlt and TextOut land here. */
+int ddraw_surface_info(uint32_t obj, uint32_t *pixels, int *w, int *h, int *pitch)
+{
+    if (obj < 0x30000000u || obj >= 0x40000000u) return 0;
+    Surface *s = com_host(obj);
+    if (!s) return 0;
+    *pixels = s->pixels; *w = s->w; *h = s->h; *pitch = s->pitch;
+    return 1;
+}
+
+void ddraw_surface_present(uint32_t obj)
+{
+    Surface *s = com_host(obj);
+    if (s && s->primary) present_primary();
+}
+
 /* ---- registration ---- */
 
 /* Method names, so the call trace can be diffed against Wine's ddraw channel. */

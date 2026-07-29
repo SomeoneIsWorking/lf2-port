@@ -46,6 +46,12 @@ void guest_load_image(const char *exe_path)
     const uint32_t base = *(uint32_t *)(file + pe + 24 + 28);
     const uint8_t *sec = file + pe + 24 + optsz;
 
+    /* Map the headers too. A real loader maps SizeOfHeaders bytes at the image base, and
+     * this program depends on it: it checks the MZ signature at 0x400000, and its
+     * resources are found by walking the data directory in mapped memory. */
+    const uint32_t hdr_size = *(uint32_t *)(file + pe + 24 + 60);
+    memcpy(g_mem + base, file, hdr_size ? hdr_size : 0x400);
+
     for (int i = 0; i < nsec; i++) {
         const uint8_t *s = sec + i * 40;
         const uint32_t vsize = *(uint32_t *)(s + 8);
@@ -180,6 +186,7 @@ Handler host_lookup(const char *dll, const char *name);
 Handler win32_lookup(const char *dll, const char *name);
 Handler gfx_lookup(const char *dll, const char *name);
 Handler dsound_lookup(const char *dll, const char *name);
+Handler gdi_lookup(const char *dll, const char *name);
 void com_call(uint32_t sentinel);
 
 void host_import(uint32_t sentinel)
@@ -193,6 +200,7 @@ void host_import(uint32_t sentinel)
     if (!h) h = win32_lookup(imports[i].dll, imports[i].name);
     if (!h) h = gfx_lookup(imports[i].dll, imports[i].name);
     if (!h) h = dsound_lookup(imports[i].dll, imports[i].name);
+    if (!h) h = gdi_lookup(imports[i].dll, imports[i].name);
     if (!h) {
         fprintf(stderr, "unimplemented import: %s.%s\n", imports[i].dll, imports[i].name);
         abort();

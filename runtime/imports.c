@@ -232,6 +232,8 @@ static const char *gstr(uint32_t p) { return (const char *)(g_mem + p); }
  * The game stores Windows paths ("data\\m_ok.wav"). Backslashes become slashes, and if
  * that still misses we retry component-by-component case-insensitively, because the
  * original filesystem was case-insensitive and the data files are not consistent. */
+static const char *host_path(uint32_t guest_str);
+
 static int find_ci(const char *dir, const char *want, char *out, size_t cap)
 {
     DIR *d = opendir(dir[0] ? dir : ".");
@@ -283,6 +285,8 @@ static const char *host_path(uint32_t guest_str)
     return path;
 }
 
+
+const char *host_path_of(uint32_t g) { return host_path(g); }
 
 static void h_fopen(void)
 {
