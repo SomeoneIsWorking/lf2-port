@@ -236,3 +236,25 @@ LF2_PROBE=4246fd,4274da cmake --build build --target lf2   # log ESP at those in
 
 `LF2_PROBE` is read when the code is **generated**, not when it runs, so the target has to
 be rebuilt after changing it.
+
+## How far the game runs
+
+Verified by scripted input and screenshots:
+
+| Screen | Reached |
+|---|---|
+| Title menu | yes |
+| Control settings | yes, renders fully |
+| Mode selection (VS, Stage, championships, Battle, Demo, Playback) | yes |
+| VS mode control overlay | yes |
+| Character selection | yes — players join, portraits render on assignment |
+| A running match | **not yet** |
+
+Starting a match needs the pre-fight menu (Fight! / Reset All / Reset Random / Background /
+Difficulty / Exit) driven to its first entry and confirmed. The highlight starts on Reset
+Random, so an attack press there re-rolls the characters instead of starting, and pressing
+up to move the highlight un-joins the player rather than moving within the menu.
+
+That is a choreography problem rather than a port defect: every screen renders, and input
+is verified all the way into the game's key-state array. It wants a human at the keyboard,
+or a more careful script than a fixed cycling sequence.
