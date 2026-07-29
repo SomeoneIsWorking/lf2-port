@@ -221,7 +221,14 @@ static void surf_Blt(uint32_t self)
         const int keyed = (flags & DDBLT_KEYSRC) && s->has_key;
         blit(d, dl, dt, s, sl, st_, sr - sl, sb - st_, keyed, s->key_lo, s->key_hi);
     }
-    if (d->primary) present_primary();
+    if (d->primary) {
+        if (getenv("LF2_BLT_DEBUG")) {
+            static long n;
+            fprintf(stderr, "blt->primary #%ld drect=%08x [%d %d %d %d] src=%08x srect=%08x flags=%08x\n",
+                    ++n, drect, dl, dt, dr, db, srcobj, srect, flags);
+        }
+        present_primary();
+    }
     com_ret(6, DD_OK);
 }
 
