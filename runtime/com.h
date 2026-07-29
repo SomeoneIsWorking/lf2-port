@@ -15,7 +15,9 @@
 
 enum { COM_SENTINEL = 0xF1000000u };
 
-enum { IF_DDRAW, IF_SURFACE, IF_CLIPPER, IF_PALETTE, IF_DSOUND, IF_DSBUFFER, IF_STUB, IF_COUNT };
+enum { IF_DDRAW, IF_SURFACE, IF_CLIPPER, IF_PALETTE, IF_DSOUND, IF_DSBUFFER,
+       IF_GRAPH, IF_MCONTROL, IF_MPOSITION, IF_BAUDIO, IF_MEVENT, IF_MSEEK,
+       IF_COUNT };
 
 /* A COM method: `this` is the guest object address, args follow on the guest stack.
  * Return with com_ret(nargs_including_this, hresult). */
@@ -28,6 +30,10 @@ typedef struct {
 } ComClass;
 
 extern ComClass com_class[IF_COUNT];
+
+/* Which method is currently executing -- lets a shared handler pop the right number of
+ * stdcall arguments from a per-interface table instead of needing one function each. */
+extern int com_cur_iface, com_cur_method;
 
 void     com_init(void);
 uint32_t com_create(int iface, void *host);   /* -> guest object address */

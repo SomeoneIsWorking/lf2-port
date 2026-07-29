@@ -201,6 +201,24 @@ static void ds_CreateSoundBuffer(uint32_t self)
     com_ret(4, DD_OK);
 }
 
+/* The game plays the same sound concurrently, so it duplicates buffers. Returning S_OK
+ * without writing the out-pointer left the game calling through uninitialised memory. */
+static void ds_DuplicateSoundBuffer(uint32_t self)
+{
+    (void)self;
+    const uint32_t src = ARG(1), out = ARG(2);
+    SBuf *o = src ? com_host(src) : NULL;
+    if (!o || !out) { if (out) ST32(out, 0); com_ret(3, E_FAIL); return; }
+
+    SBuf *b = SDL_calloc(1, sizeof *b);
+    *b = *o;                     /* shares the PCM; its own play cursor */
+    b->playing = 0;
+    b->pos = 0;
+    if (nbufs < MAX_BUFS) bufs[nbufs++] = b;
+    ST32(out, com_create(IF_DSBUFFER, b));
+    com_ret(3, DD_OK);
+}
+
 static void ds_ret_ok2(uint32_t self) { (void)self; com_ret(2, DD_OK); }
 static void ds_ret_ok3(uint32_t self) { (void)self; com_ret(3, DD_OK); }
 
@@ -214,7 +232,7 @@ void dsound_register(void)
     c->method[2] = obj_Release;
     c->method[3] = ds_CreateSoundBuffer;
     c->method[4] = ds_ret_ok2;                   /* GetCaps */
-    c->method[5] = ds_ret_ok3;                   /* DuplicateSoundBuffer */
+    c->method[5] = ds_DuplicateSoundBuffer;
     c->method[6] = ds_ret_ok3;                   /* SetCooperativeLevel */
     c->method[7] = sb_ret_ok1;                   /* Compact */
     c->method[8] = ds_ret_ok2;                   /* GetSpeakerConfig */

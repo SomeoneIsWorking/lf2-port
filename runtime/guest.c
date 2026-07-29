@@ -301,7 +301,8 @@ void dispatch(uint32_t target)
     if (target >= IMPORT_SENTINEL) { host_import(target); return; }
     const GuestFunc *f = bsearch(&target, g_funcs, (size_t)g_nfuncs, sizeof g_funcs[0], cmp_addr);
     if (!f) {
-        fprintf(stderr, "indirect call to unknown address %08x\n", target);
+        fprintf(stderr, "indirect call to unknown address %08x from guest %08x\n",
+                target, LD32(R(ESP)));
         dump_trace();
         abort();
     }
