@@ -164,7 +164,19 @@ Two candidate consumers have been examined and neither is the menu:
   y=422, w=132, h=32 — which is exactly the advertisement layout in `data/ad0.txt`
   (`ba 0 422 132 32`). That code drives the ad strip, not the menu.
 
-- **The `WM_KEYDOWN` route is text entry.** `004031d0`, the function the handler passes the
+- **The game keeps its own key-state array at `00455378`**, indexed by virtual-key code.
+  `fn_0043bf10` fills it with `0x75` at startup and the `WM_KEYDOWN` handler writes `0x64`
+  at `0043b557` (`MOV byte ptr [EBX + 0x455378], DL`, with EBX holding wParam). This is
+  what the game polls instead of `GetKeyState`, which explains why `GetKeyState` is never
+  called. The chain right after it comparing wParam against `0x4c`, `0x46` and `0x32` is
+  the "LF2" cheat-code detector.
+
+  **Open:** watching `keystate[0x65]` (`004553dd`) shows only the startup fill to `0x75`,
+  never the `0x64` a keypress should write — even though the handler provably runs and the
+  key provably reaches the text buffer two instructions earlier. Something about that store
+  is not taking effect, and it is the most concrete open lead.
+
+- **The `WM_KEYDOWN` route is also text entry.** `004031d0`, the function the handler passes the
   key to, accepts space, period, letters and digits and appends them to a string buffer.
   It is for typing a name, not for menu navigation — which is consistent with nothing ever
   draining the queue.
