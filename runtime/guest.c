@@ -115,6 +115,7 @@ Handler gfx_lookup(const char *dll, const char *name);
 Handler dsound_lookup(const char *dll, const char *name);
 Handler gdi_lookup(const char *dll, const char *name);
 Handler gamepad_lookup(const char *dll, const char *name);
+Handler wsock_lookup(const char *dll, const char *name);
 void com_call(uint32_t sentinel);
 
 void host_import(uint32_t sentinel)
@@ -130,6 +131,7 @@ void host_import(uint32_t sentinel)
     if (!h) h = dsound_lookup(imports[i].dll, imports[i].name);
     if (!h) h = gdi_lookup(imports[i].dll, imports[i].name);
     if (!h) h = gamepad_lookup(imports[i].dll, imports[i].name);
+    if (!h) h = wsock_lookup(imports[i].dll, imports[i].name);
     if (!h) {
         fprintf(stderr, "unimplemented import: %s.%s\n", imports[i].dll, imports[i].name);
         abort();

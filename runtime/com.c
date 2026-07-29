@@ -7,7 +7,10 @@
 ComClass com_class[IF_COUNT];
 int com_cur_iface, com_cur_method;
 
-enum { MAX_OBJECTS = 512 };
+/* Loading a match creates a surface per character sprite sheet, and LF2 ships around
+ * forty characters with several sheets each, so 512 ran out mid-load. The table is only
+ * pointers; the surfaces themselves live in guest memory. */
+enum { MAX_OBJECTS = 8192 };
 static struct { uint32_t self; void *host; int iface; } objects[MAX_OBJECTS];
 static int nobjects;
 
