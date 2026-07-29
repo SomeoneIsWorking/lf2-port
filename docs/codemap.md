@@ -18,7 +18,8 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Recompiler: lifter (x86 → C) | `recompiler/lift.c` | **wip** | 96.25% of instructions lifted; output compiles; x87 + string ops remain |
 | Runtime | `runtime/guest.h`, `runtime/guest_ops.h` | **wip** | CPU state, lazy flags, memory; no host backend yet |
 | Runtime (SDL3) | — | **planned** | video / audio / input / Win32 shim |
-| Overrides | — | **planned** | controller hotplug, borderless |
+| Controllers | `runtime/gamepad.c` | **done** | SDL3 gamepad; auto-detect and hotswap (untested on hardware) |
+| Window modes | `runtime/win32.c` | **done** | windowed / borderless / fullscreen, Alt+Enter toggle |
 | Netplay | — | **dropped** | stock lockstep netcode not ported; replace later |
 | Startup crash | `docs/current-crash.md` | **fixed** | function-end detection; see doc |
 | Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **wip** | main menu renders natively; some background regions still blank |

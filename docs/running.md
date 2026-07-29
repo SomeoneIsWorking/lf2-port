@@ -24,6 +24,21 @@ opens on the real desktop while `import` photographs the empty Xvfb display. Uns
 `WAYLAND_DISPLAY` is not enough — SDL still finds the socket. This looked like a rendering
 bug for a while; it is purely an artefact of the capture setup.
 
+## Window mode
+
+`LF2_WINDOW` selects how the window is created. The game itself only ever asks for a
+fixed-size bordered window, so this is the port's choice rather than something the game
+can express.
+
+| Value | Effect |
+|---|---|
+| `windowed` (default) | resizable bordered window at the game's native 794x550 |
+| `borderless` | same size, no frame |
+| `fullscreen` | borderless fullscreen |
+
+**Alt+Enter** toggles fullscreen at any time. Rendering always happens at 794x550 and is
+letterboxed to whatever the window becomes, so the game never sees a different resolution.
+
 ## Debug switches
 
 All are environment variables read at run time, and all are off by default.

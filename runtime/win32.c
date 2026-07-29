@@ -29,6 +29,33 @@ static void h_RegisterClassA(void)
     ret_stdcall(1, 1);
 }
 
+/* Window mode. The game only ever asks for a fixed-size bordered window, so the choice
+ * lives here rather than being something it can express. Letterboxed logical presentation
+ * means the game still renders at its native 794x550 whatever the window becomes. */
+static void apply_window_mode(void)
+{
+    const char *mode = getenv("LF2_WINDOW");
+    if (!mode) mode = "windowed";
+
+    if (strcmp(mode, "borderless") == 0) {
+        SDL_SetWindowBordered(hw.window, false);
+    } else if (strcmp(mode, "fullscreen") == 0) {
+        SDL_SetWindowBordered(hw.window, false);
+        SDL_SetWindowFullscreen(hw.window, true);
+    } else if (strcmp(mode, "windowed") != 0) {
+        fprintf(stderr, "LF2_WINDOW: unknown mode \"%s\" "
+                        "(windowed, borderless, fullscreen)\n", mode);
+    }
+}
+
+static void toggle_fullscreen(void)
+{
+    const bool now = (SDL_GetWindowFlags(hw.window) & SDL_WINDOW_FULLSCREEN) != 0;
+    SDL_SetWindowFullscreen(hw.window, !now);
+    if (now) SDL_SetWindowBordered(hw.window, true);
+    else     SDL_SetWindowBordered(hw.window, false);
+}
+
 static void h_CreateWindowExA(void)
 {
     hw.width  = (int)ARG(6);
@@ -46,6 +73,7 @@ static void h_CreateWindowExA(void)
     hw.renderer = SDL_CreateRenderer(hw.window, NULL);
     SDL_SetRenderLogicalPresentation(hw.renderer, hw.width, hw.height,
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    apply_window_mode();
     hw.hwnd = 0x00010000;
     queue_startup_messages();
     ret_stdcall(12, hw.hwnd);
@@ -84,6 +112,9 @@ void hostwin_pump(void)
         if (e.type == SDL_EVENT_QUIT) quit_posted = 1;
         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE &&
             (e.key.mod & SDL_KMOD_SHIFT)) quit_posted = 1;
+        /* Alt+Enter is what players expect, and the game cannot ask for it itself. */
+        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_RETURN &&
+            (e.key.mod & SDL_KMOD_ALT)) toggle_fullscreen();
     }
 }
 
