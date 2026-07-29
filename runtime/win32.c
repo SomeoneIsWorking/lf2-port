@@ -120,13 +120,16 @@ static int autokey_pressed(uint32_t vk);
  * tell us nothing about code that reacts to WM_KEYDOWN. */
 /* Scripted pointer, the mouse counterpart of LF2_AUTOKEY:
  *   LF2_AUTOCLICK=<x>,<y>   move there and click on the same schedule as LF2_AUTOKEY. */
+/* LF2_AUTOCLICK takes one or more points, separated by semicolons, and steps through
+ * them on the same schedule as the keys: "400,220;155,29". A single fixed point cannot
+ * drive a sequence of screens whose buttons are in different places. */
 static int autoclick_state(int *x, int *y)
 {
     const char *spec = getenv("LF2_AUTOCLICK");
     if (!spec) return 0;
-    *x = (int)strtol(spec, (char **)&spec, 10);
-    while (*spec == ',' || *spec == ' ') spec++;
-    *y = (int)strtol(spec, NULL, 10);
+
+    unsigned points = 1;
+    for (const char *c = spec; *c; c++) if (*c == ';') points++;
 
     static uint64_t start_ms;
     if (!start_ms) start_ms = SDL_GetTicks();
@@ -137,7 +140,19 @@ static int autoclick_state(int *x, int *y)
 
     const uint64_t now = SDL_GetTicks() - start_ms;
     if (now < begin) return 0;
-    return ((now - begin) % every) < 150;          /* button held briefly */
+    const uint64_t elapsed = now - begin;
+
+    const unsigned want = (unsigned)((elapsed / every) % points);
+    unsigned i = 0;
+    for (const char *c = spec; *c; ) {
+        const int px = (int)strtol(c, (char **)&c, 10);
+        while (*c == ',' || *c == ' ') c++;
+        const int py = (int)strtol(c, (char **)&c, 10);
+        if (i == want) { *x = px; *y = py; break; }
+        i++;
+        while (*c == ';' || *c == ' ') c++;
+    }
+    return (elapsed % every) < 150;                /* button held briefly */
 }
 
 static void pump_autoclick(void)
@@ -513,6 +528,10 @@ static void h_u1_0(void) { ret_stdcall(0, 1); }
 static void h_u1_4_defwnd(void) { ret_stdcall(4, 0); }
 
 /* ole32: the game only uses COM to reach DirectSound. */
+/* No file dialog. Reporting a cancelled dialog is a state the game already handles,
+ * whereas aborting here takes the whole process down. */
+static void h_GetOpenFileNameA(void) { ret_stdcall(1, 0); }
+
 static void h_CoInitialize(void)   { ret_stdcall(1, 0); }
 /* DirectShow (background music) is not implemented, so this reports failure.
  * A generic COM stub is NOT viable here: stdcall methods pop their own arguments and
@@ -564,6 +583,7 @@ Handler win32_lookup(const char *dll, const char *name)
         { "USER32.dll", "LoadIconA",         h_u1_2 },
 
         { "USER32.dll", "SetCursor",         h_u1_1 },
+        { "COMDLG32.dll", "GetOpenFileNameA", h_GetOpenFileNameA },
         { "ole32.dll",  "CoInitialize",      h_CoInitialize },
         { "ole32.dll",  "CoCreateInstance",  h_CoCreateInstance },
         { "SHELL32.dll", "ShellExecuteA",    h_u1_6 },
