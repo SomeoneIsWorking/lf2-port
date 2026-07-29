@@ -321,8 +321,11 @@ static void h_GetMessageA(void)
     ret_stdcall(4, 1);
 }
 
+void dump_mem_once(void);
+
 static void h_DispatchMessageA(void)
 {
+    dump_mem_once();
     const uint32_t p = ARG(0);
     const uint32_t msg = LD32(p + 4);
     if (getenv("LF2_MSG_DEBUG"))
