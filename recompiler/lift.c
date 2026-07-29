@@ -731,7 +731,12 @@ static int testable(const x86_insn *in)
     if (op >= 0x70 && op <= 0x7F) return 0;
     if (op == 0xC2 || op == 0xC3 || op == 0xC9) return 0;
     if (op == 0xFF || op == 0xFE) return 0;
-    if (op >= 0x50 && op <= 0x5F) return 0;              /* push/pop touch memory */
+    /* PUSH and POP cannot be differentially tested against a 64-bit host at all: in long
+     * mode their operand size defaults to 64, so the CPU moves eight bytes and adjusts
+     * rsp by eight where 32-bit code moves four. No encoding overrides that, so the two
+     * sides cannot be made to agree. This is a limit of the technique, not a gap that
+     * more harness work would close -- an interpreter-based oracle would be needed. */
+    if (op >= 0x50 && op <= 0x5F) return 0;
     if (op == 0x68 || op == 0x6A || op == 0x8F) return 0;
     if (op == 0x9C || op == 0x9D) return 0;
     if (op == 0xCC || op == 0xCD) return 0;
@@ -842,11 +847,17 @@ static void gen_insn_test(const char *tsv, const char *out)
                            ? (int)((insn.modrm >> 3) & 7) : -1;
         const int scale = insn.has_sib ? (1 << (insn.sib >> 6)) : 1;
         const int is_x87 = (insn.map == 1 && insn.opcode >= 0xD8 && insn.opcode <= 0xDF);
+        const int is_stack = (insn.map == 1 &&
+                             ((insn.opcode >= 0x50 && insn.opcode <= 0x5F) ||
+                              insn.opcode == 0x68 || insn.opcode == 0x6A ||
+                              insn.opcode == 0x8F ||
+                              (insn.opcode == 0xFF && ((insn.modrm >> 3) & 7) == 6)));
         const int is_str = (insn.map == 1 &&
                             ((insn.opcode >= 0xA4 && insn.opcode <= 0xA7) ||
                              (insn.opcode >= 0xAA && insn.opcode <= 0xAF)));
-        fprintf(o, "}, case_%d, %d, %d, %d, %d, %d, %d, %d, %d },\n",
-                idx++, mem, base, index, addr_reg, (int)insn.disp, scale, is_x87, is_str);
+        fprintf(o, "}, case_%d, %d, %d, %d, %d, %d, %d, %d, %d, %d },\n",
+                idx++, mem, base, index, addr_reg, (int)insn.disp, scale,
+                is_x87, is_str, is_stack);
     }
     fprintf(o, "};\nconst int insn_ncases = %d;\n", idx);
     fclose(o);

@@ -46,6 +46,20 @@ static const uint8_t PROLOGUE[] = {
     0x41, 0x8B, 0x7C, 0x24, 0x1C,       /* mov edi, [r12+0x1C] */
 };
 
+/* Stack variants: park the host's own rsp in r13, point esp at the guest stack for the
+ * duration of the instruction, then put it back. Writing esp zeroes the top half of rsp,
+ * which is why guest memory has to live in the low 4 GB. */
+static const uint8_t STACK_PRE[] = {
+    0x41, 0x55,                         /* push r13            */
+    0x49, 0x89, 0xE5,                   /* mov  r13, rsp       */
+    0x41, 0x8B, 0x64, 0x24, 0x10,       /* mov  esp, [r12+0x10]*/
+};
+static const uint8_t STACK_POST[] = {
+    0x41, 0x89, 0x64, 0x24, 0x10,       /* mov  [r12+0x10], esp*/
+    0x4C, 0x89, 0xEC,                   /* mov  rsp, r13       */
+    0x41, 0x5D,                         /* pop  r13            */
+};
+
 /* x87 variants: restore the FPU before the instruction, save it after. */
 static const uint8_t FRSTOR_IN[]  = { 0x41, 0xDD, 0xA4, 0x24, 0x40, 0x00, 0x00, 0x00 };
 static const uint8_t FNSAVE_OUT[] = { 0x41, 0xDD, 0xB4, 0x24, 0xB0, 0x00, 0x00, 0x00 };
@@ -74,13 +88,15 @@ enum { GUEST_SIZE = 16u << 20, SCRATCH = 8u << 20, SCRATCH_SPAN = 4096 };
 
 static uint8_t *page;
 
-static Stub build(const uint8_t *insn, unsigned len, int x87)
+static Stub build(const uint8_t *insn, unsigned len, int x87, int stack)
 {
     size_t n = 0;
     memcpy(page + n, PROLOGUE, sizeof PROLOGUE); n += sizeof PROLOGUE;
-    if (x87) { memcpy(page + n, FRSTOR_IN, sizeof FRSTOR_IN); n += sizeof FRSTOR_IN; }
+    if (x87)   { memcpy(page + n, FRSTOR_IN, sizeof FRSTOR_IN);   n += sizeof FRSTOR_IN; }
+    if (stack) { memcpy(page + n, STACK_PRE, sizeof STACK_PRE);   n += sizeof STACK_PRE; }
     memcpy(page + n, insn, len);                 n += len;
-    if (x87) { memcpy(page + n, FNSAVE_OUT, sizeof FNSAVE_OUT); n += sizeof FNSAVE_OUT; }
+    if (stack) { memcpy(page + n, STACK_POST, sizeof STACK_POST); n += sizeof STACK_POST; }
+    if (x87)   { memcpy(page + n, FNSAVE_OUT, sizeof FNSAVE_OUT); n += sizeof FNSAVE_OUT; }
     memcpy(page + n, EPILOGUE, sizeof EPILOGUE);
     __builtin___clear_cache((char *)page, (char *)page + 4096);
     return (Stub)page;
@@ -172,7 +188,7 @@ int main(void)
             fprintf(stderr, "\n");
             fflush(stderr);
         }
-        Stub stub = build(k->bytes, k->len, k->is_x87);
+        Stub stub = build(k->bytes, k->len, k->is_x87, k->is_stack);
 
         for (int r = 0; r < ROUNDS; r++) {
             State want;
@@ -181,6 +197,7 @@ int main(void)
             want.eflags = 0x202;
 
             uint32_t index_val = 0;
+            if (k->is_stack) want.r[4] = SCRATCH + 1024;   /* guest stack, grows down */
             if (k->is_string) {
                 /* Source and destination are placed apart so a REP MOVS does not overlap
                  * itself, and both stay inside the filled scratch span. ECX is kept small
@@ -212,10 +229,12 @@ int main(void)
 
             State got = want;
             if (k->uses_memory) got.r[k->base_reg] = mem_base + want.r[k->base_reg];
+            if (k->is_stack) want.r[4] = SCRATCH + 1024;   /* guest stack, grows down */
             if (k->is_string) {
                 got.r[6] = mem_base + want.r[6];
                 got.r[7] = mem_base + want.r[7];
             }
+            if (k->is_stack) got.r[4] = mem_base + want.r[4];
             stub(&got);
             memcpy(after_host, g_mem + SCRATCH - SCRATCH_SPAN / 2, SCRATCH_SPAN);
 
@@ -265,7 +284,7 @@ int main(void)
                 continue;
             }
             for (int i = 0; i < 8; i++) {
-                if (i == 4) continue;
+                if (i == 4 && !k->is_stack) continue;
                 /* The base register holds a host address on one side by construction. */
                 if (k->uses_memory && i == k->base_reg) continue;
                 /* ESI/EDI hold host addresses on one side by construction, and the string
@@ -273,6 +292,7 @@ int main(void)
                 uint32_t mine = cpu.r[i];
                 if (i == k->addr_reg) mine += mem_base;
                 if (k->is_string && (i == 6 || i == 7)) mine += mem_base;
+                if (k->is_stack && i == 4) mine += mem_base;
                 if (mine != got.r[i]) {
                     failed++;
                     if (reported < 15) {

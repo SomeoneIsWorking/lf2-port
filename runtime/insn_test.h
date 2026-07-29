@@ -16,6 +16,7 @@ typedef struct {
     int         scale;         /* index scale */
     int         is_x87;
     int         is_string;     /* addresses through ESI/EDI */
+    int         is_stack;      /* push/pop: needs a substituted ESP */
 } InsnCase;
 
 extern const InsnCase insn_cases[];
