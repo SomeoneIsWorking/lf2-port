@@ -149,6 +149,122 @@ static const char *ALU_C[8]  = { "+", "|", "+", "-", "&", "-", "^", "-" };
 static const char *ALU_F[8]  = { "F_ADD", "F_LOGIC", "F_ADD", "F_SUB",
                                  "F_LOGIC", "F_SUB", "F_LOGIC", "F_SUB" };
 
+
+/* ---------- x87 ----------
+ * Operand width comes from the escape byte plus the ModRM reg field, not the mnemonic.
+ * Evaluated in host double; see docs/isa-scope.md for why that is faithful here. */
+static const char *FARITH[8] = { "+", "*", "", "", "-", "-", "/", "/" };
+
+static int emit_x87(FILE *o, const x86_insn *in)
+{
+    const uint8_t esc = in->opcode, modrm = in->modrm;
+    const int g = (modrm >> 3) & 7;
+    char addr[128];
+
+    if (modrm < 0xC0) {                       /* memory operand */
+        ea(addr, sizeof addr, in);
+        const char *ld = NULL;
+        switch (esc) {
+        case 0xD9: ld = "LDF32"; break;
+        case 0xDD: ld = "LDF64"; break;
+        case 0xD8: ld = "LDF32"; break;
+        case 0xDC: ld = "LDF64"; break;
+        case 0xDB: ld = (g == 0) ? "(double)(int32_t)LD32" : NULL; break;
+        case 0xDF: ld = (g == 0) ? "(double)(int16_t)LD16" : NULL; break;
+        case 0xDA: ld = "(double)(int32_t)LD32"; break;
+        case 0xDE: ld = "(double)(int16_t)LD16"; break;
+        default: break;
+        }
+
+        if (esc == 0xD9 || esc == 0xDD) {                 /* FLD / FST / FSTP */
+            const char *st = (esc == 0xD9) ? "STF32" : "STF64";
+            if (g == 0) { fprintf(o, "fpu_push(%s(%s));", ld, addr); return 1; }
+            if (g == 2) { fprintf(o, "%s(%s, FST(0));", st, addr); return 1; }
+            if (g == 3) { fprintf(o, "%s(%s, fpu_pop());", st, addr); return 1; }
+            return 0;                                     /* FLDCW etc: absent here */
+        }
+        if (esc == 0xDB || esc == 0xDF) {                 /* FILD / FISTP */
+            const int wide = (esc == 0xDF);
+            if (g == 0) { fprintf(o, "fpu_push(%s(%s));", ld, addr); return 1; }
+            if (g == 2 || g == 3) {
+                fprintf(o, "ST%d(%s, (uint%d_t)(int%d_t)%s);", wide ? 16 : 32, addr,
+                        wide ? 16 : 32, wide ? 16 : 32, g == 3 ? "fpu_pop()" : "FST(0)");
+                return 1;
+            }
+            if (esc == 0xDF && g == 5) { fprintf(o, "fpu_push((double)(int64_t)LD32(%s));", addr); return 1; }
+            if (esc == 0xDF && g == 7) { fprintf(o, "ST32(%s, (uint32_t)(int64_t)fpu_pop());", addr); return 1; }
+            return 0;
+        }
+        if (!ld) return 0;
+        if (g == 2 || g == 3) {                           /* FCOM / FCOMP */
+            fprintf(o, "fpu_cmp(FST(0), %s(%s));%s", ld, addr, g == 3 ? " fpu_pop();" : "");
+            return 1;
+        }
+        if (!FARITH[g][0]) return 0;
+        if (g == 5 || g == 7)                             /* reversed forms */
+            fprintf(o, "FST(0) = %s(%s) %s FST(0);", ld, addr, FARITH[g]);
+        else
+            fprintf(o, "FST(0) = FST(0) %s %s(%s);", FARITH[g], ld, addr);
+        return 1;
+    }
+
+    /* register forms */
+    const int i = modrm & 7;
+    switch (esc) {
+    case 0xD9:
+        if (modrm >= 0xC0 && modrm <= 0xC7) { fprintf(o, "fpu_push(FST(%d));", i); return 1; }
+        if (modrm >= 0xC8 && modrm <= 0xCF) {
+            fprintf(o, "{ double _t = FST(0); FST(0) = FST(%d); FST(%d) = _t; }", i, i); return 1; }
+        if (modrm == 0xE0) { fprintf(o, "FST(0) = -FST(0);"); return 1; }
+        if (modrm == 0xE8) { fprintf(o, "fpu_push(1.0);"); return 1; }
+        if (modrm == 0xEE) { fprintf(o, "fpu_push(0.0);"); return 1; }
+        return 0;
+    case 0xD8:
+        if (modrm >= 0xD0 && modrm <= 0xD7) { fprintf(o, "fpu_cmp(FST(0), FST(%d));", i); return 1; }
+        if (modrm >= 0xD8 && modrm <= 0xDF) { fprintf(o, "fpu_cmp(FST(0), FST(%d)); fpu_pop();", i); return 1; }
+        if (!FARITH[g][0]) return 0;
+        fprintf(o, "FST(0) = FST(0) %s FST(%d);", FARITH[g], i);
+        return 1;
+    case 0xDC:
+        if (!FARITH[g][0]) return 0;
+        if (g == 5 || g == 7) fprintf(o, "FST(%d) = FST(0) %s FST(%d);", i, FARITH[g], i);
+        else                  fprintf(o, "FST(%d) = FST(%d) %s FST(0);", i, i, FARITH[g]);
+        return 1;
+    case 0xDD:
+        if (modrm >= 0xD8 && modrm <= 0xDF) { fprintf(o, "FST(%d) = fpu_pop();", i); return 1; }
+        if (modrm >= 0xD0 && modrm <= 0xD7) { fprintf(o, "FST(%d) = FST(0);", i); return 1; }
+        return 0;
+    case 0xDE:
+        if (modrm == 0xD9) { fprintf(o, "fpu_cmp(FST(0), FST(1)); fpu_pop(); fpu_pop();"); return 1; }
+        if (!FARITH[g][0]) return 0;
+        if (g == 5 || g == 7) fprintf(o, "FST(%d) = FST(0) %s FST(%d); fpu_pop();", i, FARITH[g], i);
+        else                  fprintf(o, "FST(%d) = FST(%d) %s FST(0); fpu_pop();", i, i, FARITH[g]);
+        return 1;
+    case 0xDF:
+        if (modrm == 0xE0) { fprintf(o, "R(EAX) = (R(EAX) & ~0xffffu) | cpu.fsw;"); return 1; }
+        return 0;
+    default: return 0;
+    }
+}
+
+/* ---------- string ops ---------- */
+static int emit_string(FILE *o, const x86_insn *in)
+{
+    const uint8_t op = in->opcode;
+    const int size = (op & 1) ? ((in->prefixes & X86_PFX_OPSIZE) ? 2 : 4) : 1;
+    const int rep  = (in->prefixes & (X86_PFX_REP | X86_PFX_REPNE)) != 0;
+    const int repe = (in->prefixes & X86_PFX_REP) != 0;
+
+    switch (op) {
+    case 0xA4: case 0xA5: fprintf(o, "op_movs(%d, %d);", size, rep); return 1;
+    case 0xAA: case 0xAB: fprintf(o, "op_stos(%d, %d);", size, rep); return 1;
+    case 0xAC: case 0xAD: fprintf(o, "op_lods(%d);", size); return 1;
+    case 0xA6: case 0xA7: fprintf(o, "op_cmps(%d, %d);", size, rep ? (repe ? 1 : -1) : 0); return 1;
+    case 0xAE: case 0xAF: fprintf(o, "op_scas(%d, %d);", size, rep ? (repe ? 1 : -1) : 0); return 1;
+    default: return 0;
+    }
+}
+
 /* ---------- instruction emission ---------- */
 
 /* Emit one instruction. Returns 1 if lifted, 0 if it fell through to a TODO. */
@@ -159,6 +275,9 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
     char a[160], b[160];
 
     if (in->map == 1) {
+        if (op >= 0xD8 && op <= 0xDF) return emit_x87(o, in);
+        if ((op >= 0xA4 && op <= 0xA7) || (op >= 0xAA && op <= 0xAF)) return emit_string(o, in);
+
         /* ALU r/m,r and r,r/m and al/eax,imm */
         if (op < 0x40 && (op & 7) <= 5 && op != 0x0F &&
             !(op == 0x0F) && ((op & 7) != 6) && ((op & 7) != 7)) {
@@ -231,6 +350,24 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
         case 0x8F: rm_write(o, in, 4, "POP32()"); return 1;
 
         case 0x90: fprintf(o, "/* nop */"); return 1;
+        case 0x91: case 0x92: case 0x93: case 0x94:
+        case 0x95: case 0x96: case 0x97:
+            fprintf(o, "{ uint32_t _t=R(EAX); R(EAX)=%s; %s=_t; }",
+                    REG32[op - 0x90], REG32[op - 0x90]); return 1;
+        case 0x8C:  /* MOV r/m16, Sreg -- flat model, selectors are inert here */
+            rm_write(o, in, 2, "0u"); return 1;
+        case 0x8E: fprintf(o, "/* MOV Sreg, r/m16 ignored (flat model) */"); return 1;
+        case 0x9C: fprintf(o, "PUSH32(flags_pack());"); return 1;
+        case 0x9D: fprintf(o, "flags_unpack(POP32());"); return 1;
+        case 0xFE: {
+            const int g2 = (in->modrm >> 3) & 7;
+            rm_read(a, sizeof a, in, 1);
+            fprintf(o, "{ uint32_t _a=%s,_r=_a%s1; FLAGS(%s,1,_a,1,_r); ",
+                    a, g2 == 0 ? "+" : "-", g2 == 0 ? "F_INC" : "F_DEC");
+            rm_write(o, in, 1, "_r");
+            fprintf(o, " }");
+            return 1;
+        }
 
         case 0xB0: case 0xB1: case 0xB2: case 0xB3:
         case 0xB4: case 0xB5: case 0xB6: case 0xB7:
@@ -330,21 +467,29 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
                 fprintf(o, "{ uint32_t _a=%s,_r=0u-_a; FLAGS(F_SUB,%d,0u,_a,_r); ", a, size);
                 rm_write(o, in, size, "_r"); fprintf(o, " }"); return 1;
             case 4:                                    /* MUL */
+                if (size == 1) { fprintf(o, "{ uint32_t _p=(uint32_t)GETR8(0)*(uint32_t)(%s); "
+                                            "R(EAX)=(R(EAX)&~0xffffu)|(_p&0xffffu); }", a); return 1; }
                 if (size != 4) break;
                 fprintf(o, "{ uint64_t _p=(uint64_t)R(EAX)*(uint64_t)(%s); "
                            "R(EAX)=(uint32_t)_p; R(EDX)=(uint32_t)(_p>>32); }", a);
                 return 1;
             case 5:                                    /* IMUL */
+                if (size == 1) { fprintf(o, "{ int32_t _p=(int32_t)(int8_t)GETR8(0)*(int32_t)(int8_t)(%s); "
+                                            "R(EAX)=(R(EAX)&~0xffffu)|((uint32_t)_p&0xffffu); }", a); return 1; }
                 if (size != 4) break;
                 fprintf(o, "{ int64_t _p=(int64_t)(int32_t)R(EAX)*(int64_t)(int32_t)(%s); "
                            "R(EAX)=(uint32_t)_p; R(EDX)=(uint32_t)((uint64_t)_p>>32); }", a);
                 return 1;
             case 6:                                    /* DIV */
+                if (size == 1) { fprintf(o, "{ uint32_t _n=R(EAX)&0xffffu, _d=%s; "
+                                            "R(EAX)=(R(EAX)&~0xffffu)|((_n/_d)&0xffu)|(((_n%%_d)&0xffu)<<8); }", a); return 1; }
                 if (size != 4) break;
                 fprintf(o, "{ uint64_t _n=((uint64_t)R(EDX)<<32)|R(EAX); uint32_t _d=%s; "
                            "R(EAX)=(uint32_t)(_n/_d); R(EDX)=(uint32_t)(_n%%_d); }", a);
                 return 1;
             case 7:                                    /* IDIV */
+                if (size == 1) { fprintf(o, "{ int32_t _n=(int16_t)R(EAX), _d=(int8_t)(%s); "
+                                            "R(EAX)=(R(EAX)&~0xffffu)|((uint32_t)(_n/_d)&0xffu)|(((uint32_t)(_n%%_d)&0xffu)<<8); }", a); return 1; }
                 if (size != 4) break;
                 fprintf(o, "{ int64_t _n=(int64_t)(((uint64_t)R(EDX)<<32)|R(EAX)); "
                            "int32_t _d=(int32_t)(%s); "
@@ -429,6 +574,13 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
             const uint8_t reg = (in->modrm >> 3) & 7;
             if (op < 0xBE) fprintf(o, "%s = (uint32_t)(%s);", REG32[reg], a);
             else fprintf(o, "%s = (uint32_t)(int32_t)(int%d_t)(%s);", REG32[reg], size * 8, a);
+            return 1;
+        }
+        if (op == 0xA2) { fprintf(o, "op_cpuid();"); return 1; }
+        if (op == 0x28 || op == 0x29) { fprintf(o, "/* MOVAPD: CRT scratch, no guest effect */"); return 1; }
+        if (op == 0x2C || op == 0x2D) {                 /* CVTTSD2SI */
+            rm_read(a, sizeof a, in, 4);
+            fprintf(o, "%s = (uint32_t)(int32_t)LDF64(%s);", REG32[(in->modrm >> 3) & 7], a);
             return 1;
         }
         if (op == 0xAF) {                               /* IMUL r32, r/m32 */
