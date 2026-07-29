@@ -84,6 +84,20 @@ void fn_enter(uint32_t addr);
 #define FN_ENTER(a) ((void)0)
 #endif
 
+/* Stack-balance assertion.
+ *
+ * At a function's entry ESP points at the return address, and at its RET it must point
+ * there again. Anything that pops the wrong number of stdcall arguments breaks that
+ * invariant, and the damage only shows up much later as a wild pointer. Checking it at
+ * every RET names the offending function directly. Off unless built with
+ * LF2_STACK_CHECK. */
+#ifdef LF2_STACK_CHECK
+void stack_check(uint32_t esp_at_entry, uint32_t fn);
+#define STACK_CHECK(e, fn) stack_check((e), (fn))
+#else
+#define STACK_CHECK(e, fn) ((void)0)
+#endif
+
 /* Instructions the lifter does not emit yet. Aborts loudly rather than silently doing
  * nothing -- a no-op here would look like a working port that quietly computes garbage. */
 #define TODO(what)                                                                      \

@@ -60,6 +60,10 @@ extern const int g_nfuncs;
 /* Imported functions get a sentinel address written into their IAT slot, so an
  * indirect call through the IAT lands in dispatch() with something we can name. */
 enum { IMPORT_SENTINEL = 0xF0000000u };
+
+/* Thread information block. The CRT's SEH prologues address it through FS, so FS-relative
+ * accesses are rebased here instead of landing on absolute address 0. */
+enum { TIB_BASE = 0x7FFDE000u };
 void host_import(uint32_t sentinel);
 
 void guest_init(void);

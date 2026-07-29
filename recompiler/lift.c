@@ -85,7 +85,9 @@ static const char *REG32[8] = { "R(EAX)", "R(ECX)", "R(EDX)", "R(EBX)",
 static void ea(char *buf, size_t n, const x86_insn *in)
 {
     const uint8_t mod = in->modrm >> 6, rm = in->modrm & 7;
-    if (mod == 0 && rm == 5) { snprintf(buf, n, "0x%xu", (unsigned)in->disp); return; }
+    /* FS addresses the TIB; every other segment is flat in a Win32 process. */
+    const char *seg = (in->seg_prefix == 0x64) ? "TIB_BASE + " : "";
+    if (mod == 0 && rm == 5) { snprintf(buf, n, "%s0x%xu", seg, (unsigned)in->disp); return; }
 
     char base[64] = "", index[64] = "";
     if (in->has_sib) {
@@ -98,7 +100,7 @@ static void ea(char *buf, size_t n, const x86_insn *in)
 
     char disp[32] = "";
     if (in->disp_size) snprintf(disp, sizeof disp, " + %d", in->disp);
-    snprintf(buf, n, "%s%s%s", base[0] ? base : "0u", index, disp);
+    snprintf(buf, n, "%s%s%s%s", seg, base[0] ? base : "0u", index, disp);
 }
 
 /* r/m operand as an rvalue and as an assignment target. */
@@ -527,8 +529,13 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
             else                           fprintf(o, "dispatch(0x%xu); return;", t);
             return 1;
         }
-        case 0xC3: fprintf(o, "R(ESP) += 4; return;"); return 1;
-        case 0xC2: fprintf(o, "R(ESP) += %u; return;", 4u + (unsigned)in->imm); return 1;
+        case 0xC3:
+            fprintf(o, "STACK_CHECK(_esp0, 0x%xu); R(ESP) += 4; return;", cur_lo);
+            return 1;
+        case 0xC2:
+            fprintf(o, "STACK_CHECK(_esp0, 0x%xu); R(ESP) += %u; return;",
+                    cur_lo, 4u + (unsigned)in->imm);
+            return 1;
 
         case 0xFF: {
             const int g = (in->modrm >> 3) & 7;
@@ -640,6 +647,7 @@ static void lift_function(FILE *o, const Func *f)
 
     fprintf(o, "\nvoid fn_%08x(void)\n{\n", f->addr);
     fprintf(o, "    FN_ENTER(0x%xu);\n", f->addr);
+    fprintf(o, "    const uint32_t _esp0 = R(ESP); (void)_esp0;\n");
     for (int i = 0; i < n; i++) {
         if (is_target[i]) fprintf(o, "L_%08x:\n", addrs[i]);
         fprintf(o, "    ");
