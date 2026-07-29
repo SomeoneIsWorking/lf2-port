@@ -62,5 +62,8 @@ Full detail in [`docs/platform-boundary.md`](docs/platform-boundary.md). The hea
 
 ## Licence
 
-Not yet chosen; all rights reserved for now. This covers the tools and documentation in this
-repository only — it says nothing about Little Fighter 2 itself, which belongs to its authors.
+[MIT](LICENSE).
+
+This covers the tools and documentation in this repository only. It says nothing about
+Little Fighter 2 itself, which remains the copyright of Marti Wong and Starsky Wong and is
+not distributed here.
