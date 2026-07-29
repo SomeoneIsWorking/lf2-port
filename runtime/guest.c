@@ -213,6 +213,21 @@ void dump_trace(void)
             if (LD32(a) == bad) { fprintf(stderr, " %08x", a); hits++; }
         fprintf(stderr, "%s\n", hits ? "" : " none");
     }
+    /* Which of the game's variables still hold valid COM object pointers? The correct
+     * destination is one of these; seeing which are intact says whether the game lost it
+     * or never stored it. */
+    {
+        fprintf(stderr, "COM pointers in the image data:\n");
+        int shown = 0;
+        for (uint32_t a = 0x400000; a < 0x460000 && shown < 16; a += 4) {
+            const uint32_t v = LD32(a);
+            if (v >= 0x30000000u && v < 0x30010000u) {
+                fprintf(stderr, "  [%08x] = %08x\n", a, v);
+                shown++;
+            }
+        }
+        if (!shown) fprintf(stderr, "  none\n");
+    }
     dump_fn_trace();
     fprintf(stderr, "recent calls (newest last):");
     for (unsigned i = 0; i < TRACE_N; i++) {
