@@ -20,6 +20,42 @@ static uint32_t text_rva, text_size, text_off;
 static Func funcs[MAX_FUNCS];
 static int nfuncs;
 
+/* Instruction addresses to emit an ESP probe before, from LF2_PROBE at generation time.
+ * Inferring frame relationships by hand has been wrong repeatedly in this project; this
+ * reports the real value at the real instruction. */
+static uint32_t probe_addr[16];
+static int nprobes;
+
+static void load_probes(void)
+{
+    const char *v = getenv("LF2_PROBE");
+    if (!v) return;
+    while (*v && nprobes < 16) {
+        probe_addr[nprobes++] = (uint32_t)strtoul(v, (char **)&v, 16);
+        while (*v == ',' || *v == ' ') v++;
+    }
+}
+
+static int is_probe(uint32_t va)
+{
+    for (int i = 0; i < nprobes; i++) if (probe_addr[i] == va) return 1;
+    return 0;
+}
+
+/* A branch to an address INSIDE the function that has no label becomes a tail call,
+ * which abandons the frame instead of continuing -- the callee's RET then pops a return
+ * address that was never pushed, and the caller's ESP is left wrong. Always a lifter bug,
+ * so count and report them. */
+static long internal_tailcalls;
+
+static void internal_tailcall(uint32_t fn, uint32_t at, uint32_t target)
+{
+    internal_tailcalls++;
+    if (internal_tailcalls <= 20)
+        fprintf(stderr, "  internal tail call: fn_%08x at %08x -> %08x (no label)\n",
+                fn, at, target);
+}
+
 static uint32_t cur_lo, cur_hi;   /* bounds of the function being lifted */
 static const uint32_t *cur_addrs; /* decoded instruction addresses in this function */
 static int cur_n;
@@ -527,6 +563,7 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
             if (t >= cur_lo && t < cur_hi && has_label(t)) fprintf(o, "goto L_%08x;", t);
             else if (is_func(t))           fprintf(o, "fn_%08x(); return;", t);
             else                           fprintf(o, "dispatch(0x%xu); return;", t);
+            if (t >= cur_lo && t < cur_hi && !has_label(t)) internal_tailcall(cur_lo, va, t);
             return 1;
         }
         case 0xC3:
@@ -560,14 +597,20 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
         if (op >= 0x70 && op <= 0x7F) {                /* Jcc rel8 */
             uint32_t t = (uint32_t)(next + (int32_t)in->imm);
             if (t >= cur_lo && t < cur_hi && has_label(t)) fprintf(o, "if (%s) goto L_%08x;", CC[op - 0x70], t);
-            else fprintf(o, "if (%s) { dispatch(0x%xu); return; }", CC[op - 0x70], t);
+            else {
+                fprintf(o, "if (%s) { dispatch(0x%xu); return; }", CC[op - 0x70], t);
+                if (t >= cur_lo && t < cur_hi) internal_tailcall(cur_lo, va, t);
+            }
             return 1;
         }
     } else if (in->map == 2) {
         if (op >= 0x80 && op <= 0x8F) {                /* Jcc rel32 */
             uint32_t t = (uint32_t)(next + (int32_t)in->imm);
             if (t >= cur_lo && t < cur_hi && has_label(t)) fprintf(o, "if (%s) goto L_%08x;", CC[op - 0x80], t);
-            else fprintf(o, "if (%s) { dispatch(0x%xu); return; }", CC[op - 0x80], t);
+            else {
+                fprintf(o, "if (%s) { dispatch(0x%xu); return; }", CC[op - 0x80], t);
+                if (t >= cur_lo && t < cur_hi) internal_tailcall(cur_lo, va, t);
+            }
             return 1;
         }
         if (op >= 0x90 && op <= 0x9F) {                /* SETcc */
@@ -619,7 +662,35 @@ static void lift_function(FILE *o, const Func *f)
     if (!code) return;
 
     cur_lo = f->addr;
+    /* Extend to the next entry rather than trusting the declared size: Ghidra's sizes are
+     * occasionally a byte or two short, which leaves a trailing instruction undecoded. A
+     * branch to it then has no label and is emitted as a tail call to an address nothing
+     * defines, which aborts at runtime if that path is ever taken. */
     cur_hi = f->addr + f->size;
+
+    /* Ghidra's sizes are occasionally a couple of bytes short, leaving a trailing
+     * instruction undecoded; a branch to it then has no label and gets emitted as a tail
+     * call to an address nothing defines. Extend only as far as an actual branch target
+     * requires -- blanket-extending to the next entry decodes inter-function padding and
+     * data as if it were code. */
+    {
+        uint32_t va = f->addr, furthest = cur_hi;
+        while (va < cur_hi) {
+            const uint8_t *p = guest_ptr(va);
+            x86_insn in;
+            if (!p || !x86_decode(p, 16, &in)) break;
+            const uint32_t next = va + in.length;
+            int branch = (in.map == 1 && (in.opcode == 0xE9 || in.opcode == 0xEB ||
+                                          (in.opcode >= 0x70 && in.opcode <= 0x7F))) ||
+                         (in.map == 2 && in.opcode >= 0x80 && in.opcode <= 0x8F);
+            if (branch) {
+                const uint32_t t = (uint32_t)(next + (int32_t)in.imm);
+                if (t >= cur_hi && t < cur_hi + 64 && t > furthest) furthest = t;
+            }
+            va = next;
+        }
+        if (furthest > cur_hi) cur_hi = furthest + 16;
+    }
 
     static uint32_t addrs[MAX_INSNS];
     static x86_insn insns[MAX_INSNS];
@@ -627,11 +698,14 @@ static void lift_function(FILE *o, const Func *f)
     int n = 0;
 
     uint32_t va = f->addr;
-    while (va < f->addr + f->size && n < MAX_INSNS) {
+    while (va < cur_hi && n < MAX_INSNS) {
         const uint8_t *p = guest_ptr(va);
         if (!p) break;
+        /* MSVC pads between functions with INT3. Decoding it produces thousands of bogus
+         * instructions, so the extension past the declared size stops there. */
+        if (va >= f->addr + f->size && *p == 0xCC) break;
         x86_insn in;
-        size_t avail = f->addr + f->size - va;
+        size_t avail = cur_hi - va;
         if (!x86_decode(p, avail < 16 ? avail : 16, &in)) break;
         addrs[n] = va;
         insns[n] = in;
@@ -661,6 +735,7 @@ static void lift_function(FILE *o, const Func *f)
     fprintf(o, "    const uint32_t _esp0 = R(ESP); (void)_esp0;\n");
     for (int i = 0; i < n; i++) {
         if (is_target[i]) fprintf(o, "L_%08x:\n", addrs[i]);
+        if (is_probe(addrs[i])) fprintf(o, "    PROBE(0x%xu);\n", addrs[i]);
         fprintf(o, "    ");
         if (emit_insn(o, &insns[i], addrs[i], addrs[i] + insns[i].length)) {
             lifted++;
@@ -876,6 +951,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: %s <lf2.exe> <functions.tsv> <out.c>\n", argv[0]);
         return 2;
     }
+    load_probes();
     load_pe(argv[1]);
 
     FILE *fl = fopen(argv[2], "r");
@@ -918,6 +994,9 @@ int main(int argc, char **argv)
     printf("%d functions, %ld instructions: %ld lifted (%.2f%%), %ld TODO\n",
            nfuncs, total, lifted, total ? lifted * 100.0 / (double)total : 0.0, todo);
 
+    if (internal_tailcalls)
+        printf("!! %ld branches to unlabelled addresses inside their own function\n",
+               internal_tailcalls);
     printf("top unhandled:");
     for (int round = 0; round < 12; round++) {
         int best = -1;

@@ -98,6 +98,10 @@ void stack_check(uint32_t esp_at_entry, uint32_t fn);
 #define STACK_CHECK(e, fn) ((void)0)
 #endif
 
+/* Emitted only at addresses named by LF2_PROBE when the code was generated. */
+void probe(uint32_t addr);
+#define PROBE(a) probe(a)
+
 /* Instructions the lifter does not emit yet. Aborts loudly rather than silently doing
  * nothing -- a no-op here would look like a working port that quietly computes garbage. */
 #define TODO(what)                                                                      \

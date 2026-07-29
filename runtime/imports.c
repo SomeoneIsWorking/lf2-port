@@ -705,6 +705,15 @@ static void h_CloseHandle(void)
     ret_stdcall(1, 1);
 }
 
+/* Must actually terminate. Returning from this lets a /GS stack-cookie failure fall
+ * through __report_gsfailure and keep running on a wrecked stack, which then surfaces
+ * far away as a wild pointer. */
+static void h_TerminateProcess(void)
+{
+    fprintf(stderr, "TerminateProcess called -- the guest is aborting deliberately\n");
+    abort();
+}
+
 static void h_GetLocalTime(void)
 {
     time_t t = time(NULL);
@@ -782,7 +791,7 @@ static const struct { const char *dll, *name; Handler fn; } TABLE[] = {
     { "KERNEL32.dll", "CloseHandle",             h_CloseHandle },
     { "KERNEL32.dll", "GetLocalTime",            h_GetLocalTime },
     { "KERNEL32.dll", "CreateThread",            h_CreateThread },
-    { "KERNEL32.dll", "TerminateProcess",        h_ret0_2 },
+    { "KERNEL32.dll", "TerminateProcess",        h_TerminateProcess },
 
     { "MSVCR80.dll", "__getmainargs",       h_getmainargs },
     { "MSVCR80.dll", "_initterm",           h_initterm },

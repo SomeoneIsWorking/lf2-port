@@ -157,6 +157,11 @@ void watch_sample(const char *where, uint32_t ctx);
 void watch_arm(uint32_t a);
 extern int esp_log_active;
 
+void probe(uint32_t addr)
+{
+    fprintf(stderr, "PROBE %08x esp=%08x ebp=%08x\n", addr, R(ESP), R(EBP));
+}
+
 void fn_enter(uint32_t addr)
 {
     fn_ring[fn_pos % FN_TRACE_N] = addr;
