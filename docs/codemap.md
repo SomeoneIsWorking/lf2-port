@@ -13,7 +13,9 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Ghidra recon | `tools/ghidra/ListFunctions.java`, `re/functions.tsv` | **done** | 352 functions, 93.6% of `.text` |
 | Wine oracle | `scratch/wineprefix` | **done** | boots headless under Xvfb to the main menu |
 | Boundary tracer | `docs/platform-boundary.md` | **done** | Wine debug channels; relay tracing proven useless (see doc) |
-| Recompiler (x86 → C) | — | **planned** | test-first; decoder before lifter |
+| ISA scoping | `docs/isa-scope.md`, `re/instructions.tsv` | **done** | 70,508 instructions, only 92 mnemonics; top 50 cover 99.5% |
+| Recompiler: decoder | `recompiler/x86_decode.c` | **done** | length-exact on all 70,508 instructions; negative-control validated |
+| Recompiler: lifter (x86 → C) | — | **planned** | next; x87 precision strategy undecided (see isa-scope) |
 | Runtime (SDL3) | — | **planned** | video / audio / input / Win32 shim |
 | Overrides | — | **planned** | controller hotplug, borderless |
 | Netplay | — | **dropped** | stock lockstep netcode not ported; replace later |
