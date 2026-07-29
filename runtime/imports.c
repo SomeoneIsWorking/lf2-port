@@ -850,13 +850,6 @@ static const struct { const char *dll, *name; Handler fn; } TABLE[] = {
     { "WINMM.dll", "mmioRead",         h_mmioRead },
     { "WINMM.dll", "mmioDescend",      h_mmioDescend },
     { "WINMM.dll", "mmioAscend",       h_mmioAscend },
-    { "WINMM.dll", "joyGetNumDevs",    h_joyGetNumDevs },
-    { "WINMM.dll", "joyGetDevCapsA",   h_joyGetDevCaps },
-    { "WINMM.dll", "joyGetDevCapsW",   h_joyGetDevCaps },
-    { "WINMM.dll", "joyGetPosEx",      h_joyGetPosEx },
-    { "WINMM.dll", "joyGetPos",        h_joyGetPos },
-    { "WINMM.dll", "joySetCapture",    h_joySetCapture },
-    { "WINMM.dll", "joySetThreshold",  h_joySetThreshold },
 };
 
 Handler host_lookup(const char *dll, const char *name)
