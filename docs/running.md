@@ -325,3 +325,24 @@ letting silence read as "no input". To actually follow input, probe reads of `0x
 exactly two `poll set changed` lines. Since the game never exercises this path, that
 self-test is the only evidence the detector works at all — run it before trusting a
 negative result from it.
+
+## Watching guest memory reads
+
+`LF2_READ_WATCH=<lo>:<hi>` reports which offsets inside a span the game loads, by novelty:
+a sweep closes when an offset repeats, and a set is printed only when it differs from the
+previous sweep. A malformed or empty span is refused with exit 2 rather than silently
+watching nothing, and the hit count is reported even when it is zero, so "saw nothing" is
+distinguishable from "was never armed". Disabled it costs one predictable not-taken branch
+per load; measured frame throughput is unchanged (~30 fps either way).
+
+**What it showed about input, including the part that did not work.** The intent was to
+recover a per-screen input signature by watching the key array at `0x455378`. That does not
+work: the game sweeps the entire array linearly, offsets `00` through `f9`, every frame to
+rebuild its input bitmask. Selective checks are buried inside that bulk scan, so watching
+by *address* cannot separate "the game is asking about the Up key" from "the game is
+rebuilding its bitmask".
+
+Separating them needs the reading instruction's address, not the read address — the bulk
+scan is one call site and the selective checks are others. That is not currently
+recoverable, because `cpu.eip` is only maintained at call boundaries in the generated code.
+Recorded so the next attempt starts from there instead of re-deriving it.

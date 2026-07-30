@@ -20,6 +20,71 @@ uint8_t *g_mem;
 enum { GUEST_SPACE = 0x100000000ull };   /* full 32-bit space, lazily committed */
 enum { STACK_TOP = 0x00300000, STACK_SIZE = 0x00100000 };
 
+/* ---- read-watch ----
+ * LF2_READ_WATCH=<lo>:<hi> reports which offsets in a span the game actually loads. The
+ * offsets are the interesting part -- for the key array at 0x455378 they are virtual-key
+ * codes, so the set read on a given screen is that screen's input signature.
+ *
+ * Reporting is by novelty, not by cap: a sweep closes when an offset repeats, and a set
+ * is printed only when it differs from the previous sweep. Capping instead ("first 20
+ * hits") would show one screen and imply the rest never happened.
+ */
+uint32_t g_rwatch_lo, g_rwatch_hi;
+static long rwatch_hits;
+
+void rwatch_hit(uint32_t a)
+{
+    static uint8_t cur[4096], prev[4096];
+    static int have_prev, sweeps;
+    const uint32_t off = a - g_rwatch_lo;
+    if (off >= sizeof cur) return;
+
+    rwatch_hits++;
+    if (cur[off]) {
+        sweeps++;
+        if (!have_prev || memcmp(cur, prev, sizeof cur) != 0) {
+            fprintf(stderr, "read set changed (sweep %d, +0x%x..):", sweeps, g_rwatch_lo);
+            for (unsigned i = 0; i < sizeof cur; i++) if (cur[i]) fprintf(stderr, " %02x", i);
+            fprintf(stderr, "\n");
+            memcpy(prev, cur, sizeof cur);
+            have_prev = 1;
+        }
+        memset(cur, 0, sizeof cur);
+    }
+    cur[off] = 1;
+}
+
+/* A span nothing ever reads and a span that does not exist look identical from the
+ * outside, so the count is reported either way. */
+void rwatch_report(void)
+{
+    if (!g_rwatch_hi) return;
+    fprintf(stderr, "LF2_READ_WATCH [%08x,%08x): %ld reads\n",
+            g_rwatch_lo, g_rwatch_hi, rwatch_hits);
+    if (rwatch_hits == 0)
+        fprintf(stderr, "  nothing in that span was read -- the watch saw NOTHING, which\n"
+                        "  is not the same as the game not reading its input.\n");
+}
+
+static void rwatch_init(void)
+{
+    const char *spec = getenv("LF2_READ_WATCH");
+    if (!spec) return;
+    char *end = NULL;
+    const uint32_t lo = (uint32_t)strtoul(spec, &end, 0);
+    if (!end || *end != ':') {
+        fprintf(stderr, "LF2_READ_WATCH must be <lo>:<hi>, got \"%s\"\n", spec);
+        exit(2);                       /* refuse rather than silently watch nothing */
+    }
+    const uint32_t hi = (uint32_t)strtoul(end + 1, NULL, 0);
+    if (hi <= lo) {
+        fprintf(stderr, "LF2_READ_WATCH: empty span %08x:%08x\n", lo, hi);
+        exit(2);
+    }
+    g_rwatch_lo = lo; g_rwatch_hi = hi;
+    fprintf(stderr, "LF2_READ_WATCH watching [%08x,%08x)\n", lo, hi);
+}
+
 void guest_init(void)
 {
     /* Reserving the whole 4 GiB means a guest address is just an index -- no bounds
@@ -32,6 +97,7 @@ void guest_init(void)
     memset(&cpu, 0, sizeof cpu);
     cpu.st_top = 0;
     cpu.fcw = 0x027F;      /* MSVC default: exceptions masked, 53-bit precision */
+    rwatch_init();
     R(ESP) = STACK_TOP;
     R(EBP) = STACK_TOP;
 
