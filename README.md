@@ -53,13 +53,14 @@ variables, are in [`docs/running.md`](docs/running.md).
 | Sound effects (DirectSound → SDL3) | works |
 | Background music (WMA) | works, needs `ffmpeg` on PATH |
 | Controller auto-detect and hotswap, no configuration | implemented, **untested on real hardware** |
+| Two controllers | attaches and routes, but a second pad can land on a computer-controlled slot |
 | Borderless / windowed / fullscreen, Alt+Enter | works |
 | Linux | works |
 | macOS | portability blockers removed, builds and passes under clang, **never built on a Mac** |
 | Netplay | **not ported** — stubbed as "no network available" |
 
-The two untested rows are untested because no Mac and no gamepad were available, not
-because they are known-broken. Reports welcome.
+The untested rows are untested because no Mac and no gamepad were available, not because
+they are known-broken. Reports welcome.
 
 ## Extracting the game files
 

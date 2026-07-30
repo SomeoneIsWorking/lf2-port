@@ -177,9 +177,13 @@ void gamepad_drive_ui(void)
  *
  * The script is button:frame pairs, e.g. "down:60,down:90,south:120", where the names are
  * SDL_GamepadButton short names and the frame is when to press (released 8 frames later).
+ *
+ * LF2_VIRTUAL_PAD2 attaches a second one. That exists because "a second controller is
+ * player two" was a claim with nothing behind it -- the slot-assignment code looked right,
+ * but only one pad had ever been attached.
  */
-static SDL_Joystick *virtual_pad;
-static SDL_JoystickID virtual_id;
+static SDL_Joystick *virtual_pad[JOY_SLOTS];
+static SDL_JoystickID virtual_id[JOY_SLOTS];
 
 static int button_by_name(const char *name, size_t n)
 {
@@ -195,28 +199,8 @@ static int button_by_name(const char *name, size_t n)
     return -1;
 }
 
-void virtual_pad_tick(long frame)
+static void play_script(SDL_Joystick *pad, const char *script, long frame)
 {
-    const char *script = getenv("LF2_VIRTUAL_PAD");
-    if (!script) return;
-
-    if (!virtual_pad) {
-        SDL_VirtualJoystickDesc desc;
-        SDL_INIT_INTERFACE(&desc);
-        desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
-        desc.naxes = 6;
-        desc.nbuttons = 15;
-        desc.name = "lf2 virtual pad";
-        virtual_id = SDL_AttachVirtualJoystick(&desc);
-        if (!virtual_id) {
-            fprintf(stderr, "virtual pad: attach failed: %s\n", SDL_GetError());
-            return;
-        }
-        virtual_pad = SDL_OpenJoystick(virtual_id);
-        fprintf(stderr, "virtual pad: attached as joystick %u\n", (unsigned)virtual_id);
-        return;                      /* let the add event land before pressing anything */
-    }
-
     for (const char *c = script; *c; ) {
         const char *name = c;
         while (*c && *c != ':') c++;
@@ -225,8 +209,37 @@ void virtual_pad_tick(long frame)
         const long at = strtol(c, (char **)&c, 10);
         while (*c == ',' || *c == ' ') c++;
         if (btn < 0) continue;
-        if (frame == at)      SDL_SetJoystickVirtualButton(virtual_pad, btn, true);
-        else if (frame == at + 8) SDL_SetJoystickVirtualButton(virtual_pad, btn, false);
+        if (frame == at)          SDL_SetJoystickVirtualButton(pad, btn, true);
+        else if (frame == at + 8) SDL_SetJoystickVirtualButton(pad, btn, false);
+    }
+}
+
+void virtual_pad_tick(long frame)
+{
+    static const char *const VARS[JOY_SLOTS] = { "LF2_VIRTUAL_PAD", "LF2_VIRTUAL_PAD2" };
+
+    for (int i = 0; i < JOY_SLOTS; i++) {
+        const char *script = getenv(VARS[i]);
+        if (!script) continue;
+
+        if (!virtual_pad[i]) {
+            SDL_VirtualJoystickDesc desc;
+            SDL_INIT_INTERFACE(&desc);
+            desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+            desc.naxes = 6;
+            desc.nbuttons = 15;
+            desc.name = "lf2 virtual pad";
+            virtual_id[i] = SDL_AttachVirtualJoystick(&desc);
+            if (!virtual_id[i]) {
+                fprintf(stderr, "virtual pad %d: attach failed: %s\n", i, SDL_GetError());
+                continue;
+            }
+            virtual_pad[i] = SDL_OpenJoystick(virtual_id[i]);
+            fprintf(stderr, "virtual pad %d: attached as joystick %u\n",
+                    i, (unsigned)virtual_id[i]);
+            continue;                /* let the add event land before pressing anything */
+        }
+        play_script(virtual_pad[i], script, frame);
     }
 }
 

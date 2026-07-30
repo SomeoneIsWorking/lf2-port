@@ -720,8 +720,23 @@ time.
 | B / X | jump / defend |
 | Start | activates the front-end menu's selection |
 
-Pads are handed to player slots in order, so a second controller is player two with no
-configuration either.
+Pads are handed to live player slots in order.
+
+**A second pad is not finished.** It attaches and its input does reach a second slot — two
+virtual pads measure 1408 merges across 704 gathers, exactly two per gather, and 64 → 80
+button presses — but "live slot" includes one the game has filled with a *computer*. With
+one human and one CPU the second pad therefore drives the CPU's fighter, fighting its AI
+for the same button bytes. One pad is unaffected, which is why this was written up as
+working before anyone attached a second one.
+
+Fixing it needs the per-slot "this one is AI" marker, which is not pinned down. What is
+known: the character-select drawer classifies a slot from a per-slot value (≤ 0 empty, 1–10
+human, ≥ 11 computer), and `0x0045128c` is measured going 0 → 11 exactly when the computer
+appears. But `0x00451288` / `0x451268` / `0x451248` are written as separate scalars 0x20
+apart, so those are fields of a per-slot **struct** rather than one flat array, and the base
+and stride are unconfirmed. An earlier guess of `0x004517c8`, taken from one of three
+"Computer" call sites, measured as all zeros — the wrong call site. `LF2_VIRTUAL_PAD2`
+exists so the next attempt can be measured rather than reasoned about.
 
 ### Why this needed a port rather than a shim
 
