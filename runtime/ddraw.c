@@ -312,7 +312,12 @@ static void surf_Blt(uint32_t self)
     if (s) {
         int sl, st_, sr, sb;
         read_rect(srect, &sl, &st_, &sr, &sb, s->w, s->h);
-        const int keyed = (flags & DDBLT_KEYSRC) && s->has_key;
+        /* LF2_CK_FORCE is a discriminator, not a fix: if honouring the key on every blit
+         * that has one makes the sprites transparent, they arrive through Blt and the
+         * question is about the flags; if nothing changes, they are composited elsewhere
+         * (Lock) and the Blt path is innocent. Run against both classes before believing
+         * either. */
+        const int keyed = ((flags & DDBLT_KEYSRC) || getenv("LF2_CK_FORCE")) && s->has_key;
         if (keyed) ck_blt_keyed++; else ck_blt_plain++;
         if (getenv("LF2_CK_DEBUG")) {
             static long seen[8]; static uint32_t fv[8]; static int nf;

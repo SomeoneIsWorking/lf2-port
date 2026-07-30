@@ -115,19 +115,23 @@ Blt flags=01000000 (has_key=1)                 (0x01000000 = DDBLT_WAIT)
 Blt flags=01000800 (has_key=1)                 (+0x800 = DDBLT_DDFX)
 ```
 
-So the game **does** set source colour keys, on surfaces that reach `Blt` with
-`has_key` set — and then never passes `DDBLT_KEYSRC` (0x8000) on any of 13,083 blits.
-`BltFast`, the usual sprite path, is not called at all. The argument mapping was checked
-against `IDirectDrawSurface::Blt` rather than assumed, since a wrong index caused a real
-bug in this tree before.
+The game sets source colour keys on surfaces that reach `Blt` with `has_key` set, and then
+never passes `DDBLT_KEYSRC` (0x8000) on any of 13,083 blits. `BltFast`, the usual sprite
+path, is never called. The argument mapping was checked against `IDirectDrawSurface::Blt`
+rather than assumed, since a wrong index caused a real bug in this tree before.
 
-That combination does not add up under plain DirectDraw semantics, where a `Blt` without
-`DDBLT_KEYSRC` ignores the key. The likely explanation is that the game composites sprites
-itself through `Lock`, having adapted to the 32-bit XRGB format it was told about (it
-creates no palette and queries `GetPixelFormat`), in which case transparency is its own
-comparison and the fault is in what the sprite pixels or the key value look like after our
-8-bit-to-XRGB conversion — not in the `Blt` path at all.
+**Established by experiment: the sprites arrive through `Blt`.** `LF2_CK_FORCE=1` honours
+the key on every blit whose surface has one. With it the black boxes disappear entirely —
+fighters composite cleanly and the sky shows its clouds and mountains. That rules out the
+earlier hypothesis that the game composited sprites itself through `Lock`; the `Blt` path
+is where the fault lives.
 
-**Not yet established, and worth saying so:** which code actually draws the fighters. The
-next step is to confirm whether they arrive via `Lock` or via `Blt`, because the two lead
-to entirely different fixes.
+**`LF2_CK_FORCE` is a discriminator, not a fix.** The same screenshot shows the floor gone
+transparent, so background surfaces carry colour keys too, and honouring every key trades
+one artefact for another. Kept because it distinguishes the two failure classes in one run.
+
+What remains open is narrow: **why the game omits `DDBLT_KEYSRC`** when plain DirectDraw
+would then ignore the key. Worth checking against the Wine oracle, which runs the same
+binary on a real DirectDraw — if Wine sees the same flags, the game is relying on
+behaviour beyond the documented semantics and the port must match whatever that is; if
+Wine sees `DDBLT_KEYSRC`, then something in this tree is losing the bit before it arrives.
