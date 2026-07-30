@@ -194,8 +194,18 @@ static void pump_autokey_messages(void)
     }
 }
 
+static void keydebug_report(void);
+static void keydebug_note(unsigned vk);
+static void keydebug_selftest(void);
+
 void hostwin_pump(void)
 {
+    if (getenv("LF2_KEY_DEBUG")) {
+        static int pumps;
+        if (pumps == 0 && getenv("LF2_KEY_DEBUG_SELFTEST")) keydebug_selftest();
+        if (++pumps == 400) keydebug_report();
+    }
+
     pump_autokey_messages();
     pump_autoclick();
     SDL_Event e;
@@ -475,14 +485,63 @@ static uint32_t mouse_lparam(float wx, float wy)
     return ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
 }
 
+/* Counted so the summary can distinguish "no transitions" from "never called". */
+static long keydebug_calls;
+
+/* Which keys the game polls is a screen signature: the title screen asks about very
+ * different keys than character select. Reporting each key once for the whole run (what
+ * this used to do) collapses that timeline to one line and hides every transition, so a
+ * sweep is closed when a key repeats and its set printed only when it differs from the
+ * previous sweep -- first occurrence plus every change, nothing in between. */
+static void keydebug_note(unsigned vk)
+{
+    static uint8_t cur[256], prev[256];
+    static int have_prev, sweeps;
+    keydebug_calls++;
+    if (cur[vk]) {                                  /* repeat => sweep ended */
+        sweeps++;
+        if (!have_prev || memcmp(cur, prev, sizeof cur) != 0) {
+            fprintf(stderr, "poll set changed (sweep %d):", sweeps);
+            for (int i = 0; i < 256; i++) if (cur[i]) fprintf(stderr, " %02x", i);
+            fprintf(stderr, "\n");
+            memcpy(prev, cur, sizeof cur);
+            have_prev = 1;
+        }
+        memset(cur, 0, sizeof cur);
+    }
+    cur[vk] = 1;
+}
+
+/* This game never calls GetKeyState, so the detector above would otherwise ship having
+ * never once been seen to fire. LF2_KEY_DEBUG_SELFTEST feeds it two different sweeps,
+ * which must produce exactly two "poll set changed" lines. */
+static void keydebug_selftest(void)
+{
+    fprintf(stderr, "LF2_KEY_DEBUG selftest: expect 2 'poll set changed' lines\n");
+    const unsigned a[] = { 0x0d, 0x20, 0x0d };            /* sweep 1, then repeat */
+    const unsigned b[] = { 0x68, 0x57, 0x49, 0x68 };      /* different set */
+    for (unsigned i = 0; i < 3; i++) keydebug_note(a[i]);
+    for (unsigned i = 0; i < 4; i++) keydebug_note(b[i]);
+    fprintf(stderr, "LF2_KEY_DEBUG selftest: done\n");
+}
+
+/* Called from the frame pump, not atexit: registering at exit inside the handler would
+ * only arm it once the very thing being measured had already happened, and runs here are
+ * ended by SIGTERM anyway. This has to fire *during* a run to be worth anything. */
+static void keydebug_report(void)
+{
+    if (keydebug_calls == 0)
+        fprintf(stderr,
+                "LF2_KEY_DEBUG: the game never called GetKeyState, so this trace saw\n"
+                "  NOTHING -- that is not evidence of no input. LF2 keeps its own key\n"
+                "  array at 0x455378, filled from WM_KEYDOWN, and reads that instead.\n"
+                "  To follow input, probe reads of 0x455378 rather than this import.\n");
+}
+
 static void h_GetKeyState(void)
 {
     hostwin_pump();
-    if (getenv("LF2_KEY_DEBUG")) {
-        static uint8_t seen[256];
-        if (!seen[ARG(0) & 0xff]) { seen[ARG(0) & 0xff] = 1;
-            fprintf(stderr, "GetKeyState polls vk=0x%02x\n", ARG(0)); }
-    }
+    if (getenv("LF2_KEY_DEBUG")) keydebug_note(ARG(0) & 0xff);
     if (ARG(0) == 0x01) { ret_stdcall(1, mouse_left_down ? 0xFF80u : 0u); return; }
     if (ARG(0) == 0x02) { ret_stdcall(1, mouse_right_down ? 0xFF80u : 0u); return; }
     if (autokey_pressed(ARG(0))) { ret_stdcall(1, 0xFF80u); return; }
