@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sched.h>
 #include <time.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -60,6 +61,21 @@ static void h_GetSystemTimeAsFileTime(void)
     uint32_t out = ARG(0);
     ST32(out, (uint32_t)ft);
     ST32(out + 4, (uint32_t)(ft >> 32));
+    ret_stdcall(1, 0);
+}
+
+/* Sleep was a no-op returning immediately, so the game's frame pacing -- which is a
+ * Sleep in a loop -- became a spin, pegging a core at ~96% for a 30 fps 2D fighter.
+ * Honouring it is also the faithful behaviour: on Windows this blocks the thread, and the
+ * game is written expecting that. Sleep(0) is a yield, not a delay. */
+static void h_Sleep(void)
+{
+    const uint32_t ms = ARG(0);
+    if (ms == 0) sched_yield();
+    else {
+        struct timespec req = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
+        nanosleep(&req, NULL);
+    }
     ret_stdcall(1, 0);
 }
 
@@ -784,7 +800,7 @@ static const struct { const char *dll, *name; Handler fn; } TABLE[] = {
     { "KERNEL32.dll", "InterlockedCompareExchange", h_InterlockedCompareExchange },
     { "KERNEL32.dll", "lstrlenA",                h_lstrlenA },
     { "KERNEL32.dll", "OutputDebugStringA",      h_OutputDebugStringA },
-    { "KERNEL32.dll", "Sleep",                   h_ret0_1 },
+    { "KERNEL32.dll", "Sleep",                   h_Sleep },
     { "KERNEL32.dll", "MultiByteToWideChar",     h_MultiByteToWideChar },
     { "KERNEL32.dll", "CreateFileA",             h_CreateFileA },
     { "KERNEL32.dll", "WriteFile",               h_WriteFile },
