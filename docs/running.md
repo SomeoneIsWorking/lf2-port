@@ -328,21 +328,39 @@ negative result from it.
 
 ## Watching guest memory reads
 
-`LF2_READ_WATCH=<lo>:<hi>` reports which offsets inside a span the game loads, by novelty:
-a sweep closes when an offset repeats, and a set is printed only when it differs from the
-previous sweep. A malformed or empty span is refused with exit 2 rather than silently
-watching nothing, and the hit count is reported even when it is zero, so "saw nothing" is
-distinguishable from "was never armed". Disabled it costs one predictable not-taken branch
-per load; measured frame throughput is unchanged (~30 fps either way).
+`LF2_READ_WATCH=<lo>:<hi>` reports which offsets inside a span the game loads. A malformed
+or empty span is refused with exit 2 rather than silently watching nothing, and the hit
+count is reported even when zero, so "saw nothing" is distinguishable from "was never
+armed". Disabled it costs one predictable not-taken branch per load; frame throughput is
+unchanged (~30 fps either way).
 
-**What it showed about input, including the part that did not work.** The intent was to
-recover a per-screen input signature by watching the key array at `0x455378`. That does not
-work: the game sweeps the entire array linearly, offsets `00` through `f9`, every frame to
-rebuild its input bitmask. Selective checks are buried inside that bulk scan, so watching
-by *address* cannot separate "the game is asking about the Up key" from "the game is
-rebuilding its bitmask".
+**Sequential scans are filtered out.** The game rebuilds its input bitmask by sweeping the
+whole key array in order, so a raw read set is 250 sequential offsets on every screen and
+says nothing. The scan is separable by *shape* rather than by call site: it is a long
+strictly-ascending run, while a deliberate "is this key down" check is isolated and
+out-of-sequence. Runs of `SCAN_RUN` (16) or more are dropped. This is why the tool does not
+need the reading instruction's address, which would have meant tracking `eip` through the
+generated code and paying for it on the hot path.
 
-Separating them needs the reading instruction's address, not the read address — the bulk
-scan is one call site and the selective checks are others. That is not currently
-recoverable, because `cpu.eip` is only maintained at call boundaries in the generated code.
-Recorded so the next attempt starts from there instead of re-deriving it.
+Sweeps close on the **frame**, not on a repeated offset. Closing on a repeat splits the
+single array scan in two and leaves its tail (`7a 7b`) looking like a deliberate check —
+a phantom finding, and exactly what the first version of this reported.
+
+`LF2_READ_WATCH_SELFTEST=1` feeds a synthetic frame: a full 250-entry ascending scan plus
+four isolated checks. It must report exactly `26 49 57 68`. Without it,
+"(nothing but sequential scans)" would be indistinguishable from a filter that discards
+everything.
+
+### What it found, and what it did not
+
+On every screen reachable so far — attract, main menu, control settings — the only
+discriminating reads are `7a 7b` (F11/F12), and the set never changes. So **the key array
+is not a screen signature on those screens**, and the idea of driving scripted input off it
+does not work there.
+
+It is not that the instrument is blind: the self-test shows it separates isolated checks
+from a scan, and the pre-fight menu is known to check `68 57 49 26` (players 1-4 "up") at
+`0x419b73`, which this would report. That screen simply cannot be reached yet. The blocker
+is **navigation, not observation**: menus are mouse-driven and each screen's clickable
+bands have to be recovered from the game's own comparison constants, the way the main
+menu's were (see above).

@@ -41,6 +41,8 @@ extern uint8_t *g_mem;      /* guest address N lives at g_mem[N] */
  * -- disabled costs a predictable not-taken branch. */
 extern uint32_t g_rwatch_lo, g_rwatch_hi;
 void rwatch_hit(uint32_t a);
+void rwatch_frame(void);
+void rwatch_selftest(void);
 #define RWATCH(a) \
     do { if (__builtin_expect((a) - g_rwatch_lo < g_rwatch_hi - g_rwatch_lo, 0)) \
              rwatch_hit(a); } while (0)
