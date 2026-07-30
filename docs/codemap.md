@@ -207,6 +207,12 @@ Fixed, buffers come out at their real sizes and formats (8480 @ 21000 Hz 16-bit,
 `SetVolume` appears 93 times where it did not before, and the mix peak drops from a clipping
 32768 to 25161 — real audio rather than clicks.
 
+**Confirmed against ground truth, not just plausibility.** After the fix the port creates
+buffers at 7006, 34156, 41096, 144384 and 379640 bytes — exactly the sizes Wine reports
+creating against real DirectSound, in the same order. The `DDSURFACEDESC` offsets in
+`ddraw.c` were audited at the same time and are correct (0/4/8/12/16/36/72/104/108), as is
+the `WAVEFORMATEX` reader and `Lock`'s parameter mapping.
+
 **This is why "audio works" was not a safe conclusion.** Non-zero plays, non-zero peak and a
 busy mixer were all true the whole time. Two samples of a loud waveform satisfies every one
 of those. Nothing short of comparing against a real DirectSound would have caught it.
