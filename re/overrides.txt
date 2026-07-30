@@ -1,0 +1,6 @@
+# Functions replaced by hand-written native implementations in runtime/overrides.c.
+# One hex address per line. Anything listed here is not lifted; the generated code still
+# calls fn_<addr>() and the linker resolves it to the native version.
+#
+# The point is to change behaviour where the game expresses it, rather than intercepting
+# the consequences at the Win32 boundary.
