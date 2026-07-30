@@ -612,3 +612,9 @@ It does mean the import path is hot. Resolving a handler used to walk up to seve
 tables doing two `strcmp`s per entry, **on every call**. Caching the resolution per import
 took the data load from **13.1 s to 10.2 s** (measured twice, identical), and the cache is
 correct by construction: the guest's import table is fixed once the image is loaded.
+
+The obvious follow-up did **not** pay off, which is worth recording so it is not tried
+again: `h_fscanf` called `getenv` on every one of those 2.5M invocations, and caching it
+changed the load time by nothing measurable (10.1 s / 10.3 s against 10.2 s). glibc's
+`getenv` is cheap next to the surrounding parse. The caching was kept because it is the
+right shape for a flag on a hot path, not because it bought anything.

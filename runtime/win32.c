@@ -217,11 +217,16 @@ void hostwin_pump(void)
      * Xlib kills the process, so the game's own shutdown never runs. This drives the same
      * path the game takes when the user quits. */
     {
-        const char *qa = getenv("LF2_QUIT_AFTER");
-        if (qa && hostwin_frames() >= strtol(qa, NULL, 10)) quit_posted = 1;
+        static long qa_frames = -2;                 /* -2 unread, -1 unset */
+        if (qa_frames == -2) {
+            const char *qa = getenv("LF2_QUIT_AFTER");
+            qa_frames = qa ? strtol(qa, NULL, 10) : -1;
+        }
+        if (qa_frames >= 0 && hostwin_frames() >= qa_frames) quit_posted = 1;
     }
 
-    if (getenv("LF2_KEY_DEBUG")) {
+    static int keydbg = -1;
+    if (env_flag("LF2_KEY_DEBUG", &keydbg)) {
         static int pumps;
         if (pumps == 0 && getenv("LF2_KEY_DEBUG_SELFTEST")) keydebug_selftest();
         if (++pumps == 400) keydebug_report();

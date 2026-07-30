@@ -40,6 +40,15 @@ extern uint8_t *g_mem;      /* guest address N lives at g_mem[N] */
 
 #define R(i)  (cpu.r[(i)])
 
+/* getenv is a linear scan of the environment. Debug flags read on paths the game hits
+ * millions of times per load -- fscanf alone is 2.5M calls -- must be resolved once.
+ * Usage: static int c = -1; if (env_flag("LF2_X", &c)) ... */
+static inline int env_flag(const char *name, int *cache)
+{
+    if (*cache < 0) *cache = (getenv(name) != NULL);
+    return *cache;
+}
+
 /* Read-watch over [lo, hi). LF2 reads its key state out of its own array rather than
  * asking Windows, so following input means watching loads, not imports. The test is one
  * subtract and one compare, and with lo == hi == 0 the span is zero so it is always false
