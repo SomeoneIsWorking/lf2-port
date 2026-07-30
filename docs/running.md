@@ -556,3 +556,21 @@ works headless, and it captures the game's own framebuffer rather than a window 
 whatever the desktop put behind it. Two attempts at photographing a match via `import`
 landed on the preceding menu instead; the frame dump is what established that those runs
 genuinely never reached the match.
+
+## State-triggered input
+
+`LF2_AUTOKEY_AFTER=0x68` starts the key script when the game is first seen polling that
+key, instead of at a wall-clock offset from launch. It arms the read-watch on the key array
+automatically. The point at which a menu starts asking about the player keys is a fact
+about the game's state; "32 seconds in" is a guess that drifts with however long the data
+load took.
+
+In practice the trigger fires at the **mode menu**, which is the first screen to poll the
+player keys — not at character selection, as first assumed. That still removes the load-time
+variance, which was the largest source of drift.
+
+**It does not make reaching a match deterministic, and honesty requires saying so.** The
+remaining variance is at the pre-fight overlay: depending on when it opens, the same two
+"up" presses either move the highlight to `Fight!` or close the overlay and leave character
+selection with both slots re-rolled. Verified by frame dump, not inferred. Driving that step
+reliably needs a signal for the overlay itself, which does not exist yet.

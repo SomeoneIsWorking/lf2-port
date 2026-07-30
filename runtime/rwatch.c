@@ -43,6 +43,14 @@ void rwatch_hit(uint32_t a)
 }
 
 /* Called once per presented frame. */
+/* Set once the game is seen polling the key named by LF2_AUTOKEY_AFTER. Scripted input
+ * keys off this rather than a stopwatch: the point at which character selection starts
+ * asking about the player keys is a fact about the game's state, whereas "32 seconds in"
+ * is a guess that drifts with load time. */
+static int trigger_seen;
+
+int rwatch_triggered(void) { return trigger_seen; }
+
 void rwatch_frame(void)
 {
     if (!g_rwatch_hi || rw_seqn == 0) return;
@@ -56,6 +64,16 @@ void rwatch_frame(void)
         if (j - i < SCAN_RUN)
             for (int k = i; k < j; k++) cur[rw_seq[k]] = 1;
         i = j;
+    }
+
+    const char *after = getenv("LF2_AUTOKEY_AFTER");
+    if (after && !trigger_seen) {
+        const uint32_t want = (uint32_t)strtoul(after, NULL, 0);
+        if (want < RW_SPAN && cur[want]) {
+            trigger_seen = 1;
+            fprintf(stderr, "input trigger: game polled key %02x, starting key script\n",
+                    want);
+        }
     }
 
     if (!rw_have_prev || memcmp(cur, rw_prev, sizeof cur) != 0) {
@@ -103,6 +121,9 @@ void rwatch_report(void)
 void rwatch_init(void)
 {
     const char *spec = getenv("LF2_READ_WATCH");
+    /* LF2_AUTOKEY_AFTER needs the key array watched to see the trigger, so arm it here
+     * rather than making the caller remember to pass both. */
+    if (!spec && getenv("LF2_AUTOKEY_AFTER")) spec = "0x455378:0x455478";
     if (!spec) return;
     char *end = NULL;
     const uint32_t lo = (uint32_t)strtoul(spec, &end, 0);

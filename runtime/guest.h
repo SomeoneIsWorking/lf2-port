@@ -49,6 +49,7 @@ void rwatch_hit(uint32_t a);
 void rwatch_frame(void);
 void rwatch_selftest(void);
 void rwatch_init(void);
+int  rwatch_triggered(void);
 #define RWATCH(a) \
     do { if (__builtin_expect((a) - g_rwatch_lo < g_rwatch_hi - g_rwatch_lo, 0)) \
              rwatch_hit(a); } while (0)

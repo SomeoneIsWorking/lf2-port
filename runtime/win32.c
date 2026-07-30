@@ -455,8 +455,16 @@ static int autokey_pressed(uint32_t vk)
     const char *script = getenv("LF2_AUTOKEY");
     if (!script) return 0;
 
+    /* With LF2_AUTOKEY_AFTER the clock starts when the game is first seen polling that
+     * key, not at process start -- so the script tracks the game's state instead of
+     * drifting with however long the data load happened to take. */
     static uint64_t base_ms;
-    if (!base_ms) base_ms = SDL_GetTicks();
+    if (getenv("LF2_AUTOKEY_AFTER")) {
+        if (!rwatch_triggered()) return 0;
+        if (!base_ms) base_ms = SDL_GetTicks();
+    } else if (!base_ms) {
+        base_ms = SDL_GetTicks();
+    }
     const char *s_env = getenv("LF2_AUTOKEY_START");
     const char *e_env = getenv("LF2_AUTOKEY_EVERY");
     const char *h_env = getenv("LF2_AUTOKEY_HOLD");
