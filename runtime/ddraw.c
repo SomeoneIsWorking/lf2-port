@@ -394,6 +394,10 @@ static void surf_Blt(uint32_t self)
             done = 1;
         }
     }
+    if (getenv("LF2_BLT_RECTS")) {
+        static long n;
+        if (n++ < 4000) fprintf(stderr, "RECT %d %d %d %d\n", dl, dt, dr, db);
+    }
     if (getenv("LF2_BLT_STACK")) {
         int wx = 0, wy = 0;
         sscanf(getenv("LF2_BLT_STACK"), "%d,%d", &wx, &wy);

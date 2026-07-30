@@ -243,3 +243,40 @@ render in full and match the oracle's content.
 It is an approximation of a proportional face, not that face — matching Windows' System
 font exactly would need the font itself. The remaining difference is glyph shape, not
 layout.
+
+## Menu and ad structure, for porting them natively
+
+Established by differential call-chain tracing (`LF2_BLT_STACK=<x>,<y>` walks the guest
+stack at the blit landing on a given destination), not by guessing:
+
+- **`fn_004246b0`** is the menu. 4689 lines of generated C, covering the main menu, control
+  settings and recording info. It draws everything and hit-tests everything.
+- It reaches the character art through **`fn_00423840`** and the ad panel through
+  **`fn_00423b00`**. The two call chains share their entire outer frame and differ only in
+  that middle hop, which is what identifies them.
+- **Neither `fn_00423b00` nor `fn_004242e0` is "the ad function".** Both are shared drawing
+  helpers taking a descriptor; stubbing the first aborts the game, stubbing the second
+  garbles the character art. `fn_004242e0` does contain the "To advertise on LF2" link
+  handling — it references `http://www.littlefighter.com/advertise` and ShellExecute's
+  `open` verb — but that is one branch of a general helper.
+
+The menu computes a **selection index from the mouse position** and dispatches on it:
+
+```
+ECX = mouse_x (0x4546f0);  if (ECX < 260 || ECX > 547) skip
+ECX = mouse_y (0x453cdc)
+if (274 <= ECX <= 300) EAX = 1
+if (305 <= ECX <= 330) EAX = 2
+if (336 <= ECX <= 361) EAX = 3
+... then dispatch on EAX
+```
+
+So the whole menu is mouse-position-driven by construction, and the ad elements are drawn
+inline in the same function as everything else. That is why there is no small function to
+replace: **removing the ads and making selection controller-native both require porting
+`fn_004246b0` itself**, which is the substantial piece of work here rather than a stub.
+
+Ad destination rectangles, for reference when porting: top strip `(0,0)-(397,34)`, right
+panel `(590,199)-(788,393)`, its arrows `(750,185)-(769,199)` and `(769,185)-(788,199)`,
+bottom strip around `(0,508)-(71,517)`. The character art is `(0,0)-(330,546)` and the
+background `(0,0)-(794,550)`.
