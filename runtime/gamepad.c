@@ -94,6 +94,141 @@ static SDL_Gamepad *pad_for(uint32_t id)
     return (id < JOY_SLOTS) ? slot[id] : NULL;
 }
 
+/* ---- driving the menus from a controller ----
+ *
+ * The game's own joystick support only covers fighting: the menus are driven by the mouse
+ * (clickable bands) or by the player keys, and neither looks at a joystick at all. So a
+ * controller is translated here into the input the menus actually respond to.
+ *
+ * Directions become player 1's keys, which drives every keyboard menu (mode select,
+ * character selection, the pre-fight overlay). Up and down ALSO walk the main menu's
+ * clickable bands by moving the pointer, which makes the game highlight the entry under it
+ * exactly as a mouse would -- so the highlight comes from the game, not from anything drawn
+ * here. The confirm button sends both the attack key and a click, so it works on whichever
+ * kind of screen is up.
+ *
+ * The band coordinates come from the game's own hit-test constants, recovered by
+ * tools/click_bands.py; see docs/running.md.
+ */
+static const struct { int x, y; } MENU_BANDS[] = {
+    { 403, 228 },  /* game start      */
+    { 403, 259 },  /* network game    */
+    { 403, 292 },  /* control settings*/
+    { 403, 322 },  /* recording info  */
+    { 403, 353 },  /* official website*/
+};
+enum { N_MENU_BANDS = (int)(sizeof MENU_BANDS / sizeof MENU_BANDS[0]) };
+
+/* Player 1's defaults, as shown on the control settings screen. */
+enum { VK_P1_UP = 0x68, VK_P1_DOWN = 0x62, VK_P1_LEFT = 0x64, VK_P1_RIGHT = 0x66,
+       VK_P1_ATTACK = 0x65, VK_P1_JUMP = 0x60, VK_P1_DEFEND = 0x6B };
+
+static int band_index;
+
+void gamepad_drive_ui(void)
+{
+    ensure_init();
+    SDL_Gamepad *pad = slot[0];
+    if (!pad) return;
+
+    static uint8_t was[16];
+    struct { SDL_GamepadButton b; SDL_GamepadAxis ax; int dir; uint32_t vk; } MAP[] = {
+        { SDL_GAMEPAD_BUTTON_DPAD_UP,    SDL_GAMEPAD_AXIS_LEFTY, -1, VK_P1_UP },
+        { SDL_GAMEPAD_BUTTON_DPAD_DOWN,  SDL_GAMEPAD_AXIS_LEFTY, +1, VK_P1_DOWN },
+        { SDL_GAMEPAD_BUTTON_DPAD_LEFT,  SDL_GAMEPAD_AXIS_LEFTX, -1, VK_P1_LEFT },
+        { SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_AXIS_LEFTX, +1, VK_P1_RIGHT },
+        { SDL_GAMEPAD_BUTTON_SOUTH,      SDL_GAMEPAD_AXIS_INVALID, 0, VK_P1_ATTACK },
+        { SDL_GAMEPAD_BUTTON_EAST,       SDL_GAMEPAD_AXIS_INVALID, 0, VK_P1_JUMP },
+        { SDL_GAMEPAD_BUTTON_WEST,       SDL_GAMEPAD_AXIS_INVALID, 0, VK_P1_DEFEND },
+        { SDL_GAMEPAD_BUTTON_START,      SDL_GAMEPAD_AXIS_INVALID, 0, 0x0D /* Enter */ },
+    };
+
+    for (unsigned i = 0; i < sizeof MAP / sizeof MAP[0]; i++) {
+        int down = SDL_GetGamepadButton(pad, MAP[i].b);
+        if (!down && MAP[i].ax != SDL_GAMEPAD_AXIS_INVALID) {
+            const int raw = SDL_GetGamepadAxis(pad, MAP[i].ax);
+            down = MAP[i].dir < 0 ? (raw < -16000) : (raw > 16000);
+        }
+        if (down == was[i]) continue;              /* edge-triggered, like a keypress */
+        was[i] = (uint8_t)down;
+
+        hostwin_inject_key(MAP[i].vk, down);
+
+        /* Up and down also walk the pointer over the main menu's bands. Harmless on
+         * screens that have none: nothing is under the pointer, so nothing highlights. */
+        if (down && (MAP[i].vk == VK_P1_UP || MAP[i].vk == VK_P1_DOWN)) {
+            band_index += (MAP[i].vk == VK_P1_DOWN) ? 1 : -1;
+            if (band_index < 0) band_index = N_MENU_BANDS - 1;
+            if (band_index >= N_MENU_BANDS) band_index = 0;
+            hostwin_inject_pointer(MENU_BANDS[band_index].x, MENU_BANDS[band_index].y, -1);
+        }
+        if (MAP[i].vk == VK_P1_ATTACK)
+            hostwin_inject_pointer(MENU_BANDS[band_index].x, MENU_BANDS[band_index].y, down);
+    }
+}
+
+/* ---- virtual controller, for testing without hardware ----
+ *
+ * LF2_VIRTUAL_PAD=<script> attaches a software gamepad through SDL and plays a button
+ * script into it. This is the only way any of the controller support gets exercised here,
+ * since there is no physical pad to plug in -- auto-detect, hotswap and the menu driving
+ * above were otherwise all untested code.
+ *
+ * The script is button:frame pairs, e.g. "down:60,down:90,south:120", where the names are
+ * SDL_GamepadButton short names and the frame is when to press (released 8 frames later).
+ */
+static SDL_Joystick *virtual_pad;
+static SDL_JoystickID virtual_id;
+
+static int button_by_name(const char *name, size_t n)
+{
+    static const struct { const char *n; SDL_GamepadButton b; } NAMES[] = {
+        { "up", SDL_GAMEPAD_BUTTON_DPAD_UP }, { "down", SDL_GAMEPAD_BUTTON_DPAD_DOWN },
+        { "left", SDL_GAMEPAD_BUTTON_DPAD_LEFT }, { "right", SDL_GAMEPAD_BUTTON_DPAD_RIGHT },
+        { "south", SDL_GAMEPAD_BUTTON_SOUTH }, { "east", SDL_GAMEPAD_BUTTON_EAST },
+        { "west", SDL_GAMEPAD_BUTTON_WEST }, { "north", SDL_GAMEPAD_BUTTON_NORTH },
+        { "start", SDL_GAMEPAD_BUTTON_START },
+    };
+    for (unsigned i = 0; i < sizeof NAMES / sizeof NAMES[0]; i++)
+        if (strlen(NAMES[i].n) == n && strncmp(NAMES[i].n, name, n) == 0) return NAMES[i].b;
+    return -1;
+}
+
+void virtual_pad_tick(long frame)
+{
+    const char *script = getenv("LF2_VIRTUAL_PAD");
+    if (!script) return;
+
+    if (!virtual_pad) {
+        SDL_VirtualJoystickDesc desc;
+        SDL_INIT_INTERFACE(&desc);
+        desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+        desc.naxes = 6;
+        desc.nbuttons = 15;
+        desc.name = "lf2 virtual pad";
+        virtual_id = SDL_AttachVirtualJoystick(&desc);
+        if (!virtual_id) {
+            fprintf(stderr, "virtual pad: attach failed: %s\n", SDL_GetError());
+            return;
+        }
+        virtual_pad = SDL_OpenJoystick(virtual_id);
+        fprintf(stderr, "virtual pad: attached as joystick %u\n", (unsigned)virtual_id);
+        return;                      /* let the add event land before pressing anything */
+    }
+
+    for (const char *c = script; *c; ) {
+        const char *name = c;
+        while (*c && *c != ':') c++;
+        const int btn = button_by_name(name, (size_t)(c - name));
+        if (*c == ':') c++;
+        const long at = strtol(c, (char **)&c, 10);
+        while (*c == ',' || *c == ' ') c++;
+        if (btn < 0) continue;
+        if (frame == at)      SDL_SetJoystickVirtualButton(virtual_pad, btn, true);
+        else if (frame == at + 8) SDL_SetJoystickVirtualButton(virtual_pad, btn, false);
+    }
+}
+
 /* ---- the winmm entry points ---- */
 
 static void h_joyGetNumDevs(void)

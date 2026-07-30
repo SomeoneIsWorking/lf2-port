@@ -29,3 +29,6 @@ void music_stop(void);
 void music_set_volume(int32_t centibels);
 long hostwin_frames(void);
 void hostwin_shutdown(void);
+void hostwin_inject_key(uint32_t vk, int down);
+void hostwin_inject_pointer(int x, int y, int down);
+int  hostwin_injected_key(uint32_t vk);

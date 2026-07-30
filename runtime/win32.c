@@ -29,6 +29,8 @@ enum { WM_KEYDOWN_FWD = 0x0100, WM_KEYUP_FWD = 0x0101,
 static int mouse_left_down, mouse_right_down;
 static unsigned autokey_pumps;
 void gamepad_handle_event(const SDL_Event *e);
+void gamepad_drive_ui(void);
+void virtual_pad_tick(long frame);
 
 /* ---- window ---- */
 
@@ -209,6 +211,31 @@ static void keydebug_report(void);
 static void keydebug_note(unsigned vk);
 static void keydebug_selftest(void);
 
+/* Injection points for the controller UI layer in gamepad.c. Keys go in as real
+ * WM_KEYDOWN/WM_KEYUP so code that reacts to messages sees them, and are also reflected in
+ * the polled key state, because the game reads both. `down` of -1 on the pointer means
+ * "move only, do not touch the buttons". */
+static uint8_t injected_keys[256];
+
+void hostwin_inject_key(uint32_t vk, int down)
+{
+    if (vk > 255) return;
+    injected_keys[vk] = down ? 1 : 0;
+    push_message(down ? WM_KEYDOWN_FWD : WM_KEYUP_FWD, vk, 1);
+}
+
+void hostwin_inject_pointer(int x, int y, int down)
+{
+    const uint32_t lp = ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
+    push_message(WM_MOUSEMOVE, (uint32_t)(mouse_left_down ? 1 : 0), lp);
+    if (down < 0) return;
+    if ((down != 0) == mouse_left_down) return;
+    mouse_left_down = down != 0;
+    push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
+}
+
+int hostwin_injected_key(uint32_t vk) { return vk < 256 && injected_keys[vk]; }
+
 void hostwin_pump(void)
 {
     /* LF2_QUIT_AFTER=<frames> posts WM_QUIT once that many frames have been presented.
@@ -264,6 +291,9 @@ void hostwin_pump(void)
                                  vk, 1);
         }
     }
+
+    virtual_pad_tick(hostwin_frames());
+    gamepad_drive_ui();        /* controller -> the input the menus actually read */
 }
 
 static void fill_msg(uint32_t p, uint32_t msg)
@@ -582,7 +612,9 @@ static void h_GetKeyState(void)
     if (getenv("LF2_KEY_DEBUG")) keydebug_note(ARG(0) & 0xff);
     if (ARG(0) == 0x01) { ret_stdcall(1, mouse_left_down ? 0xFF80u : 0u); return; }
     if (ARG(0) == 0x02) { ret_stdcall(1, mouse_right_down ? 0xFF80u : 0u); return; }
-    if (autokey_pressed(ARG(0))) { ret_stdcall(1, 0xFF80u); return; }
+    if (autokey_pressed(ARG(0)) || hostwin_injected_key(ARG(0))) {
+        ret_stdcall(1, 0xFF80u); return;
+    }
     const SDL_Scancode sc = vk_to_scancode(ARG(0));
     int n = 0;
     const bool *state = SDL_GetKeyboardState(&n);
