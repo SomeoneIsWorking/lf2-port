@@ -468,6 +468,14 @@ ffmpeg is run with `fork`/`exec`, not `popen`: the path comes from the game's da
 and interpolating it into a shell command string would make a filename a shell injection.
 Quoting it would be a patch over the wrong mechanism — no shell needs to be involved.
 
+The graph's `Stop` and `Pause` silence the music. Without that a track change layers the
+new track over the old one, since the graph is the only thing that knows a track is
+finished with.
+
+`IBasicAudio::put_Volume` is honoured. The game sets **-500 centibels** (-5 dB) for music,
+which is a gain of 0.562 — and the measured mix peak is 18426/32767 = 0.562, so the scale
+conversion is right rather than merely plausible.
+
 The decode is synchronous and measured at **0.15 s** for a 150-second track, so it needs no
 threading or streaming. Both paths are verified: with ffmpeg the track loads and mixes;
 with `PATH=/nonexistent` it prints `ffmpeg not found on PATH`, reports `music-frames=0` and
