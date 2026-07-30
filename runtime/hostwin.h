@@ -24,3 +24,4 @@ void audio_report(void);
 int  music_load(const char *path);
 void music_start(void);
 void music_stop(void);
+void music_set_volume(int32_t centibels);

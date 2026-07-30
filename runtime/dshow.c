@@ -105,7 +105,22 @@ static void ds_QueryInterface(uint32_t self)
 
 /* IMediaControl */
 static void mc_Run(uint32_t self)  { (void)self; music_start(); graph_running = 1; com_ret(1, DD_OK); }
-static void mc_Stop(uint32_t self) { (void)self; graph_running = 0; com_ret(1, DD_OK); }
+/* Stop and Pause must silence the music, or a track change layers the new track over the
+ * old one -- the graph is the only thing that knows a track is finished with. */
+static void mc_Stop(uint32_t self)  { (void)self; music_stop(); graph_running = 0; com_ret(1, DD_OK); }
+static void mc_Pause(uint32_t self) { (void)self; music_stop(); graph_running = 0; com_ret(1, DD_OK); }
+
+/* IBasicAudio::put_Volume(long lVolume) */
+static void ba_put_Volume(uint32_t self)
+{
+    (void)self;
+    if (getenv("LF2_AUDIO_DEBUG")) {
+        static int n;
+        if (n++ < 3) fprintf(stderr, "put_Volume(%d) centibels\n", (int32_t)ARG(1));
+    }
+    music_set_volume((int32_t)ARG(1));
+    com_ret(2, DD_OK);
+}
 static void mc_GetState(uint32_t self)
 {
     (void)self;
@@ -192,7 +207,9 @@ void dshow_register(void)
     com_class[IF_GRAPH].method[13] = gb_RenderFile;
 
     com_class[IF_MCONTROL].method[7]  = mc_Run;
+    com_class[IF_MCONTROL].method[8]  = mc_Pause;
     com_class[IF_MCONTROL].method[9]  = mc_Stop;
+    com_class[IF_BAUDIO].method[7]    = ba_put_Volume;
     com_class[IF_MCONTROL].method[10] = mc_GetState;
     com_class[IF_MCONTROL].method[11] = mc_RenderFile;
 

@@ -53,7 +53,15 @@ static void audio_start(void);    /* defined below; music must be able to open t
 static int16_t *mus_pcm;          /* interleaved stereo at MIX_RATE */
 static size_t   mus_frames, mus_pos;
 static int      mus_playing;
+static float    mus_gain = 0.5f;  /* until the game says otherwise */
 long            au_music_frames;
+
+/* IBasicAudio volume is hundredths of a dB, -10000 (silence) to 0 (unattenuated), the
+ * same scale DirectSound uses for effects. */
+void music_set_volume(int32_t centibels)
+{
+    mus_gain = (centibels <= -10000) ? 0.0f : SDL_powf(10.0f, (float)centibels / 2000.0f);
+}
 
 void music_stop(void) { mus_playing = 0; }
 
@@ -167,7 +175,8 @@ static void SDLCALL feed(void *ud, SDL_AudioStream *s, int additional, int total
         for (int f = 0; f < chunk; f++) {
             if (mus_pos >= mus_frames) mus_pos = 0;            /* loop */
             for (int c = 0; c < MIX_CHANNELS; c++)
-                out[f * MIX_CHANNELS + c] = mus_pcm[mus_pos * MIX_CHANNELS + c] / 2;
+                out[f * MIX_CHANNELS + c] =
+                    (int16_t)((float)mus_pcm[mus_pos * MIX_CHANNELS + c] * mus_gain);
             mus_pos++;
         }
     }
