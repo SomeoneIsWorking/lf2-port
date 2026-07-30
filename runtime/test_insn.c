@@ -268,6 +268,16 @@ int main(void)
             }
             k->lifted();
 
+            if (k->is_x87 && getenv("LF2_X87_DUMP")) {
+                static int shown;
+                if (!shown++) {
+                    fprintf(stderr, "fpu_out cw=%02x%02x sw=%02x%02x tw=%02x%02x R0..R2:",
+                            got.fpu_out[1], got.fpu_out[0], got.fpu_out[5], got.fpu_out[4],
+                            got.fpu_out[9], got.fpu_out[8]);
+                    for (int b = 28; b < 58; b++) fprintf(stderr, " %02x", got.fpu_out[b]);
+                    fprintf(stderr, "\n");
+                }
+            }
             if (k->is_x87) {
                 int bad = -1;
                 /* Only the live part of the stack is meaningful; slots beyond it hold
