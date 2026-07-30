@@ -121,3 +121,22 @@ Two things are **assumed, not proven**:
 **Falsifier:** a differential run against the Wine oracle showing float state diverging.
 Check this once the harness can compare state; if it fires, the fallback is software
 80-bit for the affected functions only, not globally.
+
+## x87 differential harness — status
+
+The x87 cases in `runtime/test_insn.c` are gated off by default (`LF2_INSN_X87=1` enables
+them) because the harness is not yet trustworthy. What is established:
+
+**The plumbing works.** Dumping the `FNSAVE` output (`LF2_X87_DUMP=1`) shows the seeded
+control word `0x027f` round-tripping through `FRSTOR` and `FNSAVE`, and the status word
+reading `0x1800` — TOP of 3, down from the 4 that was seeded, which proves the `FILD`
+under test actually executed and pushed.
+
+**The seeding does not.** The tag word comes back `0x557f`: every register tagged zero or
+empty, including the four that were seeded with non-zero doubles converted to `long
+double`. So the 80-bit values written into the save area are not being loaded by `FRSTOR`
+as intended, and `FILD` therefore reports zero.
+
+That is a much narrower problem than "x87 does not work": the instruction executes, the
+state is captured, and only the input register encoding is wrong. Worth resuming from
+there rather than from scratch.
