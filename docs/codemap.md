@@ -190,6 +190,26 @@ streaming caller there is no room to write. That fix changes nothing measurable 
 precisely because the game never reaches the call, but the old behaviour would have stalled
 the stream the moment it did.
 
-*Next step:* find why the game creates 41 buffers under Wine and 5 here, since the streaming
-buffer is presumably among the missing ones. Comparing `CreateSoundBuffer` flags between the
-two would say.
+### What that next step found
+
+Comparing `CreateSoundBuffer` against the oracle exposed a much larger bug. The
+`DSBUFFERDESC` fields were read at the wrong offsets — `dwBufferBytes` at +12 (actually
+`dwReserved`) and `lpwfxFormat` at +16... at +20 (actually `guid3DAlgorithm`). The correct
+layout is `dwSize`+0, `dwFlags`+4, `dwBufferBytes`+8, `dwReserved`+12, `lpwfxFormat`+16.
+
+Every sound buffer therefore came out as the 4-byte fallback with the default format: all
+116 buffers in a run reported *"4 bytes, 22050 Hz 1ch 8bit"*, where the oracle creates them
+at 7006, 34156, 41096, 144384 and 352800 bytes across several rates. Each effect was
+playing two samples.
+
+Fixed, buffers come out at their real sizes and formats (8480 @ 21000 Hz 16-bit, 60416 @
+22050, 3758 @ 11025, 34310 @ 38400, …), the game's `Lock`/`Unlock` count goes from 5 to 116,
+`SetVolume` appears 93 times where it did not before, and the mix peak drops from a clipping
+32768 to 25161 — real audio rather than clicks.
+
+**This is why "audio works" was not a safe conclusion.** Non-zero plays, non-zero peak and a
+busy mixer were all true the whole time. Two samples of a loud waveform satisfies every one
+of those. Nothing short of comparing against a real DirectSound would have caught it.
+
+*Still open:* the game does not enter its streaming path here (`GetCurrentPosition` remains
+at zero calls).
