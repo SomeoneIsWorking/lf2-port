@@ -514,7 +514,7 @@ cd scratch/build && ctest           # everything, including the ~75 s smoke test
 cd scratch/build && ctest -LE slow  # the fast set only
 ```
 
-`tools/smoke_test.sh` drives the port to a running match headless and asserts what has
+`tools/smoke_test.sh` drives the port deep into the game headless and asserts what has
 actually broken before: colour-keyed blits, sound effects firing, a non-zero mix peak, the
 device being pulled, music decoding, and no aborts. Thresholds sit far below observed
 values so it fails on "broken", not on "slightly different". It skips itself if the game
@@ -525,6 +525,14 @@ assertion: the game renders, sounds and plays correctly at 96% of a core, which 
 how the unimplemented `Sleep` survived. `LF2_NO_SLEEP=1` is the control — it reports 99%
 and fails, against 18% normally.
 
+It does **not** guarantee reaching a running match. The scripted keys reach character
+selection reliably, but whether the final presses land on "Fight!" or on "Reset Random"
+depends on when the pre-fight overlay opens relative to the ~13 s load, which varies run to
+run. Frame dumps caught runs ending at character select while still reporting healthy blit
+and audio counts — so the earlier claim that the numbers came from a match was wrong. The
+assertions are unaffected, since each was checked against a broken build and failed there
+either way.
+
 **It is validated against deliberately broken builds**, which is the only reason to
 believe it. Reintroducing the ADC/SBB carry bug makes it report `keyed blits: 0` and fail;
 removing it again passes at ~11,600. That check also caught a bug in the test itself:
@@ -532,3 +540,19 @@ removing it again passes at ~11,600. That check also caught a bug in the test it
 been asserting on the unkeyed count all along — a number that is large whether or not
 colour-keying works. The assertion could not have failed. The pattern is now anchored on a
 leading space.
+
+## Deterministic frame capture
+
+`LF2_FRAME_DUMP=1900,2100` writes those presented frames as PPM into `$LF2_DUMP_DIR`
+(default `scratch`):
+
+```sh
+cd game && SDL_VIDEODRIVER=offscreen LF2_DUMP_DIR=../scratch/frames \
+  LF2_FRAME_DUMP=1900,2400 ../scratch/build/lf2 lf2.exe
+```
+
+Prefer this to screenshotting an X server. Frame numbers are exact and reproducible, it
+works headless, and it captures the game's own framebuffer rather than a window with
+whatever the desktop put behind it. Two attempts at photographing a match via `import`
+landed on the preceding menu instead; the frame dump is what established that those runs
+genuinely never reached the match.
