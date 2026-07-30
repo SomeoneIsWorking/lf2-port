@@ -82,7 +82,11 @@ reasoning about the code:
 
 ## Still open
 
-- Some background regions render black; the sheets themselves all decode correctly, so
-  this is compositing rather than loading.
+- ~~Some background regions render black; the sheets themselves all decode correctly, so
+  this is compositing rather than loading.~~ **Fixed**, and the diagnosis above was right
+  that it was compositing: the cause was ADC/SBB dropping the carry, which made the game
+  compute `DDBLT_KEYSRC` as 0, so every colour-keyed blit drew opaque. See
+  `docs/codemap.md`. The same one-line class of bug accounted for the black slab behind
+  the main menu, the black boxes around fighter sprites, and the missing ad artwork.
 - GDI `TextOutA` draws nothing, so text drawn through GDI is missing. The menu's own text
   is bitmap art and does appear.

@@ -24,7 +24,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Window modes | `runtime/win32.c` | **done** | windowed / borderless / fullscreen, Alt+Enter toggle |
 | Netplay | `runtime/wsock.c` | **stubbed** | reports started-but-no-network, which the game handles |
 | Startup crash | `docs/current-crash.md` | **fixed** | function-end detection; see doc |
-| Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **done** | menus, screens and GDI text all render |
+| Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **done** | menus, screens, GDI text and colour-keyed sprites all render |
 | Game flow | `docs/running.md` | **done** | reaches gameplay: a VS-mode match runs unattended, see the click/key script |
 | Sprite colour-key | `recompiler/lift.c` | **fixed** | root cause was ADC/SBB dropping the carry; see below |
 
