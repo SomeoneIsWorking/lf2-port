@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <sys/mman.h>
 
 /* Host execution (live, capture) runs the binary's own instruction bytes, so those two
@@ -386,9 +387,22 @@ static int run_cases(int mode, FILE *cap, uint32_t mem_base)
             for (uint32_t i = 0; i < SCRATCH_SPAN; i += 4)
                 ST32(SCRATCH - SCRATCH_SPAN / 2 + i, rnd());
 
+            /* Mostly ordinary magnitudes, with sparse specials: values that overflow a
+             * 32-bit integer, infinities and NaN. FIST on any of those yields the x86
+             * integer indefinite 0x80000000, while a plain C cast is undefined behaviour
+             * that ARM resolves differently (saturation, or 0 for NaN) -- exactly the
+             * class of divergence an arm64 replay exists to catch. The choice is driven
+             * by the drawn VALUE, so the rnd() stream stays identical either way. */
             double st_in[8];
-            for (int i = 0; i < 8; i++)
-                st_in[i] = (double)(int32_t)rnd() / 65536.0;
+            for (int i = 0; i < 8; i++) {
+                const uint32_t u = rnd();
+                switch (u >> 28) {
+                case 0xF: st_in[i] = (double)NAN; break;
+                case 0xE: st_in[i] = u & 1 ? INFINITY : -INFINITY; break;
+                case 0xD: st_in[i] = (u & 1 ? 1.0 : -1.0) * 3e15; break;   /* > INT32 */
+                default:  st_in[i] = (double)(int32_t)u / 65536.0; break;
+                }
+            }
 
             /* ---- host side (live and capture) ---- */
 #if HOST_IS_X86
