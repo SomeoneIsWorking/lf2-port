@@ -116,6 +116,61 @@ static void screen_change_check(const uint8_t *px, int w, int h, int pitch, long
     }
 }
 
+/* Diagnostic dumps go to $LF2_DUMP_DIR, default "scratch". Never an absolute path: this
+ * is a committed file in a public repository, and a baked-in home directory is both
+ * unusable for anyone else and a leak of the author's layout. */
+static void dump_path(char *out, size_t n, const char *fmt, ...)
+{
+    const char *dir = getenv("LF2_DUMP_DIR");
+    if (!dir || !*dir) dir = "scratch";
+    int k = snprintf(out, n, "%s/", dir);
+    if (k < 0 || (size_t)k >= n) { out[0] = 0; return; }
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(out + k, n - (size_t)k, fmt, ap);
+    va_end(ap);
+}
+
+/* Deterministic visual capture: LF2_FRAME_DUMP=1500,1800 writes those presented frames as
+ * PPM into $LF2_DUMP_DIR. Screenshotting an X server instead means racing the game's own
+ * timing -- two attempts at capturing a match landed on the menu before it -- and cannot
+ * run headless at all. Frame numbers are exact, so a capture is reproducible.
+ */
+static int frame_wanted(long frame)
+{
+    const char *spec = getenv("LF2_FRAME_DUMP");
+    if (!spec) return 0;
+    for (const char *c = spec; *c; ) {
+        char *end = NULL;
+        const long v = strtol(c, &end, 10);
+        if (end == c) break;
+        if (v == frame) return 1;
+        c = end;
+        while (*c == ',' || *c == ' ') c++;
+    }
+    return 0;
+}
+
+static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
+{
+    if (!frame_wanted(frame)) return;
+    char path[256];
+    dump_path(path, sizeof path, "frame_%06ld.ppm", frame);
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "frame dump: cannot write %s\n", path); return; }
+    fprintf(f, "P6\n%d %d\n255\n", w, h);
+    for (int y = 0; y < h; y++) {
+        const uint32_t *row = (const uint32_t *)(px + (size_t)y * (size_t)pitch);
+        for (int x = 0; x < w; x++) {
+            const uint8_t rgb[3] = { (uint8_t)(row[x] >> 16), (uint8_t)(row[x] >> 8),
+                                     (uint8_t)row[x] };
+            fwrite(rgb, 1, 3, f);
+        }
+    }
+    fclose(f);
+    fprintf(stderr, "frame dump: wrote %s (%dx%d)\n", path, w, h);
+}
+
 /* ---- presentation ---- */
 
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
@@ -124,6 +179,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
     screen_change_check(pixels, w, h, src_pitch, frames);
+    dump_frame(pixels, w, h, src_pitch, frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
     if (frames % 900 == 0) { colorkey_report(); vram_report(); com_release_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
@@ -248,21 +304,6 @@ static void blit(Surface *d, int dx, int dy, int dw, int dh,
             dp[dxx] = v;
         }
     }
-}
-
-/* Diagnostic dumps go to $LF2_DUMP_DIR, default "scratch". Never an absolute path: this
- * is a committed file in a public repository, and a baked-in home directory is both
- * unusable for anyone else and a leak of the author's layout. */
-static void dump_path(char *out, size_t n, const char *fmt, ...)
-{
-    const char *dir = getenv("LF2_DUMP_DIR");
-    if (!dir || !*dir) dir = "scratch";
-    int k = snprintf(out, n, "%s/", dir);
-    if (k < 0 || (size_t)k >= n) { out[0] = 0; return; }
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(out + k, n - (size_t)k, fmt, ap);
-    va_end(ap);
 }
 
 static void dump_surface(uint32_t obj, const char *tag)

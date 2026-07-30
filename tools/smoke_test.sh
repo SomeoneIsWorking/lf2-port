@@ -1,6 +1,16 @@
 #!/bin/sh
-# End-to-end smoke test: drive the port to a running match and assert the things that
-# have actually broken before.
+# End-to-end smoke test: drive the port deep into the game and assert the things that have
+# actually broken before.
+#
+# What it does NOT guarantee is reaching a running match. The scripted keys reach character
+# selection reliably, but whether the last presses land on "Fight!" or on "Reset Random"
+# depends on when the pre-fight overlay opens relative to the ~13 s data load, and that
+# varies between runs. Frame dumps confirmed runs that ended at character select while
+# still reporting healthy blit and audio counts.
+#
+# That does not weaken the assertions: every one of them was checked against a
+# deliberately broken build and failed there, so they detect the regressions they name
+# regardless of which of the two screens the run ends on.
 #
 # Every assertion here corresponds to a real regression:
 #   keyed blits   -- ADC/SBB dropped the carry, so DDBLT_KEYSRC was computed as 0 and
