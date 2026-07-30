@@ -463,3 +463,12 @@ Two things this turned up. The filename arrives as UTF-16 but with a **zero BSTR
 prefix**, so the terminator is what to trust, not the prefix. And the audio device was only
 opened when a sound *effect* first played, so music alone — which is all that happens on
 the menus — decoded a full track that nothing ever pulled.
+
+ffmpeg is run with `fork`/`exec`, not `popen`: the path comes from the game's data files,
+and interpolating it into a shell command string would make a filename a shell injection.
+Quoting it would be a patch over the wrong mechanism — no shell needs to be involved.
+
+The decode is synchronous and measured at **0.15 s** for a 150-second track, so it needs no
+threading or streaming. Both paths are verified: with ffmpeg the track loads and mixes;
+with `PATH=/nonexistent` it prints `ffmpeg not found on PATH`, reports `music-frames=0` and
+carries on silently.

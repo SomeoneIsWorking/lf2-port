@@ -11,6 +11,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #define ARG(n) LD32(R(ESP) + 4 + 4 * (n))
 
 typedef struct {
@@ -64,38 +68,70 @@ void music_start(void)
     mus_pos = 0;
 }
 
-/* Returns 0 and explains itself on any failure; never leaves a half-loaded track. */
+/* Returns 0 and explains itself on any failure; never leaves a half-loaded track.
+ *
+ * fork/exec rather than popen: the path comes from the game's data files, and building a
+ * shell command string around it would make an attacker-supplied filename a shell
+ * injection. Quoting it would be a patch over the wrong mechanism -- there is no reason
+ * for a shell to be involved at all. */
+static FILE *ffmpeg_open(const char *path, pid_t *out_pid)
+{
+    int fd[2];
+    if (pipe(fd) != 0) return NULL;
+
+    char rate[16], chans[8];
+    snprintf(rate, sizeof rate, "%d", MIX_RATE);
+    snprintf(chans, sizeof chans, "%d", MIX_CHANNELS);
+
+    const pid_t pid = fork();
+    if (pid < 0) { close(fd[0]); close(fd[1]); return NULL; }
+    if (pid == 0) {
+        close(fd[0]);
+        dup2(fd[1], STDOUT_FILENO);
+        close(fd[1]);
+        const int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
+        execlp("ffmpeg", "ffmpeg", "-v", "quiet", "-nostdin", "-i", path,
+               "-f", "s16le", "-acodec", "pcm_s16le", "-ar", rate, "-ac", chans,
+               "-", (char *)NULL);
+        _exit(127);                      /* exec failed: no ffmpeg on PATH */
+    }
+    close(fd[1]);
+    *out_pid = pid;
+    return fdopen(fd[0], "r");
+}
+
 int music_load(const char *path)
 {
     music_stop();
     free(mus_pcm); mus_pcm = NULL; mus_frames = 0; au_music_frames = 0;
 
-    char cmd[1024];
-    snprintf(cmd, sizeof cmd,
-             "ffmpeg -v quiet -nostdin -i '%s' -f s16le -acodec pcm_s16le "
-             "-ar %d -ac %d - 2>/dev/null", path, MIX_RATE, MIX_CHANNELS);
-    FILE *pipe = popen(cmd, "r");
-    if (!pipe) { fprintf(stderr, "music: could not run ffmpeg\n"); return 0; }
+    pid_t pid = -1;
+    FILE *pipe = ffmpeg_open(path, &pid);
+    if (!pipe) { fprintf(stderr, "music: could not start ffmpeg\n"); return 0; }
 
     size_t cap = 1u << 20, len = 0;
     int16_t *buf = malloc(cap);
-    if (!buf) { pclose(pipe); return 0; }
+    if (!buf) { fclose(pipe); waitpid(pid, NULL, 0); return 0; }
     for (;;) {
         if (len == cap) {
             int16_t *bigger = realloc(buf, cap * 2);
-            if (!bigger) { free(buf); pclose(pipe); return 0; }
+            if (!bigger) { free(buf); fclose(pipe); waitpid(pid, NULL, 0); return 0; }
             buf = bigger; cap *= 2;
         }
         const size_t got = fread((char *)buf + len, 1, cap - len, pipe);
         if (got == 0) break;
         len += got;
     }
-    const int rc = pclose(pipe);
+    fclose(pipe);
+    int status = 0;
+    waitpid(pid, &status, 0);
 
     if (len == 0) {
         free(buf);
+        const int exited = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
         fprintf(stderr, "music: no audio decoded from %s%s\n", path,
-                rc != 0 ? " (is ffmpeg installed?)" : "");
+                exited == 127 ? " (ffmpeg not found on PATH)" : "");
         return 0;
     }
     mus_pcm = buf;
