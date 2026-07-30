@@ -521,6 +521,146 @@ static int text_draw_ttf(const char *text, int x, int y,
 }
 #endif /* LF2_HAVE_TTF */
 
+/* ---- the game's own 8x16 text ----
+ *
+ * Every string the game draws itself -- name tags, the status line, screen headings --
+ * goes out as one blit per glyph from a fixed-pitch bitmap sheet, with the character code
+ * as the clip index. The caller advances the pen 8 pixels regardless of what was drawn,
+ * so the glyph SHAPE can be replaced without touching a single layout calculation.
+ *
+ * That constrains the choice: the replacement has to be MONOSPACE and sized so its advance
+ * is at most 8 pixels, or characters overlap. A proportional face is not an option here,
+ * which is why this is a separate font from the one the GDI path uses.
+ *
+ * Glyphs are cached per (character, colour). The game draws 20,000+ of them in a run and
+ * rendering each one through TTF every time would be visible.
+ */
+#ifdef LF2_HAVE_TTF
+enum { GLYPH_W = 8, GLYPH_H = 16 };
+
+static TTF_Font *mono_font;
+static int mono_tried, mono_baseline;
+
+static TTF_Font *mono_open(void)
+{
+    if (mono_tried) return mono_font;
+    mono_tried = 1;
+    if (!TTF_Init()) return NULL;
+
+    static const char *const CANDIDATES[] = {
+        "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/liberation-mono-fonts/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/google-noto/NotoSansMono-Regular.ttf",
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+        "/System/Library/Fonts/Menlo.ttc",
+        "/System/Library/Fonts/Monaco.ttf",
+    };
+    const char *override = getenv("LF2_GAME_FONT");
+
+    /* Largest size whose advance still fits the 8-pixel cell. Measured from the font
+     * rather than assumed from the point size: the ratio differs between faces, and
+     * guessing it wrong makes every glyph overlap its neighbour. */
+    for (int pt = 20; pt >= 8 && !mono_font; pt--) {
+        TTF_Font *f = NULL;
+        if (override && *override) f = TTF_OpenFont(override, pt);
+        for (unsigned i = 0; !f && i < sizeof CANDIDATES / sizeof CANDIDATES[0]; i++)
+            f = TTF_OpenFont(CANDIDATES[i], pt);
+        if (!f) break;                      /* no candidate exists at any size */
+        int adv = 0;
+        if (TTF_GetGlyphMetrics(f, 'M', NULL, NULL, NULL, NULL, &adv) && adv <= GLYPH_W) {
+            mono_font = f;
+            mono_baseline = (GLYPH_H - TTF_GetFontHeight(f)) / 2 + TTF_GetFontAscent(f);
+            if (getenv("LF2_GLYPH_DEBUG"))
+                fprintf(stderr, "glyph font: %d pt, advance %d px, baseline %d\n",
+                        pt, adv, mono_baseline);
+            break;
+        }
+        TTF_CloseFont(f);
+    }
+    if (!mono_font)
+        fprintf(stderr, "glyph font: no monospace font fits an %d px cell; the game's own\n"
+                        "            bitmap font is used. Set LF2_GAME_FONT to choose one.\n",
+                (int)GLYPH_W);
+    return mono_font;
+}
+
+/* One cached 8x16 coverage mask per character. Colour is applied at blit time, so a glyph
+ * drawn in two colours is still rendered once. */
+typedef struct { uint8_t cov[GLYPH_W * GLYPH_H]; int valid; } Glyph;
+static Glyph glyph_cache[128];
+
+static const Glyph *glyph_of(int ch)
+{
+    if (ch < 32 || ch > 126) return NULL;         /* CJK and control codes: not ours */
+    Glyph *g = &glyph_cache[ch];
+    if (g->valid) return g;
+
+    TTF_Font *font = mono_open();
+    if (!font) return NULL;
+
+    const char text[2] = { (char)ch, 0 };
+    SDL_Color white = { 255, 255, 255, 255 };
+    SDL_Surface *surf = TTF_RenderText_Blended(font, text, 1, white);
+    if (!surf) { g->valid = 1; return g; }        /* blank, but do not retry every frame */
+    SDL_Surface *rgba = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(surf);
+    if (!rgba) { g->valid = 1; return g; }
+
+    const int top = mono_baseline - TTF_GetFontAscent(font);
+    for (int y = 0; y < rgba->h; y++) {
+        const int cy = y + top;
+        if (cy < 0 || cy >= GLYPH_H) continue;
+        const uint32_t *row = (const uint32_t *)((const uint8_t *)rgba->pixels
+                                                 + (size_t)y * (size_t)rgba->pitch);
+        for (int x = 0; x < rgba->w && x < GLYPH_W; x++)
+            g->cov[cy * GLYPH_W + x] = (uint8_t)(row[x] >> 24);
+    }
+    SDL_DestroySurface(rgba);
+    g->valid = 1;
+    return g;
+}
+
+/* Returns 1 if it drew the glyph, 0 to let the game's bitmap copy proceed. */
+int game_glyph_draw(int ch, int x, int y, uint32_t ink,
+                    uint32_t dpix, int dwid, int dhei, int dpitch)
+{
+    const Glyph *g = glyph_of(ch);
+    if (!g) return 0;
+
+    const int ir = (int)((ink >> 16) & 0xff), ig = (int)((ink >> 8) & 0xff);
+    const int ib = (int)(ink & 0xff);
+
+    for (int gy = 0; gy < GLYPH_H; gy++) {
+        const int dy = y + gy;
+        if (dy < 0 || dy >= dhei) continue;
+        uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
+        for (int gx = 0; gx < GLYPH_W; gx++) {
+            const int a = g->cov[gy * GLYPH_W + gx];
+            if (!a) continue;
+            const int dx = x + gx;
+            if (dx < 0 || dx >= dwid) continue;
+            const uint32_t bg = dst[dx];
+            const int br = (int)((bg >> 16) & 0xff), bgc = (int)((bg >> 8) & 0xff);
+            const int bb = (int)(bg & 0xff);
+            dst[dx] = ((uint32_t)((ir * a + br * (255 - a)) / 255) << 16)
+                    | ((uint32_t)((ig * a + bgc * (255 - a)) / 255) << 8)
+                    | (uint32_t)((ib * a + bb * (255 - a)) / 255);
+        }
+    }
+    return 1;
+}
+#else
+int game_glyph_draw(int ch, int x, int y, uint32_t ink,
+                    uint32_t dpix, int dwid, int dhei, int dpitch)
+{
+    (void)ch; (void)x; (void)y; (void)ink;
+    (void)dpix; (void)dwid; (void)dhei; (void)dpitch;
+    return 0;
+}
+#endif
+
 static void h_TextOutA(void)
 {
     const uint32_t hdc = ARG(0), str = ARG(3);

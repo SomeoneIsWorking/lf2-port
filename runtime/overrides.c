@@ -15,6 +15,7 @@ void fn_004246b0__orig(void);
 void fn_00423b00__orig(void);
 void fn_00419a60__orig(void);
 void fn_0043f010__orig(void);
+void fn_00423940__orig(void);
 
 /* Overridden so far:
  *
@@ -399,12 +400,76 @@ void fn_00419a60(void)
  * Args, from the call sites: (x, y, clip, ...), six of them, RET 0x18, ECX = the sheet.
  * ------------------------------------------------------------------------ */
 
+/* The three 8x16 bitmap font sheets fn_00423940 selects between. Any clip drawn from one
+ * of these is a text glyph, whatever code path asked for it -- which is the only place all
+ * of the game's own text meets. */
+enum { FONT_SHEET_0 = 0x0044faf4, FONT_SHEET_1 = 0x0044f888, FONT_SHEET_2 = 0x0044fcbc };
+
+static int font_sheet_index(uint32_t obj)
+{
+    if (!obj) return -1;
+    if (obj == LD32(FONT_SHEET_0)) return 0;
+    if (obj == LD32(FONT_SHEET_1)) return 1;
+    if (obj == LD32(FONT_SHEET_2)) return 2;
+    return -1;
+}
+
 void fn_0043f010(void)
 {
+    /* A clip drawn from a font sheet is a text glyph, and the clip index IS the character
+     * code. Tell the blit path, which is the only place that also knows the destination
+     * surface, and clear it afterwards so an ordinary sprite is never mistaken for text. */
+    const int sheet = font_sheet_index(R(ECX));
+    if (sheet >= 0) {
+        glyph_hint_set((int32_t)LD32(R(ESP) + 12));
+        fn_0043f010__orig();
+        glyph_hint_clear();
+        return;
+    }
+
     if (R(ECX) == LD32(MENU_CLIP7) &&
         LD32(R(ESP) + 4) == NOTICE_X && LD32(R(ESP) + 8) == NOTICE_Y) {
         R(ESP) += 4 + 24;                    /* RET 0x18: return address and six args */
         return;
     }
     fn_0043f010__orig();
+}
+
+/* ---------------------------------------------------------------------------
+ * fn_00423940 -- the game's own text, drawn from an 8x16 bitmap sheet.
+ *
+ * Read out of the body rather than off the call sites, after a first attempt at the latter
+ * gave a wrong answer: scanning for pushed CONSTANTS silently drops register-pushed
+ * arguments, so the fourth argument appeared to be 0x40 at one site and 0x01 at another
+ * when they were not the same argument at all.
+ *
+ *   fn_00423940(str, x, y, cols, rows, font)
+ *
+ *     x, y    pixels; the pen advances 8 per glyph and 16 per line
+ *     cols    wrap width IN CHARACTERS -- this is a text box, not a single line
+ *     rows    maximum lines
+ *     font    0, 1 or 2, selecting a sheet at 0x0044faf4 / 0x0044f888 / 0x0044fcbc
+ *
+ * Each glyph goes out as fn_0043f010(x, y, char_code, 1, 0, sheet) -- the character code
+ * IS the clip index into the sheet. fn_00423a70 wraps this, calling it four times at +-1
+ * pixel offsets, which is the outline.
+ * ------------------------------------------------------------------------ */
+void fn_00423940(void)
+{
+    if (getenv("LF2_GAMETEXT_DEBUG")) {
+        char buf[128];
+        const uint32_t str = LD32(R(ESP) + 4);
+        unsigned n = 0;
+        for (; n < sizeof buf - 1; n++) {
+            const uint8_t c = LD8(str + n);
+            if (!c) break;
+            buf[n] = (c >= 32 && c < 127) ? (char)c : '.';
+        }
+        buf[n] = 0;
+        fprintf(stderr, "gametext x=%d y=%d cols=%d rows=%d font=%d \"%s\"\n",
+                (int32_t)LD32(R(ESP) + 8), (int32_t)LD32(R(ESP) + 12),
+                (int32_t)LD32(R(ESP) + 16), (int32_t)LD32(R(ESP) + 20),
+                (int32_t)LD32(R(ESP) + 24), buf);
+    }
+    fn_00423940__orig();
 }
