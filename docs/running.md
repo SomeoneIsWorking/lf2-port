@@ -50,10 +50,22 @@ This is worth stating plainly because it was invisible for the life of the proje
 differential passed 66,984 checks every time it ran, and the game rendered correctly. A
 second compiler was the instrument that could see it.
 
-`tools/build_matrix.sh` builds and tests under every compiler on the machine, so this stays
-a routine check rather than something done once. Pass `-LE slow` to skip the two ~65 s
-end-to-end tests. It warns when fewer than two compilers were available, because a matrix
-that quietly tested one thing is not cross-checking anything.
+`tools/build_matrix.sh` builds and tests every compiler on the machine at two optimisation
+levels — evaluation order is the front end's choice and can differ with `-O` too — so this
+stays a routine check rather than something done once. Pass `-LE slow` to skip the ~65 s
+end-to-end tests, or `-R instructions` for just the differential. It warns when fewer than
+four configurations ran, because a matrix that quietly tested one thing is not
+cross-checking anything.
+
+Validated by re-introducing the bug: gcc passes at both levels, clang fails at both with
+the same 40 mismatches, and the script exits non-zero. A matrix that reported success while
+a configuration failed would be the worst possible version of this.
+
+**A compiler warning cannot replace it, and this was checked rather than assumed.** Fed the
+exact defect — `FST(i) = fpu_pop();` with `fpu_pop` a `static inline` that modifies
+`cpu.st_top` — both `clang -Wunsequenced` and `gcc -Wsequence-point` are **silent**, while
+both flag a syntactic `i = i++` control in the same file. They only handle syntactic cases.
+A clean warning sweep over the generated code is not evidence about this bug class.
 
 **Apple Silicon runs the port but not one of its tests.** The recompiled game is ordinary
 C and compiles for arm64 like anything else. The instruction differential test is
