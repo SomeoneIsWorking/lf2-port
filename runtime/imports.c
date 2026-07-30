@@ -548,7 +548,8 @@ static void h_fscanf(void)
 {
     FILE *fh = file_of(ARG(0));
     const int n = fh ? gscan(fh, NULL, gstr(ARG(1)), R(ESP) + 4 + 8) : -1;
-    if (getenv("LF2_STR_DEBUG")) {
+    static int dbg = -1;
+    if (env_flag("LF2_STR_DEBUG", &dbg)) {
         fprintf(stderr, "fscanf[%08x] -> %d fmt=\"", ARG(0), n);
         for (const char *c = gstr(ARG(1)); *c; c++)
             fputs(*c == '\n' ? "\\n" : *c == '\r' ? "\\r" : (char[]){*c, 0}, stderr);
