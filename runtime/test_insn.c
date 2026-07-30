@@ -108,7 +108,10 @@ static Stub build(const uint8_t *insn, unsigned len, int x87, int stack)
     memcpy(page + n, PROLOGUE, sizeof PROLOGUE); n += sizeof PROLOGUE;
     if (x87)   { memcpy(page + n, FRSTOR_IN, sizeof FRSTOR_IN);   n += sizeof FRSTOR_IN; }
     if (stack) { memcpy(page + n, STACK_PRE, sizeof STACK_PRE);   n += sizeof STACK_PRE; }
-    memcpy(page + n, insn, len);                 n += len;
+    /* Negative control: with LF2_X87_NULL the instruction is omitted, so the stub is a
+     * bare FRSTOR/FNSAVE round-trip. If state does not survive that, the harness itself
+     * is broken and no x87 result it reports means anything. */
+    if (!(x87 && getenv("LF2_X87_NULL"))) { memcpy(page + n, insn, len); n += len; }
     if (stack) { memcpy(page + n, STACK_POST, sizeof STACK_POST); n += sizeof STACK_POST; }
     if (x87)   { memcpy(page + n, FNSAVE_OUT, sizeof FNSAVE_OUT); n += sizeof FNSAVE_OUT; }
     memcpy(page + n, EPILOGUE, sizeof EPILOGUE);
@@ -244,6 +247,14 @@ int main(void)
             for (int i = 0; i < 8; i++)
                 st_in[i] = (double)(int32_t)rnd() / 65536.0;
             if (k->is_x87) fpu_state_init(want.fpu_in, st_in);
+            if (k->is_x87 && getenv("LF2_X87_DUMP")) {
+                static int sh;
+                if (!sh++) {
+                    fprintf(stderr, "in st_in[0]=%f R4:", st_in[0]);
+                    for (int b = 68; b < 78; b++) fprintf(stderr, " %02x", want.fpu_in[b]);
+                    fprintf(stderr, "  sizeof(long double)=%zu\n", sizeof(long double));
+                }
+            }
 
             State got = want;
             if (k->uses_memory) got.r[k->base_reg] = mem_base + want.r[k->base_reg];

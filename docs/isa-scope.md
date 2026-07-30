@@ -125,18 +125,30 @@ Check this once the harness can compare state; if it fires, the fallback is soft
 ## x87 differential harness — status
 
 The x87 cases in `runtime/test_insn.c` are gated off by default (`LF2_INSN_X87=1` enables
-them) because the harness is not yet trustworthy. What is established:
+them) because the harness is not yet trustworthy.
 
-**The plumbing works.** Dumping the `FNSAVE` output (`LF2_X87_DUMP=1`) shows the seeded
-control word `0x027f` round-tripping through `FRSTOR` and `FNSAVE`, and the status word
-reading `0x1800` — TOP of 3, down from the 4 that was seeded, which proves the `FILD`
-under test actually executed and pushed.
+**The fault is in the harness round-trip, not in any instruction.** `LF2_X87_NULL=1`
+omits the instruction under test, leaving a bare `FRSTOR`/`FNSAVE` pair. State still does
+not survive it: the tag word returns `0x55ff`, marking R4–R7 zero when they were seeded
+valid. Nothing the harness reports about an x87 instruction can mean anything until that
+round-trip holds.
 
-**The seeding does not.** The tag word comes back `0x557f`: every register tagged zero or
-empty, including the four that were seeded with non-zero doubles converted to `long
-double`. So the 80-bit values written into the save area are not being loaded by `FRSTOR`
-as intended, and `FILD` therefore reports zero.
+What is ruled out, by measurement:
 
-That is a much narrower problem than "x87 does not work": the instruction executes, the
-state is captured, and only the input register encoding is wrong. Worth resuming from
-there rather than from scratch.
+- **The seeding.** `LF2_X87_DUMP=1` shows R4 seeded as `00 00 00 00 06 02 f3 9a 0d 40` —
+  exponent `0x400d`, i.e. 2^14, mantissa giving 19833.5, exactly the input double. The
+  80-bit conversion is correct.
+- **The stub offsets and encodings.** `41 DD A4 24 40000000` is `FRSTOR [r12+0x40]` and
+  `41 DD B4 24 B0000000` is `FNSAVE [r12+0xB0]`; both match `State`'s layout.
+- **The save-area layout.** Registers start at offset 28 — forced, since 28 + 8×10 is
+  exactly the 108-byte image.
+- **Reaching the FPU at all.** The seeded control word `0x027f` and TOP both round-trip,
+  so `FRSTOR` is reading the right memory. Only the register values are lost.
+
+So it is narrowly the 80-bit register transfer, in a round-trip whose every other field
+survives. Resume from the negative control, not from the instruction cases.
+
+**Lesson:** this was first written up as a seeding bug, on inference rather than
+measurement, and committed that way. The negative control — omit the instruction, test the
+harness against itself — should have been the first move, not the fourth; it took one
+patch and disproved the write-up immediately.
