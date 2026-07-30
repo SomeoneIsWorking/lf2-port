@@ -34,3 +34,5 @@ void hostwin_inject_pointer(int x, int y, int down);
 int  hostwin_injected_key(uint32_t vk);
 int  menu_move(int delta);
 void menu_confirm(void);
+int  gamepad_player_buttons(int index, unsigned char out[7]);
+void input_report(void);

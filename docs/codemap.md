@@ -19,7 +19,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Recompiler: lifter (x86 → C) | `recompiler/lift.c` | **done** | 74,135 / 74,136 lifted (100.00%); 1 TODO is decoded data, see below |
 | Runtime | `runtime/guest.h`, `runtime/guest_ops.h` | **done** | CPU state, lazy flags, 4 GiB lazily-committed memory, PE load, import binding; ~13% of a core in play |
 | Runtime (SDL3) | `runtime/ddraw.c`, `win32.c`, `gdi.c`, `gamepad.c`, `dsound.c` | **done** | video / input / Win32 shim; effects via DirectSound, music via ffmpeg |
-| Controllers | `runtime/gamepad.c` | **done** | SDL3 gamepad; auto-detect, hotswap and full menu navigation, tested via SDL virtual pad |
+| Controllers | `runtime/gamepad.c`, `runtime/overrides.c` | **done** | SDL3 gamepad; auto-detect, hotswap, and the pad merged into the game's own player buttons by the ported input gather — no configuration, keyboard still live, second pad is player two. Regression-tested pad-only by `tools/controller_test.sh` |
 | Input path | `runtime/win32.c` | **done** | keyboard and mouse verified into game state; menu navigates |
 | Window modes | `runtime/win32.c` | **done** | windowed / borderless / fullscreen, Alt+Enter toggle |
 | Netplay | `runtime/wsock.c` | **stubbed** | reports started-but-no-network, which the game handles |
@@ -51,7 +51,7 @@ Only ~130 imported symbols. This is what the runtime must implement:
 | DLL | Imports | Replacement |
 |---|---|---|
 | `DDRAW` | `DirectDrawCreate` **only** | our own COM vtables → SDL3 GPU |
-| `WINMM` | `joyGetNumDevs`, `joyGetDevCapsA`, `joyGetPosEx`, `joySetCapture`, `joySetThreshold`, `timeGetTime`, `mmio*` | SDL3 gamepad; **the legacy joystick API is why hotplug does not work today** |
+| `WINMM` | `joyGetNumDevs`, `joyGetDevCapsA`, `joyGetPosEx`, `joySetCapture`, `joySetThreshold`, `timeGetTime`, `mmio*` | SDL3 gamepad. Reimplementing these was necessary but **not sufficient**: they answered correctly while a controller still did nothing, because the game only consults a joystick for a player whose control config names one. That is fixed in the ported input gather, not here |
 | `DSOUND` | ordinal #1 (`DirectSoundCreate`) | our own COM vtables → SDL3 audio |
 | `USER32` / `GDI32` | window, message pump, `StretchBlt` | SDL3 window; `StretchBlt` is the scaling path → borderless |
 | `WSOCK32` | 19 ordinals | **stubbed**, netplay dropped |

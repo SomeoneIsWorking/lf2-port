@@ -94,39 +94,63 @@ static SDL_Gamepad *pad_for(uint32_t id)
     return (id < JOY_SLOTS) ? slot[id] : NULL;
 }
 
-/* ---- driving the menus from a controller ----
+/* Player input, in the game's own terms: the seven buttons a fighter has, in the order the
+ * game stores them (up, down, left, right, attack, jump, defend). Returns 0 when nothing is
+ * plugged into that slot, so a caller can tell "no pad" from "pad with nothing pressed" --
+ * the two are not the same and conflating them would silently disable the feature. */
+int gamepad_player_buttons(int index, unsigned char out[7])
+{
+    ensure_init();
+    if (index < 0 || index >= JOY_SLOTS || !slot[index]) return 0;
+    SDL_Gamepad *pad = slot[index];
+
+    static const struct { SDL_GamepadButton b; SDL_GamepadAxis ax; int dir; } B[7] = {
+        { SDL_GAMEPAD_BUTTON_DPAD_UP,    SDL_GAMEPAD_AXIS_LEFTY,   -1 },
+        { SDL_GAMEPAD_BUTTON_DPAD_DOWN,  SDL_GAMEPAD_AXIS_LEFTY,   +1 },
+        { SDL_GAMEPAD_BUTTON_DPAD_LEFT,  SDL_GAMEPAD_AXIS_LEFTX,   -1 },
+        { SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_AXIS_LEFTX,   +1 },
+        { SDL_GAMEPAD_BUTTON_SOUTH,      SDL_GAMEPAD_AXIS_INVALID,  0 },  /* attack */
+        { SDL_GAMEPAD_BUTTON_EAST,       SDL_GAMEPAD_AXIS_INVALID,  0 },  /* jump   */
+        { SDL_GAMEPAD_BUTTON_WEST,       SDL_GAMEPAD_AXIS_INVALID,  0 },  /* defend */
+    };
+    for (int i = 0; i < 7; i++) {
+        int down = SDL_GetGamepadButton(pad, B[i].b);
+        if (!down && B[i].ax != SDL_GAMEPAD_AXIS_INVALID) {
+            const int raw = SDL_GetGamepadAxis(pad, B[i].ax);
+            down = B[i].dir < 0 ? (raw < -16000) : (raw > 16000);
+        }
+        out[i] = (unsigned char)!!down;
+    }
+    return 1;
+}
+
+/* ---- driving the front-end menu from a controller ----
  *
- * The game's own joystick support only covers fighting: the menus are driven by the mouse
- * (clickable bands) or by the player keys, and neither looks at a joystick at all. So a
- * controller is translated here into the input the menus actually respond to.
+ * Only the front-end menu needs anything here. Everything the game itself drives from the
+ * player buttons -- mode select, character selection, the pre-fight overlay and the match
+ * -- gets the pad through the ported input gather in runtime/overrides.c, which merges it
+ * into the game's own button state. The front end is the exception because it is driven by
+ * a mouse rather than by player buttons, so what a pad moves there is the selection index
+ * of the ported menu.
  *
- * Directions become player 1's keys, which drives every keyboard menu (mode select,
- * character selection, the pre-fight overlay), and they also move the selection index in
- * the ported main menu (runtime/overrides.c). The confirm button sends the attack key and
- * activates the ported menu's selection, so it works on whichever kind of screen is up.
+ * This used to synthesise player-1 keypresses for all of it. That worked, but it was the
+ * wrong shape: it made a controller pretend to be a keyboard at the window boundary
+ * instead of being an input device the game understands, it could only ever drive player
+ * one, and it silently depended on player one still having the default key bindings.
  */
-
-/* Player 1's defaults, as shown on the control settings screen. */
-enum { VK_P1_UP = 0x68, VK_P1_DOWN = 0x62, VK_P1_LEFT = 0x64, VK_P1_RIGHT = 0x66,
-       VK_P1_ATTACK = 0x65, VK_P1_JUMP = 0x60, VK_P1_DEFEND = 0x6B };
-
-
 void gamepad_drive_ui(void)
 {
     ensure_init();
     SDL_Gamepad *pad = slot[0];
     if (!pad) return;
 
-    static uint8_t was[16];
-    struct { SDL_GamepadButton b; SDL_GamepadAxis ax; int dir; uint32_t vk; } MAP[] = {
-        { SDL_GAMEPAD_BUTTON_DPAD_UP,    SDL_GAMEPAD_AXIS_LEFTY, -1, VK_P1_UP },
-        { SDL_GAMEPAD_BUTTON_DPAD_DOWN,  SDL_GAMEPAD_AXIS_LEFTY, +1, VK_P1_DOWN },
-        { SDL_GAMEPAD_BUTTON_DPAD_LEFT,  SDL_GAMEPAD_AXIS_LEFTX, -1, VK_P1_LEFT },
-        { SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_AXIS_LEFTX, +1, VK_P1_RIGHT },
-        { SDL_GAMEPAD_BUTTON_SOUTH,      SDL_GAMEPAD_AXIS_INVALID, 0, VK_P1_ATTACK },
-        { SDL_GAMEPAD_BUTTON_EAST,       SDL_GAMEPAD_AXIS_INVALID, 0, VK_P1_JUMP },
-        { SDL_GAMEPAD_BUTTON_WEST,       SDL_GAMEPAD_AXIS_INVALID, 0, VK_P1_DEFEND },
-        { SDL_GAMEPAD_BUTTON_START,      SDL_GAMEPAD_AXIS_INVALID, 0, 0x0D /* Enter */ },
+    static uint8_t was[4];
+    static const struct { SDL_GamepadButton b; SDL_GamepadAxis ax; int dir; int delta; }
+    MAP[] = {
+        { SDL_GAMEPAD_BUTTON_DPAD_UP,    SDL_GAMEPAD_AXIS_LEFTY,   -1, -1 },
+        { SDL_GAMEPAD_BUTTON_DPAD_DOWN,  SDL_GAMEPAD_AXIS_LEFTY,   +1, +1 },
+        { SDL_GAMEPAD_BUTTON_SOUTH,      SDL_GAMEPAD_AXIS_INVALID,  0,  0 },  /* confirm */
+        { SDL_GAMEPAD_BUTTON_START,      SDL_GAMEPAD_AXIS_INVALID,  0,  0 },  /* confirm */
     };
 
     for (unsigned i = 0; i < sizeof MAP / sizeof MAP[0]; i++) {
@@ -137,13 +161,10 @@ void gamepad_drive_ui(void)
         }
         if (down == was[i]) continue;              /* edge-triggered, like a keypress */
         was[i] = (uint8_t)down;
+        if (!down) continue;
 
-        hostwin_inject_key(MAP[i].vk, down);
-
-        /* Directions also move the ported menu's selection index. */
-        if (down && (MAP[i].vk == VK_P1_UP   || MAP[i].vk == VK_P1_LEFT))  menu_move(-1);
-        if (down && (MAP[i].vk == VK_P1_DOWN || MAP[i].vk == VK_P1_RIGHT)) menu_move(+1);
-        if (down && MAP[i].vk == VK_P1_ATTACK) menu_confirm();
+        if (MAP[i].delta) menu_move(MAP[i].delta);
+        else              menu_confirm();
     }
 }
 

@@ -13,6 +13,7 @@
 
 void fn_004246b0__orig(void);
 void fn_00423b00__orig(void);
+void fn_00419a60__orig(void);
 
 /* Nothing overridden yet.
  *
@@ -91,12 +92,22 @@ static const Item RECORDING_INFO[] = {
     { 480, 428 },  /* cancel */
 };
 
-/* fn_004246b0 is a __thiscall method and [this+0] is the TOP-level mode: 0 while loading,
- * 1 the front-end menu, 2 character selection (which it dispatches to fn_0041bc90).
- * 0x0044d064 is only the sub-screen within mode 1, so keying off it alone would let these
- * tables fire on the character-select screen whenever that variable happened to hold a
- * matching value. Both are checked. */
-enum { MODE_FRONT_END = 1 };
+/* fn_004246b0 is a __thiscall method and [this+0] is the TOP-level mode. Its own dispatch,
+ * read out of the disassembly rather than guessed at:
+ *
+ *   == 1  a one-shot entry step that immediately stores 2 and returns
+ *   == 2  hand the frame to fn_0041bc90 -- character selection and the match
+ *   else  fall through into the front-end menu body, which is this whole function
+ *
+ * So the front end is the DEFAULT branch, not a numbered mode; the observed value there is
+ * 0. An earlier version of this gate had it as `mode == 1`, which is the one value that is
+ * never live for a whole frame -- the port never ran, and the game simply used its original
+ * body, which is exactly why nothing looked wrong.
+ *
+ * 0x0044d064 is only the sub-screen within the front end, so keying off it alone would let
+ * these tables fire during character selection whenever it happened to hold a matching
+ * value. Both are checked. */
+enum { MODE_ENTER = 1, MODE_IN_GAME = 2 };
 
 static const struct { uint32_t screen; const Item *items; int n; } SCREENS[] = {
     { 0, MAIN_MENU,        (int)(sizeof MAIN_MENU / sizeof MAIN_MENU[0]) },
@@ -158,14 +169,15 @@ void fn_004246b0(void)
     const uint32_t mode = R(ECX) ? LD32(R(ECX)) : 0xffffffffu;
     const uint32_t screen = LD32(GX_SCREEN);
     if (getenv("LF2_MENU_DEBUG")) {
-        static uint32_t last = 0xfffffffdu;
-        if (screen != last) { last = screen; fprintf(stderr, "menu screen = %u\n", screen); }
-        static uint32_t last_mode = 0xfffffffdu;
-        const uint32_t mode = R(ECX) ? LD32(R(ECX)) : 0xffffffffu;
-        if (mode != last_mode) { last_mode = mode; fprintf(stderr, "menu mode [this] = %u\n", mode); }
+        static uint32_t last_screen = 0xfffffffdu, last_mode = 0xfffffffdu;
+        if (screen != last_screen || mode != last_mode) {
+            last_screen = screen; last_mode = mode;
+            fprintf(stderr, "menu mode=%u screen=%u\n", mode, screen);
+        }
     }
     int n = 0;
-    const Item *items = (mode == MODE_FRONT_END) ? screen_items(screen, &n) : NULL;
+    const int front_end = (mode != MODE_ENTER && mode != MODE_IN_GAME);
+    const Item *items = front_end ? screen_items(screen, &n) : NULL;
 
     /* Anything outside the front-end menu, or without an item table, is pure delegation. */
     if (!items) { fn_004246b0__orig(); return; }
@@ -214,4 +226,98 @@ void fn_00423b00(void)
         return;
     }
     fn_00423b00__orig();
+}
+
+/* ---------------------------------------------------------------------------
+ * fn_00419a60 -- per-frame player input.
+ *
+ * This is where the game turns "a device" into the seven button flags a fighter acts on.
+ * Read out of the original:
+ *
+ *   0x00450b4c[i]   device selector for player i, i in 0..7. <= 0 means the slot is not
+ *                   taking live input (unjoined, or -1 while a recording plays back).
+ *                   1..4 select a control config; the loop bound is 0x00450b6c.
+ *   0x0044fbe0      control configs, stride 80. [+0] is a joystick number, 0 for keyboard;
+ *                   [+4..+28] are the seven keyboard codes, [+32..+40] joystick buttons.
+ *   this+404        an array of eight player-object pointers, one per slot.
+ *   obj+198..204    the previous frame's buttons; obj+205..211 this frame's, one byte each,
+ *                   in the order up, down, left, right, attack, jump, defend.
+ *   arg3            a byte per player, and 0x0044d040 a global mirror of it; both are
+ *                   packed bitmasks written only when recording or networking is on.
+ *
+ * A controller reaches a player only if that player's control config names a joystick,
+ * which means visiting the settings screen before a pad does anything. That is the actual
+ * cause of "I plugged in a controller and nothing happened", and it lives here rather than
+ * at the winmm boundary -- joyGetPosEx was already answering correctly; nothing asked it.
+ *
+ * So: the original runs first and fills in the configured devices exactly as it always did,
+ * then any connected pad is merged into the buttons of the player it belongs to. Merged,
+ * not substituted -- the keyboard keeps working for the same player, which is what makes it
+ * "plug it in and play" rather than "now your keyboard is dead".
+ *
+ * Pads are handed to the live slots in order, so pad 0 drives the first joined player and
+ * pad 1 the second, with no configuration at all.
+ * ------------------------------------------------------------------------ */
+
+enum { DEVSEL = 0x00450b4c, DEVSEL_END = 0x00450b6c };
+enum { PLAYER_PTRS = 404 };            /* this+404: eight player-object pointers */
+enum { BTN_CUR = 205 };                /* obj+205..211: this frame's seven buttons */
+enum { NET_OR_RECORD = 0x00450b80 };   /* non-zero: the packed masks are being consumed */
+enum { RECORDING = 0x0044f1af, MASK_MIRROR = 0x0044d040 };
+
+/* Bit for each of the seven buttons in the packed mask, in button order. The game writes
+ * these itself further down its own loop; a pad press has to appear in them too, or a
+ * recording made with a controller would replay as a player standing still. */
+static const uint8_t BTN_BIT[7] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02 };
+
+/* Counters, not a hit log: the interesting failure is that this never merges anything, and
+ * a diagnostic that only printed when it did would be silent in exactly that case. The
+ * three together distinguish "no player slot was live", "no controller was bound to one"
+ * and "a pad was there and nothing was pressed" -- which are three different bugs. */
+static long in_frames, in_live, in_padded, in_presses;
+
+void input_report(void)
+{
+    fprintf(stderr, "input: %ld gathers, %ld live player-slots, %ld of them with a pad, "
+                    "%ld button presses merged\n",
+            in_frames, in_live, in_padded, in_presses);
+}
+
+void fn_00419a60(void)
+{
+    const uint32_t self = R(ECX);              /* __thiscall */
+    const uint32_t mask_buf = LD32(R(ESP) + 12);
+
+    fn_00419a60__orig();                       /* configured devices, unchanged */
+
+    const int want_mask   = LD32(NET_OR_RECORD) != 0;
+    const int want_mirror = (int8_t)LD8(RECORDING) > 0;
+
+    /* Counters, not a hit log: the interesting failure is that this never merges anything,
+     * and a diagnostic that only prints when it does would be silent in exactly that case.
+     * live/pads/merges together say which of "no player slot", "no controller" and "nothing
+     * pressed" actually happened. */
+    in_frames++;
+    int pad_index = 0;
+    for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END; sel += 4, i++) {
+        if ((int32_t)LD32(sel) <= 0) continue;         /* slot takes no live input */
+        in_live++;
+
+        unsigned char btn[7];
+        if (!gamepad_player_buttons(pad_index++, btn)) continue;
+        in_padded++;
+
+        const uint32_t obj = LD32(self + PLAYER_PTRS + 4 * i);
+        if (!obj) continue;
+        for (int b = 0; b < 7; b++) in_presses += btn[b];
+
+        for (int b = 0; b < 7; b++) {
+            if (!btn[b]) continue;
+            ST8(obj + BTN_CUR + b, 1);
+            if (want_mask)
+                ST8(mask_buf + i, (uint8_t)(LD8(mask_buf + i) | BTN_BIT[b]));
+            if (want_mirror)
+                ST8(MASK_MIRROR + i, (uint8_t)(LD8(MASK_MIRROR + i) | BTN_BIT[b]));
+        }
+    }
 }

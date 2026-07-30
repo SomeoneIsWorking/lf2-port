@@ -92,3 +92,13 @@ add_test(NAME smoke
 set_tests_properties(smoke PROPERTIES
                      LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
+# The controller path, which the mouse-driven smoke test cannot see at all. Kept separate
+# rather than folded in: it supplies no keyboard and no mouse input, so a failure names the
+# controller support rather than being one more assertion in a run that does everything.
+add_test(NAME controller
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/controller_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(controller PROPERTIES
+                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")

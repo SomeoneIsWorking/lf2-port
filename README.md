@@ -45,7 +45,7 @@ variables, are in [`docs/running.md`](docs/running.md).
 | Rendering — DirectDraw, GDI text, colour-keyed sprites | works |
 | Sound effects (DirectSound → SDL3) | works |
 | Background music (WMA) | works, needs `ffmpeg` on PATH |
-| Controller auto-detect and hotswap | implemented, **untested on real hardware** |
+| Controller auto-detect and hotswap, no configuration | implemented, **untested on real hardware** |
 | Borderless / windowed / fullscreen, Alt+Enter | works |
 | Linux | works |
 | macOS | portability blockers removed, **never built on a Mac** |
@@ -91,7 +91,10 @@ Full detail in [`docs/platform-boundary.md`](docs/platform-boundary.md) and
   port silently loses the text rendering path.
 - **Controller hotswap is impossible in the stock game by construction.** It enumerates
   joysticks once at startup, probes only device ids 0 and 1, and uses `joySetCapture` — a
-  legacy API with no device-arrival notification. Replacing that surface *is* the fix.
+  legacy API with no device-arrival notification. Replacing that surface is necessary but
+  not sufficient: the game only consults a joystick for a player whose *control config*
+  names one, so a correctly reimplemented `joyGetPosEx` can answer perfectly while a
+  controller still does nothing. "Plug it in and play" needed the input gather ported.
 - **Ghidra does not disassemble everything reachable**, so `re/instructions.tsv` is a lower
   bound. A live block using `FNSTCW` is absent from it entirely; "the binary contains no X"
   is not a conclusion that file can support.
