@@ -629,20 +629,57 @@ right shape for a flag on a hot path, not because it bought anything.
 
 ## Playing with a controller
 
-The game's own joystick support only covers fighting — its menus are driven by the mouse
-(clickable bands) or by the player keys, and neither reads a joystick. A controller is
-therefore translated in the runtime into the input the menus actually respond to:
+Plug a pad in and play. Nothing to configure, and the keyboard keeps working at the same
+time.
 
 | control | effect |
 |---|---|
-| d-pad / left stick | player 1's direction keys, **and** walks the main menu's bands |
-| A (south) | player 1's attack, **and** a click at the selected band |
+| d-pad / left stick | the player's directions; in the front-end menu, moves the selection |
+| A (south) | attack; in the front-end menu, activates the selection |
 | B / X | jump / defend |
-| Start | Enter |
+| Start | activates the front-end menu's selection |
 
-Walking the bands works by moving the pointer, so the game highlights the entry under it
-exactly as a mouse would — the highlight is the game's, not something drawn on top. The
-band coordinates come from the game's own hit-test constants (`tools/click_bands.py`).
+Pads are handed to player slots in order, so a second controller is player two with no
+configuration either.
+
+### Why this needed a port rather than a shim
+
+`joyGetPosEx` and friends are reimplemented on SDL3 in `runtime/gamepad.c`, and they were
+answering correctly long before a controller did anything useful. The reason nothing
+happened is one level up: **a controller reaches a player only if that player's control
+config names a joystick**, and nothing sets that without a trip to the settings screen.
+
+That decision lives in `fn_00419a60`, the per-frame input gather, so that is what is
+ported (`runtime/overrides.c`). Read out of the original:
+
+| address | meaning |
+|---|---|
+| `0x00450b4c[i]` | device selector for player `i`, `i` in 0..7; `<= 0` means the slot takes no live input (unjoined, or −1 while a recording plays). Loop bound `0x00450b6c`. |
+| `0x0044fbe0` | control configs, stride 80. `[+0]` is a joystick number, 0 for keyboard; `[+4..+28]` the seven keyboard codes, `[+32..+40]` joystick buttons. |
+| `this+404` | array of eight player-object pointers |
+| `obj+198..204` | last frame's buttons; `obj+205..211` this frame's, one byte each, in the order up, down, left, right, attack, jump, defend |
+| `0x00450b80` | non-zero while the packed per-player masks are being consumed |
+| `0x0044f1af` | recording flag; gates the `0x0044d040` mirror of those masks |
+
+The port runs the original first, so every configured device behaves exactly as before,
+then **merges** any connected pad into the buttons of the player it belongs to — merged,
+not substituted, which is what keeps the keyboard alive for the same player. The packed
+masks get the pad's presses too, or a recording made with a controller would replay as a
+player standing still.
+
+Everything the game drives from those buttons then follows for free: mode select, character
+selection, the pre-fight overlay and the match itself.
+
+The front-end menu is the one exception, because it is mouse-driven rather than
+button-driven, so what a pad moves there is the ported menu's selection index. Selecting
+works by placing the pointer, so the game highlights the entry exactly as a mouse would —
+the highlight is the game's, not something drawn on top. The band coordinates come from the
+game's own hit-test constants (`tools/click_bands.py`).
+
+This replaced an earlier version that synthesised player-1 keypresses at the window
+boundary for all of it. That worked, but it made a controller pretend to be a keyboard
+instead of being an input device the game understands, it could only ever drive player one,
+and it silently assumed player one still had the default key bindings.
 
 ### Testing it without a controller
 
@@ -650,14 +687,26 @@ band coordinates come from the game's own hit-test constants (`tools/click_bands
 SDL and plays a script of button presses into it — names are SDL button short names, the
 number is the frame to press on, released eight frames later.
 
-This is how the controller support is tested at all, and it verified three things that had
-been untestable and were therefore pure assumption:
+This is how the controller support is tested at all, and it verified things that had been
+untestable and were therefore pure assumption:
 
 - **auto-detect** — the runtime reports `controller 0 connected: lf2 virtual pad`
 - **hotswap** — the pad attaches *after* the game has started and already probed its
   joysticks, and is still picked up, which is exactly the case the stock game cannot handle
-- **menu driving** — two d-pad downs then A reaches the control settings page, confirmed by
-  frame dump
+- **the whole route** — `tools/controller_test.sh` (ctest target `controller`) drives from
+  the title screen into character selection with **no keyboard and no mouse input at all**,
+  and asserts on the input gather's own counters
+
+That last one is a regression test with a specific bug behind it: a wrong gate on the
+ported menu disabled the port outright, the game quietly fell back to its original body,
+and every other test stayed green. The test was checked by re-introducing that bug on
+purpose — it fails, three assertions at a time.
+
+`input: N gathers, N live player-slots, N of them with a pad, N button presses merged` is
+printed every 900 frames. All four are counters rather than a hit log, because the failure
+worth catching is that nothing is ever merged, and a line that only printed on success
+would be silent in exactly that case. The three totals separate "no player slot was live"
+from "no controller was bound to one" from "a pad was there and nothing was pressed".
 
 Real hardware is still worth testing, since SDL's virtual device cannot reproduce every
 driver quirk. But the code path is no longer unexercised.
@@ -687,17 +736,31 @@ The two are kept consistent: if the pointer moves to somewhere the port did not 
 mouse is being used, so whatever it is pointing at becomes the selection and the port hands
 control back. Picking up the mouse after using a pad does not fight it, and vice versa.
 
-`fn_004246b0` is a `__thiscall` method and **`[this+0]` is the top-level mode**: 0 while
-loading, 1 the front-end menu, 2 character selection (which it dispatches to
-`fn_0041bc90`). `0x0044d064` is only the sub-screen *within* mode 1, so both are checked —
-keying off the sub-screen alone would let these tables fire during character selection
-whenever that variable happened to hold a matching value.
+`fn_004246b0` is a `__thiscall` method and **`[this+0]` is the top-level mode**. Its own
+dispatch:
 
-**Character selection needs none of this.** `fn_0041bc90` is 7499 lines and reads the mouse
-zero times: it is driven entirely by the player keys. A controller already drives it,
-because the pad maps to those keys, which is the input idiom the game itself uses there.
-Verified by pad alone from the main menu through mode select, VS mode and the
-computer-player count into character selection with both slots joined.
+| `[this+0]` | |
+|---|---|
+| 1 | a one-shot entry step that immediately stores 2 and returns |
+| 2 | hand the frame to `fn_0041bc90` — character selection and the match |
+| anything else | fall through into the front-end menu body |
+
+So **the front end is the default branch, not a numbered mode**; the value observed there is
+0. An earlier version of this documentation said mode 1 was the front end, and the gate was
+written to match. Mode 1 is the one value that is never live for a whole frame, so the port
+never ran at all: the game used its original body, the menus worked, the ads were still
+gone (that is a separate override), and every test stayed green. A dead port and a working
+port were indistinguishable from the outside — which is why `tools/controller_test.sh`
+exists and why it was checked against the bug re-introduced on purpose.
+
+`0x0044d064` is only the sub-screen *within* the front end, so both are checked — keying
+off the sub-screen alone would let these tables fire during character selection whenever
+that variable happened to hold a matching value.
+
+**Character selection needs no menu port.** `fn_0041bc90` is 7499 lines and reads the mouse
+zero times: it is driven entirely by the player buttons, which is the input idiom the game
+itself uses there. What a controller needs to reach it is the ported input gather below,
+not a table of clickable bands.
 
 Screens are ported one at a time, each with a table of selectable items taken from the
 game's **own hit-test constants** — the centre of each band it brackets the pointer
