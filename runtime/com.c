@@ -69,6 +69,22 @@ void com_ret(int nargs, uint32_t hresult)
     R(ESP) += 4 + 4u * (unsigned)nargs;   /* stdcall: callee pops, `this` included */
 }
 
+/* Method 2 of every interface is IUnknown::Release. Counting calls per interface answers
+ * whether anything is ever released at all -- which decides whether the surface arena's
+ * lack of a free path can actually bite, or is only theoretical. */
+long com_releases[IF_COUNT];
+
+void com_release_report(void)
+{
+    fprintf(stderr, "com releases:");
+    int any = 0;
+    for (int i = 0; i < IF_COUNT; i++)
+        if (com_releases[i]) { fprintf(stderr, " %s=%ld",
+                com_class[i].name ? com_class[i].name : "?", com_releases[i]); any = 1; }
+    if (!any) fprintf(stderr, " none -- nothing is ever released");
+    fprintf(stderr, "\n");
+}
+
 void com_call(uint32_t sentinel)
 {
     const int iface = (int)((sentinel >> 8) & 0xff);
@@ -84,6 +100,7 @@ void com_call(uint32_t sentinel)
         if (mn) fprintf(stderr, "TRACE %s::%s this=%08x\n", com_class[iface].name, mn, LD32(R(ESP) + 4));
         else    fprintf(stderr, "TRACE %s::[%d]\n", com_class[iface].name, m);
     }
+    if (m == 2) com_releases[iface]++;          /* IUnknown::Release */
     com_cur_iface = iface;
     com_cur_method = m;
     const uint32_t self = LD32(R(ESP) + 4);

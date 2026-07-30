@@ -150,8 +150,15 @@ of the 32-bit XRGB decision: the game's surfaces are 8-bit indexed on Windows, s
 itself is sound (the game creates no palette and adapts to whatever `GetPixelFormat`
 reports) but it is not free.
 
-**`vram_alloc` is a bump allocator that never frees.** All 394 allocations happen during
-load and none during play, so a session is bounded — but nothing reclaims a surface on
-release, so repeated loads (stage changes, returning to the menu and starting again) would
-grow it. Not observed to bite, not fixed, and stated rather than left to be discovered.
-*The fix is to free on surface release rather than to enlarge the arena.*
+**`vram_alloc` is a bump allocator that never frees — and measurement says leave it that
+way.** All 394 allocations happen during load and none during play. More to the point, the
+game releases **2** surfaces in an entire session (`com_release_report`, which counts
+`IUnknown::Release` per interface). There is nothing meaningful to reclaim.
+
+Adding a free list would mean refcounting COM objects, and getting that subtly wrong gives
+a use-after-free on a surface the game still draws from. Taking on that hazard to recover
+two allocations out of 394 is the wrong trade, so it is deliberately not implemented.
+
+*What would change the decision:* the release counter climbing. If a stage-change path ever
+released and reallocated surfaces in bulk, `com releases: IDirectDrawSurface=…` would show
+it, and the arena would then need a free path rather than a bigger base.

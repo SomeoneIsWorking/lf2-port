@@ -125,7 +125,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     screen_change_check(pixels, w, h, src_pitch, frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
-    if (frames % 900 == 0) { colorkey_report(); vram_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    if (frames % 900 == 0) { colorkey_report(); vram_report(); com_release_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
     if (!hw.renderer) return;
     if (!hw.texture) {
         hw.texture = SDL_CreateTexture(hw.renderer, SDL_PIXELFORMAT_XRGB8888,
