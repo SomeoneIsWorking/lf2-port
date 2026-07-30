@@ -437,8 +437,32 @@ static void surf_Blt(uint32_t self)
         }
     }
     if (getenv("LF2_BLT_RECTS")) {
-        static long n;
-        if (n++ < 4000) fprintf(stderr, "RECT %d %d %d %d\n", dl, dt, dr, db);
+        /* Capped by NOVELTY, not by count. The cap used to be the first 4000 blits, which
+         * is a few seconds of the menu -- so a search for something drawn during a match
+         * found nothing and read as "that is never drawn". Distinct rectangles are what the
+         * hook is for, and there are only a few hundred of them across a whole run. */
+        enum { MAX_RECTS = 4096 };
+        static struct { int l, t, r, b; } seen[MAX_RECTS];
+        static int nseen;
+        static long dropped;
+
+        int known = 0;
+        for (int i = 0; i < nseen; i++)
+            if (seen[i].l == dl && seen[i].t == dt && seen[i].r == dr && seen[i].b == db) {
+                known = 1;
+                break;
+            }
+        if (!known) {
+            if (nseen < MAX_RECTS) {
+                seen[nseen].l = dl; seen[nseen].t = dt;
+                seen[nseen].r = dr; seen[nseen].b = db;
+                nseen++;
+                fprintf(stderr, "RECT %d %d %d %d\n", dl, dt, dr, db);
+            } else if (++dropped == 1) {
+                fprintf(stderr, "RECT: more than %d distinct rectangles; the rest are NOT "
+                                "logged\n", (int)MAX_RECTS);
+            }
+        }
     }
     if (getenv("LF2_BLT_STACK")) {
         int wx = 0, wy = 0;

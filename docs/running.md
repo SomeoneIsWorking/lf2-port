@@ -114,9 +114,32 @@ worse than it should.
 **What this does and does not cover.** GDI text is the menu's copyright block and the whole
 character-select panel — player numbers, `Computer`, `Join?`, fighter names, team, music and
 difficulty labels. It is **not** the in-match text (`VS mode (Difficult)`, the `1`/`Com`
-name tags) or headings like `Character Selection`: those are drawn from the game's own
-bitmap sprite sheets, which are artwork in the game data rather than a font. Changing them
-means porting the game's own text renderer, not selecting a typeface.
+name tags) or headings like `Character Selection`.
+
+### The other font, and what porting it would take
+
+Those are drawn from the game's own **8x16 fixed-pitch bitmap sheet**, one blit per glyph —
+`LF2_BLT_RECTS` during a match shows `VS mode (Difficult)` as twenty consecutive 8-pixel
+destination rectangles stepping across `y 532..548`. Scoped, not done:
+
+| | |
+|---|---|
+| `fn_00423940` | draws a string, looping glyphs at 8 px pitch — the port target |
+| `fn_00423a70` | calls it four times at ±1 px offsets, which is the outline |
+| `fn_0041b130` | builds `"VS mode " + "(Difficult)"` and right-aligns it as `0x316 - len*8` |
+
+Three things make it more than a typeface swap, and they are why it stopped here rather
+than being half-done:
+
+- **Layout assumes 8 px per character.** Right-aligned text positions itself by
+  `x = right - len*8`, so a proportional face lands short of where the game intended unless
+  the port re-derives the alignment.
+- **The sheet contains CJK**, so a replacement needs a font with the same coverage, which
+  is not something that can be assumed present on a user's machine the way DejaVu Sans can.
+- **The argument semantics are not pinned down.** Reading constants at the call sites gives
+  `(str, x, y, ...)` but the fourth argument reads as `0x40` at one site and `0x01` at
+  another, and a first pass at tabulating them was wrong because register-pushed arguments
+  do not show up in a scan for constants. Porting on that reading would be guessing.
 
 ## Window mode
 
