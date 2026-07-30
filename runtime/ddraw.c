@@ -112,7 +112,7 @@ void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
     screen_change_check(indexed, w, h, src_pitch, frames);
-    if (frames == 900) colorkey_report();
+    if (frames == 900) { colorkey_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
     if (!hw.renderer) return;
     if (!hw.texture) {
         hw.texture = SDL_CreateTexture(hw.renderer, SDL_PIXELFORMAT_XRGB8888,

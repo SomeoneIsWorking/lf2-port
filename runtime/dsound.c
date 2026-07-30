@@ -8,6 +8,7 @@
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ARG(n) LD32(R(ESP) + 4 + 4 * (n))
@@ -25,10 +26,84 @@ enum { MAX_BUFS = 128 };
 static SBuf *bufs[MAX_BUFS];
 static int nbufs;
 
+enum { MIX_RATE = 22050, MIX_CHANNELS = 2 };
+
 static SDL_AudioStream *stream;
 static SDL_Mutex *mix_lock;
 
-enum { MIX_RATE = 22050, MIX_CHANNELS = 2 };
+/* LF2_AUDIO_DEBUG. Four counters rather than one, because they fail independently: the
+ * game may never create a buffer, never start one, never have the device pull from us, or
+ * pull and get silence. A single "audio works" flag cannot tell those apart, and peak
+ * amplitude is the only one of them that proves sound would actually be heard. */
+long au_bufs, au_plays, au_pulls, au_peak;
+
+/* ---- background music ----
+ * The game's BGM is WMA, which nothing here decodes. Rather than ship a decoder, the
+ * track is decoded to raw PCM by whatever ffmpeg is on PATH, once, at RenderFile time.
+ * That keeps it an optional runtime dependency: no ffmpeg means no music and a clear
+ * message, never a broken build. The whole track is decoded up front -- roughly 16 MB for
+ * three minutes at this rate -- which avoids feeding a pipe from the audio callback.
+ */
+static void audio_start(void);    /* defined below; music must be able to open the device */
+
+static int16_t *mus_pcm;          /* interleaved stereo at MIX_RATE */
+static size_t   mus_frames, mus_pos;
+static int      mus_playing;
+long            au_music_frames;
+
+void music_stop(void) { mus_playing = 0; }
+
+/* Opens the device itself. It was previously only opened when a sound *effect* first
+ * played, so music alone -- which is all that happens on the menus -- produced a decoded
+ * track that nothing ever pulled. */
+void music_start(void)
+{
+    if (!mus_pcm) return;
+    audio_start();
+    mus_playing = 1;
+    mus_pos = 0;
+}
+
+/* Returns 0 and explains itself on any failure; never leaves a half-loaded track. */
+int music_load(const char *path)
+{
+    music_stop();
+    free(mus_pcm); mus_pcm = NULL; mus_frames = 0; au_music_frames = 0;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof cmd,
+             "ffmpeg -v quiet -nostdin -i '%s' -f s16le -acodec pcm_s16le "
+             "-ar %d -ac %d - 2>/dev/null", path, MIX_RATE, MIX_CHANNELS);
+    FILE *pipe = popen(cmd, "r");
+    if (!pipe) { fprintf(stderr, "music: could not run ffmpeg\n"); return 0; }
+
+    size_t cap = 1u << 20, len = 0;
+    int16_t *buf = malloc(cap);
+    if (!buf) { pclose(pipe); return 0; }
+    for (;;) {
+        if (len == cap) {
+            int16_t *bigger = realloc(buf, cap * 2);
+            if (!bigger) { free(buf); pclose(pipe); return 0; }
+            buf = bigger; cap *= 2;
+        }
+        const size_t got = fread((char *)buf + len, 1, cap - len, pipe);
+        if (got == 0) break;
+        len += got;
+    }
+    const int rc = pclose(pipe);
+
+    if (len == 0) {
+        free(buf);
+        fprintf(stderr, "music: no audio decoded from %s%s\n", path,
+                rc != 0 ? " (is ffmpeg installed?)" : "");
+        return 0;
+    }
+    mus_pcm = buf;
+    mus_frames = len / (sizeof(int16_t) * MIX_CHANNELS);
+    au_music_frames = (long)mus_frames;
+    return 1;
+}
+
 
 static float gain_of(const SBuf *b)
 {
@@ -47,6 +122,19 @@ static void SDLCALL feed(void *ud, SDL_AudioStream *s, int additional, int total
     static int16_t out[4096 * MIX_CHANNELS];
     const int chunk = frames > 4096 ? 4096 : frames;
     memset(out, 0, (size_t)chunk * sizeof(int16_t) * MIX_CHANNELS);
+
+    au_pulls++;
+
+    /* Music first, so the effect mixing below saturates against it the same way it does
+     * against other effects. */
+    if (mus_playing && mus_pcm) {
+        for (int f = 0; f < chunk; f++) {
+            if (mus_pos >= mus_frames) mus_pos = 0;            /* loop */
+            for (int c = 0; c < MIX_CHANNELS; c++)
+                out[f * MIX_CHANNELS + c] = mus_pcm[mus_pos * MIX_CHANNELS + c] / 2;
+            mus_pos++;
+        }
+    }
 
     SDL_LockMutex(mix_lock);
     for (int i = 0; i < nbufs; i++) {
@@ -81,6 +169,10 @@ static void SDLCALL feed(void *ud, SDL_AudioStream *s, int additional, int total
         b->pos = (uint32_t)cursor * (uint32_t)bps;
     }
     SDL_UnlockMutex(mix_lock);
+    for (int i = 0; i < chunk * MIX_CHANNELS; i++) {
+        const long v = out[i] < 0 ? -(long)out[i] : (long)out[i];
+        if (v > au_peak) au_peak = v;
+    }
 
     SDL_PutAudioStreamData(s, out, chunk * (int)sizeof(int16_t) * MIX_CHANNELS);
 }
@@ -120,6 +212,7 @@ static void sb_Play(uint32_t self)
     SDL_LockMutex(mix_lock);
     b->looping = (ARG(3) & 1) != 0;      /* DSBPLAY_LOOPING */
     b->playing = 1;
+    au_plays++;
     SDL_UnlockMutex(mix_lock);
     com_ret(4, DD_OK);
 }
@@ -196,7 +289,7 @@ static void ds_CreateSoundBuffer(uint32_t self)
         if (b->rate < 4000 || b->rate > 192000) b->rate = 22050;
         if (b->bits != 8 && b->bits != 16) b->bits = 8;
     }
-    if (nbufs < MAX_BUFS) bufs[nbufs++] = b;
+    if (nbufs < MAX_BUFS) { bufs[nbufs++] = b; au_bufs++; }
     ST32(out, com_create(IF_DSBUFFER, b));
     com_ret(4, DD_OK);
 }
@@ -214,13 +307,26 @@ static void ds_DuplicateSoundBuffer(uint32_t self)
     *b = *o;                     /* shares the PCM; its own play cursor */
     b->playing = 0;
     b->pos = 0;
-    if (nbufs < MAX_BUFS) bufs[nbufs++] = b;
+    if (nbufs < MAX_BUFS) { bufs[nbufs++] = b; au_bufs++; }
     ST32(out, com_create(IF_DSBUFFER, b));
     com_ret(3, DD_OK);
 }
 
 static void ds_ret_ok2(uint32_t self) { (void)self; com_ret(2, DD_OK); }
 static void ds_ret_ok3(uint32_t self) { (void)self; com_ret(3, DD_OK); }
+
+void audio_report(void)
+{
+    fprintf(stderr, "audio: buffers=%ld plays=%ld device-pulls=%ld peak=%ld/32767 "
+                    "music-frames=%ld\n",
+            au_bufs, au_plays, au_pulls, au_peak, au_music_frames);
+    if (!au_bufs)  fprintf(stderr, "  the game never created a sound buffer\n");
+    else if (!au_plays) fprintf(stderr, "  buffers exist but none was ever started\n");
+    else if (!au_pulls) fprintf(stderr, "  buffers played but the device never pulled -- "
+                                        "the mixer callback is not running\n");
+    else if (!au_peak)  fprintf(stderr, "  the mixer ran but produced pure silence, so "
+                                        "nothing would be heard\n");
+}
 
 void dsound_register(void)
 {

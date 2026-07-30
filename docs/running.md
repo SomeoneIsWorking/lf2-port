@@ -437,3 +437,29 @@ That contains `68 57 49 26`, exactly the four VKs predicted from the polling sit
 `0x419b73` (players 1-4 "up"), plus every binding the control settings page lists for all
 four players. The instrument was built before this screen could be reached and its output
 matches an independent prediction, which is the strongest evidence available that it works.
+
+## Audio
+
+Sound effects go through DirectSound on SDL3 and work with no setup.
+
+**Background music needs `ffmpeg` on PATH.** The game's BGM is eight `.wma` files, and
+rather than carry a WMA decoder the track is decoded to raw PCM by `ffmpeg` once, when the
+DirectShow graph renders it. That keeps it an optional *runtime* dependency: without
+ffmpeg you get silence and a message, never a broken build.
+
+`LF2_AUDIO_DEBUG=1` reports the audio path as four independent counters, because they fail
+independently — the game may never create a buffer, never start one, never have the device
+pull, or pull and get silence:
+
+```
+audio: buffers=116 plays=1 device-pulls=1320 peak=31420/32767 music-frames=3325952
+```
+
+`peak` is the one that proves sound would actually be heard; the rest can all be non-zero
+while the output is silent. In a menu-only run music alone gives a peak of 16384 (it mixes
+at half gain), and effects push it higher in gameplay.
+
+Two things this turned up. The filename arrives as UTF-16 but with a **zero BSTR length
+prefix**, so the terminator is what to trust, not the prefix. And the audio device was only
+opened when a sound *effect* first played, so music alone — which is all that happens on
+the menus — decoded a full track that nothing ever pulled.
