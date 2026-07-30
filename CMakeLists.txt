@@ -110,6 +110,7 @@ add_custom_command(
 add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c runtime/test_insn.c runtime/flags.c runtime/strops.c runtime/rwatch.c)
 target_include_directories(test_insn PRIVATE runtime)
 add_test(NAME instructions COMMAND test_insn)
+set_tests_properties(instructions PROPERTIES SKIP_RETURN_CODE 77)
 
 # End-to-end: drives the port to a running match and asserts the things that have actually
 # broken before. Slow (~75 s) and needs the extracted game tree, so it is labelled and can

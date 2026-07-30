@@ -16,12 +16,17 @@ void fn_00423b00__orig(void);
 void fn_00419a60__orig(void);
 void fn_0043f010__orig(void);
 
-/* Nothing overridden yet.
+/* Overridden so far:
  *
- * A note from the first attempt, so it is not repeated: fn_004242e0 looked like the ad
- * strip -- it references http://www.littlefighter.com/advertise and ShellExecute's "open"
- * verb, and its hit-test constants (x 145..775, y 535) match the "To advertise on LF2"
- * link exactly. It is not. It is a general drawing helper, called seven times from the
+ *   fn_004246b0   the front-end menu -- selection index, so a controller can drive it
+ *   fn_00423b00   element draw -- declines the advertising panel by its descriptor
+ *   fn_0043f010   clip draw -- declines the ad system's corner update notice
+ *   fn_00419a60   per-frame player input -- merges a controller into the game's buttons
+ *
+ * A note from the first attempt at the ads, so it is not repeated: fn_004242e0 looked like
+ * the ad strip -- it references http://www.littlefighter.com/advertise and ShellExecute's
+ * "open" verb, and its hit-test constants (x 145..775, y 535) match the "To advertise on
+ * LF2" link exactly. It is not. It is a general drawing helper, called seven times from the
  * menu draw path, and stubbing it garbled the character artwork along with the ad.
  *
  * Referencing an ad URL is not the same as being the ad function. The thing to port is the

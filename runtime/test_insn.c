@@ -14,18 +14,17 @@
 #include <sys/mman.h>
 
 /* This test executes the binary's own instruction bytes on the host, so it only means
- * anything on an x86 host -- on Apple Silicon there is nothing to compare against.
- * MAP_32BIT is also a Linux extension; macOS on x86 already places mmap low enough for a
- * 32-bit base register, so requesting it is unnecessary there. */
+ * anything on an x86 host -- on Apple Silicon there is nothing to compare against. */
 #if defined(__x86_64__) || defined(__i386__)
 #define HOST_IS_X86 1
 #else
 #define HOST_IS_X86 0
 #endif
 
-#ifndef MAP_32BIT
-#define MAP_32BIT 0
-#endif
+/* There used to be a `#ifndef MAP_32BIT / #define MAP_32BIT 0` here, on the reasoning that
+ * macOS "already places mmap low enough for a 32-bit base register". That reasoning was
+ * never measured, and defining the macro away would have made the portable path below
+ * unreachable on the one platform it exists for. The placement is checked instead. */
 
 /* The flag module and the generated cases expect these; the harness owns them here. */
 Cpu cpu;
@@ -192,10 +191,40 @@ int main(void)
 
     /* Guest memory must sit in the low 4 GB for the memory cases: the host executes the
      * instruction with a 32-bit base register, so it needs g_mem + guest_addr to fit in
-     * one. MAP_32BIT guarantees that. Both sides then address the identical bytes. */
+     * one. Both sides then address the identical bytes.
+     *
+     * MAP_32BIT guarantees that but is a Linux extension; macOS has no equivalent, so
+     * there the placement is requested by hint and CHECKED. A hint is advisory -- the
+     * kernel may put the mapping anywhere -- so a mapping that lands high is unmapped and
+     * the next hint tried, rather than trusted. 16 MB fits in the low 4 GB many times
+     * over; if none of the hints land, that is reported and the run skips, because
+     * comparing against a base the host cannot address would not be a comparison. */
+/* -DLF2_NO_MAP_32BIT forces the portable path on Linux, so it can actually be run
+     * here rather than only compiled somewhere nobody has. */
+#if defined(MAP_32BIT) && !defined(LF2_NO_MAP_32BIT)
     g_mem = mmap(NULL, GUEST_SIZE, PROT_READ | PROT_WRITE,
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+#else
+    g_mem = MAP_FAILED;
+    for (uintptr_t hint = 0x10000000u; hint < 0xf0000000u; hint += 0x10000000u) {
+        void *p = mmap((void *)hint, GUEST_SIZE, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (p == MAP_FAILED) continue;
+        if ((uintptr_t)p + GUEST_SIZE <= 0x100000000u) { g_mem = p; break; }
+        munmap(p, GUEST_SIZE);
+    }
+    if (g_mem == MAP_FAILED) {
+        printf("SKIP: could not place guest memory in the low 4 GB, so the host cannot\n"
+               "      address it with a 32-bit base. No instructions were compared.\n");
+        return 77;
+    }
+#endif
     if (g_mem == MAP_FAILED) { perror("mmap guest"); return 2; }
+    if ((uintptr_t)g_mem + GUEST_SIZE > 0x100000000u) {
+        printf("SKIP: guest memory landed at %p, above the 4 GB the host can address with\n"
+               "      a 32-bit base. No instructions were compared.\n", (void *)g_mem);
+        return 77;
+    }
     const uint32_t mem_base = (uint32_t)(uintptr_t)g_mem;
 
     enum { ROUNDS = 8 };
