@@ -5,3 +5,8 @@ scratch/
 __pycache__/
 
 # Wine oracle prefix and run artifacts
+
+# Ghidra dump of the game code: every instruction with its raw bytes, which is enough
+# to reconstruct .text. A derivative of a binary this repository does not distribute.
+# Regenerate it from your own copy -- see docs/isa-scope.md.
+re/instructions.tsv

@@ -45,13 +45,38 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: %s <instructions.tsv>\n", argv[0]);
         return 2;
     }
+    /* This test validates the decoder against an INDEPENDENT disassembly, so it is only
+     * meaningful with Ghidra's dump. That file is derived from the game binary and is not
+     * distributed here (docs/isa-scope.md regenerates it). Absent, the test SKIPS and says
+     * what was not checked -- it must never read as a pass, which is what returning 0 on a
+     * missing corpus would do. */
     FILE *fh = fopen(argv[1], "r");
-    if (!fh) { perror(argv[1]); return 2; }
+    if (!fh) {
+        fprintf(stderr,
+                "SKIP: no corpus at %s -- the decoder was NOT checked against an\n"
+                "      independent disassembly. Regenerate it with Ghidra, see\n"
+                "      docs/isa-scope.md.\n", argv[1]);
+        return 77;
+    }
 
     long total = 0, ok = 0, bad_len = 0, undecodable = 0, reported = 0;
     char line[MAX_LINE];
 
     while (fgets(line, sizeof line, fh)) {
+        /* A corpus this project emitted from its own decoder cannot test that decoder.
+         * Refusing is the point: run against it and every length agrees by construction,
+         * which would read as 70,508 passing checks. */
+        if (line[0] == '#') {
+            if (strstr(line, "self-derived")) {
+                fprintf(stderr,
+                        "SKIP: %s was emitted by lift --dump-insns, i.e. by the decoder\n"
+                        "      under test. It cannot validate itself. Use Ghidra's dump.\n",
+                        argv[1]);
+                fclose(fh);
+                return 77;
+            }
+            continue;
+        }
         char *addr = strtok(line, "\t");
         char *len_s = strtok(NULL, "\t");
         char *mnemonic = strtok(NULL, "\t");
