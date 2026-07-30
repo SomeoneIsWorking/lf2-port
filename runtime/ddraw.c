@@ -45,8 +45,19 @@ static uint32_t active_palette;
 enum { VRAM_BASE = 0x50000000u };
 static uint32_t vram_next = VRAM_BASE;
 
+long vram_allocs, vram_bytes;
+
+void vram_report(void)
+{
+    /* Reported relative to VRAM_BASE. Printing the raw cursor makes a 316 MB arena look
+     * like 1.5 GB, because the base is 0x50000000. */
+    fprintf(stderr, "vram: %ld allocations, %ld KB requested, %u KB of arena used\n",
+            vram_allocs, vram_bytes / 1024, (vram_next - VRAM_BASE) / 1024);
+}
+
 static uint32_t vram_alloc(uint32_t n)
 {
+    vram_allocs++; vram_bytes += n;
     uint32_t p = vram_next;
     vram_next = (vram_next + n + 4095u) & ~4095u;
     return p;
@@ -114,7 +125,7 @@ void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int
     screen_change_check(indexed, w, h, src_pitch, frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
-    if (frames % 900 == 0) { colorkey_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    if (frames % 900 == 0) { colorkey_report(); vram_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
     if (!hw.renderer) return;
     if (!hw.texture) {
         hw.texture = SDL_CreateTexture(hw.renderer, SDL_PIXELFORMAT_XRGB8888,

@@ -136,3 +136,22 @@ could never have contradicted the bug.
 `want.eflags` now varies CF per round. With the carry restored to the lifter the suite
 passes; with it dropped again 43 cases fail. DF is deliberately left at 0: it is a
 direction control rather than an arithmetic input, and the string cases assume forward.
+
+## Memory: measured, and one bounded limitation
+
+A full match sits at **555 MB RSS**, flat from ~30 s onward, with file descriptors steady
+at 14. There is no leak during play: RSS and fd count were sampled at 10/30/50/70/90 s and
+do not move after load.
+
+Where it goes: 371 MB is the guest address space (touched pages) and 96 MB the host heap.
+Of the guest side, **316 MB is DirectDraw surfaces** — 394 allocations. That is the price
+of the 32-bit XRGB decision: the game's surfaces are 8-bit indexed on Windows, so this is
+4x, and every surface is zeroed at creation, which makes every page resident. The decision
+itself is sound (the game creates no palette and adapts to whatever `GetPixelFormat`
+reports) but it is not free.
+
+**`vram_alloc` is a bump allocator that never frees.** All 394 allocations happen during
+load and none during play, so a session is bounded — but nothing reclaims a surface on
+release, so repeated loads (stage changes, returning to the menu and starting again) would
+grow it. Not observed to bite, not fixed, and stated rather than left to be discovered.
+*The fix is to free on surface release rather than to enlarge the arena.*
