@@ -133,8 +133,13 @@ static int autoclick_state(int *x, int *y)
 
     static uint64_t start_ms;
     if (!start_ms) start_ms = SDL_GetTicks();
-    const char *s_env = getenv("LF2_AUTOKEY_START");
-    const char *e_env = getenv("LF2_AUTOKEY_EVERY");
+    /* Clicks default to the key schedule but can be given their own. They have to be
+     * separable: reaching the game means one click on "game start", then a ~25 s data
+     * load, then keys -- on a shared clock the keys are all consumed during the load. */
+    const char *s_env = getenv("LF2_AUTOCLICK_START");
+    const char *e_env = getenv("LF2_AUTOCLICK_EVERY");
+    if (!s_env) s_env = getenv("LF2_AUTOKEY_START");
+    if (!e_env) e_env = getenv("LF2_AUTOKEY_EVERY");
     const uint64_t begin = s_env ? (uint64_t)strtoul(s_env, NULL, 10) : 6000;
     const uint64_t every = e_env ? (uint64_t)strtoul(e_env, NULL, 10) : 2500;
 
@@ -472,7 +477,11 @@ static int autokey_pressed(uint32_t vk)
     }
     if (!count) return 0;
 
-    const unsigned want = (unsigned)((elapsed / every) % count);
+    /* As with clicks, a menu path is one-way: cycling the list keeps navigating and
+     * overshoots the screen you were aiming for. LF2_AUTOKEY_ONCE plays it once. */
+    const unsigned step = (unsigned)(elapsed / every);
+    if (getenv("LF2_AUTOKEY_ONCE") && step >= count) return 0;
+    const unsigned want = step % count;
     unsigned i = 0;
     for (const char *c = script; *c; ) {
         const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);

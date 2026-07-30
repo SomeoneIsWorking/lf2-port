@@ -365,15 +365,26 @@ is **navigation, not observation**: menus are mouse-driven and each screen's cli
 bands have to be recovered from the game's own comparison constants, the way the main
 menu's were (see above).
 
-## The menu map, and how it was recovered
+## Starting a match
 
-The port navigates from the title screen into the game. The path is:
+The port reaches gameplay. This runs a VS-mode fight, Louis against one computer
+opponent, entirely unattended:
 
 ```sh
-cd game && LF2_AUTOCLICK_ONCE=1 LF2_AUTOCLICK=403,228 \
-  LF2_AUTOKEY=0x68,0x68,0x65 LF2_AUTOKEY_START=3000 LF2_AUTOKEY_EVERY=2200 \
+cd game && LF2_AUTOCLICK_ONCE=1 LF2_AUTOCLICK=403,228 LF2_AUTOCLICK_START=3000 \
+  LF2_AUTOKEY_ONCE=1 LF2_AUTOKEY=0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x68,0x68,0x65 \
+  LF2_AUTOKEY_START=32000 LF2_AUTOKEY_EVERY=1800 \
   ../scratch/build/lf2 lf2.exe
 ```
+
+The click picks **game start**; the game then loads its data for ~25 s, which is why the
+key script starts at 32 s and why clicks and keys need separate schedules
+(`LF2_AUTOCLICK_START`/`_EVERY` fall back to the `LF2_AUTOKEY_` ones). The eight attacks
+walk mode select, player join and the computer-player count; the two ups move from
+"Reset Random" to **Fight!** on the pre-fight overlay, and the last attack starts the
+match. Both scripts need their `_ONCE` flag: cycling walks straight back out again.
+
+## The menu map, and how it was recovered
 
 `403,228` is **game start**. Clicking it loads the game data (`Now Loading… data\*.dat`,
 about 25 s) and reaches the mode menu — VS mode, Stage mode, Championships, Battle mode,
