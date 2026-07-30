@@ -34,6 +34,7 @@ typedef struct {
     uint32_t key_lo, key_hi;
     uint32_t palette;       /* guest object address of the attached palette, 0 if none */
     uint32_t attached;      /* back buffer handed out by GetAttachedSurface */
+    uint32_t clipper;   /* IDirectDrawClipper set via SetClipper, 0 if none */
 } Surface;
 
 typedef struct { uint32_t entries[256]; } Palette;
@@ -532,11 +533,28 @@ static void surf_GetCaps(uint32_t self)
     com_ret(2, DD_OK);
 }
 
+/* Hand back whatever SetClipper attached. Reporting DDERR_NOCLIPPERATTACHED
+ * unconditionally -- which this did -- means the game can never reach its clipper, so it
+ * never calls GetClipList and takes a different drawing path than it does against real
+ * DirectDraw. Measured against the Wine oracle: 8.4% of the oracle's DirectDraw calls are
+ * GetClipList, and 0% of ours were. */
 static void surf_GetClipper(uint32_t self)
 {
-    (void)self;
-    if (ARG(1)) ST32(ARG(1), 0);
-    com_ret(2, E_FAIL);            /* DDERR_NOCLIPPERATTACHED */
+    Surface *s = com_host(self);
+    if (!s || !s->clipper) {
+        if (ARG(1)) ST32(ARG(1), 0);
+        com_ret(2, E_FAIL);        /* DDERR_NOCLIPPERATTACHED */
+        return;
+    }
+    if (ARG(1)) ST32(ARG(1), s->clipper);
+    com_ret(2, DD_OK);
+}
+
+static void surf_SetClipper(uint32_t self)
+{
+    Surface *s = com_host(self);
+    if (s) s->clipper = ARG(1);
+    com_ret(2, DD_OK);
 }
 
 static void surf_GetColorKey(uint32_t self)
@@ -554,7 +572,6 @@ static void surf_GetPalette(uint32_t self)
 }
 
 static void surf_ret_ok1(uint32_t self) { (void)self; com_ret(1, DD_OK); }
-static void surf_ret_ok2(uint32_t self) { (void)self; com_ret(2, DD_OK); }
 
 static void surf_GetPixelFormat(uint32_t self)
 {
@@ -783,7 +800,7 @@ void ddraw_register(void)
     c->method[25] = surf_Lock;
     c->method[26] = surf_ReleaseDC;
     c->method[27] = surf_ret_ok1;            /* Restore */
-    c->method[28] = surf_ret_ok2;            /* SetClipper */
+    c->method[28] = surf_SetClipper;
     c->method[29] = surf_SetColorKey;
     c->method[31] = surf_SetPalette;
     c->method[32] = surf_Unlock;
