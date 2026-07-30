@@ -219,7 +219,13 @@ static int emit_x87(FILE *o, const x86_insn *in)
             if (g == 0) { fprintf(o, "fpu_push(%s(%s));", ld, addr); return 1; }
             if (g == 2) { fprintf(o, "%s(%s, FST(0));", st, addr); return 1; }
             if (g == 3) { fprintf(o, "%s(%s, fpu_pop());", st, addr); return 1; }
-            return 0;                                     /* FLDCW etc: absent here */
+            /* Control word. Ghidra does not disassemble the block at 0x4450ec that uses
+             * these, so they are absent from re/instructions.tsv -- which is why an
+             * earlier scoping pass concluded the binary contained none. It does: the CRT
+             * reads the word back and checks that all exceptions are masked. */
+            if (esc == 0xD9 && g == 5) { fprintf(o, "cpu.fcw = (uint16_t)LD16(%s);", addr); return 1; }
+            if (esc == 0xD9 && g == 7) { fprintf(o, "ST16(%s, cpu.fcw);", addr); return 1; }
+            return 0;
         }
         if (esc == 0xDB || esc == 0xDF) {                 /* FILD / FISTP */
             const int wide = (esc == 0xDF);

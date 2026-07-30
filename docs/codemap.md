@@ -90,17 +90,14 @@ uncomp size at `+18`, NUL-terminated path at `+62`.
 reuse an earlier blob (e.g. `bg/template/2/pic2.bmp` is byte-identical to `template/1`'s).
 A naive sequential name↔blob pairing misaligns and silently writes wrong content.
 
-## Known defect: end detection over-runs into data
+## re/instructions.tsv is not a complete census
 
-`fn_004450d0` contains a forward branch to `0x445106`, which is not an internal label but
-the prologue of the *next* function. The control-flow end detection therefore keeps
-extending the body to reach it, decoding the 26 bytes of data at `0x4450ec`–`0x445105`
-(`05 56 00 05 58 ...`) as instructions. That is the single remaining `TODO` in the
-generated output.
+Ghidra does not disassemble everything reachable. The block at `0x4450ec` — a live CRT
+check that reads the x87 control word — is absent from `re/instructions.tsv` entirely,
+even though `fn_004450d0`'s declared size covers it. Anything scoped by grepping that file
+is therefore a **lower bound**, not a total, and a "there are none in the binary" answer
+obtained from it is worthless: the corpus excludes exactly the regions in question.
 
-It is harmless in practice — the branch jumps straight over the decoded garbage, so it is
-unreachable at runtime, which is why the game is unaffected. But it is wrong: a branch to
-another function's entry should become a tail call, not an internal `goto`. The fix is to
-check forward branch targets against the known function-entry set before letting one
-extend the body. Not attempted yet because the end-detection heuristic is what fixed the
-startup crash and is worth changing carefully.
+The lifter's control-flow end detection does not share this blind spot — it decodes from
+the bytes — which is why it found the block. When the two disagree, the lifter is the
+better instrument.
