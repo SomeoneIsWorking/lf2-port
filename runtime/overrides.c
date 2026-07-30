@@ -65,6 +65,12 @@ enum { GX_CLICK = 0x00457580, GX_SCREEN = 0x0044d064 };
  *   main menu (screen 0):  x 260..547, five entries down the middle
  *   control settings (6):  ok   x 405..560 y 441..465
  *                          cancel x 582..737 y 441..465
+ *   recording info (7):    ok   x 231..386 y 416..440
+ *                          cancel x 403..558 y 416..440
+ *
+ * The recording page's "click here to know more" link (x 44..483, y 461..484) is
+ * deliberately not selectable: it opens a web page, and a controller should not be able to
+ * fall onto something that leaves the game.
  */
 typedef struct { int x, y; } Item;
 
@@ -80,9 +86,15 @@ static const Item CONTROL_SETTINGS[] = {
     { 659, 453 },  /* cancel */
 };
 
+static const Item RECORDING_INFO[] = {
+    { 308, 428 },  /* ok     */
+    { 480, 428 },  /* cancel */
+};
+
 static const struct { uint32_t screen; const Item *items; int n; } SCREENS[] = {
     { 0, MAIN_MENU,        (int)(sizeof MAIN_MENU / sizeof MAIN_MENU[0]) },
     { 6, CONTROL_SETTINGS, (int)(sizeof CONTROL_SETTINGS / sizeof CONTROL_SETTINGS[0]) },
+    { 7, RECORDING_INFO,   (int)(sizeof RECORDING_INFO / sizeof RECORDING_INFO[0]) },
 };
 
 static int menu_index;
@@ -137,6 +149,10 @@ static void menu_sync_from_pointer(const Item *items, int n)
 void fn_004246b0(void)
 {
     const uint32_t screen = LD32(GX_SCREEN);
+    if (getenv("LF2_MENU_DEBUG")) {
+        static uint32_t last = 0xfffffffdu;
+        if (screen != last) { last = screen; fprintf(stderr, "menu screen = %u\n", screen); }
+    }
     int n = 0;
     const Item *items = screen_items(screen, &n);
 
