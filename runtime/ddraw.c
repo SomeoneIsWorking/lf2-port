@@ -394,6 +394,23 @@ static void surf_Blt(uint32_t self)
             done = 1;
         }
     }
+    if (getenv("LF2_BLT_STACK")) {
+        int wx = 0, wy = 0;
+        sscanf(getenv("LF2_BLT_STACK"), "%d,%d", &wx, &wy);
+        static int shown;
+        if (!shown && dl == wx && dt == wy) {
+            shown = 1;
+            /* Poor man's backtrace: scan the guest stack for values that look like code
+             * addresses in .text, which are the return addresses of the frames above. */
+            fprintf(stderr, "blt (%d,%d) guest call chain:", dl, dt);
+            uint32_t sp = R(ESP);
+            for (int k = 0; k < 400; k++) {
+                const uint32_t v = LD32(sp + (uint32_t)k * 4);
+                if (v >= 0x401000u && v < 0x44e000u) fprintf(stderr, " %08x", v);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
     Surface *s = srcobj ? com_host(srcobj) : NULL;
     if (s) {
         int sl, st_, sr, sb;

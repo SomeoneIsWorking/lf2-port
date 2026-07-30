@@ -25,7 +25,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
     COMMAND lift ${CMAKE_SOURCE_DIR}/game/lf2.exe ${CMAKE_SOURCE_DIR}/re/entries.tsv
                  ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
-    DEPENDS lift ${CMAKE_SOURCE_DIR}/re/entries.tsv
+    DEPENDS lift ${CMAKE_SOURCE_DIR}/re/entries.tsv ${CMAKE_SOURCE_DIR}/re/overrides.txt
     COMMENT "Recompiling lf2.exe -> C")
 
 add_executable(lf2
@@ -43,6 +43,7 @@ add_executable(lf2
     runtime/gdi.c
     runtime/gamepad.c
     runtime/wsock.c
+    runtime/overrides.c
     runtime/main.c)
 target_include_directories(lf2 PRIVATE runtime)
 
@@ -52,7 +53,7 @@ target_include_directories(lf2 PRIVATE runtime)
 set_source_files_properties(
     runtime/guest.c runtime/flags.c runtime/strops.c runtime/rwatch.c runtime/imports.c
     runtime/com.c runtime/win32.c runtime/ddraw.c runtime/dsound.c runtime/dshow.c
-    runtime/gdi.c runtime/gamepad.c runtime/wsock.c runtime/main.c
+    runtime/gdi.c runtime/gamepad.c runtime/wsock.c runtime/overrides.c runtime/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
 if(LF2_FN_TRACE)

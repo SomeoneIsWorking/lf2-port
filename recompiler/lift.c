@@ -105,6 +105,36 @@ static const uint8_t *guest_ptr(uint32_t va)
     return image + text_off + (rva - text_rva);
 }
 
+/* Functions listed in re/overrides.txt are NOT lifted. Their symbol is provided by a
+ * hand-written native implementation in runtime/overrides.c instead, so behaviour can be
+ * changed at the level the game actually expresses it -- a ported menu, say -- rather than
+ * by intercepting the results at the Win32 boundary. The generated code still calls
+ * fn_<addr>() exactly as before; only the definition moves. */
+#define MAX_OVERRIDES 64
+static uint32_t overrides[MAX_OVERRIDES];
+static int noverrides;
+
+static void load_overrides(const char *dir)
+{
+    char path[512];
+    snprintf(path, sizeof path, "%s/overrides.txt", dir);
+    FILE *f = fopen(path, "r");
+    if (!f) return;                       /* optional file */
+    char line[256];
+    while (fgets(line, sizeof line, f) && noverrides < MAX_OVERRIDES) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        overrides[noverrides++] = (uint32_t)strtoul(line, NULL, 16);
+    }
+    fclose(f);
+    fprintf(stderr, "%d function(s) overridden by native implementations\n", noverrides);
+}
+
+static int is_overridden(uint32_t va)
+{
+    for (int i = 0; i < noverrides; i++) if (overrides[i] == va) return 1;
+    return 0;
+}
+
 static int is_func(uint32_t va)
 {
     for (int i = 0; i < nfuncs; i++) if (funcs[i].addr == va) return 1;
@@ -824,6 +854,10 @@ static void lift_function(FILE *o, const Func *f)
     cur_addrs = addrs;
     cur_n = n;
 
+    if (is_overridden(f->addr)) {
+        fprintf(o, "\n/* fn_%08x: native override, see runtime/overrides.c */\n", f->addr);
+        return;
+    }
     fprintf(o, "\nvoid fn_%08x(void)\n{\n", f->addr);
     fprintf(o, "    FN_ENTER(0x%xu);\n", f->addr);
     fprintf(o, "    const uint32_t _esp0 = R(ESP); (void)_esp0;\n");
@@ -1047,6 +1081,14 @@ int main(int argc, char **argv)
     }
     load_probes();
     load_pe(argv[1]);
+
+    {   /* overrides.txt sits beside the entries file */
+        char dir[512];
+        snprintf(dir, sizeof dir, "%s", argv[2]);
+        char *slash = strrchr(dir, '/');
+        if (slash) *slash = 0; else snprintf(dir, sizeof dir, ".");
+        load_overrides(dir);
+    }
 
     FILE *fl = fopen(argv[2], "r");
     if (!fl) { perror(argv[2]); return 2; }
