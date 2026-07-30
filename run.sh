@@ -6,6 +6,13 @@
 set -e
 cd "$(dirname "$0")"
 
+# The game tree is not committed; it is extracted from the installer's overlay
+# on first run (tools/extract_game.py, no Windows or Wine involved). The build
+# needs it too -- the recompiler reads game/lf2.exe.
+if [ ! -f game/lf2.exe ]; then
+    python3 tools/extract_game.py LF2_v2.0a.exe game
+fi
+
 cmake -S . -B scratch/build >/dev/null
 cmake --build scratch/build -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)"
 
