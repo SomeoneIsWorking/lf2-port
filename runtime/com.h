@@ -47,4 +47,6 @@ uint32_t guest_call(uint32_t addr, const uint32_t *args, int nargs);
 
 enum { DD_OK = 0, E_FAIL = 0x80004005u, E_NOINTERFACE = 0x80004002u };
 
+void com_release_report(void);
+
 #endif /* COM_H */
