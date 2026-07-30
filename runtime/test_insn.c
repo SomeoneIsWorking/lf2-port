@@ -183,7 +183,7 @@ int main(void)
 {
 #if !HOST_IS_X86
     printf("skipped: the instruction differential needs an x86 host to compare against\n");
-    return 0;
+    return 77;
 #else
     page = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

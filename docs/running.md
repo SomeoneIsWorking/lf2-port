@@ -67,11 +67,14 @@ exact defect — `FST(i) = fpu_pop();` with `fpu_pop` a `static inline` that mod
 both flag a syntactic `i = i++` control in the same file. They only handle syntactic cases.
 A clean warning sweep over the generated code is not evidence about this bug class.
 
-**Apple Silicon runs the port but not one of its tests.** The recompiled game is ordinary
-C and compiles for arm64 like anything else. The instruction differential test is
-different: it works by executing the binary's *own* x86 bytes on the host and comparing,
-which has no meaning on an ARM CPU. It now detects a non-x86 host and skips with a
-message rather than failing. The decoder and flag tests are pure C and still run.
+**Apple Silicon runs the port but not two of its tests.** The recompiled game is ordinary
+C and compiles for arm64 like anything else. The instruction differential and the flag
+test are different: both compare against the host — the first executes the binary's *own*
+x86 bytes, the second computes reference flags with x86 inline asm — which has no meaning
+on an ARM CPU. Both detect a non-x86 host and skip (exit 77, which ctest reports as a
+skip, not a pass) rather than failing. An earlier version of this note claimed the flag
+test was pure C and still ran; the first arm64 build failed on its asm constraints, so it
+plainly was not. The decoder test is pure C and still runs.
 
 The other thing to expect on Apple Silicon is the x87 question in `docs/isa-scope.md`:
 host `long double` is 128-bit quad there rather than the 80 bits it is on x86-64. The port
