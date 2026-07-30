@@ -8,6 +8,35 @@ cd game && ../build/lf2 lf2.exe
 The working directory must be the extracted game tree — the game opens its data with
 relative paths.
 
+## macOS
+
+**Untested — no Mac was available.** What follows is what the code should need, and the
+portability blockers that have been removed, not a report of a successful build.
+
+```sh
+brew install sdl3 cmake
+cmake -S . -B build && cmake --build build -j
+cd game && ../build/lf2 lf2.exe
+```
+
+The runtime is POSIX plus SDL3 throughout; an audit found no `/proc`, no epoll, no
+Linux-only headers. Two real blockers were fixed:
+
+- `MAP_NORESERVE` does not exist on macOS. It is only ever a hint on Linux, so it is now
+  defined to zero where absent.
+- `MAP_32BIT` is a Linux extension, used only by the instruction differential test.
+
+**Apple Silicon runs the port but not one of its tests.** The recompiled game is ordinary
+C and compiles for arm64 like anything else. The instruction differential test is
+different: it works by executing the binary's *own* x86 bytes on the host and comparing,
+which has no meaning on an ARM CPU. It now detects a non-x86 host and skips with a
+message rather than failing. The decoder and flag tests are pure C and still run.
+
+The other thing to expect on Apple Silicon is the x87 question in `docs/isa-scope.md`:
+host `long double` is 128-bit quad there rather than the 80 bits it is on x86-64. The port
+uses `double` for x87 precisely because neither matches, so this should be a non-issue —
+but it is the first thing to check if float behaviour differs.
+
 ## Headless runs and screenshots
 
 Forcing the video driver is required, and the reason is worth knowing:
