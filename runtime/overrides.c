@@ -14,6 +14,7 @@
 void fn_004246b0__orig(void);
 void fn_00423b00__orig(void);
 void fn_00419a60__orig(void);
+void fn_0043f010__orig(void);
 
 /* Nothing overridden yet.
  *
@@ -58,6 +59,10 @@ enum { GX_MOUSE_X = 0x004546f0, GX_MOUSE_Y = 0x00453cdc };
  * the game performs its own dispatch, sound and screen change.
  */
 enum { GX_CLICK = 0x00457580, GX_SCREEN = 0x0044d064 };
+
+/* The ad system's update notice in the top-right corner; see fn_0043f010 below. */
+enum { MENU_CLIP7 = 0x00451188 };            /* sheet handle, loaded from "MENU_CLIP7" */
+enum { NOTICE_X = 725, NOTICE_Y = 5 };       /* the game's own constants for the notice */
 
 /* Selectable items per screen, taken from the game's own hit-test constants -- the centre
  * of each band it brackets the pointer against. Adding a screen is a matter of reading its
@@ -172,9 +177,20 @@ void fn_004246b0(void)
         static uint32_t last_screen = 0xfffffffdu, last_mode = 0xfffffffdu;
         if (screen != last_screen || mode != last_mode) {
             last_screen = screen; last_mode = mode;
-            fprintf(stderr, "menu mode=%u screen=%u\n", mode, screen);
+            fprintf(stderr, "menu mode=%u screen=%u updater=%u\n",
+                    mode, screen, LD32(0x00458424));
         }
     }
+    /* The update notice in the top-right corner is gone (see fn_0043f010), so its hit box
+     * must go with it, or the menu keeps an invisible control that opens sub-screen -3. The
+     * game's own test is `mouse.x >= 725 && mouse.y < 18` with no upper bound on x or lower
+     * bound on y -- the whole corner. Swallowing the click here rather than letting the
+     * original body act on it is the port owning a control it removed; nothing else in the
+     * menu is hit-tested in that region. */
+    if (LD32(GX_CLICK) && (int32_t)LD32(GX_MOUSE_X) >= NOTICE_X
+                       && (int32_t)LD32(GX_MOUSE_Y) < 18)
+        ST32(GX_CLICK, 0);
+
     int n = 0;
     const int front_end = (mode != MODE_ENTER && mode != MODE_IN_GAME);
     const Item *items = front_end ? screen_items(screen, &n) : NULL;
@@ -320,4 +336,48 @@ void fn_00419a60(void)
                 ST8(MASK_MIRROR + i, (uint8_t)(LD8(MASK_MIRROR + i) | BTN_BIT[b]));
         }
     }
+}
+
+/* ---------------------------------------------------------------------------
+ * fn_0043f010 -- draw one clip from a sprite sheet, and the update notice.
+ *
+ * What was left in the top-right corner of the main menu after the ad panel and strips
+ * came out: a small "Update on <date>" label at (725,5)-(787,18), drawn every frame, and
+ * clickable. It is the ad system's own status line -- the same subsystem that reads
+ * data/adinfo.txt and data/ad0.txt (the latter is a list of banner rectangles and
+ * click-through URLs). Clicking it opens sub-screen -3, an update page that in this port
+ * can never do anything: WININET is stubbed, so there is nothing to fetch.
+ *
+ * Found with the blit tracer, not by reading: LF2_BLT_RECTS showed exactly one destination
+ * in that corner, LF2_BLT_STACK put the call inside the menu, and the menu's own code
+ * there is
+ *
+ *     EnterCriticalSection(&ad_lock);  state = [0x00458424];  LeaveCriticalSection(...)
+ *     if (state == 1 || state == 2)  draw clip 0x0b at (725,5)      // busy, no link
+ *     else                           draw clip 6/7 at (725,5)       // idle, clickable
+ *                                    if (mouse.x >= 725 && mouse.y < 18 && clicked)
+ *                                        sub_screen = -3
+ *
+ * The state is 0 at runtime (measured), so the live case is the clickable one.
+ *
+ * Identity, not coordinates-as-a-hack: the element is clip 6..9 and 0x0b of MENU_CLIP7 at
+ * a position the game itself hard-codes, and nothing else draws there -- the rect scan
+ * found one destination in that corner across 500 frames. Declining it here is the same
+ * shape as declining the ad panel by its descriptor in fn_00423b00.
+ *
+ * The honest alternative is porting fn_004246b0's body around that block, which is 4689
+ * lines of generated C with no function boundary anywhere near it. That is worth doing
+ * eventually; it is not worth doing to remove one label.
+ *
+ * Args, from the call sites: (x, y, clip, ...), six of them, RET 0x18, ECX = the sheet.
+ * ------------------------------------------------------------------------ */
+
+void fn_0043f010(void)
+{
+    if (R(ECX) == LD32(MENU_CLIP7) &&
+        LD32(R(ESP) + 4) == NOTICE_X && LD32(R(ESP) + 8) == NOTICE_Y) {
+        R(ESP) += 4 + 24;                    /* RET 0x18: return address and six args */
+        return;
+    }
+    fn_0043f010__orig();
 }

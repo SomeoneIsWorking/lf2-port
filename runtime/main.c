@@ -3,6 +3,7 @@
 #include "hostwin.h"
 
 void import_stats_report(void);
+void blt_stack_report(void);
 
 void ddraw_register(void);
 void dsound_register(void);
@@ -29,6 +30,7 @@ int main(int argc, char **argv)
      * Registered here at startup rather than lazily, so it is armed on every path. */
     atexit(hostwin_shutdown);
     atexit(import_stats_report);
+    atexit(blt_stack_report);
 
     dispatch(ENTRY);
     printf("returned from entry point\n");
