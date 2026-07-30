@@ -8,6 +8,7 @@
 #include "hostwin.h"
 
 #include <SDL3/SDL.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -249,12 +250,27 @@ static void blit(Surface *d, int dx, int dy, int dw, int dh,
     }
 }
 
+/* Diagnostic dumps go to $LF2_DUMP_DIR, default "scratch". Never an absolute path: this
+ * is a committed file in a public repository, and a baked-in home directory is both
+ * unusable for anyone else and a leak of the author's layout. */
+static void dump_path(char *out, size_t n, const char *fmt, ...)
+{
+    const char *dir = getenv("LF2_DUMP_DIR");
+    if (!dir || !*dir) dir = "scratch";
+    int k = snprintf(out, n, "%s/", dir);
+    if (k < 0 || (size_t)k >= n) { out[0] = 0; return; }
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(out + k, n - (size_t)k, fmt, ap);
+    va_end(ap);
+}
+
 static void dump_surface(uint32_t obj, const char *tag)
 {
     Surface *s = com_host(obj);
     if (!s) return;
     char path[160];
-    snprintf(path, sizeof path, "./scratch/dump_%s.ppm", tag);
+    dump_path(path, sizeof path, "dump_%s.ppm", tag);
     FILE *f = fopen(path, "wb");
     if (!f) return;
     fprintf(f, "P6\n%d %d\n255\n", s->w, s->h);
