@@ -117,12 +117,12 @@ static void screen_change_check(const uint8_t *px, int w, int h, int pitch, long
 
 /* ---- presentation ---- */
 
-void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int h, int src_pitch)
+void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
 {
     static long frames;
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
-    screen_change_check(indexed, w, h, src_pitch, frames);
+    screen_change_check(pixels, w, h, src_pitch, frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
     if (frames % 900 == 0) { colorkey_report(); vram_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
@@ -138,7 +138,7 @@ void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int
         for (int y = 0; y < h; y++) {
             uint32_t *row = (uint32_t *)((uint8_t *)dst + (size_t)y * (size_t)pitch);
             /* Rows are src_pitch apart, not width apart. */
-            const uint32_t *src = (const uint32_t *)(indexed + (size_t)y * (size_t)src_pitch);
+            const uint32_t *src = (const uint32_t *)(pixels + (size_t)y * (size_t)src_pitch);
             memcpy(row, src, (size_t)w * 4);
         }
         SDL_UnlockTexture(hw.texture);
@@ -152,7 +152,7 @@ static void present_primary(void)
 {
     if (!primary_surface) return;
     Surface *s = com_host(primary_surface);
-    hostwin_present(g_mem + s->pixels, NULL, s->w, s->h, s->pitch);
+    hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
 }
 
 /* ---- IDirectDrawPalette ---- */
@@ -483,7 +483,6 @@ static void surf_GetPalette(uint32_t self)
 
 static void surf_ret_ok1(uint32_t self) { (void)self; com_ret(1, DD_OK); }
 static void surf_ret_ok2(uint32_t self) { (void)self; com_ret(2, DD_OK); }
-static void surf_ret_ok3(uint32_t self) { (void)self; com_ret(3, DD_OK); }
 
 static void surf_GetPixelFormat(uint32_t self)
 {

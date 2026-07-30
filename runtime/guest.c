@@ -300,7 +300,7 @@ void stack_check(uint32_t esp_at_entry, uint32_t fn)
             fn, (int)(R(ESP) - esp_at_entry));
 }
 
-static uint32_t w_addr, w_val, w_target;
+static uint32_t w_addr, w_val;
 static int w_armed;
 
 void watch_arm(uint32_t a)

@@ -10,6 +10,7 @@ target_compile_options(x86_decode PRIVATE -Wall -Wextra)
 
 add_executable(test_corpus recompiler/test_corpus.c)
 target_link_libraries(test_corpus PRIVATE x86_decode)
+target_compile_options(test_corpus PRIVATE -Wall -Wextra)
 
 enable_testing()
 add_test(NAME decoder_corpus
@@ -17,6 +18,7 @@ add_test(NAME decoder_corpus
 
 add_executable(lift recompiler/lift.c)
 target_link_libraries(lift PRIVATE x86_decode)
+target_compile_options(lift PRIVATE -Wall -Wextra)
 
 add_custom_command(
     OUTPUT ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
@@ -43,6 +45,15 @@ add_executable(lf2
     runtime/wsock.c
     runtime/main.c)
 target_include_directories(lf2 PRIVATE runtime)
+
+# Warnings on the hand-written runtime only. The recompiled output is machine-emitted and
+# would bury the signal, so it is compiled without them rather than the whole target being
+# left unchecked -- which is how four real warnings sat unnoticed.
+set_source_files_properties(
+    runtime/guest.c runtime/flags.c runtime/strops.c runtime/rwatch.c runtime/imports.c
+    runtime/com.c runtime/win32.c runtime/ddraw.c runtime/dsound.c runtime/dshow.c
+    runtime/gdi.c runtime/gamepad.c runtime/wsock.c runtime/main.c
+    PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
 if(LF2_FN_TRACE)
     target_compile_definitions(lf2 PRIVATE LF2_FN_TRACE)
