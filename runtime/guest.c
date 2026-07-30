@@ -182,7 +182,7 @@ void dump_mem_once(void)
 
 void probe(uint32_t addr)
 {
-    fprintf(stderr, "PROBE %08x eax=%08x ebx=%08x ecx=%08x edx=%08x\n", addr, R(EAX), R(EBX), R(ECX), R(EDX));
+    fprintf(stderr, "PROBE %08x eax=%08x ecx=%08x edx=%08x esi=%08x edi=%08x\n", addr, R(EAX), R(ECX), R(EDX), R(ESI), R(EDI));
 }
 
 void fn_enter(uint32_t addr)
