@@ -26,6 +26,13 @@ trap 'rm -f "$LOG"' EXIT
 if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi
 if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; fi
 
+# CPU time is captured because a regression to busy-waiting is invisible to every other
+# assertion here: the game renders, sounds and plays correctly at 96% of a core, which is
+# exactly how the unimplemented Sleep survived unnoticed.
+TIMER=""
+for t in /usr/bin/time /bin/time; do [ -x "$t" ] && TIMER=$t && break; done
+CPUFILE=$(mktemp); trap 'rm -f "$LOG" "$CPUFILE"' EXIT
+
 echo "running a match headless (about 75s)..."
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
@@ -34,6 +41,7 @@ echo "running a match headless (about 75s)..."
   LF2_AUTOKEY_ONCE=1 \
   LF2_AUTOKEY=0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x68,0x68,0x65 \
   LF2_AUTOKEY_START=32000 LF2_AUTOKEY_EVERY=1800 \
+  ${TIMER:+$TIMER -f "%U %S %e" -o "$CPUFILE"} \
   timeout 75 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
 
 fail=0
@@ -69,6 +77,23 @@ if command -v ffmpeg >/dev/null 2>&1; then
     check "music frames" "$mf" 100000
 else
     echo "  skip  music frames: ffmpeg not on PATH (music is an optional dependency)"
+fi
+
+# Busy-wait guard. Observed ~13% with Sleep honoured and ~96% without, so 50% separates
+# the two by a wide margin without being sensitive to machine speed.
+if [ -n "$TIMER" ] && [ -s "$CPUFILE" ]; then
+    # The run always ends via timeout, so /usr/bin/time prefixes a "Command exited with
+    # non-zero status" line. Select the timing line by shape rather than by position.
+    pct=$(awk 'NF == 3 && $3 + 0 > 0 { printf "%d\n", ($1 + $2) * 100 / $3 }' "$CPUFILE" \
+          | tail -1)
+    if [ "${pct:-100}" -lt 50 ]; then
+        echo "  ok    cpu usage: ${pct}% of one core (< 50)"
+    else
+        echo "  FAIL  cpu usage: ${pct}% of one core -- looks like a busy-wait"
+        fail=1
+    fi
+else
+    echo "  skip  cpu usage: no /usr/bin/time available"
 fi
 
 if grep -qE "unimplemented opcode|fell off the end|Aborted" "$LOG"; then

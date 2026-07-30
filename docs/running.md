@@ -520,7 +520,12 @@ device being pulled, music decoding, and no aborts. Thresholds sit far below obs
 values so it fails on "broken", not on "slightly different". It skips itself if the game
 tree is absent.
 
-**It is validated against a deliberately broken build**, which is the only reason to
+It also guards CPU use, because a regression to busy-waiting is invisible to every other
+assertion: the game renders, sounds and plays correctly at 96% of a core, which is exactly
+how the unimplemented `Sleep` survived. `LF2_NO_SLEEP=1` is the control — it reports 99%
+and fails, against 18% normally.
+
+**It is validated against deliberately broken builds**, which is the only reason to
 believe it. Reintroducing the ADC/SBB carry bug makes it report `keyed blits: 0` and fail;
 removing it again passes at ~11,600. That check also caught a bug in the test itself:
 `grep -oE 'keyed blits=[0-9]+'` matches inside *un*`keyed blits=`, so with `tail -1` it had
