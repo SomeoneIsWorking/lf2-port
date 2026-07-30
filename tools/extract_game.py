@@ -21,6 +21,7 @@ import bz2
 import os
 import struct
 import sys
+import tempfile
 import zlib
 
 from unpack_installer import overlay_offset, unpack
@@ -80,9 +81,13 @@ def main() -> None:
     installer, outdir = sys.argv[1], sys.argv[2]
     data = open(installer, "rb").read()
 
-    scripts = os.path.join(outdir, ".installer")
-    unpack(installer, scripts)
-    table = open(os.path.join(scripts, f"{TABLE_RECORD:03d}.bin"), "rb").read()
+    # The container records go to a temporary directory, not into outdir. Only the file
+    # table is needed; leaving the other records behind put seven stray .bin files in the
+    # user's game tree and made the "690 files written" report disagree with what was
+    # actually on disk.
+    with tempfile.TemporaryDirectory(prefix="lf2-unpack-") as scripts:
+        unpack(installer, scripts)
+        table = open(os.path.join(scripts, f"{TABLE_RECORD:03d}.bin"), "rb").read()
     entries = parse_table(table)
 
     # The installer stores each distinct file once; a table entry whose sizes

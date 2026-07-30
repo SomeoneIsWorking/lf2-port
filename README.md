@@ -1,13 +1,14 @@
 # lf2-port
 
-Work toward a **native Linux/macOS port of Little Fighter 2 v2.0a** by static recompilation,
-with the quality-of-life features the original can't support — controller auto-detect and
-hotswap, borderless windowed mode, and native builds on non-Windows platforms.
+A **native Linux/macOS port of Little Fighter 2 v2.0a** by static recompilation — the x86
+binary is translated to C, and the Windows APIs it calls are reimplemented on SDL3. Along
+the way it gains the quality-of-life features the original cannot support: controller
+auto-detect and hotswap, and borderless windowed mode.
 
-> **Status: early. There is no playable port yet.**
-> What exists today is reverse-engineering groundwork: an installer unpacker, a Ghidra
-> function map, and a traced map of the game's platform boundary. The recompiler and runtime
-> are not written. See [`docs/codemap.md`](docs/codemap.md) for an honest per-subsystem status.
+> **Status: it plays the game.** The port boots, renders, navigates the menus, starts a
+> VS-mode match, and has sound effects and background music.
+> See [`docs/codemap.md`](docs/codemap.md) for an honest per-subsystem status, including
+> what is still broken.
 
 ## No game content is distributed here
 
@@ -18,52 +19,98 @@ copyright. To use anything here you must download the official installer yoursel
 
 This is an unofficial project with no affiliation with or endorsement by the LF2 authors.
 
-## Extracting the game files
-
-The v2.0a installer is not Inno Setup or NSIS — it's a Win32 stub wrapping a custom `wwgT`
-container. `tools/extract_game.py` reconstructs the full 690-file tree on Linux or macOS
-with no Windows and no Wine involved:
+## Building and running
 
 ```sh
 curl -O https://lf2.net/LF2_v2.0a.exe
 python3 tools/extract_game.py LF2_v2.0a.exe game/
+
+cmake -S . -B scratch/build && cmake --build scratch/build -j
+cd game && ../scratch/build/lf2 lf2.exe
 ```
 
-Only Python 3 and its standard library are required. Correctness is verified end to end: the
-game boots from the reconstructed tree.
+Needs SDL3 and a C compiler. Extraction needs only Python 3 and its standard library — no
+Windows, no Wine. Background music additionally needs `ffmpeg` on PATH at runtime (see
+below); everything else works without it.
+
+The working directory must be the extracted game tree, since the game opens its data by
+relative path. Full details, including headless operation and the debugging environment
+variables, are in [`docs/running.md`](docs/running.md).
+
+## What works, and what doesn't
+
+| | |
+|---|---|
+| Boot, menus, character select, a VS match | works |
+| Rendering — DirectDraw, GDI text, colour-keyed sprites | works |
+| Sound effects (DirectSound → SDL3) | works |
+| Background music (WMA) | works, needs `ffmpeg` on PATH |
+| Controller auto-detect and hotswap | implemented, **untested on real hardware** |
+| Borderless / windowed / fullscreen, Alt+Enter | works |
+| Linux | works |
+| macOS | portability blockers removed, **never built on a Mac** |
+| Netplay | **not ported** — stubbed as "no network available" |
+
+The two untested rows are untested because no Mac and no gamepad were available, not
+because they are known-broken. Reports welcome.
+
+## Extracting the game files
+
+The v2.0a installer is not Inno Setup or NSIS — it's a Win32 stub wrapping a custom `wwgT`
+container. `tools/extract_game.py` reconstructs the full 690-file tree with no Windows
+involved. Correctness is verified end to end: the game boots from the reconstructed tree.
 
 The container format, including a deduplication trap that silently misaligns filenames
 against their contents if you pair them naively, is documented in
 [`docs/codemap.md`](docs/codemap.md).
 
-## What the reverse engineering found
+## How it works
 
-Full detail in [`docs/platform-boundary.md`](docs/platform-boundary.md). The headline results:
+The recompiler decodes all 70,508 instructions of `lf2.exe` and emits one C function per
+guest function — 100% of instructions lifted, no interpreter fallback. The runtime provides
+a 4 GiB lazily-committed guest address space, lazy EFLAGS, x87 in host `double`, and
+reimplementations of DirectDraw, DirectSound, DirectShow, GDI and the Win32 message loop on
+SDL3. COM interfaces are synthesised as guest-memory vtables with sentinel addresses that
+dispatch back into host C.
 
-- **The porting surface is small.** `lf2.exe` is an unpacked MSVC 2005 binary with 284 KB of
-  code and only ~130 imported symbols. `DirectDrawCreate` is the *only* DirectDraw import,
-  so all other video calls travel through COM vtables — which means the runtime gets to
-  define them.
-- **Part of every frame is drawn by GDI**, not DirectDraw (1651 `GetDC`/`ReleaseDC` pairs per
-  20 s). A naive "DirectDraw → texture" port silently loses the text rendering path.
+Correctness rests on differential testing against the host CPU: **8373 instruction
+encodings × 8 rounds = 66,984 checks**, including x87. Every claim of the form "this is
+right" in the docs is expected to name the measurement behind it, and several documented
+findings are corrections of earlier confidently-wrong ones.
+
+### Notes from the reverse engineering
+
+Full detail in [`docs/platform-boundary.md`](docs/platform-boundary.md) and
+[`docs/isa-scope.md`](docs/isa-scope.md).
+
+- **The porting surface is small.** An unpacked MSVC 2005 binary, 284 KB of code, ~130
+  imported symbols, only 92 distinct mnemonics. `DirectDrawCreate` is the *only* DirectDraw
+  import, so every other video call travels through COM vtables — which means the runtime
+  gets to define them.
+- **Part of every frame is drawn by GDI**, not DirectDraw. A naive "DirectDraw → texture"
+  port silently loses the text rendering path.
 - **Controller hotswap is impossible in the stock game by construction.** It enumerates
-  joysticks exactly once at startup, probes only device ids 0 and 1, and uses `joySetCapture`
-  — a legacy API with no device-arrival notification of any kind. This isn't a bug to patch
-  around; replacing that surface is the fix.
+  joysticks once at startup, probes only device ids 0 and 1, and uses `joySetCapture` — a
+  legacy API with no device-arrival notification. Replacing that surface *is* the fix.
+- **Ghidra does not disassemble everything reachable**, so `re/instructions.tsv` is a lower
+  bound. A live block using `FNSTCW` is absent from it entirely; "the binary contains no X"
+  is not a conclusion that file can support.
 
 ## Repository layout
 
 | Path | |
 |---|---|
-| `tools/` | installer unpacker and Ghidra scripts |
-| `docs/` | codemap and reverse-engineering notes |
-| `re/` | Ghidra-derived function map |
+| `recompiler/` | x86 decoder and the x86 → C lifter |
+| `runtime/` | guest machine, SDL3 backends, Win32/COM shims, test harnesses |
+| `tools/` | installer unpacker, Ghidra scripts, analysis helpers |
+| `docs/` | codemap, running guide, reverse-engineering notes |
+| `re/` | Ghidra-derived function and instruction maps |
 | `game/` | extracted game tree — **gitignored, supply your own** |
 
 ## Licence
 
 [MIT](LICENSE).
 
-This covers the tools and documentation in this repository only. It says nothing about
-Little Fighter 2 itself, which remains the copyright of Marti Wong and Starsky Wong and is
-not distributed here.
+This covers the tools, recompiler, runtime and documentation in this repository only. It
+says nothing about Little Fighter 2 itself, which remains the copyright of Marti Wong and
+Starsky Wong and is not distributed here.
