@@ -227,7 +227,13 @@ int main(void)
             State want;
             for (int i = 0; i < 8; i++) want.r[i] = rnd();
             want.r[4] = 0;                              /* ESP unused */
-            want.eflags = 0x202;
+            /* The incoming carry has to vary. With CF pinned to 0, SBB r,r is 0 whether
+             * or not the borrow is honoured, so a lifter that emits ADC/SBB as plain
+             * ADD/SUB passes every round -- which is exactly what happened, and it cost a
+             * real bug in the shipped port (see docs/codemap.md). DF stays 0: it is a
+             * direction control, not an input to arithmetic, and the string cases assume
+             * forward. */
+            want.eflags = 0x202u | (rnd() & 1u);        /* vary CF */
 
             uint32_t index_val = 0;
             if (k->is_stack) want.r[4] = SCRATCH + 1024;   /* guest stack, grows down */

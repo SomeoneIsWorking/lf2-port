@@ -17,6 +17,11 @@ int flag_cf(void)
     switch (cpu.op) {
     case F_ADD:   return (cpu.res & mask()) < (cpu.a & mask());
     case F_SUB:   return (cpu.a & mask()) < (cpu.b & mask());
+    /* With carry in, the result can equal the operand and still have carried. */
+    case F_ADC:   return cpu.cin ? (cpu.res & mask()) <= (cpu.a & mask())
+                                 : (cpu.res & mask()) <  (cpu.a & mask());
+    case F_SBB:   return cpu.cin ? (cpu.a & mask()) <= (cpu.b & mask())
+                                 : (cpu.a & mask()) <  (cpu.b & mask());
     case F_LOGIC: return 0;
     case F_SHL:   return cpu.b ? ((cpu.a >> (cpu.size * 8 - cpu.b)) & 1) : 0;
     case F_SHR:
@@ -29,8 +34,8 @@ int flag_of(void)
 {
     const uint32_t m = msb();
     switch (cpu.op) {
-    case F_ADD: return (~(cpu.a ^ cpu.b) & (cpu.a ^ cpu.res) & m) != 0;
-    case F_SUB: return (((cpu.a ^ cpu.b) & (cpu.a ^ cpu.res)) & m) != 0;
+    case F_ADD: case F_ADC: return (~(cpu.a ^ cpu.b) & (cpu.a ^ cpu.res) & m) != 0;
+    case F_SUB: case F_SBB: return (((cpu.a ^ cpu.b) & (cpu.a ^ cpu.res)) & m) != 0;
     case F_INC: return (cpu.res & mask()) == m;
     case F_DEC: return (cpu.res & mask()) == (m - 1);
     /* Shifts define OF only for a count of 1; the hardware still computes it, so match

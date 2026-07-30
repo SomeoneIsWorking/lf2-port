@@ -26,7 +26,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Startup crash | `docs/current-crash.md` | **fixed** | function-end detection; see doc |
 | Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **done** | menus, screens and GDI text all render |
 | Game flow | `docs/running.md` | **done** | reaches gameplay: a VS-mode match runs unattended, see the click/key script |
-| Sprite colour-key | `runtime/ddraw.c` | **broken** | fighters draw in opaque black boxes; measured with `LF2_CK_DEBUG`, see below |
+| Sprite colour-key | `recompiler/lift.c` | **fixed** | root cause was ADC/SBB dropping the carry; see below |
 
 ## The binary
 
@@ -103,55 +103,36 @@ The lifter's control-flow end detection does not share this blind spot — it de
 the bytes — which is why it found the block. When the two disagree, the lifter is the
 better instrument.
 
-## Open: sprite colour-key
+## Fixed: sprite colour-key — ADC/SBB dropped the carry
 
-In gameplay the fighters draw inside opaque black rectangles. `LF2_CK_DEBUG=1` measures
-both halves of the mechanism over a full match:
+Fighters drew inside opaque black rectangles. The chain, each step measured:
 
-```
-colour-key: SetColorKey=392 keyed blits=0 unkeyed blits=13083
-SetColorKey #1 flags=00000008 key=002ffe48     (0x08 = DDCKEY_SRCBLT)
-Blt flags=01000000 (has_key=1)                 (0x01000000 = DDBLT_WAIT)
-Blt flags=01000800 (has_key=1)                 (+0x800 = DDBLT_DDFX)
-```
+1. `LF2_CK_DEBUG=1` over a match: 392 `SetColorKey` calls, **0 of 13,083 blits keyed**.
+2. `LF2_CK_FORCE=1` (honour every key) removed the black boxes, proving sprites arrive
+   through `Blt` and refuting the hypothesis that the game composited them via `Lock`. It
+   also turned the floor transparent, so it was a discriminator, never a fix.
+3. Reading the call site showed `DDBLT_KEYSRC` is *computed*, at `0x0043f14c`:
+   `MOV EDX,EBP / NEG EDX / SBB EDX,EDX / AND EDX,0x8000` — the standard
+   carry-materialising idiom, so the key is requested iff `EBP != 0`.
+4. `NEG` was verified correct (`f7 da` is in the differential and passes), so the fault
+   was upstream.
+5. The generated C showed it: `SBB EBP,EBP` emitted as `_a - _b`. **`ALU_C`/`ALU_F` mapped
+   ADC to `ADD` and SBB to `SUB`, discarding the carry** — everywhere in the binary, not
+   just here. `SBB r,r` therefore always yielded 0, so `AND 0x8000` always yielded 0.
 
-The game sets source colour keys on surfaces that reach `Blt` with `has_key` set, and then
-never passes `DDBLT_KEYSRC` (0x8000) on any of 13,083 blits. `BltFast`, the usual sprite
-path, is never called. The argument mapping was checked against `IDirectDrawSurface::Blt`
-rather than assumed, since a wrong index caused a real bug in this tree before.
+The fix adds `F_ADC`/`F_SBB` flag kinds (the carry-in shifts the boundary case: with a
+borrow in, `SBB` sets CF when `a == b`, which `SUB` does not) and emits both with the
+incoming carry folded into result and flags. Verified: `DDBLT_KEYSRC` now appears in the
+flags (`0x01008000`) and keyed blits go from **0 to 11,290** of 13,099 — with 1,809 still
+unkeyed, so it is selective rather than the blanket behaviour of `LF2_CK_FORCE`.
 
-**Established by experiment: the sprites arrive through `Blt`.** `LF2_CK_FORCE=1` honours
-the key on every blit whose surface has one. With it the black boxes disappear entirely —
-fighters composite cleanly and the sky shows its clouds and mountains. That rules out the
-earlier hypothesis that the game composited sprites itself through `Lock`; the `Blt` path
-is where the fault lives.
+### Why the instruction differential missed it
 
-**`LF2_CK_FORCE` is a discriminator, not a fix.** The same screenshot shows the floor gone
-transparent, so background surfaces carry colour keys too, and honouring every key trades
-one artefact for another. Kept because it distinguishes the two failure classes in one run.
+`1b d2` (`SBB EDX,EDX`) **was** in the corpus and passed every round. The harness pinned
+`eflags` to `0x202`, so the incoming carry was always 0 — and with CF=0, `SBB r,r` is 0
+whether or not the borrow is honoured. The test exercised only the negative class, so it
+could never have contradicted the bug.
 
-### Narrowed to one boolean
-
-`DDBLT_KEYSRC` is not a constant the game forgets — it is computed, at `0x0043f14c`:
-
-```
-0043f14c  MOV EDX, EBP
-0043f14e  NEG EDX            ; CF = (EDX != 0)
-0043f150  SBB EDX, EDX       ; EDX = -CF
-0043f152  AND EDX, 0x00008000  ; DDBLT_KEYSRC
-0043f15a  OR  EDX, 0x01000000  ; DDBLT_WAIT
-0043f160  PUSH EDX             ; dwFlags
-```
-
-The `NEG`/`SBB` pair is the standard carry-materialising idiom, so the key is requested
-**iff `EBP != 0`**. The sibling branch at `0x0043f138` does the same with `0x01000800`.
-Both branches are observed, always without `0x8000`, so **`EBP` is always 0 here** when it
-should sometimes be non-zero.
-
-`NEG` itself is not the bug: `f7 da` is in the instruction differential corpus and passes
-all 8 rounds against the host CPU. The fault is upstream, in whatever computes the
-colour-key boolean that reaches `EBP`.
-
-So this is a **guest-code divergence, not a runtime gap** — the `Blt` handler is doing
-exactly what it is told. The next step is to find what writes `EBP` before `0x0043f14c`
-and compare that against the Wine oracle, rather than anything in `runtime/ddraw.c`.
+`want.eflags` now varies CF per round. With the carry restored to the lifter the suite
+passes; with it dropped again 43 cases fail. DF is deliberately left at 0: it is a
+direction control rather than an arithmetic input, and the string cases assume forward.

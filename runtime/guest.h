@@ -10,7 +10,11 @@ enum { EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI };
 /* Flags are evaluated lazily: arithmetic records its operands and result, and the
  * individual flags are derived only when a Jcc/SETcc actually reads one. Only 5 sites
  * in the whole binary (PUSHFD/POPFD) ever need the full register materialised. */
-enum { F_ADD, F_SUB, F_LOGIC, F_INC, F_DEC, F_SHL, F_SHR, F_SAR, F_MUL, F_NONE };
+/* F_ADC and F_SBB are distinct from F_ADD/F_SUB because the carry-in shifts the
+ * boundary case: with a borrow in, SBB sets CF when a == b, which SUB does not. Folding
+ * them together makes the carry-materialising idiom (NEG/SBB reg,reg) collapse to zero. */
+enum { F_ADD, F_SUB, F_LOGIC, F_INC, F_DEC, F_SHL, F_SHR, F_SAR, F_MUL, F_ADC, F_SBB,
+       F_NONE };
 
 typedef struct {
     uint32_t r[8];
@@ -18,6 +22,7 @@ typedef struct {
     uint8_t  op;        /* last flag-setting operation kind */
     uint8_t  size;      /* 1, 2 or 4 bytes */
     uint32_t a, b, res; /* its operands and result */
+    uint32_t cin;       /* carry into the last ADC/SBB; unused by other kinds */
     uint32_t cf_hint;   /* carry for shifts/mul, where res cannot recover it */
     double   st[8];     /* x87 stack; host double -- see docs/isa-scope.md */
     int      st_top;
@@ -43,6 +48,7 @@ extern uint32_t g_rwatch_lo, g_rwatch_hi;
 void rwatch_hit(uint32_t a);
 void rwatch_frame(void);
 void rwatch_selftest(void);
+void rwatch_init(void);
 #define RWATCH(a) \
     do { if (__builtin_expect((a) - g_rwatch_lo < g_rwatch_hi - g_rwatch_lo, 0)) \
              rwatch_hit(a); } while (0)
@@ -60,7 +66,14 @@ static inline uint32_t POP32(void)    { uint32_t v = LD32(R(ESP)); R(ESP) += 4; 
 /* Record a flag-setting result. */
 static inline void FLAGS(uint8_t op, uint8_t size, uint32_t a, uint32_t b, uint32_t res)
 {
-    cpu.op = op; cpu.size = size; cpu.a = a; cpu.b = b; cpu.res = res;
+    cpu.op = op; cpu.size = size; cpu.a = a; cpu.b = b; cpu.res = res; cpu.cin = 0;
+}
+
+/* ADC/SBB need the carry that went in, not just the operands. */
+static inline void FLAGS_C(uint8_t op, uint8_t size, uint32_t a, uint32_t b,
+                           uint32_t res, uint32_t cin)
+{
+    cpu.op = op; cpu.size = size; cpu.a = a; cpu.b = b; cpu.res = res; cpu.cin = cin;
 }
 
 int  flag_zf(void);

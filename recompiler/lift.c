@@ -183,9 +183,28 @@ static const char *CC[16] = { "flag_of()", "!flag_of()", "flag_cf()", "!flag_cf(
     "(flag_zf()||flag_sf()!=flag_of())", "(!flag_zf()&&flag_sf()==flag_of())" };
 
 /* arithmetic group 0..7 = ADD OR ADC SBB AND SUB XOR CMP */
+/* Groups 2 and 3 are ADC and SBB: they take the carry in, and emitting them as plain
+ * ADD/SUB silently drops it. That breaks the standard carry-materialising idiom
+ * (NEG r / SBB r,r -> -CF), which the game uses to build DDBLT_KEYSRC, so sprites lost
+ * their colour key. See docs/codemap.md. */
 static const char *ALU_C[8]  = { "+", "|", "+", "-", "&", "-", "^", "-" };
-static const char *ALU_F[8]  = { "F_ADD", "F_LOGIC", "F_ADD", "F_SUB",
+static const char *ALU_F[8]  = { "F_ADD", "F_LOGIC", "F_ADC", "F_SBB",
                                  "F_LOGIC", "F_SUB", "F_LOGIC", "F_SUB" };
+static int alu_uses_carry(int g) { return g == 2 || g == 3; }
+
+/* Emits the opening of an ALU block: operands, result and the flag record. ADC and SBB
+ * read the incoming carry first -- before FLAGS overwrites the flag state -- and fold it
+ * into both the result and the record. */
+static void alu_open(FILE *o, int g, const char *a, const char *b, int size)
+{
+    if (alu_uses_carry(g))
+        fprintf(o, "{ uint32_t _c=(uint32_t)flag_cf(), _a=%s, _b=%s, _r=_a %s _b %s _c; "
+                   "FLAGS_C(%s,%d,_a,_b,_r,_c); ",
+                a, b, ALU_C[g], ALU_C[g], ALU_F[g], size);
+    else
+        fprintf(o, "{ uint32_t _a=%s, _b=%s, _r=_a %s _b; FLAGS(%s,%d,_a,_b,_r); ",
+                a, b, ALU_C[g], ALU_F[g], size);
+}
 
 
 /* ---------- x87 ----------
@@ -364,8 +383,7 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
             if ((op & 7) <= 1) {                      /* r/m op= r */
                 rm_read(a, sizeof a, in, size);
                 reg_operand(in, size, b, sizeof b);
-                fprintf(o, "{ uint32_t _a=%s, _b=%s, _r=_a %s _b; FLAGS(%s,%d,_a,_b,_r); ",
-                        a, b, ALU_C[g], ALU_F[g], size);
+                alu_open(o, g, a, b, size);
                 if (!is_cmp) rm_write(o, in, size, "_r");
                 fprintf(o, " }");
                 return 1;
@@ -373,8 +391,7 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
             if ((op & 7) <= 3) {                      /* r op= r/m */
                 reg_operand(in, size, a, sizeof a);
                 rm_read(b, sizeof b, in, size);
-                fprintf(o, "{ uint32_t _a=%s, _b=%s, _r=_a %s _b; FLAGS(%s,%d,_a,_b,_r); ",
-                        a, b, ALU_C[g], ALU_F[g], size);
+                alu_open(o, g, a, b, size);
                 if (!is_cmp) {
                     const uint8_t reg = (in->modrm >> 3) & 7;
                     if (size == 4) fprintf(o, "%s = _r;", REG32[reg]);
@@ -385,9 +402,8 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
             }
             /* AL/eAX, imm */
             const int size2 = (op & 1) ? osize : 1;
-            fprintf(o, "{ uint32_t _a=%s, _b=0x%xu, _r=_a %s _b; FLAGS(%s,%d,_a,_b,_r); ",
-                    size2 == 1 ? "GETR8(0)" : "R(EAX)", (unsigned)in->imm, ALU_C[g],
-                    ALU_F[g], size2);
+            { char imm[32]; snprintf(imm, sizeof imm, "0x%xu", (unsigned)in->imm);
+              alu_open(o, g, size2 == 1 ? "GETR8(0)" : "R(EAX)", imm, size2); }
             if (!is_cmp) fprintf(o, size2 == 1 ? "SETR8(0, _r);" : "R(EAX) = _r;");
             fprintf(o, " }");
             return 1;
@@ -456,8 +472,8 @@ static int emit_insn(FILE *o, const x86_insn *in, uint32_t va, uint32_t next)
             const int g = (in->modrm >> 3) & 7;
             const int size = (op == 0x80) ? 1 : osize;
             rm_read(a, sizeof a, in, size);
-            fprintf(o, "{ uint32_t _a=%s, _b=0x%xu, _r=_a %s _b; FLAGS(%s,%d,_a,_b,_r); ",
-                    a, (unsigned)in->imm, ALU_C[g], ALU_F[g], size);
+            { char imm[32]; snprintf(imm, sizeof imm, "0x%xu", (unsigned)in->imm);
+              alu_open(o, g, a, imm, size); }
             if (g != 7) rm_write(o, in, size, "_r");
             fprintf(o, " }");
             return 1;

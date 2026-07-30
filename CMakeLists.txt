@@ -31,6 +31,7 @@ add_executable(lf2
     runtime/guest.c
     runtime/flags.c
     runtime/strops.c
+    runtime/rwatch.c
     runtime/imports.c
     runtime/com.c
     runtime/win32.c
@@ -66,6 +67,6 @@ add_custom_command(
     DEPENDS lift ${CMAKE_SOURCE_DIR}/re/instructions.tsv
     COMMENT "Generating instruction differential cases")
 
-add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c runtime/test_insn.c runtime/flags.c runtime/strops.c)
+add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c runtime/test_insn.c runtime/flags.c runtime/strops.c runtime/rwatch.c)
 target_include_directories(test_insn PRIVATE runtime)
 add_test(NAME instructions COMMAND test_insn)
