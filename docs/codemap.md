@@ -26,7 +26,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Startup crash | `docs/current-crash.md` | **fixed** | function-end detection; see doc |
 | Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **done** | menus, screens and GDI text all render |
 | Game flow | `docs/running.md` | **done** | reaches gameplay: a VS-mode match runs unattended, see the click/key script |
-| Sprite colour-key | `runtime/ddraw.c` | **broken** | fighters draw with opaque black boxes; source colour-keying is not applied (only visible in gameplay, not menus) |
+| Sprite colour-key | `runtime/ddraw.c` | **broken** | fighters draw in opaque black boxes; measured with `LF2_CK_DEBUG`, see below |
 
 ## The binary
 
@@ -102,3 +102,32 @@ obtained from it is worthless: the corpus excludes exactly the regions in questi
 The lifter's control-flow end detection does not share this blind spot — it decodes from
 the bytes — which is why it found the block. When the two disagree, the lifter is the
 better instrument.
+
+## Open: sprite colour-key
+
+In gameplay the fighters draw inside opaque black rectangles. `LF2_CK_DEBUG=1` measures
+both halves of the mechanism over a full match:
+
+```
+colour-key: SetColorKey=392 keyed blits=0 unkeyed blits=13083
+SetColorKey #1 flags=00000008 key=002ffe48     (0x08 = DDCKEY_SRCBLT)
+Blt flags=01000000 (has_key=1)                 (0x01000000 = DDBLT_WAIT)
+Blt flags=01000800 (has_key=1)                 (+0x800 = DDBLT_DDFX)
+```
+
+So the game **does** set source colour keys, on surfaces that reach `Blt` with
+`has_key` set — and then never passes `DDBLT_KEYSRC` (0x8000) on any of 13,083 blits.
+`BltFast`, the usual sprite path, is not called at all. The argument mapping was checked
+against `IDirectDrawSurface::Blt` rather than assumed, since a wrong index caused a real
+bug in this tree before.
+
+That combination does not add up under plain DirectDraw semantics, where a `Blt` without
+`DDBLT_KEYSRC` ignores the key. The likely explanation is that the game composites sprites
+itself through `Lock`, having adapted to the 32-bit XRGB format it was told about (it
+creates no palette and queries `GetPixelFormat`), in which case transparency is its own
+comparison and the fault is in what the sprite pixels or the key value look like after our
+8-bit-to-XRGB conversion — not in the `Blt` path at all.
+
+**Not yet established, and worth saying so:** which code actually draws the fighters. The
+next step is to confirm whether they arrive via `Lock` or via `Blt`, because the two lead
+to entirely different fixes.
