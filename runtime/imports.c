@@ -71,6 +71,18 @@ static void h_GetSystemTimeAsFileTime(void)
 static void h_Sleep(void)
 {
     const uint32_t ms = ARG(0);
+    /* LF2_NO_SLEEP restores the old no-op, purely so the cost of honouring Sleep can be
+     * A/B measured. Not a tuning knob: skipping it burns a whole core. */
+    if (getenv("LF2_NO_SLEEP")) { ret_stdcall(1, 0); return; }
+    if (getenv("LF2_SLEEP_DEBUG")) {
+        static long n, total_ms, hist[6];   /* 0, 1, 2-5, 6-15, 16-50, 50+ */
+        n++; total_ms += ms;
+        hist[ms == 0 ? 0 : ms == 1 ? 1 : ms <= 5 ? 2 : ms <= 15 ? 3 : ms <= 50 ? 4 : 5]++;
+        if (n % 2000 == 0)
+            fprintf(stderr, "sleep: %ld calls, %ld ms requested; 0:%ld 1:%ld 2-5:%ld "
+                            "6-15:%ld 16-50:%ld 50+:%ld\n", n, total_ms,
+                    hist[0], hist[1], hist[2], hist[3], hist[4], hist[5]);
+    }
     if (ms == 0) sched_yield();
     else {
         struct timespec req = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
