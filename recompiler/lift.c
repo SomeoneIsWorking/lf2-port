@@ -116,7 +116,7 @@ static int noverrides;
 
 static void load_overrides(const char *dir)
 {
-    char path[512];
+    char path[544];          /* dir is at most 512, plus "/overrides.txt" */
     snprintf(path, sizeof path, "%s/overrides.txt", dir);
     FILE *f = fopen(path, "r");
     if (!f) return;                       /* optional file */
@@ -333,7 +333,16 @@ static int emit_x87(FILE *o, const x86_insn *in)
         else                  fprintf(o, "FST(%d) = FST(%d) %s FST(0);", i, i, FARITH[g]);
         return 1;
     case 0xDD:
-        if (modrm >= 0xD8 && modrm <= 0xDF) { fprintf(o, "FST(%d) = fpu_pop();", i); return 1; }
+        /* FSTP ST(i): store ST(0), THEN pop, and the destination is indexed with the
+         * pre-pop TOP. Emitted as two statements on purpose. `FST(i) = fpu_pop();` reads
+         * cpu.st_top on the left and modifies it on the right with nothing sequencing the
+         * two -- undefined behaviour that gcc happens to get right and clang does not, so
+         * it passed the differential for as long as only gcc was used. 40 mismatches under
+         * clang, 0 after this. */
+        if (modrm >= 0xD8 && modrm <= 0xDF) {
+            fprintf(o, "FST(%d) = FST(0); fpu_pop();", i);
+            return 1;
+        }
         if (modrm >= 0xD0 && modrm <= 0xD7) { fprintf(o, "FST(%d) = FST(0);", i); return 1; }
         return 0;
     case 0xDE:

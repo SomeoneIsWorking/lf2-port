@@ -55,7 +55,7 @@ variables, are in [`docs/running.md`](docs/running.md).
 | Controller auto-detect and hotswap, no configuration | implemented, **untested on real hardware** |
 | Borderless / windowed / fullscreen, Alt+Enter | works |
 | Linux | works |
-| macOS | portability blockers removed, **never built on a Mac** |
+| macOS | portability blockers removed, builds and passes under clang, **never built on a Mac** |
 | Netplay | **not ported** — stubbed as "no network available" |
 
 The two untested rows are untested because no Mac and no gamepad were available, not
@@ -81,9 +81,14 @@ SDL3. COM interfaces are synthesised as guest-memory vtables with sentinel addre
 dispatch back into host C.
 
 Correctness rests on differential testing against the host CPU: **8373 instruction
-encodings × 8 rounds = 66,984 checks**, including x87. Every claim of the form "this is
-right" in the docs is expected to name the measurement behind it, and several documented
-findings are corrections of earlier confidently-wrong ones.
+encodings × 8 rounds = 66,984 checks**, including x87, under **both gcc and clang**. Every
+claim of the form "this is right" in the docs is expected to name the measurement behind
+it, and several documented findings are corrections of earlier confidently-wrong ones.
+
+Building under a second compiler is part of that, not housekeeping: it is what caught
+`FSTP ST(i)` being emitted as `FST(i) = fpu_pop();`, which reads and modifies the FPU top
+pointer unsequenced. Undefined behaviour that gcc happened to order correctly, so 66,984
+passing checks said nothing about it.
 
 ### Notes from the reverse engineering
 

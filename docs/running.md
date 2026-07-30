@@ -20,11 +20,40 @@ cd game && ../scratch/build/lf2 lf2.exe
 ```
 
 The runtime is POSIX plus SDL3 throughout; an audit found no `/proc`, no epoll, no
-Linux-only headers. Two real blockers were fixed:
+Linux-only headers. Real blockers found and fixed:
 
 - `MAP_NORESERVE` does not exist on macOS. It is only ever a hint on Linux, so it is now
   defined to zero where absent.
-- `MAP_32BIT` is a Linux extension, used only by the instruction differential test.
+- `MAP_32BIT` is a Linux extension, used by the instruction differential to keep guest
+  memory addressable with a 32-bit base register. Where it is absent the mapping is
+  requested by hint and **checked**, because a hint is advisory — a mapping that lands high
+  is unmapped and the next hint tried, and if none land the test skips saying so rather
+  than comparing against a base the host cannot address. Build with `-DLF2_NO_MAP_32BIT` to
+  run that path on Linux; it was, and it gives the same 66,984 checks and 0 mismatches.
+- A `#define MAP_32BIT 0` used to paper over the first point, on the unmeasured reasoning
+  that macOS "already places mmap low enough". It would have made the portable path
+  unreachable on the one platform it exists for. Removed.
+
+### Building with clang found a real bug
+
+macOS means clang, so the whole tree is now built and tested under clang as well as gcc.
+That immediately failed: **40 mismatches in the instruction differential, all `FSTP ST(i)`**
+— and 0 under gcc.
+
+The lifter emitted `FST(i) = fpu_pop();`. `FST(i)` is `cpu.st[(cpu.st_top + i) & 7]`, so
+the left side *reads* `cpu.st_top` while the right side *modifies* it, with nothing
+sequencing them. That is undefined behaviour, not a clang quirk: gcc happened to evaluate
+the destination address first, which is the correct order, and clang did not. It is emitted
+as two statements now.
+
+This is worth stating plainly because it was invisible for the life of the project: the
+differential passed 66,984 checks every time it ran, and the game rendered correctly. A
+second compiler was the instrument that could see it.
+
+`tools/build_matrix.sh` builds and tests under every compiler on the machine, so this stays
+a routine check rather than something done once. Pass `-LE slow` to skip the two ~65 s
+end-to-end tests. It warns when fewer than two compilers were available, because a matrix
+that quietly tested one thing is not cross-checking anything.
 
 **Apple Silicon runs the port but not one of its tests.** The recompiled game is ordinary
 C and compiles for arm64 like anything else. The instruction differential test is
