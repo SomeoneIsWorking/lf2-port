@@ -422,6 +422,11 @@ static void h_TextOutA(void)
     for (int i = 0; i < len; i++) text[i] = (char)LD8(str + (uint32_t)i);
     text[len] = 0;
 
+    /* Every string the game draws, with where it drew it. This is how the leftover "Update
+     * on" in the menu corner was traced back to the ad updater. */
+    if (getenv("LF2_TEXT_DEBUG"))
+        fprintf(stderr, "text (%d,%d) %d %s\n", x, y, len, text);
+
     const int w = len * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE;
     const int h = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE;
     SDL_Surface *scratch = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_XRGB8888);

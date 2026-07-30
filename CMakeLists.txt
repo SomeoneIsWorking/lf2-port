@@ -13,8 +13,22 @@ target_link_libraries(test_corpus PRIVATE x86_decode)
 target_compile_options(test_corpus PRIVATE -Wall -Wextra)
 
 enable_testing()
+
+# re/instructions.tsv is Ghidra's disassembly of the game: every instruction with its raw
+# bytes, which is enough to reconstruct .text. It is a derivative of a binary this project
+# does not distribute, so it is gitignored and supplied by whoever runs the build
+# (docs/isa-scope.md has the one-line Ghidra command).
+#
+# It feeds two different tests, and only one of them actually needs Ghidra:
+#   decoder_corpus -- checks our decoder against an INDEPENDENT disassembly. Skips (77)
+#                     without it, loudly; there is no substitute, by definition.
+#   instructions   -- feeds real encodings to the host CPU and to our lift and compares.
+#                     A corpus emitted by our own decoder serves that perfectly well, so
+#                     one is generated when Ghidra's is absent rather than losing 66,984
+#                     checks in a fresh clone.
 add_test(NAME decoder_corpus
          COMMAND test_corpus ${CMAKE_SOURCE_DIR}/re/instructions.tsv)
+set_tests_properties(decoder_corpus PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(lift recompiler/lift.c)
 target_link_libraries(lift PRIVATE x86_decode)
@@ -71,12 +85,26 @@ add_executable(test_flags runtime/test_flags.c runtime/flags.c)
 target_include_directories(test_flags PRIVATE runtime)
 add_test(NAME flags COMMAND test_flags)
 
+if(EXISTS ${CMAKE_SOURCE_DIR}/re/instructions.tsv)
+    set(INSN_TSV ${CMAKE_SOURCE_DIR}/re/instructions.tsv)
+    set(INSN_TSV_DEP ${INSN_TSV})
+else()
+    set(INSN_TSV ${CMAKE_BINARY_DIR}/gen/instructions.tsv)
+    set(INSN_TSV_DEP ${INSN_TSV})
+    add_custom_command(
+        OUTPUT ${INSN_TSV}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
+        COMMAND lift --dump-insns ${CMAKE_SOURCE_DIR}/game/lf2.exe
+                     ${CMAKE_SOURCE_DIR}/re/entries.tsv ${INSN_TSV}
+        DEPENDS lift ${CMAKE_SOURCE_DIR}/re/entries.tsv
+        COMMENT "No Ghidra dump present; deriving an instruction corpus from the binary")
+endif()
+
 add_custom_command(
     OUTPUT ${CMAKE_BINARY_DIR}/gen/insn_cases.c
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
-    COMMAND lift --insn-test ${CMAKE_SOURCE_DIR}/re/instructions.tsv
-                 ${CMAKE_BINARY_DIR}/gen/insn_cases.c
-    DEPENDS lift ${CMAKE_SOURCE_DIR}/re/instructions.tsv
+    COMMAND lift --insn-test ${INSN_TSV} ${CMAKE_BINARY_DIR}/gen/insn_cases.c
+    DEPENDS lift ${INSN_TSV_DEP}
     COMMENT "Generating instruction differential cases")
 
 add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c runtime/test_insn.c runtime/flags.c runtime/strops.c runtime/rwatch.c)

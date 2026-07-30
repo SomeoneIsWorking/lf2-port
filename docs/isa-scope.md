@@ -11,6 +11,29 @@ analyzeHeadless scratch/ghidra lf2 -process lf2.exe -noanalysis \
   -scriptPath tools/ghidra -postScript DumpInstructions.java $PWD/re/instructions.tsv
 ```
 
+## The dump is not distributed here
+
+`re/instructions.tsv` is **gitignored**. It holds every instruction of the game *with its
+raw bytes*, so `.text` can be reconstructed from it column-wise — it is a derivative of a
+binary this repository deliberately does not carry. Regenerate it from your own copy with
+the command above.
+
+Two tests read it, and they are affected differently:
+
+| test | without the dump |
+|---|---|
+| `decoder_corpus` | **skips**, and says the decoder was not checked against an independent disassembly. There is no substitute: the whole point is a second opinion. |
+| `instructions` | runs anyway, on a corpus `lift --dump-insns` derives from the binary with this project's own decoder. |
+
+That substitution is sound for the differential and unsound for the decoder test, so it is
+enforced rather than left to judgement: the derived file carries a `# self-derived` header
+and `test_corpus` refuses it outright. Run it against its own decoder's output and every
+length agrees by construction — 70,508 checks that cannot fail, which is worse than no
+checks at all.
+
+Measured equivalence for the differential: 8375 cases against Ghidra's 8373, both 0
+mismatches. The derived corpus loses nothing there.
+
 ## Headline: the subset is small
 
 **70,508 instructions, only 92 distinct mnemonics.**

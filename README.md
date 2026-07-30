@@ -17,6 +17,13 @@ and notes. Little Fighter 2 is freeware by **Marti Wong and Starsky Wong** and r
 copyright. To use anything here you must download the official installer yourself from
 <https://lf2.net> and extract it locally; the extracted tree is gitignored.
 
+That applies to derivatives too. `re/instructions.tsv` — Ghidra's dump of every instruction
+*with its raw bytes* — is gitignored for the same reason, since `.text` can be rebuilt from
+it. Regenerate it from your own copy ([`docs/isa-scope.md`](docs/isa-scope.md)); the build
+derives a substitute corpus when it is absent, so only the decoder-vs-Ghidra test skips.
+What is kept is `re/entries.tsv` and `re/functions.tsv`: function addresses, sizes and
+placeholder names, with no code in them.
+
 This is an unofficial project with no affiliation with or endorsement by the LF2 authors.
 
 ## Building and running

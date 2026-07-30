@@ -984,6 +984,7 @@ static void gen_insn_test(const char *tsv, const char *out)
 
     /* pass 1: bodies */
     while (fgets(line, sizeof line, in_f)) {
+        if (line[0] == '#') continue;              /* corpus provenance header */
         char *f1 = strtok(line, "\t"), *f2 = strtok(NULL, "\t");
         char *f3 = strtok(NULL, "\t"), *f4 = strtok(NULL, "\t");
         if (!f1 || !f2 || !f3 || !f4) continue;
@@ -1020,6 +1021,7 @@ static void gen_insn_test(const char *tsv, const char *out)
     int idx = 0;
     nseen = 0;
     while (fgets(line, sizeof line, in_f)) {
+        if (line[0] == '#') continue;              /* corpus provenance header */
         char *f1 = strtok(line, "\t"), *f2 = strtok(NULL, "\t");
         char *f3 = strtok(NULL, "\t"), *f4 = strtok(NULL, "\t");
         if (!f1 || !f2 || !f3 || !f4) continue;
@@ -1075,10 +1077,68 @@ static void gen_insn_test(const char *tsv, const char *out)
     printf("emitted %d distinct register-only instruction cases\n", idx);
 }
 
+/* Emit an instruction corpus from the binary using THIS project's decoder.
+ *
+ * re/instructions.tsv -- Ghidra's dump -- is a complete disassembly of the game's code,
+ * raw bytes included, so it is not distributed with this repository. Without some corpus
+ * the instruction differential (66,984 checks of the lifter against the host CPU) simply
+ * would not run in a fresh clone, which is far too much correctness to drop.
+ *
+ * What this can and cannot do, stated plainly because the distinction is the whole point:
+ * the differential feeds real encodings from the binary to the host CPU and to our lift
+ * and compares the results, so a self-derived corpus tests the LIFTER just as well. It
+ * cannot test the DECODER, since a length this decoder got wrong yields a byte string this
+ * decoder agrees with. The header line below makes test_corpus refuse the file outright.
+ *
+ * The mnemonic column is an opcode label, not a disassembly: this decoder has no mnemonic
+ * table, and inventing names that Ghidra would not agree with would be worse than a label
+ * that is obviously mechanical. */
+static void dump_insns(const char *exe, const char *entries, const char *out)
+{
+    load_pe(exe);
+
+    FILE *fl = fopen(entries, "r");
+    FILE *o = fopen(out, "w");
+    if (!fl || !o) { perror("dump-insns"); exit(2); }
+
+    fprintf(o, "# self-derived by lift --dump-insns: emitted by this project's own decoder,\n");
+    fprintf(o, "# so it can exercise the lifter but CANNOT validate the decoder.\n");
+
+    long n = 0;
+    char line[512];
+    while (fgets(line, sizeof line, fl)) {
+        const uint32_t addr = (uint32_t)strtoul(line, NULL, 16);
+        char *tab = strchr(line, '\t');
+        if (!addr || !tab) continue;
+        const uint32_t size = (uint32_t)strtoul(tab + 1, NULL, 10);
+        if (!size) continue;
+
+        for (uint32_t off = 0; off < size; ) {
+            const uint8_t *p = guest_ptr(addr + off);
+            if (!p) break;
+            x86_insn in;
+            if (!x86_decode(p, size - off, &in) || !in.length) break;
+
+            fprintf(o, "%08x\t%u\tOP%u_%02X\t", addr + off, in.length, in.map, in.opcode);
+            for (int i = 0; i < in.length; i++) fprintf(o, "%02x", p[i]);
+            fprintf(o, "\t-\n");
+            n++;
+            off += in.length;
+        }
+    }
+    fclose(fl);
+    fclose(o);
+    printf("%ld instructions written to %s\n", n, out);
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 4 && strcmp(argv[1], "--insn-test") == 0) {
         gen_insn_test(argv[2], argv[3]);
+        return 0;
+    }
+    if (argc == 5 && strcmp(argv[1], "--dump-insns") == 0) {
+        dump_insns(argv[2], argv[3], argv[4]);
         return 0;
     }
 
