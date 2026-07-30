@@ -4,3 +4,5 @@
 #
 # The point is to change behaviour where the game expresses it, rather than intercepting
 # the consequences at the Win32 boundary.
+004246b0
+00423b00
