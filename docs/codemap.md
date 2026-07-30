@@ -130,8 +130,28 @@ is where the fault lives.
 transparent, so background surfaces carry colour keys too, and honouring every key trades
 one artefact for another. Kept because it distinguishes the two failure classes in one run.
 
-What remains open is narrow: **why the game omits `DDBLT_KEYSRC`** when plain DirectDraw
-would then ignore the key. Worth checking against the Wine oracle, which runs the same
-binary on a real DirectDraw — if Wine sees the same flags, the game is relying on
-behaviour beyond the documented semantics and the port must match whatever that is; if
-Wine sees `DDBLT_KEYSRC`, then something in this tree is losing the bit before it arrives.
+### Narrowed to one boolean
+
+`DDBLT_KEYSRC` is not a constant the game forgets — it is computed, at `0x0043f14c`:
+
+```
+0043f14c  MOV EDX, EBP
+0043f14e  NEG EDX            ; CF = (EDX != 0)
+0043f150  SBB EDX, EDX       ; EDX = -CF
+0043f152  AND EDX, 0x00008000  ; DDBLT_KEYSRC
+0043f15a  OR  EDX, 0x01000000  ; DDBLT_WAIT
+0043f160  PUSH EDX             ; dwFlags
+```
+
+The `NEG`/`SBB` pair is the standard carry-materialising idiom, so the key is requested
+**iff `EBP != 0`**. The sibling branch at `0x0043f138` does the same with `0x01000800`.
+Both branches are observed, always without `0x8000`, so **`EBP` is always 0 here** when it
+should sometimes be non-zero.
+
+`NEG` itself is not the bug: `f7 da` is in the instruction differential corpus and passes
+all 8 rounds against the host CPU. The fault is upstream, in whatever computes the
+colour-key boolean that reaches `EBP`.
+
+So this is a **guest-code divergence, not a runtime gap** — the `Blt` handler is doing
+exactly what it is told. The next step is to find what writes `EBP` before `0x0043f14c`
+and compare that against the Wine oracle, rather than anything in `runtime/ddraw.c`.
