@@ -31,6 +31,7 @@ void guest_init(void)
 
     memset(&cpu, 0, sizeof cpu);
     cpu.st_top = 0;
+    cpu.fcw = 0x027F;      /* MSVC default: exceptions masked, 53-bit precision */
     R(ESP) = STACK_TOP;
     R(EBP) = STACK_TOP;
 

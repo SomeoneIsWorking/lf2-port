@@ -94,9 +94,22 @@ Three facts settle it:
    `FCOS`, `FPATAN` or `F2XM1`, which is where x87-vs-libm divergence usually bites. That
    entire class of bug cannot occur here.
 
-Additionally there is **no `FLDCW`/`FNSTCW`/`FNINIT` anywhere in `.text`** — the game never
-touches the x87 control word, so precision control is whatever `MSVCR80`'s startup leaves
-it at.
+**Correction: the binary does contain `FNSTCW`.** This section previously claimed there
+was none anywhere in `.text`. That was checked by grepping `re/instructions.tsv`, and
+Ghidra never disassembled the block at `0x4450ec` that uses it, so the corpus could not
+have shown the other answer. The CRT reads the control word back and tests
+`(cw & 0x7f) == 0x7f`, i.e. that every exception is masked.
+
+`FLDCW` and `FNSTCW` are now implemented against a `cpu.fcw` initialised to `0x027F`
+(MSVC's default: exceptions masked, round-to-nearest, 53-bit precision), so the read-back
+sees what it expects. Precision control is stored but not acted on — x87 is evaluated in
+host `double`, which is 53-bit regardless. If a future `FLDCW` ever selected 64-bit
+precision that would be a real divergence, and the store is there so it can be detected.
+
+The counts in this document come from the same `instructions.tsv` and are therefore lower
+bounds. They remain sound for *scoping* — they cannot understate which mnemonics exist in
+the disassembled 93.6% — but "the binary contains no X" is not a conclusion this file can
+support.
 
 **This also retires the `long double` option outright.** Since the game stores `double`,
 matching x87 exactly would need true 80-bit semantics — and `long double` is 128-bit quad

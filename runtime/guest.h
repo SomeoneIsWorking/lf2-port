@@ -22,6 +22,12 @@ typedef struct {
     double   st[8];     /* x87 stack; host double -- see docs/isa-scope.md */
     int      st_top;
     uint16_t fsw;
+    /* x87 control word. The game reads it back (FNSTCW) to check that exceptions are
+     * masked, so it has to hold a plausible value; 0x027F is MSVC's default -- all
+     * exceptions masked, round-to-nearest, 53-bit precision. Precision control is not
+     * acted on: x87 is evaluated in host double throughout, which is 53-bit anyway.
+     * See docs/isa-scope.md. */
+    uint16_t fcw;
 } Cpu;
 
 extern Cpu cpu;
