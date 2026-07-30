@@ -155,9 +155,8 @@ static void dump_path(char *out, size_t n, const char *fmt, ...)
  * timing -- two attempts at capturing a match landed on the menu before it -- and cannot
  * run headless at all. Frame numbers are exact, so a capture is reproducible.
  */
-static int frame_wanted(long frame)
+static int spec_lists(const char *spec, long frame)
 {
-    const char *spec = getenv("LF2_FRAME_DUMP");
     if (!spec) return 0;
     for (const char *c = spec; *c; ) {
         char *end = NULL;
@@ -168,6 +167,30 @@ static int frame_wanted(long frame)
         while (*c == ',' || *c == ' ') c++;
     }
     return 0;
+}
+
+static int frame_wanted(long frame) { return spec_lists(getenv("LF2_FRAME_DUMP"), frame); }
+
+/* LF2_MEM_DUMP=<frame>[,<frame>...] writes the game's whole .data section to
+ * data_<frame>.bin in $LF2_DUMP_DIR. Diffing two of them across a single input finds the
+ * variable behind an on-screen change when reading the disassembly would mean picking one
+ * candidate out of hundreds -- which is how the pre-fight overlay's selection index was
+ * located. tools/diff_data.py does the comparison.
+ *
+ * The range is the section's own bounds from the PE header, not a guess: dumping too
+ * little would drop the answer and look like "nothing changed". */
+enum { DATA_BASE = 0x0044d000, DATA_SIZE = 0xc724 };
+
+static void dump_data(long frame)
+{
+    if (!spec_lists(getenv("LF2_MEM_DUMP"), frame)) return;
+    char path[256];
+    dump_path(path, sizeof path, "data_%06ld.bin", frame);
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "data dump: cannot write %s\n", path); return; }
+    fwrite(g_mem + DATA_BASE, 1, DATA_SIZE, f);
+    fclose(f);
+    fprintf(stderr, "data dump: wrote %s (%d bytes from %08x)\n", path, DATA_SIZE, DATA_BASE);
 }
 
 static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
@@ -214,6 +237,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
     screen_change_check(pixels, w, h, src_pitch, frames);
     dump_frame(pixels, w, h, src_pitch, frames);
+    dump_data(frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
     if (frames % 900 == 0) { colorkey_report(); vram_report(); com_release_report(); input_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }

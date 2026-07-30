@@ -113,20 +113,55 @@ letterboxed to whatever the window becomes, so the game never sees a different r
 
 For checking the port without a human at the keyboard:
 
+**Prefer the frame-scheduled form.** Presented-frame numbers are exact and reproducible;
+a wall clock drifts with however long the ~13 s data load takes, so a press aimed at one
+screen lands on another.
+
 | Variable | Effect |
 |---|---|
-| `LF2_AUTOKEY=<vk>[,<vk>...]` | press each virtual key in turn, held 120 ms |
-| `LF2_AUTOKEY_START=<ms>` | when to begin (default 6000) |
-| `LF2_AUTOKEY_EVERY=<ms>` | gap between presses (default 2500) |
-| `LF2_AUTOCLICK=<x>,<y>` | move the pointer there in game coordinates and click on the same schedule |
+| `LF2_KEY_SCRIPT="<vk>:<frame>[,...]"` | press that key on that presented frame, held 8 frames |
+| `LF2_CLICK_SCRIPT="<x>,<y>:<frame>[;...]"` | place the pointer and click, same schedule |
+| `LF2_VIRTUAL_PAD="<button>:<frame>[,...]"` | the controller equivalent |
+
+The older wall-clock form is still there for probing (`LF2_AUTOKEY`, `LF2_AUTOKEY_START`,
+`LF2_AUTOKEY_EVERY`, `LF2_AUTOCLICK` and their `_ONCE` variants), but nothing that needs to
+land on a particular screen should use it.
+
+The pointer is placed four frames before the button goes down, because the menu hit-tests
+where the pointer *is* when the click arrives — moving and clicking on the same frame races
+the game's own read.
 
 LF2's menu is driven by the player-1 controls from `data/control.txt`, not by Enter — the
-defaults are the numpad, so `LF2_AUTOKEY=65` is player 1's attack.
+defaults are the numpad, so `0x65` is player 1's attack and `0x68` is up.
 
-**This does not yet advance past the menu.** Two hypotheses have been tried and both
-failed: the port now delivers `WM_KEYDOWN`/`WM_KEYUP` from real key events *and* scripted
-keys generate the same messages, so neither the polling path nor the message path is the
-missing piece.
+### Reaching a match, deterministically
+
+Both `tools/smoke_test.sh` (mouse and keyboard) and `tools/controller_test.sh` (pad only)
+now play a VS match every run. The part that used to be luck was the pre-fight overlay —
+Fight! / Reset All / Reset Random / Background / Difficulty / Exit — where a blind press
+landed on whatever was selected, usually Reset Random, which re-rolls the characters and
+stays put.
+
+Its selection index is **`0x0044d06c`**, 0..5 top to bottom, up decrements and wraps, and
+it is **2 on entry** (measured from boot, not assumed). So two ups reach Fight!.
+
+Finding it is worth recording as a method, because reading the disassembly did not work:
+searching `fn_0041bc90` for the compare returned twenty-odd candidates that could not be
+told apart on sight. Instead `LF2_MEM_DUMP=<frame>[,...]` writes the whole `.data` section
+and `tools/diff_data.py` compares two dumps across a single press:
+
+```sh
+LF2_MEM_DUMP=2290,2450 LF2_VIRTUAL_PAD="...,up:2350" ./lf2 lf2.exe
+tools/diff_data.py scratch/data_002290.bin scratch/data_002450.bin --max 8
+# 12745 dwords compared, 9 differed, 2 after filters
+# 0044d06c  2 -> 1
+```
+
+Two candidates out of 12,745 dwords, and the right one confirmed by matching that 2 → 1
+against the frame where the highlight moved Reset Random → Reset All. `diff_data.py`
+reports the denominator at every stage on purpose — "no candidates" from a run that
+compared nothing looks identical to "no candidates" from a run that compared everything.
+
 
 Mouse input **is confirmed to reach the game**, established by logging what the window
 procedure is actually handed (`LF2_MSG_DEBUG`) rather than inferring from the screen:
@@ -148,11 +183,11 @@ procedure. The handler at `0043b8af` stores the pointer in two globals — x at 
 y at `00453cdc` — and watching the first shows it take the value `0x1ae` (430), exactly
 what was sent.
 
-**The game still does not select a menu item.** The mouse is probably not how it is done:
-every hit-test against `004546f0` compares x against 0x24e–0x2d5 (590–725), which is the
-advertisement panel on the right, not the menu text at roughly x 300–500. LF2's menu
-entries are selected with the player-1 controls from `data/control.txt`, which default to
-the numpad.
+(An earlier note here concluded "the mouse is probably not how menu items are selected",
+from seeing every hit-test against `004546f0` compare x against 590–725 rather than the
+menu text at x 300–500. That was reading one hit-test — the advertisement panel on the
+right — and generalising from it. The menu is entirely mouse-driven; its own item bands
+are x 260–547, and the port now drives them.)
 
 The game **never calls `GetKeyState`** — polling it produced no hits at all — so keyboard
 input must travel entirely as `WM_KEYDOWN`/`WM_KEYUP` messages.
@@ -597,6 +632,11 @@ works headless, and it captures the game's own framebuffer rather than a window 
 whatever the desktop put behind it. Two attempts at photographing a match via `import`
 landed on the preceding menu instead; the frame dump is what established that those runs
 genuinely never reached the match.
+
+`LF2_MEM_DUMP=<frame>[,...]` is the same idea for state: it writes the whole `.data`
+section to `data_<frame>.bin`, and `tools/diff_data.py` compares two of them. Together they
+answer "which variable is behind this pixel" — dump both, change one thing, diff. See the
+scripted-input section above for the worked example.
 
 ## State-triggered input
 
