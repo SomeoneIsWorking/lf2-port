@@ -364,3 +364,65 @@ from a scan, and the pre-fight menu is known to check `68 57 49 26` (players 1-4
 is **navigation, not observation**: menus are mouse-driven and each screen's clickable
 bands have to be recovered from the game's own comparison constants, the way the main
 menu's were (see above).
+
+## The menu map, and how it was recovered
+
+The port navigates from the title screen into the game. The path is:
+
+```sh
+cd game && LF2_AUTOCLICK_ONCE=1 LF2_AUTOCLICK=403,228 \
+  LF2_AUTOKEY=0x68,0x68,0x65 LF2_AUTOKEY_START=3000 LF2_AUTOKEY_EVERY=2200 \
+  ../scratch/build/lf2 lf2.exe
+```
+
+`403,228` is **game start**. Clicking it loads the game data (`Now Loading… data\*.dat`,
+about 25 s) and reaches the mode menu — VS mode, Stage mode, Championships, Battle mode,
+Demo, Playback, Quit. Player 1's keys then drive it: up is Keypad 8 (`0x68`) and attack is
+Keypad 5 (`0x65`), which the control settings page states outright. From there it reaches
+Character Selection and the Battle-mode team setup.
+
+Main menu bands, from `tools/click_bands.py`:
+
+| Item | Game y | Band |
+|---|---|---|
+| game start | 228 | above the extracted bands |
+| network game | 259 | — |
+| control settings | 292 | y 274..300 |
+| recording info | 322 | y 305..330 |
+| official website | 353 | y 336..361 |
+
+All at x 260..547, so x=403.
+
+**The mistake worth recording: I probed the three extracted bands for a long time without
+ever screenshotting the menu.** The extractor only finds bands with an explicit
+`x_lo,x_hi,y_lo,y_hi` comparison run, and "game start" is not hit-tested that way, so it
+was missing from the table — and a table that looks complete reads as complete. One
+screenshot showed five menu items where the extractor had found three. Look at the screen
+before searching it.
+
+### Tools
+
+- `tools/click_bands.py` — recovers clickable bands from the game's own comparison
+  constants. Only comparisons against the register the mouse coordinate was loaded into
+  count; bounds stay in source order, since sorting destroys the lo/hi pairing. An x pair
+  may be followed by several y pairs (one menu, several entries).
+- `tools/find_path.py` — greedily extends a click path, keeping any candidate that yields
+  one more screen transition.
+- `LF2_SCREEN_HASH=1` — reports a screen change when a large fraction of a subsampled
+  framebuffer signature differs, so menu animation does not register. This is the only
+  usable "did anything happen" signal, since the key array reads the same on most screens.
+- `LF2_AUTOCLICK_ONCE=1` — walk the click list once. Cycling walks back out of the menu,
+  which looks like the game oscillating between two screens.
+
+### The read-watch, validated against a prediction
+
+On the character-selection screen `LF2_READ_WATCH=0x455378:0x455478` reports:
+
+```
+09 0d 10 11 20 25 26 27 28 41 44 49 4a 4b 4c 53 57 58 60 62 64 65 66 68 6b 70 ... f8 f9
+```
+
+That contains `68 57 49 26`, exactly the four VKs predicted from the polling site at
+`0x419b73` (players 1-4 "up"), plus every binding the control settings page lists for all
+four players. The instrument was built before this screen could be reached and its output
+matches an independent prediction, which is the strongest evidence available that it works.

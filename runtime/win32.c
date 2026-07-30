@@ -142,7 +142,13 @@ static int autoclick_state(int *x, int *y)
     if (now < begin) return 0;
     const uint64_t elapsed = now - begin;
 
-    const unsigned want = (unsigned)((elapsed / every) % points);
+    /* Cycling suits probing one screen, but a menu path is one-way: re-clicking the list
+     * from the top walks back out again, which reads as the game oscillating between two
+     * screens rather than as the script looping. LF2_AUTOCLICK_ONCE walks the list once
+     * and then stops clicking. */
+    const unsigned step = (unsigned)(elapsed / every);
+    if (getenv("LF2_AUTOCLICK_ONCE") && step >= points) return 0;
+    const unsigned want = step % points;
     unsigned i = 0;
     for (const char *c = spec; *c; ) {
         const int px = (int)strtol(c, (char **)&c, 10);
