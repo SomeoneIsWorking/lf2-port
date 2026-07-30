@@ -304,10 +304,28 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     SDL_RenderPresent(hw.renderer);
 }
 
+/* The one keyboard layout, shown where the advertising used to sit. Drawn onto the
+ * primary just before present, so it rides above whatever the game composed; the menu
+ * override turns it on outside the game proper and off inside it. Rendered with the same
+ * glyph renderer the game's own text uses -- without SDL3_ttf there are no glyphs and
+ * the hint simply does not appear, which costs nothing but the hint. */
+static int hint_on;
+void controls_hint_enable(int on) { hint_on = on; }
+
+static void controls_hint_draw(const Surface *s)
+{
+    static const char TEXT[] = "KEYBOARD:  ARROWS MOVE   Z ATTACK   X JUMP   C DEFEND";
+    const int x0 = 8;                        /* left: the game's own URL owns the right */
+    for (int i = 0; TEXT[i]; i++)
+        game_glyph_draw(TEXT[i], x0 + i * 8, s->h - 16,
+                        0xffffffu, s->pixels, s->w, s->h, s->pitch);
+}
+
 static void present_primary(void)
 {
     if (!primary_surface) return;
     Surface *s = com_host(primary_surface);
+    if (hint_on) controls_hint_draw(s);
     hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
 }
 

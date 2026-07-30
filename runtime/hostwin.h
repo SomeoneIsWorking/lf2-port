@@ -38,3 +38,5 @@ int  gamepad_player_buttons(int index, unsigned char out[7]);
 void input_report(void);
 void glyph_hint_set(int ch);
 void glyph_hint_clear(void);
+int  hostwin_key_held(uint32_t vk);
+void controls_hint_enable(int on);

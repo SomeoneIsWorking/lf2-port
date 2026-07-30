@@ -243,6 +243,7 @@ static void pump_autokey_messages(void)
 static void keydebug_report(void);
 static void keydebug_note(unsigned vk);
 static void keydebug_selftest(void);
+static void keyboard_drive_ui(void);
 
 /* Injection points for the controller UI layer in gamepad.c. Keys go in as real
  * WM_KEYDOWN/WM_KEYUP so code that reacts to messages sees them, and are also reflected in
@@ -327,6 +328,28 @@ void hostwin_pump(void)
 
     virtual_pad_tick(hostwin_frames());
     gamepad_drive_ui();        /* controller -> the input the menus actually read */
+    keyboard_drive_ui();       /* the one keyboard layout does the same */
+}
+
+/* The single keyboard layout drives the ported front-end menu the same way a pad does:
+ * arrow edges move the selection, attack confirms. The layout's own keys, so the menu
+ * and the game agree about what the keyboard is. */
+static void keyboard_drive_ui(void)
+{
+    static uint8_t was[3];
+    static const struct { uint8_t vk; int delta; } MAP[] = {
+        { 0x26, -1 },          /* up arrow    */
+        { 0x28, +1 },          /* down arrow  */
+        { 0x5A,  0 },          /* Z = attack -> confirm */
+    };
+    for (unsigned i = 0; i < sizeof MAP / sizeof MAP[0]; i++) {
+        const uint8_t down = (uint8_t)(hostwin_key_held(MAP[i].vk) != 0);
+        if (down == was[i]) continue;
+        was[i] = down;
+        if (!down) continue;
+        if (MAP[i].delta) menu_move(MAP[i].delta);
+        else              menu_confirm();
+    }
 }
 
 static void fill_msg(uint32_t p, uint32_t msg)
@@ -350,8 +373,18 @@ enum { WM_CHAR = 0x0102, MSG_RING = 64 };
 static struct { uint32_t msg, wparam, lparam; } msg_ring[MSG_RING];
 static int ring_head, ring_tail;
 
+/* Held state for every virtual key, maintained at the ONE point all key sources pass
+ * through -- real SDL keys, scripted keys and injected ones alike. The game's own key
+ * array (0x455378) is edge-flushed every frame, so it cannot answer "is this key held",
+ * which is exactly what the single-layout input routing needs for walking. Updated even
+ * when the ring is full: the ring dropping a message must not wedge a key down. */
+static uint8_t vk_held[256];
+int hostwin_key_held(uint32_t vk) { return vk < 256 && vk_held[vk]; }
+
 static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam)
 {
+    if (msg == WM_KEYDOWN_FWD && wparam < 256) vk_held[wparam] = 1;
+    if (msg == WM_KEYUP_FWD   && wparam < 256) vk_held[wparam] = 0;
     const int next = (ring_tail + 1) % MSG_RING;
     if (next == ring_head) return;              /* full: drop rather than overwrite */
     msg_ring[ring_tail].msg = msg;

@@ -198,8 +198,11 @@ The pointer is placed four frames before the button goes down, because the menu 
 where the pointer *is* when the click arrives — moving and clicking on the same frame races
 the game's own read.
 
-LF2's menu is driven by the player-1 controls from `data/control.txt`, not by Enter — the
-defaults are the numpad, so `0x65` is player 1's attack and `0x68` is up.
+The port routes all input through ONE keyboard layout (see "One keyboard, first come
+first served" below): arrows move, `Z` attacks, `X` jumps, `C` defends — so scripted keys
+use `0x26`/`0x28`/`0x25`/`0x27` for the arrows and `0x5A`/`0x58`/`0x43` for the buttons.
+(Historically the menus were driven by the player-1 controls from `data/control.txt`,
+whose defaults were the numpad; the investigation notes below still reference those keys.)
 
 ### Reaching a match, deterministically
 
@@ -515,7 +518,7 @@ opponent, entirely unattended:
 
 ```sh
 cd game && LF2_AUTOCLICK_ONCE=1 LF2_AUTOCLICK=403,228 LF2_AUTOCLICK_START=3000 \
-  LF2_AUTOKEY_ONCE=1 LF2_AUTOKEY=0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x68,0x68,0x65 \
+  LF2_AUTOKEY_ONCE=1 LF2_AUTOKEY=0x5A,0x5A,0x5A,0x5A,0x5A,0x5A,0x5A,0x5A,0x26,0x26,0x5A \
   LF2_AUTOKEY_START=32000 LF2_AUTOKEY_EVERY=1800 \
   ../scratch/build/lf2 lf2.exe
 ```
@@ -774,6 +777,26 @@ again: `h_fscanf` called `getenv` on every one of those 2.5M invocations, and ca
 changed the load time by nothing measurable (10.1 s / 10.3 s against 10.2 s). glibc's
 `getenv` is cheap next to the surrounding parse. The caching was kept because it is the
 right shape for a flag on a hot path, not because it bought anything.
+
+## One keyboard, first come first served
+
+There is exactly one keyboard layout, and it is drawn along the bottom of the front end:
+
+    arrows move | Z attack | X jump | C defend
+
+The four per-player layouts from `data/control.txt` no longer reach the game; the control
+settings screen still edits them, but the input gather override replaces every live
+player's buttons with the port's own device routing (`runtime/overrides.c`).
+
+Devices — the keyboard and every connected pad — are handed to players **first come,
+first served**: outside the game proper every device drives player one, so anyone can
+work the front-end menus; from the mode menu onward the first device to press anything
+becomes player 1, the next player 2, and so on, and pressing attack on the join screen
+claims and joins in one stroke. Assignments clear when the game returns to the front
+end, so the next session reassigns from scratch. Held keyboard state comes from a
+host-side ledger fed by the same message stream as everything else
+(`hostwin_key_held`), which is what makes the scripted-key tests exercise the identical
+path a human uses.
 
 ## Playing with a controller
 
