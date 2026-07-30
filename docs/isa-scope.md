@@ -175,3 +175,29 @@ broken" -- both from inference over a misread tag word rather than from measurem
 cheap moves would have skipped all of it: comparing register *values* in and out instead
 of squinting at tag bits, and reproducing the round-trip in a standalone probe with no
 harness to blame. The bug was never in the code being tested.
+
+## Audit: what else does the differential pin?
+
+The ADC/SBB bug survived because the harness pinned an *input* the instruction depended
+on. That is a class, not a one-off, so the remaining pinned inputs were checked.
+
+| Input | Pinned to | Consumers in this binary | Verdict |
+|---|---|---|---|
+| CF | was 0, **now varied** | ADC (3), SBB (26) | was live — found the bug |
+| DF | 0 | none | safe |
+| AF | 0 | none | safe |
+
+**DF.** No `STD`/`CLD`. This is *not* claimed from `re/instructions.tsv`, which is only a
+lower bound — it is claimed from the lifter, which has no handler for `0xFC`/`0xFD` and
+reports 0 TODOs across all 77,384 decoded instructions, including the regions Ghidra never
+disassembled. An unhandled occurrence would necessarily have surfaced as a TODO.
+*Falsifier: a `fc`/`fd` TODO ever appearing. Then string direction becomes live and the
+harness must vary DF.*
+
+**AF.** No `DAA`, `DAS`, `AAA`, `AAS`, `AAM`, `AAD`, `LAHF` or `SAHF`. AF is modelled
+anyway (`(a ^ b ^ res) & 0x10`) because `PUSHFD` materialises the whole register, and there
+are 3 `PUSHFD` / 2 `POPFD` sites. *Falsifier: any of those mnemonics appearing.*
+
+Also worth stating: ADC/SBB being wrong meant every multi-precision (64-bit) arithmetic
+chain in the game was computing wrong high words for as long as the port has existed. The
+colour key was simply the first place it became visible.
