@@ -141,8 +141,8 @@ void gamepad_drive_ui(void)
         hostwin_inject_key(MAP[i].vk, down);
 
         /* Directions also move the ported menu's selection index. */
-        if (down && MAP[i].vk == VK_P1_UP)   menu_move(-1);
-        if (down && MAP[i].vk == VK_P1_DOWN) menu_move(+1);
+        if (down && (MAP[i].vk == VK_P1_UP   || MAP[i].vk == VK_P1_LEFT))  menu_move(-1);
+        if (down && (MAP[i].vk == VK_P1_DOWN || MAP[i].vk == VK_P1_RIGHT)) menu_move(+1);
         if (down && MAP[i].vk == VK_P1_ATTACK) menu_confirm();
     }
 }

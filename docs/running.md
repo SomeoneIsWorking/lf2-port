@@ -687,9 +687,17 @@ The two are kept consistent: if the pointer moves to somewhere the port did not 
 mouse is being used, so whatever it is pointing at becomes the selection and the port hands
 control back. Picking up the mouse after using a pad does not fight it, and vice versa.
 
-The override only applies on the **main menu** (`0x0044d064 == 0`); every other screen is
-pure delegation, so nothing here can disturb the control settings or recording pages.
-Screen 6 is control settings, and `0xFFFFFFFE` appears during loading.
+Screens are ported one at a time, each with a table of selectable items taken from the
+game's **own hit-test constants** — the centre of each band it brackets the pointer
+against. Anything without a table is pure delegation.
+
+| screen (`0x0044d064`) | items |
+|---|---|
+| 0 — main menu | five entries, x 260..547 |
+| 6 — control settings | ok (x 405..560, y 441..465), cancel (x 582..737, y 441..465) |
+
+Adding a screen means reading its comparisons out of the disassembly, not inventing
+coordinates. `0xFFFFFFFE` appears during loading.
 
 Verified with `LF2_VIRTUAL_PAD`: three d-pad downs highlight "recording info", two downs
 plus A lands on the control settings page, and the mouse-driven smoke test is unaffected.

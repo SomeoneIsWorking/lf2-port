@@ -56,63 +56,105 @@ enum { GX_MOUSE_X = 0x004546f0, GX_MOUSE_Y = 0x00453cdc };
  * does not have to reproduce it. Activation sets the game's click flag for one frame, so
  * the game performs its own dispatch, sound and screen change.
  */
-enum { GX_CLICK = 0x00457580 };
-static const int MENU_ITEM_Y[] = { 228, 259, 292, 322, 353 };
-enum { MENU_ITEM_X = 403,
-       N_MENU_ITEMS = (int)(sizeof MENU_ITEM_Y / sizeof MENU_ITEM_Y[0]) };
+enum { GX_CLICK = 0x00457580, GX_SCREEN = 0x0044d064 };
 
-enum { GX_SCREEN = 0x0044d064, SCREEN_MAIN_MENU = 0 };
+/* Selectable items per screen, taken from the game's own hit-test constants -- the centre
+ * of each band it brackets the pointer against. Adding a screen is a matter of reading its
+ * comparisons out of the disassembly, not of inventing coordinates.
+ *
+ *   main menu (screen 0):  x 260..547, five entries down the middle
+ *   control settings (6):  ok   x 405..560 y 441..465
+ *                          cancel x 582..737 y 441..465
+ */
+typedef struct { int x, y; } Item;
+
+static const Item MAIN_MENU[] = {
+    { 403, 228 },  /* game start       */
+    { 403, 259 },  /* network game     */
+    { 403, 292 },  /* control settings */
+    { 403, 322 },  /* recording info   */
+    { 403, 353 },  /* official website */
+};
+static const Item CONTROL_SETTINGS[] = {
+    { 482, 453 },  /* ok     */
+    { 659, 453 },  /* cancel */
+};
+
+static const struct { uint32_t screen; const Item *items; int n; } SCREENS[] = {
+    { 0, MAIN_MENU,        (int)(sizeof MAIN_MENU / sizeof MAIN_MENU[0]) },
+    { 6, CONTROL_SETTINGS, (int)(sizeof CONTROL_SETTINGS / sizeof CONTROL_SETTINGS[0]) },
+};
 
 static int menu_index;
 static int menu_confirm_frames;
-static int menu_owns_pointer;        /* set once the selection has been moved by a pad */
+static int menu_owns_pointer;
 static uint32_t menu_wrote_x, menu_wrote_y;
+static uint32_t menu_last_screen = 0xffffffffu;
 
-/* Called from the controller layer. */
+static const Item *screen_items(uint32_t screen, int *n)
+{
+    for (unsigned i = 0; i < sizeof SCREENS / sizeof SCREENS[0]; i++)
+        if (SCREENS[i].screen == screen) { *n = SCREENS[i].n; return SCREENS[i].items; }
+    *n = 0;
+    return NULL;
+}
+
 int menu_move(int delta)
 {
+    int n = 0;
+    if (!screen_items(LD32(GX_SCREEN), &n) || n == 0) return 0;
     menu_index += delta;
-    if (menu_index < 0) menu_index = N_MENU_ITEMS - 1;
-    if (menu_index >= N_MENU_ITEMS) menu_index = 0;
+    if (menu_index < 0) menu_index = n - 1;
+    if (menu_index >= n) menu_index = 0;
     menu_owns_pointer = 1;
     return 1;
 }
 
 void menu_confirm(void)
 {
-    menu_confirm_frames = 2;          /* held long enough for the menu to sample it */
+    int n = 0;
+    if (!screen_items(LD32(GX_SCREEN), &n) || n == 0) return;
+    menu_confirm_frames = 2;
 }
 
-/* Keep the two input methods consistent. If the pointer has moved to somewhere the port
- * did not put it, a real mouse is being used: adopt whatever it is pointing at as the
- * selection and hand control back, so picking up the mouse after using a pad does not
- * fight it, and vice versa. */
-static void menu_sync_from_pointer(void)
+/* Keep pad and mouse consistent: if the pointer is somewhere the port did not put it, a
+ * mouse is in use, so adopt what it points at and hand control back. */
+static void menu_sync_from_pointer(const Item *items, int n)
 {
     const uint32_t px = LD32(GX_MOUSE_X), py = LD32(GX_MOUSE_Y);
     if (menu_owns_pointer && px == menu_wrote_x && py == menu_wrote_y) return;
 
     menu_owns_pointer = 0;
     int best = -1, best_d = 1 << 30;
-    for (int i = 0; i < N_MENU_ITEMS; i++) {
-        const int d = (int)py - MENU_ITEM_Y[i];
-        const int ad = d < 0 ? -d : d;
-        if (ad < best_d) { best_d = ad; best = i; }
+    for (int i = 0; i < n; i++) {
+        const int dx = (int)px - items[i].x, dy = (int)py - items[i].y;
+        const int d = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+        if (d < best_d) { best_d = d; best = i; }
     }
-    if (best >= 0 && best_d <= 16) menu_index = best;
+    if (best >= 0 && best_d <= 90) menu_index = best;
 }
 
 void fn_004246b0(void)
 {
-    /* Only the main menu is ported. On every other screen this is pure delegation, so
-     * nothing here can disturb the control settings or recording pages. */
-    if (LD32(GX_SCREEN) != SCREEN_MAIN_MENU) { fn_004246b0__orig(); return; }
+    const uint32_t screen = LD32(GX_SCREEN);
+    int n = 0;
+    const Item *items = screen_items(screen, &n);
 
-    menu_sync_from_pointer();
+    /* Screens without an item table are pure delegation. */
+    if (!items) { fn_004246b0__orig(); return; }
+
+    if (screen != menu_last_screen) {      /* entering a screen starts at its first item */
+        menu_last_screen = screen;
+        menu_index = 0;
+        menu_owns_pointer = 0;
+        menu_confirm_frames = 0;
+    }
+
+    menu_sync_from_pointer(items, n);
 
     if (menu_owns_pointer || menu_confirm_frames) {
-        menu_wrote_x = (uint32_t)MENU_ITEM_X;
-        menu_wrote_y = (uint32_t)MENU_ITEM_Y[menu_index];
+        menu_wrote_x = (uint32_t)items[menu_index].x;
+        menu_wrote_y = (uint32_t)items[menu_index].y;
         ST32(GX_MOUSE_X, menu_wrote_x);
         ST32(GX_MOUSE_Y, menu_wrote_y);
     }
