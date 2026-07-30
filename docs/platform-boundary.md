@@ -81,3 +81,26 @@ caps queries failed.
 That distinction matters: if the game does poll per-frame, a runtime that re-enumerates on
 hotplug may be enough; if it caches capabilities at startup, we also have to invalidate that
 cache. **Re-run this trace with a real pad attached before designing the input override.**
+
+## Call-mix agreement with the oracle
+
+Comparing the port's DirectDraw call *sequence* to Wine's is only meaningful when both runs
+are aligned, which they are not — the two reach different points in the attract animation.
+Comparing the call **mix** needs no alignment and is the better check for unaligned runs:
+
+| method | oracle | port |
+|---|---|---|
+| `Blt` | 65.4% | 72.9% |
+| `GetDC` | 12.7% | 13.1% |
+| `ReleaseDC` | 12.7% | 13.1% |
+| `GetClipList` | 8.4% | 0.0% |
+| everything else | <1% each | matches |
+
+`GetDC`/`ReleaseDC` agree to 0.3%. The `GetClipList` gap is **not** a divergence: Wine's own
+`Blt` calls it twice per blit to a clipped surface, so it is Wine internals in the trace,
+and the game calls it zero times on both sides (it calls `SetClipper` once, on both). Once
+those calls are removed from the oracle's denominator, `Blt` lands at 71.4% against the
+port's 72.9%.
+
+So the port's DirectDraw behaviour agrees with real DirectDraw on call mix. This was briefly
+written up as a defect before checking *who* was making the calls.

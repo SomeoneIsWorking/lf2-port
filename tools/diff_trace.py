@@ -24,6 +24,12 @@ INTERNAL = re.compile(
     r"ddraw_surface_update_frontbuffer|ddrawformat|wined3dformat|secondarybuffer|"
     r"primarybuffer|mixieee|setup_dsound|send_device|enumerate_)")
 
+# CAVEAT, measured: IDirectDrawClipper::GetClipList is not filtered here but is almost
+# entirely Wine-internal. Wine's Blt implementation calls it twice per blit to a clipped
+# surface, so it accounts for ~8% of the oracle's calls while a correct port that clips
+# inside its own Blt calls it zero times. That difference is not a divergence, and it was
+# briefly mistaken for one. The game itself calls SetClipper once and GetClipList never.
+#
 # The game uses the DirectDraw 1 interfaces. Wine implements those by forwarding to its
 # version 7 objects, so a single game call shows up as ddraw1_X then ddraw7_X then an
 # internal helper. Matching only the version-1 entries gives one line per real call.
