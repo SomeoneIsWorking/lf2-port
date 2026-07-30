@@ -265,7 +265,10 @@ static int emit_x87(FILE *o, const x86_insn *in)
         return 1;
     case 0xDC:
         if (!FARITH[g][0]) return 0;
-        if (g == 5 || g == 7) fprintf(o, "FST(%d) = FST(0) %s FST(%d);", i, FARITH[g], i);
+        /* Reversed at this destination is g=4 (FSUBR) / g=6 (FDIVR) -- the opposite of
+         * the D8 forms, where g=5/7 are the reversed ones. Getting it backwards silently
+         * yields the reciprocal or the negation of the right answer. */
+        if (g == 4 || g == 6) fprintf(o, "FST(%d) = FST(0) %s FST(%d);", i, FARITH[g], i);
         else                  fprintf(o, "FST(%d) = FST(%d) %s FST(0);", i, i, FARITH[g]);
         return 1;
     case 0xDD:
@@ -275,7 +278,7 @@ static int emit_x87(FILE *o, const x86_insn *in)
     case 0xDE:
         if (modrm == 0xD9) { fprintf(o, "fpu_cmp(FST(0), FST(1)); fpu_pop(); fpu_pop();"); return 1; }
         if (!FARITH[g][0]) return 0;
-        if (g == 5 || g == 7) fprintf(o, "FST(%d) = FST(0) %s FST(%d); fpu_pop();", i, FARITH[g], i);
+        if (g == 4 || g == 6) fprintf(o, "FST(%d) = FST(0) %s FST(%d); fpu_pop();", i, FARITH[g], i);
         else                  fprintf(o, "FST(%d) = FST(%d) %s FST(0); fpu_pop();", i, i, FARITH[g]);
         return 1;
     case 0xDF:

@@ -1,8 +1,8 @@
 # Running the port
 
 ```sh
-cmake -S . -B build && cmake --build build -j
-cd game && ../build/lf2 lf2.exe
+cmake -S . -B scratch/build && cmake --build scratch/build -j
+cd game && ../scratch/build/lf2 lf2.exe
 ```
 
 The working directory must be the extracted game tree — the game opens its data with
@@ -15,8 +15,8 @@ portability blockers that have been removed, not a report of a successful build.
 
 ```sh
 brew install sdl3 cmake
-cmake -S . -B build && cmake --build build -j
-cd game && ../build/lf2 lf2.exe
+cmake -S . -B scratch/build && cmake --build scratch/build -j
+cd game && ../scratch/build/lf2 lf2.exe
 ```
 
 The runtime is POSIX plus SDL3 throughout; an audit found no `/proc`, no epoll, no
@@ -43,7 +43,7 @@ Forcing the video driver is required, and the reason is worth knowing:
 
 ```sh
 Xvfb :99 -screen 0 1024x768x24 &
-cd game && DISPLAY=:99 SDL_VIDEODRIVER=x11 ../build/lf2 lf2.exe &
+cd game && DISPLAY=:99 SDL_VIDEODRIVER=x11 ../scratch/build/lf2 lf2.exe &
 DISPLAY=:99 import -window root shot.png
 ```
 
@@ -259,8 +259,8 @@ Two are build options rather than environment variables, because they need code 
 into the generated file:
 
 ```sh
-cmake -S . -B build -DLF2_STACK_CHECK=ON   # assert stack balance at every guest RET
-LF2_PROBE=4246fd,4274da cmake --build build --target lf2   # log ESP at those instructions
+cmake -S . -B scratch/build -DLF2_STACK_CHECK=ON   # assert stack balance at every guest RET
+LF2_PROBE=4246fd,4274da cmake --build scratch/build --target lf2   # log ESP at those instructions
 ```
 
 `LF2_PROBE` is read when the code is **generated**, not when it runs, so the target has to

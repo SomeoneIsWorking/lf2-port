@@ -121,8 +121,11 @@ static Stub build(const uint8_t *insn, unsigned len, int x87, int stack)
 
 /* ---- x87 state ----
  * FNSAVE's 32-bit layout: control word at 0, status at 4, tag at 8, then the eight
- * physical registers as 80-bit values from offset 28. ST(i) is physical R[(TOP+i) & 7],
- * with TOP in status bits 11..13.
+ * 80-bit registers from offset 28. Those slots are in *stack* order -- slot i is ST(i) --
+ * not physical register order, so TOP does not enter the indexing. Getting this wrong
+ * looks exactly like a corrupted round-trip: after a push the values appear one slot
+ * further along, because old ST(i) really has become ST(i+1). scratch/x87/probe3.c is
+ * the standalone check that pins the convention down.
  *
  * The control word is seeded to 53-bit precision, which is what MSVC's CRT sets. If that
  * is right, x87 arithmetic rounds to double at every step and the lifter's host `double`
@@ -133,7 +136,7 @@ enum { FPU_CW_PC53 = 0x027F };
 /* Start half-full: TOP = 4 with four valid registers below it. Marking all eight valid
  * makes every push a stack OVERFLOW, and the CPU then yields an indefinite instead of
  * the loaded value -- which looks exactly like a lifter bug. */
-enum { FPU_TOP = 4, FPU_LIVE = 4 };
+enum { FPU_TOP = 1, FPU_LIVE = 7 };
 
 static void fpu_state_init(uint8_t *area, const double *st)
 {
@@ -143,19 +146,27 @@ static void fpu_state_init(uint8_t *area, const double *st)
     const uint16_t sw = (uint16_t)(FPU_TOP << 11);   /* TOP is bits 11..13 */
     area[4] = (uint8_t)(sw & 0xff);
     area[5] = (uint8_t)(sw >> 8);
-    area[8] = 0xFF; area[9] = 0x00;           /* R0..R3 empty, R4..R7 valid */
+    /* The tag word is indexed by *physical* register, unlike the 80-bit slots above, so
+     * it has to be derived from TOP: ST(i) lives in R[(TOP+i) & 7]. Leaving it hardcoded
+     * silently marks the wrong registers empty and every operand reads as a masked
+     * stack underflow. */
+    uint16_t tw = 0xFFFF;                      /* 11 = empty everywhere */
+    for (int i = 0; i < FPU_LIVE; i++) {
+        const int phys = (FPU_TOP + i) & 7;
+        tw &= (uint16_t)~(3u << (2 * phys));   /* 00 = valid */
+    }
+    area[8] = (uint8_t)(tw & 0xff);
+    area[9] = (uint8_t)(tw >> 8);
     for (int i = 0; i < FPU_LIVE; i++) {
         long double v = (long double)st[i];
-        memcpy(area + 28 + ((FPU_TOP + i) & 7) * 10, &v, 10);
+        memcpy(area + 28 + i * 10, &v, 10);
     }
 }
 
 static double fpu_state_get(const uint8_t *area, int i)
 {
-    const unsigned sw = (unsigned)area[4] | ((unsigned)area[5] << 8);
-    const int top = (int)((sw >> 11) & 7);
     long double v = 0;
-    memcpy(&v, area + 28 + ((top + i) & 7) * 10, 10);
+    memcpy(&v, area + 28 + i * 10, 10);
     return (double)v;
 }
 
@@ -191,13 +202,14 @@ int main(void)
     long checked = 0, failed = 0, reported = 0;
     static uint8_t before[SCRATCH_SPAN], after_host[SCRATCH_SPAN];
 
-    /* The x87 path is not trustworthy yet: setting up a believable FPU state through
-     * FRSTOR has already produced three harness bugs of its own (all registers marked
-     * valid making every push an overflow, a mis-encoded TOP field, and a writeback that
-     * still yields zero). Until it is validated by a negative control like the integer
-     * path, it stays off -- a test that reports failures it cannot stand behind is worse
-     * than no test. Set LF2_INSN_X87=1 to work on it. */
-    const int want_x87 = getenv("LF2_INSN_X87") != NULL;
+    /* x87 now runs by default. It is validated the same way the integer path is: putting
+     * the FDIV/FSUB reversal back into the lifter makes 24 cases fail, and taking it out
+     * makes them pass, so the comparison demonstrably detects a wrong answer. Set
+     * LF2_INSN_X87=0 to skip it. LF2_X87_NULL=1 additionally drops the instruction under
+     * test, leaving a bare FRSTOR/FNSAVE round-trip, which is the check that separates a
+     * harness fault from a lifter fault. */
+    const char *x87_env = getenv("LF2_INSN_X87");
+    const int want_x87 = !x87_env || strcmp(x87_env, "0") != 0;
     long skipped_x87 = 0;
 
     for (int c = 0; c < insn_ncases; c++) {
@@ -250,7 +262,7 @@ int main(void)
             if (k->is_x87 && getenv("LF2_X87_DUMP")) {
                 static int sh;
                 if (!sh++) {
-                    fprintf(stderr, "in st_in[0]=%f R4:", st_in[0]);
+                    fprintf(stderr, "in st_in = %g %g %g %g R4:", st_in[0], st_in[1], st_in[2], st_in[3]);
                     for (int b = 68; b < 78; b++) fprintf(stderr, " %02x", want.fpu_in[b]);
                     fprintf(stderr, "  sizeof(long double)=%zu\n", sizeof(long double));
                 }
@@ -285,7 +297,10 @@ int main(void)
                     fprintf(stderr, "fpu_out cw=%02x%02x sw=%02x%02x tw=%02x%02x R0..R2:",
                             got.fpu_out[1], got.fpu_out[0], got.fpu_out[5], got.fpu_out[4],
                             got.fpu_out[9], got.fpu_out[8]);
-                    for (int b = 28; b < 58; b++) fprintf(stderr, " %02x", got.fpu_out[b]);
+                    for (int rg = 0; rg < 8; rg++) {
+                        long double lv; memcpy(&lv, got.fpu_out + 28 + rg * 10, 10);
+                        fprintf(stderr, " R%d=%g", rg, (double)lv);
+                    }
                     fprintf(stderr, "\n");
                 }
             }
@@ -346,8 +361,7 @@ int main(void)
         }
     }
 
-    printf("\n%d cases x %d rounds = %ld checks, %ld mismatches"
-           " (%ld x87 cases skipped -- harness not yet validated)\n",
+    printf("\n%d cases x %d rounds = %ld checks, %ld mismatches (%ld x87 skipped)\n",
            insn_ncases, ROUNDS, checked, failed, skipped_x87);
     return failed ? 1 : 0;
 #endif
