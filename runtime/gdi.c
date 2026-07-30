@@ -435,17 +435,44 @@ static void h_TextOutA(void)
     SDL_RenderDebugText(r, 0, 0, text);
     SDL_RenderPresent(r);
 
-    for (int ty = 0; ty < h; ty++) {
-        const int dy = y + ty;
-        if (dy < 0 || dy >= dhei) continue;
-        uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
-        const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels
-                                                 + (size_t)ty * (size_t)scratch->pitch);
-        for (int tx = 0; tx < w; tx++) {
-            const int dx = x + tx;
-            if (dx < 0 || dx >= dwid) continue;
-            if (row[tx] & 0x00ffffffu) dst[dx] = text_colour;
+    /* Advance per glyph by its own ink width, not by the font's fixed 8-pixel cell.
+     *
+     * The game draws with the device context's default font, which on Windows is
+     * proportional, and it sizes its own layout accordingly. Blitting SDL's fixed-pitch
+     * debug font straight out overruns that layout: the main menu's copyright line came
+     * out as "by Marti Wong, Starsky Won", clipped at the surface edge, where the same
+     * screen under Wine reads "...Starsky Wong" and two further lines in full.
+     *
+     * The widths are measured from the rendered glyphs rather than tabulated, so there is
+     * nothing to keep in step with the font. */
+    const int cell = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE;
+    int pen = x;
+    for (int i = 0; i < len; i++) {
+        int ink_l = cell, ink_r = -1;
+        for (int ty = 0; ty < h; ty++) {
+            const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels
+                                                     + (size_t)ty * (size_t)scratch->pitch);
+            for (int cx = 0; cx < cell; cx++)
+                if (row[i * cell + cx] & 0x00ffffffu) {
+                    if (cx < ink_l) ink_l = cx;
+                    if (cx > ink_r) ink_r = cx;
+                }
         }
+        if (ink_r < 0) { pen += cell / 2; continue; }        /* blank: half-cell space */
+
+        for (int ty = 0; ty < h; ty++) {
+            const int dy = y + ty;
+            if (dy < 0 || dy >= dhei) continue;
+            uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
+            const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels
+                                                     + (size_t)ty * (size_t)scratch->pitch);
+            for (int cx = ink_l; cx <= ink_r; cx++) {
+                const int dx = pen + (cx - ink_l);
+                if (dx < 0 || dx >= dwid) continue;
+                if (row[i * cell + cx] & 0x00ffffffu) dst[dx] = text_colour;
+            }
+        }
+        pen += (ink_r - ink_l) + 2;                          /* one pixel of side bearing */
     }
 
     SDL_DestroyRenderer(r);
