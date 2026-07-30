@@ -247,13 +247,20 @@ Verified by scripted input and screenshots:
 | Control settings | yes, renders fully |
 | Mode selection (VS, Stage, championships, Battle, Demo, Playback) | yes |
 | VS mode control overlay | yes |
-| Character selection | yes — players join, portraits render on assignment |
+| Character selection | yes — players join, characters assigned, all fields populated |
 | A running match | **not yet** |
 
 Starting a match needs the pre-fight menu (Fight! / Reset All / Reset Random / Background /
-Difficulty / Exit) driven to its first entry and confirmed. The highlight starts on Reset
-Random, so an attack press there re-rolls the characters instead of starting, and pressing
-up to move the highlight un-joins the player rather than moving within the menu.
+Difficulty / Exit) driven to its first entry and confirmed. Several approaches have failed
+in ways worth recording:
+
+- Attack with the default highlight on **Reset Random** re-rolls the characters.
+- Pressing **up** to move the highlight instead cancels the join and empties every slot,
+  with both player 1's numpad binding and player 3's arrow binding.
+- Clicking directly on the Fight! text does nothing, so that menu is not mouse-driven.
+
+Character selection itself works fully: joining, character assignment with portraits, and
+every field populated — Player, Fighter, Team, Background, Difficulty and the music line.
 
 That is a choreography problem rather than a port defect: every screen renders, and input
 is verified all the way into the game's key-state array. It wants a human at the keyboard,
