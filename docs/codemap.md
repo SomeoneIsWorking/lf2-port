@@ -14,10 +14,11 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Wine oracle | `scratch/wineprefix` | **done** | boots headless under Xvfb to the main menu |
 | Boundary tracer | `docs/platform-boundary.md` | **done** | Wine debug channels; relay tracing proven useless (see doc) |
 | ISA scoping | `docs/isa-scope.md`, `re/instructions.tsv` | **done** | 70,508 instructions, only 92 mnemonics; top 50 cover 99.5% |
+| Instruction differential | `runtime/test_insn.c` | **done** | 8373 encodings x 8 rounds = 66,984 checks vs the host CPU, incl. x87; negative-control validated |
 | Recompiler: decoder | `recompiler/x86_decode.c` | **done** | length-exact on all 70,508 instructions; negative-control validated |
-| Recompiler: lifter (x86 → C) | `recompiler/lift.c` | **wip** | 96.25% of instructions lifted; output compiles; x87 + string ops remain |
-| Runtime | `runtime/guest.h`, `runtime/guest_ops.h` | **wip** | CPU state, lazy flags, memory; no host backend yet |
-| Runtime (SDL3) | — | **planned** | video / audio / input / Win32 shim |
+| Recompiler: lifter (x86 → C) | `recompiler/lift.c` | **done** | 74,135 / 74,136 lifted (100.00%); 1 TODO is decoded data, see below |
+| Runtime | `runtime/guest.h`, `runtime/guest_ops.h` | **done** | CPU state, lazy flags, 4 GiB lazily-committed memory, PE load, import binding |
+| Runtime (SDL3) | `runtime/ddraw.c`, `win32.c`, `gdi.c`, `gamepad.c` | **done** | video / input / Win32 shim; audio is silent (no WMA decoder) |
 | Controllers | `runtime/gamepad.c` | **done** | SDL3 gamepad; auto-detect and hotswap (untested on hardware) |
 | Input path | `runtime/win32.c` | **done** | keyboard and mouse verified into game state; menu navigates |
 | Window modes | `runtime/win32.c` | **done** | windowed / borderless / fullscreen, Alt+Enter toggle |
@@ -88,3 +89,18 @@ uncomp size at `+18`, NUL-terminated path at `+62`.
 **Trap:** the installer stores each distinct file once. 17 table entries are duplicates that
 reuse an earlier blob (e.g. `bg/template/2/pic2.bmp` is byte-identical to `template/1`'s).
 A naive sequential name↔blob pairing misaligns and silently writes wrong content.
+
+## Known defect: end detection over-runs into data
+
+`fn_004450d0` contains a forward branch to `0x445106`, which is not an internal label but
+the prologue of the *next* function. The control-flow end detection therefore keeps
+extending the body to reach it, decoding the 26 bytes of data at `0x4450ec`–`0x445105`
+(`05 56 00 05 58 ...`) as instructions. That is the single remaining `TODO` in the
+generated output.
+
+It is harmless in practice — the branch jumps straight over the decoded garbage, so it is
+unreachable at runtime, which is why the game is unaffected. But it is wrong: a branch to
+another function's entry should become a tail call, not an internal `goto`. The fix is to
+check forward branch targets against the known function-entry set before letting one
+extend the body. Not attempted yet because the end-detection heuristic is what fixed the
+startup crash and is worth changing carefully.
