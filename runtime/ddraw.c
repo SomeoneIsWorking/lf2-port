@@ -49,6 +49,24 @@ static uint32_t vram_next = VRAM_BASE;
 
 long vram_allocs, vram_bytes;
 
+/* LF2_BLT_STACK bookkeeping; see the hook in the Blt path. */
+static int blt_stack_wanted, blt_stack_hit;
+static int blt_stack_best = 1 << 30, blt_stack_best_l, blt_stack_best_t;
+
+void blt_stack_report(void)
+{
+    const char *want = getenv("LF2_BLT_STACK");
+    if (!want) return;
+    if (blt_stack_hit) return;
+    if (!blt_stack_wanted) {
+        fprintf(stderr, "blt stack: NO BLITS AT ALL this run -- %s was never tested\n", want);
+        return;
+    }
+    fprintf(stderr, "blt stack: nothing landed on %s. The match is on the exact top-left\n"
+                    "           corner; the nearest destination seen was (%d,%d).\n",
+            want, blt_stack_best_l, blt_stack_best_t);
+}
+
 void vram_report(void)
 {
     /* Reported relative to VRAM_BASE. Printing the raw cursor makes a 316 MB arena look
@@ -401,8 +419,19 @@ static void surf_Blt(uint32_t self)
     if (getenv("LF2_BLT_STACK")) {
         int wx = 0, wy = 0;
         sscanf(getenv("LF2_BLT_STACK"), "%d,%d", &wx, &wy);
+        /* The match is on the exact top-left corner, so a coordinate that is one pixel out
+         * finds nothing -- and printing nothing is indistinguishable from "that rectangle
+         * is never drawn". Track the nearest destination seen so the miss can say what it
+         * did see; blt_stack_report() prints it at exit. */
+        blt_stack_wanted = 1;
+        const int d = abs(dl - wx) + abs(dt - wy);
+        if (d < blt_stack_best) {
+            blt_stack_best = d;
+            blt_stack_best_l = dl; blt_stack_best_t = dt;
+        }
         static int shown;
         if (!shown && dl == wx && dt == wy) {
+            blt_stack_hit = 1;
             shown = 1;
             /* Poor man's backtrace: scan the guest stack for values that look like code
              * addresses in .text, which are the return addresses of the frames above. */

@@ -803,3 +803,36 @@ helper whose stubbing garbled the artwork.
 
 Use these before stubbing anything. Two functions were stubbed on a plausible reading and
 both were wrong; the differential trace got it right first time.
+
+`LF2_BLT_STACK` matches on the **exact** top-left corner, so a coordinate one pixel out
+finds nothing. It used to print nothing in that case, which reads identically to "that
+rectangle is never drawn" — it now reports the miss and the nearest destination it did see,
+and says so separately if the run produced no blits at all.
+
+### The update notice — what was left after the ads
+
+`LF2_BLT_RECTS` showed one destination still alive in the top-right corner of the menu,
+`(725,5)-(787,18)`: a small **"Update on <date>"** label, drawn every frame and clickable.
+It belongs to the ad system — the part that reads `data/adinfo.txt` and `data/ad0.txt`, the
+latter being a list of banner rectangles and click-through URLs. Its click opens sub-screen
+−3, an update page that can never do anything here because WININET is stubbed.
+
+The menu's own code around it:
+
+```
+EnterCriticalSection(&ad_lock);  state = [0x00458424];  LeaveCriticalSection(...)
+if (state == 1 || state == 2)  draw clip 0x0b at (725,5)      // busy, no link
+else                           draw clip 6/7 at (725,5)       // idle, clickable
+                               if (mouse.x >= 725 && mouse.y < 18 && clicked)
+                                   sub_screen = -3
+```
+
+The state is 0 at runtime (measured, `LF2_MENU_DEBUG` prints it), so the live case is the
+clickable one. Both halves had to go: `fn_0043f010` declines that clip of `MENU_CLIP7` at
+that position, and the menu port swallows a click in the corner, because a removed control
+that still responds is worse than one that is merely invisible.
+
+Declining a draw by its identity is the same shape as declining the ad panel by its
+descriptor. The alternative — porting `fn_004246b0`'s body around the block — is 4689 lines
+of generated C with no function boundary anywhere near it, which is worth doing eventually
+but not in order to remove one label.
