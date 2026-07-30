@@ -13,6 +13,20 @@
 #include <string.h>
 #include <sys/mman.h>
 
+/* This test executes the binary's own instruction bytes on the host, so it only means
+ * anything on an x86 host -- on Apple Silicon there is nothing to compare against.
+ * MAP_32BIT is also a Linux extension; macOS on x86 already places mmap low enough for a
+ * 32-bit base register, so requesting it is unnecessary there. */
+#if defined(__x86_64__) || defined(__i386__)
+#define HOST_IS_X86 1
+#else
+#define HOST_IS_X86 0
+#endif
+
+#ifndef MAP_32BIT
+#define MAP_32BIT 0
+#endif
+
 /* The flag module and the generated cases expect these; the harness owns them here. */
 Cpu cpu;
 uint8_t *g_mem;
@@ -154,6 +168,10 @@ static uint32_t rnd(void)
 
 int main(void)
 {
+#if !HOST_IS_X86
+    printf("skipped: the instruction differential needs an x86 host to compare against\n");
+    return 0;
+#else
     page = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (page == MAP_FAILED) { perror("mmap"); return 2; }
@@ -311,4 +329,5 @@ int main(void)
            " (%ld x87 cases skipped -- harness not yet validated)\n",
            insn_ncases, ROUNDS, checked, failed, skipped_x87);
     return failed ? 1 : 0;
+#endif
 }

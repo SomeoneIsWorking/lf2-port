@@ -6,6 +6,12 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 
+/* macOS has no MAP_NORESERVE -- it never over-commits the way Linux does, so the flag is
+ * only ever a hint and dropping it changes nothing. */
+#ifndef MAP_NORESERVE
+#define MAP_NORESERVE 0
+#endif
+
 static void bind_imports(uint8_t *file, uint32_t base, uint32_t pe);
 
 Cpu cpu;
