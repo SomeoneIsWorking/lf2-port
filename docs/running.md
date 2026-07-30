@@ -495,3 +495,14 @@ behaviour, since on Windows it blocks the thread and the game is written expecti
 
 Frame rate is unchanged by the fix, measured rather than assumed: ~360 frames in 12 s
 before and after, across three runs each.
+
+**It does cost load time, and that is the right trade.** `LF2_NO_SLEEP=1` restores the old
+no-op for A/B measurement: the data load finishes at **8.2 s** with sleeps skipped and
+**13.1 s** with them honoured. The 5 s is the game's own pacing, not port overhead —
+`LF2_SLEEP_DEBUG=1` shows it requesting ~4.7 ms sleeps about 170 times a second, 28 s of
+intended sleep across 35 s of wall time, and `nanosleep` overshoot at that granularity is
+tens of microseconds. Buying 5 s of load by burning a core continuously is not a trade
+worth making, and `LF2_NO_SLEEP` is a measurement knob, not a tuning option.
+
+For reference, Wine running the same binary sits at ~40% CPU on the menu where this port
+sits at ~13%.
