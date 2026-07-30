@@ -69,6 +69,7 @@ static void write_pixelformat(uint32_t pf)
 void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int h, int src_pitch)
 {
     static long frames;
+    rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
     if (!hw.renderer) return;
     if (!hw.texture) {

@@ -21,41 +21,88 @@ enum { GUEST_SPACE = 0x100000000ull };   /* full 32-bit space, lazily committed 
 enum { STACK_TOP = 0x00300000, STACK_SIZE = 0x00100000 };
 
 /* ---- read-watch ----
- * LF2_READ_WATCH=<lo>:<hi> reports which offsets in a span the game actually loads. The
- * offsets are the interesting part -- for the key array at 0x455378 they are virtual-key
- * codes, so the set read on a given screen is that screen's input signature.
+ * LF2_READ_WATCH=<lo>:<hi> reports which offsets in a span the game loads.
  *
- * Reporting is by novelty, not by cap: a sweep closes when an offset repeats, and a set
- * is printed only when it differs from the previous sweep. Capping instead ("first 20
- * hits") would show one screen and imply the rest never happened.
+ * The raw set is useless on its own: the game rebuilds its input bitmask by sweeping the
+ * whole key array in order, so every frame reads all 250 offsets no matter what screen it
+ * is on. That bulk scan is separable by *shape* rather than by call site -- it is a long
+ * strictly-ascending run, whereas a deliberate "is this key down" check is an isolated,
+ * out-of-sequence access. Filtering ascending runs leaves the discriminating reads, and
+ * costs nothing on the hot path, unlike tracking the reading instruction's address.
+ *
+ * Sweeps are closed by the frame, which is the natural boundary. Closing them on a
+ * repeated offset instead splits the single array scan in two and leaves its tail looking
+ * like a deliberate check -- a phantom finding, which is exactly what the first version
+ * of this reported.
  */
 uint32_t g_rwatch_lo, g_rwatch_hi;
 static long rwatch_hits;
 
+/* Shortest ascending run treated as a scan. Genuine checks of adjacent keys do occur (the
+ * arrow keys are 0x25..0x28), so this must sit above any plausible cluster. */
+enum { SCAN_RUN = 16, RW_SPAN = 4096, RW_SEQ = 16384 };
+
+static uint8_t  rw_prev[RW_SPAN], rw_seen[RW_SPAN];
+static uint16_t rw_seq[RW_SEQ];
+static int rw_seqn, rw_have_prev, rw_sweeps;
+
 void rwatch_hit(uint32_t a)
 {
-    static uint8_t cur[4096], prev[4096];
-    static int have_prev, sweeps;
     const uint32_t off = a - g_rwatch_lo;
-    if (off >= sizeof cur) return;
-
+    if (off >= RW_SPAN || rw_seqn == RW_SEQ) return;
     rwatch_hits++;
-    if (cur[off]) {
-        sweeps++;
-        if (!have_prev || memcmp(cur, prev, sizeof cur) != 0) {
-            fprintf(stderr, "read set changed (sweep %d, +0x%x..):", sweeps, g_rwatch_lo);
-            for (unsigned i = 0; i < sizeof cur; i++) if (cur[i]) fprintf(stderr, " %02x", i);
-            fprintf(stderr, "\n");
-            memcpy(prev, cur, sizeof cur);
-            have_prev = 1;
-        }
-        memset(cur, 0, sizeof cur);
-    }
-    cur[off] = 1;
+    rw_seen[off] = 1;
+    rw_seq[rw_seqn++] = (uint16_t)off;
 }
 
-/* A span nothing ever reads and a span that does not exist look identical from the
- * outside, so the count is reported either way. */
+/* Called once per presented frame. */
+void rwatch_frame(void)
+{
+    if (!g_rwatch_hi || rw_seqn == 0) return;
+    rw_sweeps++;
+
+    static uint8_t cur[RW_SPAN];
+    memset(cur, 0, sizeof cur);
+    for (int i = 0; i < rw_seqn; ) {
+        int j = i + 1;
+        while (j < rw_seqn && rw_seq[j] == rw_seq[j - 1] + 1) j++;
+        if (j - i < SCAN_RUN)
+            for (int k = i; k < j; k++) cur[rw_seq[k]] = 1;
+        i = j;
+    }
+
+    if (!rw_have_prev || memcmp(cur, rw_prev, sizeof cur) != 0) {
+        fprintf(stderr, "read set changed (frame %d, +0x%x, scans filtered):",
+                rw_sweeps, g_rwatch_lo);
+        int any = 0;
+        for (int i = 0; i < RW_SPAN; i++) if (cur[i]) { fprintf(stderr, " %02x", i); any = 1; }
+        if (!any) fprintf(stderr, " (nothing but sequential scans)");
+        fprintf(stderr, "\n");
+        memcpy(rw_prev, cur, sizeof cur);
+        rw_have_prev = 1;
+    }
+    memset(rw_seen, 0, sizeof rw_seen);
+    rw_seqn = 0;
+}
+
+/* Feeds a synthetic frame: a full ascending scan plus four isolated checks. Only the four
+ * may be reported. Without this the filter would ship having never been seen to separate
+ * the two, and "(nothing but sequential scans)" would be indistinguishable from a filter
+ * that discards everything. */
+void rwatch_selftest(void)
+{
+    fprintf(stderr, "LF2_READ_WATCH selftest: expect exactly '68 57 49 26' below\n");
+    const uint32_t save_hi = g_rwatch_hi;
+    g_rwatch_hi = g_rwatch_lo + RW_SPAN;
+    for (unsigned i = 0; i < 250; i++) rwatch_hit(g_rwatch_lo + i);
+    const unsigned keys[] = { 0x68, 0x57, 0x49, 0x26 };
+    for (unsigned i = 0; i < 4; i++) rwatch_hit(g_rwatch_lo + keys[i]);
+    rwatch_frame();
+    g_rwatch_hi = save_hi;
+    rw_have_prev = 0;
+    fprintf(stderr, "LF2_READ_WATCH selftest: done\n");
+}
+
 void rwatch_report(void)
 {
     if (!g_rwatch_hi) return;
@@ -82,6 +129,7 @@ static void rwatch_init(void)
         exit(2);
     }
     g_rwatch_lo = lo; g_rwatch_hi = hi;
+    if (getenv("LF2_READ_WATCH_SELFTEST")) rwatch_selftest();
     fprintf(stderr, "LF2_READ_WATCH watching [%08x,%08x)\n", lo, hi);
 }
 
