@@ -122,8 +122,26 @@ add_custom_command(
 
 add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c runtime/test_insn.c runtime/flags.c runtime/strops.c runtime/rwatch.c)
 target_include_directories(test_insn PRIVATE runtime)
+# The committed golden vectors let a non-x86 host replay the x86 truth; on such a host
+# the bare `test_insn` run below automatically becomes a replay against this file.
+target_compile_definitions(test_insn PRIVATE
+    LF2_VECTORS_PATH="${CMAKE_SOURCE_DIR}/re/insn_vectors.bin")
 add_test(NAME instructions COMMAND test_insn)
 set_tests_properties(instructions PROPERTIES SKIP_RETURN_CODE 77)
+
+# Regenerate the vectors (x86 only): cmake --build . --target insn_vectors
+add_custom_target(insn_vectors
+    COMMAND test_insn --capture ${CMAKE_SOURCE_DIR}/re/insn_vectors.bin
+    DEPENDS test_insn
+    COMMENT "Capturing instruction golden vectors from the host CPU")
+
+# On x86 the replay path itself is exercised against the committed vectors, so a broken
+# replay cannot hide behind the live differential until someone runs it on a Mac.
+if(EXISTS ${CMAKE_SOURCE_DIR}/re/insn_vectors.bin)
+    add_test(NAME instructions_replay
+             COMMAND test_insn --replay ${CMAKE_SOURCE_DIR}/re/insn_vectors.bin)
+    set_tests_properties(instructions_replay PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 
 # End-to-end: drives the port to a running match and asserts the things that have actually
 # broken before. Slow (~75 s) and needs the extracted game tree, so it is labelled and can

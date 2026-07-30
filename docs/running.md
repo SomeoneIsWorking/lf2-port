@@ -67,14 +67,31 @@ exact defect — `FST(i) = fpu_pop();` with `fpu_pop` a `static inline` that mod
 both flag a syntactic `i = i++` control in the same file. They only handle syntactic cases.
 A clean warning sweep over the generated code is not evidence about this bug class.
 
-**Apple Silicon runs the port but not two of its tests.** The recompiled game is ordinary
-C and compiles for arm64 like anything else. The instruction differential and the flag
-test are different: both compare against the host — the first executes the binary's *own*
-x86 bytes, the second computes reference flags with x86 inline asm — which has no meaning
-on an ARM CPU. Both detect a non-x86 host and skip (exit 77, which ctest reports as a
-skip, not a pass) rather than failing. An earlier version of this note claimed the flag
-test was pure C and still ran; the first arm64 build failed on its asm constraints, so it
-plainly was not. The decoder test is pure C and still runs.
+**Apple Silicon now runs the instruction differential — against recorded x86 truth.**
+The recompiled game is ordinary C and compiles for arm64 like anything else, but two
+tests compare against the host: the instruction differential executes the binary's *own*
+x86 bytes, and the flag test computes reference flags with x86 inline asm. Neither
+comparison exists on an ARM CPU — and an arm64 build previously ran with its instruction
+semantics entirely unverified, which is exactly where physics-class bugs (a character
+walking in place, a jump that never lands) would live with no instrument to see them.
+
+The instrument now exists: **golden vectors**. On x86, `test_insn --capture
+re/insn_vectors.bin` records the host CPU's outputs for every corpus case (the committed
+file holds 8,373 cases × 8 rounds); on any host, `test_insn --replay <file>` runs the
+lifted C on identically regenerated inputs and compares. On a non-x86 host the plain
+`test_insn` run becomes this replay automatically, so `ctest` on a Mac now performs
+66,984 real comparisons instead of a skip. Cases are matched by instruction bytes, and
+each case's input stream is seeded from those bytes, so the corpus differing between
+machines (Ghidra dump here, self-derived there) does not misalign anything; replay
+reports how many cases had no vector, and a replay that matched nothing fails rather
+than passing. Validated in both directions: corrupting recorded registers produces
+register mismatches, corrupting recorded x87 slots produces `st(i)` mismatches, and a
+truncated or missing file refuses rather than comparing nothing.
+
+The flag test still skips on non-x86 (exit 77, which ctest reports as a skip). The
+decoder test is pure C and runs anywhere. An earlier version of this note claimed the
+flag test was pure C too; the first arm64 build failed on its asm constraints, so it
+plainly was not.
 
 The other thing to expect on Apple Silicon is the x87 question in `docs/isa-scope.md`:
 host `long double` is 128-bit quad there rather than the 80 bits it is on x86-64. The port
