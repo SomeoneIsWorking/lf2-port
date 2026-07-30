@@ -432,6 +432,15 @@ void fn_0043f010(void)
         R(ESP) += 4 + 24;                    /* RET 0x18: return address and six args */
         return;
     }
+
+    /* The loading screen's "To advertise on LF2" link. Its sheet handle is a heap pointer
+     * with no stable identity, but the draw has exactly one call site, inside the loading
+     * screen's presenter (fn_004242e0) -- so the call site IS the identity. Its click
+     * already goes nowhere: ShellExecuteA is a stub. */
+    if (LD32(R(ESP)) == 0x0042459a) {
+        R(ESP) += 4 + 24;
+        return;
+    }
     fn_0043f010__orig();
 }
 
@@ -472,4 +481,33 @@ void fn_00423940(void)
                 (int32_t)LD32(R(ESP) + 24), buf);
     }
     fn_00423940__orig();
+}
+
+/* ---------------------------------------------------------------------------
+ * fn_0043c4a0 -- the ad-set load: reads data/adinfo.txt to choose the current set, then
+ * parses data/ad<n>.txt and loads sprite/sys/ad<n>.bmp into the ad system's tables.
+ *
+ * This is the ROOT of every advertising surface -- the loading screen's grid, the menus'
+ * panel and strips, the banner rows are all presenters over these tables, and every one
+ * of them already handles the tables being empty. Its one caller is the ad-system init
+ * (fn_0043cf40): on a zero return the init falls to fn_0043c690, which resets adinfo.txt
+ * to the factory default ("now 0 4") and loads nothing. So returning 0 here empties every
+ * surface at once through the game's OWN no-ads fallback -- the same state a machine is
+ * in after the (long-dead) ad server fails to answer, verified clean on every screen.
+ *
+ * Declining draw by draw does not scale: the front menu's panel is element 0x0044d060
+ * but the mode menu's is 0x0044d020, and the loading screen draws through fn_004242e0
+ * with no element descriptor at all. Those per-draw declines are kept, but this is the
+ * fix for all of them at once.
+ *
+ * (Two near misses, so they are not retried: fn_0043c240 also parses ad<n>.txt but never
+ * runs at boot, and fn_0043bec0 -- gating the same init -- is the DirectDraw init check,
+ * whose failure path is "DirectDraw Init FAILED".)
+ *
+ * ABI: no arguments, RET 0; result in EAX, 0 = nothing loaded.
+ * ------------------------------------------------------------------------ */
+void fn_0043c4a0(void)
+{
+    R(EAX) = 0;
+    R(ESP) += 4;                             /* pop the return address only */
 }

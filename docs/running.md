@@ -990,3 +990,29 @@ Declining a draw by its identity is the same shape as declining the ad panel by 
 descriptor. The alternative — porting `fn_004246b0`'s body around the block — is 4689 lines
 of generated C with no function boundary anywhere near it, which is worth doing eventually
 but not in order to remove one label.
+
+### The root fix: the ad loader, not the presenters
+
+The per-draw declines above turned out to be chasing presenters, and there are more of
+them than the main menu shows: the **loading screen** draws a full-screen ad grid plus a
+"To advertise on LF2" link through `fn_004242e0`, and the **mode menu** draws the same
+panel as the front menu but under a different element descriptor (`0x0044d020`, not
+`0x0044d060`). None of this was visible on the development machine, whose
+`data/adinfo.txt` had long ago been reset to the factory default `now 0 4` — the game's
+own ad system had written it after failing to reach its (dead) ad server, so every
+"ads are gone" check here was passing against empty ad tables. A fresh install from the
+installer has a populated ad set and showed all of it (docs/issues/0001).
+
+The fix is one override at the root: `fn_0043c4a0`, the ad-set load (reads
+`data/adinfo.txt`, parses `data/ad<n>.txt`, loads `sprite/sys/ad<n>.bmp`), returns 0.
+Its one caller — the ad-system init `fn_0043cf40` — then falls to its own fallback
+`fn_0043c690`, which resets `adinfo.txt` to the factory default and loads nothing, and
+every presenter draws nothing because every one of them already handles empty tables.
+The loading screen's advertise link is the one draw not gated on those tables; it is
+declined at its single call site in `fn_0043f010`. Verified by frame dump on the loading
+screen and the mode menu against a fresh install: both clean, and the smoke and
+controller tests pass.
+
+Two near misses recorded so they are not retried: `fn_0043c240` also parses `ad<n>.txt`
+but never runs at boot, and `fn_0043bec0` — gating the same init — is the DirectDraw
+init check, whose failure path is `DirectDraw Init FAILED`.
