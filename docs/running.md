@@ -485,3 +485,13 @@ The decode is synchronous and measured at **0.15 s** for a 150-second track, so 
 threading or streaming. Both paths are verified: with ffmpeg the track loads and mixes;
 with `PATH=/nonexistent` it prints `ffmpeg not found on PATH`, reports `music-frames=0` and
 carries on silently.
+
+## CPU use
+
+The port sits at roughly **13% of one core** during play. It was 96% until `Sleep` was
+implemented: the import was mapped to a no-op that returned immediately, so the game's
+frame pacing — a `Sleep` in a loop — became a spin. Honouring it is also the faithful
+behaviour, since on Windows it blocks the thread and the game is written expecting that.
+
+Frame rate is unchanged by the fix, measured rather than assumed: ~360 frames in 12 s
+before and after, across three runs each.
