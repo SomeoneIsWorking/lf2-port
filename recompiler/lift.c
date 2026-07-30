@@ -164,7 +164,13 @@ static void rm_write(FILE *o, const x86_insn *in, int size, const char *value)
         return;
     }
     char a[128]; ea(a, sizeof a, in);
-    fprintf(o, "ST%d(%s, %s);", size * 8, a, value);
+    /* Cast narrow stores explicitly. An 8- or 16-bit store of a sign-extended immediate
+     * -- MOV byte [esp+52], 0xC0 arrives as 0xffffffc0 -- truncates to the right value
+     * either way, but relying on the implicit conversion makes the emitted code warn and
+     * hides whether the truncation was intended. */
+    if (size == 1)      fprintf(o, "ST8(%s, (uint8_t)(%s));", a, value);
+    else if (size == 2) fprintf(o, "ST16(%s, (uint16_t)(%s));", a, value);
+    else                fprintf(o, "ST32(%s, %s);", a, value);
 }
 
 static const char *reg_operand(const x86_insn *in, int size, char *buf, size_t n)
