@@ -94,6 +94,30 @@ opens on the real desktop while `import` photographs the empty Xvfb display. Uns
 `WAYLAND_DISPLAY` is not enough — SDL still finds the socket. This looked like a rendering
 bug for a while; it is purely an artefact of the capture setup.
 
+## Text and the font
+
+Part of every frame is drawn through GDI, with what on Windows is the device context's
+default proportional font. That was rendered here with SDL's 8x8 debug font — legible, but
+it looked like a debug overlay.
+
+With **SDL3_ttf** present the port uses a real system font instead, anti-aliased and
+blended against whatever the game already drew. It is an *optional* dependency: without it
+the debug-font path still runs, so a build with nothing but SDL3 keeps working. CMake says
+which it picked at configure time.
+
+No font is shipped — this repository carries no binary assets, and shipping one means
+shipping its licence. A system font is found at runtime from a short candidate list
+(DejaVu Sans, Liberation Sans, Noto Sans, and the usual macOS paths). `LF2_FONT=/path/to.ttf`
+overrides it. If nothing is found the runtime says so on stderr rather than quietly looking
+worse than it should.
+
+**What this does and does not cover.** GDI text is the menu's copyright block and the whole
+character-select panel — player numbers, `Computer`, `Join?`, fighter names, team, music and
+difficulty labels. It is **not** the in-match text (`VS mode (Difficult)`, the `1`/`Com`
+name tags) or headings like `Character Selection`: those are drawn from the game's own
+bitmap sprite sheets, which are artwork in the game data rather than a font. Changing them
+means porting the game's own text renderer, not selecting a typeface.
+
 ## Window mode
 
 `LF2_WINDOW` selects how the window is created. The game itself only ever asks for a

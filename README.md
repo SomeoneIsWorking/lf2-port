@@ -36,7 +36,8 @@ cmake -S . -B scratch/build && cmake --build scratch/build -j
 cd game && ../scratch/build/lf2 lf2.exe
 ```
 
-Needs SDL3 and a C compiler. Extraction needs only Python 3 and its standard library — no
+Needs SDL3 and a C compiler. `SDL3_ttf` is optional and used for the menu text — without it
+the text falls back to a built-in bitmap font. Extraction needs only Python 3 and its standard library — no
 Windows, no Wine. Background music additionally needs `ffmpeg` on PATH at runtime (see
 below); everything else works without it.
 
@@ -52,6 +53,7 @@ variables, are in [`docs/running.md`](docs/running.md).
 | Rendering — DirectDraw, GDI text, colour-keyed sprites | works |
 | Sound effects (DirectSound → SDL3) | works |
 | Background music (WMA) | works, needs `ffmpeg` on PATH |
+| Modern anti-aliased text | menu and character-select text, with `SDL3_ttf` (optional) |
 | Controller auto-detect and hotswap, no configuration | implemented, **untested on real hardware** |
 | Two controllers | attaches and routes, but a second pad can land on a computer-controlled slot |
 | Borderless / windowed / fullscreen, Alt+Enter | works |

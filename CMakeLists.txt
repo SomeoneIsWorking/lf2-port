@@ -81,6 +81,18 @@ endif()
 find_package(SDL3 REQUIRED CONFIG)
 target_link_libraries(lf2 PRIVATE SDL3::SDL3)
 
+# Optional: a real font for the GDI text path. Without it the built-in debug font is used,
+# which is legible but looks like a debug overlay. Kept optional rather than required
+# because the port otherwise needs nothing but SDL3.
+find_package(SDL3_ttf QUIET CONFIG)
+if(SDL3_ttf_FOUND)
+    target_link_libraries(lf2 PRIVATE SDL3_ttf::SDL3_ttf)
+    target_compile_definitions(lf2 PRIVATE LF2_HAVE_TTF)
+    message(STATUS "SDL3_ttf found: GDI text will use a system font")
+else()
+    message(STATUS "SDL3_ttf not found: GDI text will use SDL's built-in debug font")
+endif()
+
 add_executable(test_flags runtime/test_flags.c runtime/flags.c)
 target_include_directories(test_flags PRIVATE runtime)
 add_test(NAME flags COMMAND test_flags)
