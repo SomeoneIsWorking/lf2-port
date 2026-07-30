@@ -20,6 +20,9 @@ enum { DDSD_CAPS = 1, DDSD_HEIGHT = 2, DDSD_WIDTH = 4, DDSD_PITCH = 8,
        DDSD_PIXELFORMAT = 0x1000 };
 enum { DDSCAPS_PRIMARYSURFACE = 0x200 };
 enum { DDBLT_COLORFILL = 0x400, DDBLT_KEYSRC = 0x8000 };
+
+extern long ck_set, ck_blt_keyed, ck_blt_plain;
+void colorkey_report(void);
 enum { DDCKEY_SRCBLT = 0x8 };
 
 typedef struct {
@@ -109,6 +112,7 @@ void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
     screen_change_check(indexed, w, h, src_pitch, frames);
+    if (frames == 900) colorkey_report();
     if (!hw.renderer) return;
     if (!hw.texture) {
         hw.texture = SDL_CreateTexture(hw.renderer, SDL_PIXELFORMAT_XRGB8888,
@@ -309,6 +313,15 @@ static void surf_Blt(uint32_t self)
         int sl, st_, sr, sb;
         read_rect(srect, &sl, &st_, &sr, &sb, s->w, s->h);
         const int keyed = (flags & DDBLT_KEYSRC) && s->has_key;
+        if (keyed) ck_blt_keyed++; else ck_blt_plain++;
+        if (getenv("LF2_CK_DEBUG")) {
+            static long seen[8]; static uint32_t fv[8]; static int nf;
+            int hit = -1;
+            for (int i = 0; i < nf; i++) if (fv[i] == flags) hit = i;
+            if (hit < 0 && nf < 8) { fv[nf] = flags; hit = nf++; }
+            if (hit >= 0 && seen[hit]++ == 0)
+                fprintf(stderr, "Blt flags=%08x (has_key=%d)\n", flags, s->has_key);
+        }
         blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
              keyed, s->key_lo, s->key_hi);
     }
@@ -332,6 +345,15 @@ static void surf_BltFast(uint32_t self)
     if (s) {
         int sl, st_, sr, sb;
         read_rect(srect, &sl, &st_, &sr, &sb, s->w, s->h);
+        if ((flags & 1) && s->has_key) ck_blt_keyed++; else ck_blt_plain++;
+        if (getenv("LF2_CK_DEBUG")) {
+            static long seen[8]; static uint32_t fv[8]; static int nf;
+            int hit = -1;
+            for (int i = 0; i < nf; i++) if (fv[i] == flags) hit = i;
+            if (hit < 0 && nf < 8) { fv[nf] = flags; hit = nf++; }
+            if (hit >= 0 && seen[hit]++ == 0)
+                fprintf(stderr, "BltFast flags=%08x (has_key=%d)\n", flags, s->has_key);
+        }
         blit(d, dx, dy, sr - sl, sb - st_, s, sl, st_, sr - sl, sb - st_,
              (flags & 1) && s->has_key, s->key_lo, s->key_hi);
     }
@@ -339,10 +361,25 @@ static void surf_BltFast(uint32_t self)
     com_ret(6, DD_OK);
 }
 
+long ck_set, ck_blt_keyed, ck_blt_plain;
+
+/* Reports both halves and both zeros: "no keyed blits" and "no colour key was ever set"
+ * are different faults with the same symptom, and a counter that only prints when it
+ * fires cannot tell them apart. */
+void colorkey_report(void)
+{
+    if (!getenv("LF2_CK_DEBUG")) return;
+    fprintf(stderr, "colour-key: SetColorKey=%ld keyed blits=%ld unkeyed blits=%ld\n",
+            ck_set, ck_blt_keyed, ck_blt_plain);
+}
+
 static void surf_SetColorKey(uint32_t self)
 {
     Surface *s = com_host(self);
     const uint32_t key = ARG(2);
+    ck_set++;
+    if (getenv("LF2_CK_DEBUG") && ck_set <= 4)
+        fprintf(stderr, "SetColorKey #%ld flags=%08x key=%08x\n", ck_set, ARG(1), key);
     if (key) { s->has_key = 1; s->key_lo = LD32(key); s->key_hi = LD32(key + 4); }
     else s->has_key = 0;
     com_ret(3, DD_OK);
