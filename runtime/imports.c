@@ -345,14 +345,40 @@ static FILE *open_translated(const char *path)
     return fh;
 }
 
+/* The stock game shows banner advertising: a strip along the top, a panel on the right and
+ * a row along the bottom, all defined by data/ad0.txt and data/ad1.txt as clickable regions
+ * with URLs. ad1.txt in a fresh install contains "500 Internal Server Error", because the
+ * game fetches fresh ads over HTTP at startup.
+ *
+ * Ads are off by default here; LF2_ADS=1 restores them. The game's own files are left
+ * untouched -- an empty ad list is substituted at open time, so nothing in the user's game
+ * tree is modified and the change is reversible with an environment variable. */
+static FILE *empty_ad_list(void)
+{
+    static const char none[] = "20110502 0 en\ny 0 0 ye\n<end>\n";
+    return fmemopen((void *)none, sizeof none - 1, "r");
+}
+
+static int is_ad_file(const char *path)
+{
+    static int ads_on = -1;
+    if (ads_on < 0) ads_on = (getenv("LF2_ADS") != NULL);
+    if (ads_on) return 0;
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    return strcmp(base, "ad0.txt") == 0 || strcmp(base, "ad1.txt") == 0;
+}
+
 static void h_fopen(void)
 {
     const char *mode = gstr(ARG(1));
     const int text = !strchr(mode, 'b');
     const int reading = !strchr(mode, 'w') && !strchr(mode, 'a');
 
-    FILE *fh = (text && reading) ? open_translated(host_path(ARG(0)))
-                                 : fopen(host_path(ARG(0)), mode);
+    FILE *fh;
+    if (reading && is_ad_file(host_path(ARG(0)))) fh = empty_ad_list();
+    else fh = (text && reading) ? open_translated(host_path(ARG(0)))
+                                : fopen(host_path(ARG(0)), mode);
     if (!fh) { ret_cdecl(0); return; }
     const uint32_t tok = file_token(fh);
     if (getenv("LF2_STR_DEBUG"))
