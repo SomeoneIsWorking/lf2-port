@@ -506,3 +506,24 @@ worth making, and `LF2_NO_SLEEP` is a measurement knob, not a tuning option.
 
 For reference, Wine running the same binary sits at ~40% CPU on the menu where this port
 sits at ~13%.
+
+## Tests
+
+```sh
+cd scratch/build && ctest           # everything, including the ~75 s smoke test
+cd scratch/build && ctest -LE slow  # the fast set only
+```
+
+`tools/smoke_test.sh` drives the port to a running match headless and asserts what has
+actually broken before: colour-keyed blits, sound effects firing, a non-zero mix peak, the
+device being pulled, music decoding, and no aborts. Thresholds sit far below observed
+values so it fails on "broken", not on "slightly different". It skips itself if the game
+tree is absent.
+
+**It is validated against a deliberately broken build**, which is the only reason to
+believe it. Reintroducing the ADC/SBB carry bug makes it report `keyed blits: 0` and fail;
+removing it again passes at ~11,600. That check also caught a bug in the test itself:
+`grep -oE 'keyed blits=[0-9]+'` matches inside *un*`keyed blits=`, so with `tail -1` it had
+been asserting on the unkeyed count all along — a number that is large whether or not
+colour-keying works. The assertion could not have failed. The pattern is now anchored on a
+leading space.
