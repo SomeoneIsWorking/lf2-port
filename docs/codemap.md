@@ -25,7 +25,8 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Netplay | `runtime/wsock.c` | **stubbed** | reports started-but-no-network, which the game handles |
 | Startup crash | `docs/current-crash.md` | **fixed** | function-end detection; see doc |
 | Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **done** | menus, screens and GDI text all render |
-| Game flow | — | **wip** | reaches character selection: title, mode select, VS setup, players joined |
+| Game flow | `docs/running.md` | **done** | reaches gameplay: a VS-mode match runs unattended, see the click/key script |
+| Sprite colour-key | `runtime/ddraw.c` | **broken** | fighters draw with opaque black boxes; source colour-keying is not applied (only visible in gameplay, not menus) |
 
 ## The binary
 
