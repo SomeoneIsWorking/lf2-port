@@ -262,6 +262,13 @@ in ways worth recording:
 Character selection itself works fully: joining, character assignment with portraits, and
 every field populated — Player, Fighter, Team, Background, Difficulty and the music line.
 
+**How to find the answer without guessing.** The game polls keys through its own state
+array at `00455378`, and there are 29 references to it. `fn_00415140` is the clean
+one-shot helper — compare against `0x64`, consume by writing `0x75`, return the result —
+but instrumenting it shows it is never called, so the pre-fight menu uses one of the other
+consumers at `00414c20`, `00415022` or `00419b73`. Watching those with `LF2_FN_WATCH` will
+say exactly which virtual key that menu waits for, which beats trying bindings by hand.
+
 That is a choreography problem rather than a port defect: every screen renders, and input
 is verified all the way into the game's key-state array. It wants a human at the keyboard,
 or a more careful script than a fixed cycling sequence.
