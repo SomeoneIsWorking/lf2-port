@@ -19,3 +19,8 @@ void hostwin_pump(void);
 void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int h, int src_pitch);
 
 #endif
+
+void audio_report(void);
+int  music_load(const char *path);
+void music_start(void);
+void music_stop(void);

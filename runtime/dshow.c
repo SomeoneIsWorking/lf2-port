@@ -1,7 +1,8 @@
 /* DirectShow, enough for the game's background-music path.
  *
  * The game builds a filter graph, renders a .wma, and drives it through IMediaControl
- * and IMediaPosition. WMA decoding is not implemented, so the graph accepts everything
+ * and IMediaPosition. WMA is decoded by whatever ffmpeg is on PATH (see runtime/dsound.c),
+ * so the graph accepts everything
  * and reports a stopped-at-end stream -- the game proceeds without music rather than
  * calling through a null interface, which is what it did when CoCreateInstance failed.
  *
@@ -9,6 +10,7 @@
  * differs per method, so each interface carries a table of them. A generic stub that
  * guesses corrupts the guest stack. */
 #include "com.h"
+#include "hostwin.h"
 #include "guest_ops.h"
 
 #include <stdio.h>
@@ -71,12 +73,10 @@ static int graph_running;
 
 static void note_no_music(void)
 {
-    static int warned;
-    if (!warned) {
-        fprintf(stderr, "note: DirectShow present but WMA decoding is not implemented "
-                        "-- background music will be silent\n");
-        warned = 1;
-    }
+    static int said;
+    if (!said++)
+        fprintf(stderr, "note: could not read the music filename from the graph -- "
+                        "background music will be silent\n");
 }
 
 static void ds_ok(uint32_t self) { (void)self; com_ret(cur_nargs(), DD_OK); }
@@ -104,7 +104,7 @@ static void ds_QueryInterface(uint32_t self)
 }
 
 /* IMediaControl */
-static void mc_Run(uint32_t self)  { (void)self; note_no_music(); graph_running = 1; com_ret(1, DD_OK); }
+static void mc_Run(uint32_t self)  { (void)self; music_start(); graph_running = 1; com_ret(1, DD_OK); }
 static void mc_Stop(uint32_t self) { (void)self; graph_running = 0; com_ret(1, DD_OK); }
 static void mc_GetState(uint32_t self)
 {
@@ -112,12 +112,45 @@ static void mc_GetState(uint32_t self)
     if (ARG(2)) ST32(ARG(2), graph_running ? 2u : 0u);   /* State_Running / State_Stopped */
     com_ret(3, DD_OK);
 }
-static void mc_RenderFile(uint32_t self) { (void)self; note_no_music(); com_ret(2, DD_OK); }
+/* The filename arrives as UTF-16. A BSTR nominally carries its byte length in the four
+ * bytes before the pointer, but the string the game hands us has a zero there -- so the
+ * terminator is what to trust, not the prefix. Only ASCII paths occur here, which makes
+ * the conversion a narrowing copy. */
+static int bstr_to_path(uint32_t bstr, char *out, size_t n)
+{
+    if (!bstr) return 0;
+    size_t i = 0;
+    for (; i < n - 1; i++) {
+        const uint16_t w = LD16(bstr + (uint32_t)i * 2);
+        if (!w) break;
+        out[i] = (w < 0x80) ? (char)w : '?';
+    }
+    out[i] = 0;
+    return i > 0;
+}
+
+static void render_file(uint32_t bstr)
+{
+    char path[512];
+    if (getenv("LF2_AUDIO_DEBUG")) {
+        fprintf(stderr, "RenderFile bstr=%08x len=%u first16=", bstr,
+                bstr ? LD32(bstr - 4) : 0u);
+        for (int i = 0; bstr && i < 16; i++) fprintf(stderr, "%02x ", LD8(bstr + i));
+        fprintf(stderr, "\n");
+    }
+    if (!bstr_to_path(bstr, path, sizeof path)) { note_no_music(); return; }
+    /* The game uses backslashes; everything else here is POSIX. */
+    for (char *c = path; *c; c++) if (*c == '\\') *c = '/';
+    if (!music_load(path)) return;
+    fprintf(stderr, "music: loaded %s\n", path);
+}
+
+static void mc_RenderFile(uint32_t self) { (void)self; render_file(ARG(1)); com_ret(2, DD_OK); }
 
 /* IGraphBuilder::RenderFile(file, playlist) takes TWO parameters, unlike
  * IMediaControl::RenderFile(file). Sharing one handler popped four bytes too few and
  * corrupted the guest stack. */
-static void gb_RenderFile(uint32_t self) { (void)self; note_no_music(); com_ret(3, DD_OK); }
+static void gb_RenderFile(uint32_t self) { (void)self; render_file(ARG(1)); com_ret(3, DD_OK); }
 
 /* IMediaPosition: report a zero-length stream sitting at its end, so any
  * wait-for-completion loop terminates instead of spinning forever. */
