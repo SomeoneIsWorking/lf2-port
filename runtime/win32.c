@@ -125,8 +125,41 @@ static int autokey_pressed(uint32_t vk);
 /* LF2_AUTOCLICK takes one or more points, separated by semicolons, and steps through
  * them on the same schedule as the keys: "400,220;155,29". A single fixed point cannot
  * drive a sequence of screens whose buttons are in different places. */
+/* Scripted input is held this many presented frames: long enough for the game to see a
+ * discrete press, short enough not to auto-repeat. Shared by the key and click scripts. */
+enum { KEY_SCRIPT_HOLD = 8 };
+
+/* LF2_CLICK_SCRIPT="<x>,<y>:<frame>[;...]" -- the frame-scheduled counterpart, matching
+ * LF2_KEY_SCRIPT and LF2_VIRTUAL_PAD. Same reason: a wall-clock schedule drifts with the
+ * data load, so a click aimed at one screen can land on another. */
+static int click_script_state(int *x, int *y)
+{
+    const char *spec = getenv("LF2_CLICK_SCRIPT");
+    if (!spec) return 0;
+    const long frame = hostwin_frames();
+
+    for (const char *c = spec; *c; ) {
+        const int px = (int)strtol(c, (char **)&c, 10);
+        while (*c == ',' || *c == ' ') c++;
+        const int py = (int)strtol(c, (char **)&c, 10);
+        if (*c == ':') c++;
+        const long at = strtol(c, (char **)&c, 10);
+        while (*c == ';' || *c == ' ') c++;
+        /* The pointer is placed a few frames early and the button pressed after, because
+         * the menu hit-tests where the pointer IS when the click arrives -- moving and
+         * clicking on the same frame races the game's own read. */
+        if (frame >= at - 4 && frame < at + KEY_SCRIPT_HOLD) {
+            *x = px; *y = py;
+            return frame >= at;
+        }
+    }
+    return 0;
+}
+
 static int autoclick_state(int *x, int *y)
 {
+    if (getenv("LF2_CLICK_SCRIPT")) return click_script_state(x, y);
+
     const char *spec = getenv("LF2_AUTOCLICK");
     if (!spec) return 0;
 
@@ -172,8 +205,8 @@ static void pump_autoclick(void)
 {
     int x = 0, y = 0;
     static int was_down, announced;
+    if (!getenv("LF2_AUTOCLICK") && !getenv("LF2_CLICK_SCRIPT")) return;
     const int down = autoclick_state(&x, &y);
-    if (!getenv("LF2_AUTOCLICK")) return;
 
     /* Resend periodically rather than once: a single move pushed before the game starts
      * draining its queue is simply lost. Every pump is far too often -- that floods the
@@ -195,7 +228,7 @@ static void pump_autoclick(void)
 
 static void pump_autokey_messages(void)
 {
-    if (!getenv("LF2_AUTOKEY")) return;
+    if (!getenv("LF2_AUTOKEY") && !getenv("LF2_KEY_SCRIPT")) return;
     static uint8_t was_down[256];
     for (uint32_t vk = 0; vk < 256; vk++) {
         const uint8_t now = autokey_pressed(vk) ? 1 : 0;
@@ -495,8 +528,36 @@ static SDL_Scancode vk_to_scancode(uint32_t vk)
  *   LF2_AUTOKEY_EVERY=<ms>      gap between presses (default 1200)
  *   LF2_AUTOKEY_START=<ms>      when to begin (default 6000)
  */
+/* LF2_KEY_SCRIPT="<vk>:<frame>[,...]" -- the same shape as LF2_VIRTUAL_PAD, and for the
+ * same reason. The wall-clock schedule above drifts with however long the data load takes,
+ * so a press aimed at a particular screen can land on the one before or after it; the
+ * pre-fight overlay in particular has six items and a blind press lands on whichever one
+ * happens to be selected. Presented frames are exact and reproducible, so a frame-scheduled
+ * script reaches the same place every run.
+ *
+ * Keys are held for 8 frames, matching the virtual pad, which is long enough for the game
+ * to see a discrete press and short enough not to auto-repeat.
+ */
+static int key_script_pressed(uint32_t vk)
+{
+    const char *script = getenv("LF2_KEY_SCRIPT");
+    if (!script) return 0;
+    const long frame = hostwin_frames();
+
+    for (const char *c = script; *c; ) {
+        const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
+        if (*c == ':') c++;
+        const long at = strtol(c, (char **)&c, 10);
+        while (*c == ',' || *c == ' ') c++;
+        if (key == vk && frame >= at && frame < at + KEY_SCRIPT_HOLD) return 1;
+    }
+    return 0;
+}
+
 static int autokey_pressed(uint32_t vk)
 {
+    if (key_script_pressed(vk)) return 1;
+
     const char *script = getenv("LF2_AUTOKEY");
     if (!script) return 0;
 

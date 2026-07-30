@@ -65,6 +65,13 @@ enum { GX_MOUSE_X = 0x004546f0, GX_MOUSE_Y = 0x00453cdc };
  */
 enum { GX_CLICK = 0x00457580, GX_SCREEN = 0x0044d064 };
 
+/* The pre-fight overlay on the character-select screen: Fight! / Reset All / Reset Random
+ * / Background / Difficulty / Exit, index 0..5, up decrements and wraps. Located by
+ * diffing .data across a single d-pad press rather than by reading fn_0041bc90, where a
+ * search for the compare returned 20+ indistinguishable candidates; confirmed by matching
+ * 2 -> 1 against the frame where the highlight moved Reset Random -> Reset All. */
+enum { OVERLAY_SEL = 0x0044d06c };
+
 /* The ad system's update notice in the top-right corner; see fn_0043f010 below. */
 enum { MENU_CLIP7 = 0x00451188 };            /* sheet handle, loaded from "MENU_CLIP7" */
 enum { NOTICE_X = 725, NOTICE_Y = 5 };       /* the game's own constants for the notice */
@@ -184,6 +191,14 @@ void fn_004246b0(void)
             last_screen = screen; last_mode = mode;
             fprintf(stderr, "menu mode=%u screen=%u updater=%u\n",
                     mode, screen, LD32(0x00458424));
+        }
+        /* The pre-fight overlay's selection index, located by diffing .data across one
+         * d-pad press (tools/diff_data.py) and confirmed against the frame it drew. */
+        static uint32_t last_overlay = 0xfffffffdu;
+        const uint32_t overlay = LD32(OVERLAY_SEL);
+        if (overlay != last_overlay) {
+            last_overlay = overlay;
+            fprintf(stderr, "overlay selection = %u\n", overlay);
         }
     }
     /* The update notice in the top-right corner is gone (see fn_0043f010), so its hit box

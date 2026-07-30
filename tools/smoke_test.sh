@@ -2,22 +2,22 @@
 # End-to-end smoke test: drive the port deep into the game and assert the things that have
 # actually broken before.
 #
-# What it does NOT guarantee is reaching a running match. The scripted keys reach character
-# selection reliably, but whether the last presses land on "Fight!" or on "Reset Random"
-# depends on when the pre-fight overlay opens relative to the ~13 s data load, and that
-# varies between runs. Frame dumps confirmed runs that ended at character select while
-# still reporting healthy blit and audio counts.
-#
-# That does not weaken the assertions: every one of them was checked against a
-# deliberately broken build and failed there, so they detect the regressions they name
-# regardless of which of the two screens the run ends on.
+# It now reaches a running match every run, which it did not used to. The input is
+# scheduled by PRESENTED FRAME rather than by wall clock: a millisecond schedule drifts
+# with however long the ~13 s data load takes, so the last presses landed on "Fight!" or on
+# "Reset Random" depending on the run. The overlay's selection index was located
+# (0x0044d06c, see docs/running.md) and measured to start at 2, so two ups reach Fight!
+# deterministically.
 #
 # Every assertion here corresponds to a real regression:
 #   keyed blits   -- ADC/SBB dropped the carry, so DDBLT_KEYSRC was computed as 0 and
 #                    every sprite drew in an opaque black box. Nothing else caught it.
 #   audio peak    -- the mixer can run, be pulled from, and still emit pure silence.
 #   music frames  -- background music decodes through ffmpeg; a broken path is silent.
-#   sound plays   -- effects fire only once a match is running, not in the menus.
+#   sound plays   -- effects fire only once a match is running, not in the menus. This is
+#                    also what proves the run got there, and it discriminates: a run that
+#                    stopped at the overlay measured plays=1, one that reached the match
+#                    measured plays=7.
 #   no aborts     -- unimplemented opcodes and stack faults abort by design.
 #
 # Thresholds are deliberately far below observed values (11k keyed blits, 8 plays) so this
@@ -47,17 +47,17 @@ TIMER=""
 for t in /usr/bin/time /bin/time; do [ -x "$t" ] && TIMER=$t && break; done
 CPUFILE=$(mktemp); trap 'rm -f "$LOG" "$CPUFILE"' EXIT
 
-echo "running a match headless (about 75s)..."
+echo "running a match headless (about 90s)..."
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
   LF2_CK_DEBUG=1 LF2_AUDIO_DEBUG=1 LF2_SCREEN_HASH=1 \
-  LF2_AUTOCLICK_ONCE=1 LF2_AUTOCLICK=403,228 LF2_AUTOCLICK_START=3000 \
-  LF2_AUTOKEY_ONCE=1 \
-  LF2_AUTOKEY=0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x68,0x68,0x65 \
-  LF2_AUTOKEY_START=32000 LF2_AUTOKEY_EVERY=1800 \
-  LF2_QUIT_AFTER=2100 \
+  LF2_CLICK_SCRIPT="403,228:900" \
+  LF2_KEY_SCRIPT="0x65:960,0x65:1020,0x65:1080,0x65:1140,0x65:1200,0x65:1260,0x65:1320,\
+0x68:1380,0x68:1440,0x65:1500,0x65:1700,0x65:1920,0x68:2020,0x68:2080,0x65:2140,\
+0x66:2250,0x65:2300" \
+  LF2_QUIT_AFTER=2600 \
   ${TIMER:+$TIMER -f "%U %S %e" -o "$CPUFILE"} \
-  timeout 90 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
+  timeout 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 rc=$?
 
 fail=0
