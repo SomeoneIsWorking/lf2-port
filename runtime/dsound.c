@@ -274,11 +274,23 @@ static void sb_Stop(uint32_t self)
     com_ret(1, DD_OK);
 }
 
+/* The write cursor must LEAD the play cursor. Returning the same value for both -- which
+ * this did -- tells a streaming caller there is no room to write, and the game stalls: it
+ * streams into a looping buffer, and against real DirectDraw/DirectSound it locks and
+ * writes ~500 times a second, where this port managed five writes in total and then
+ * stopped. Wine reports the pair as playpos 246960 / writepos 250488, a lead of 3528
+ * bytes, which is 40 ms at the buffer's own rate; that is what is reproduced here. */
 static void sb_GetCurrentPosition(uint32_t self)
 {
     SBuf *b = com_host(self);
+    if (!b) { com_ret(3, DD_OK); return; }
+
+    const uint32_t bps = (uint32_t)(b->rate * b->channels * (b->bits / 8));
+    uint32_t lead = bps ? bps * 40u / 1000u : 0u;      /* 40 ms of write-ahead */
+    if (b->bytes && lead >= b->bytes) lead = b->bytes / 4;
+
     if (ARG(1)) ST32(ARG(1), b->pos);
-    if (ARG(2)) ST32(ARG(2), b->pos);
+    if (ARG(2)) ST32(ARG(2), b->bytes ? (b->pos + lead) % b->bytes : b->pos + lead);
     com_ret(3, DD_OK);
 }
 
