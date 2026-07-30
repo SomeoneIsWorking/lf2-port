@@ -508,6 +508,7 @@ void fn_00423940(void)
  * ------------------------------------------------------------------------ */
 void fn_0043c4a0(void)
 {
+    if (getenv("LF2_ADS_ON")) { void fn_0043c4a0__orig(void); fn_0043c4a0__orig(); return; }
     R(EAX) = 0;
     R(ESP) += 4;                             /* pop the return address only */
 }
