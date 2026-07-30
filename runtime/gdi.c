@@ -13,7 +13,12 @@
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#ifdef LF2_HAVE_TTF
+#include <SDL3_ttf/SDL_ttf.h>
+#endif
 
 #define ARG(n) LD32(R(ESP) + 4 + 4 * (n))
 
@@ -405,6 +410,117 @@ static void h_SetTextColor(void)
  * stamp the current text colour into the DirectDraw surface. That keeps both the colour
  * and the see-through behaviour right without pulling in a font library.
  */
+/* ---- text rendering ----
+ *
+ * The game draws part of every frame through GDI, with the device context's default font.
+ * On Windows that is a proportional system font; here it was SDL's 8x8 debug font, which
+ * is legible but looks like a debug overlay rather than a game.
+ *
+ * With SDL3_ttf present a real font is used instead, anti-aliased and blended against
+ * what is already on the surface. Without it the debug-font path below still runs, so
+ * SDL3_ttf is optional rather than a new hard dependency for a port that otherwise needs
+ * only SDL3.
+ *
+ * The font is a system font found at runtime. Shipping one would mean shipping its
+ * licence, and this repository deliberately carries no binary assets. LF2_FONT overrides
+ * the search.
+ */
+#ifdef LF2_HAVE_TTF
+enum { TEXT_PT = 13 };          /* close to the ~11 px Windows default at 96 dpi */
+
+static TTF_Font *ui_font;
+static int ui_font_tried;
+
+static TTF_Font *font_open(void)
+{
+    if (ui_font_tried) return ui_font;
+    ui_font_tried = 1;
+
+    if (!TTF_Init()) {
+        fprintf(stderr, "text: TTF_Init failed (%s); using the built-in font\n",
+                SDL_GetError());
+        return NULL;
+    }
+
+    /* Candidates, in preference order. Ordinary UI sans faces that exist by default on
+     * mainstream Linux distributions and on macOS. */
+    static const char *const CANDIDATES[] = {
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+    };
+
+    const char *override = getenv("LF2_FONT");
+    if (override && *override) {
+        ui_font = TTF_OpenFont(override, TEXT_PT);
+        if (!ui_font)
+            fprintf(stderr, "text: LF2_FONT=%s could not be opened (%s)\n",
+                    override, SDL_GetError());
+    }
+    for (unsigned i = 0; !ui_font && i < sizeof CANDIDATES / sizeof CANDIDATES[0]; i++)
+        ui_font = TTF_OpenFont(CANDIDATES[i], TEXT_PT);
+
+    /* Say which font is in use, and say it loudly when none was found -- silently falling
+     * back to the debug font would look like the new path is simply ugly. */
+    if (!ui_font)
+        fprintf(stderr, "text: no system font found in %u candidates; using the built-in\n"
+                        "      font. Set LF2_FONT=/path/to/font.ttf to choose one.\n",
+                (unsigned)(sizeof CANDIDATES / sizeof CANDIDATES[0]));
+    else if (getenv("LF2_TEXT_DEBUG"))
+        fprintf(stderr, "text: using a TTF font at %d pt\n", TEXT_PT);
+    return ui_font;
+}
+
+/* Returns 1 if it drew. Blends by coverage, so the anti-aliased edges sit on whatever the
+ * game already drew rather than on a black box. */
+static int text_draw_ttf(const char *text, int x, int y,
+                         uint32_t dpix, int dwid, int dhei, int dpitch)
+{
+    TTF_Font *font = font_open();
+    if (!font) return 0;
+
+    SDL_Color white = { 255, 255, 255, 255 };
+    SDL_Surface *glyphs = TTF_RenderText_Blended(font, text, 0, white);
+    if (!glyphs) return 0;
+    SDL_Surface *rgba = SDL_ConvertSurface(glyphs, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(glyphs);
+    if (!rgba) return 0;
+
+    const int tr = (int)((text_colour >> 16) & 0xff);
+    const int tg = (int)((text_colour >> 8) & 0xff);
+    const int tb = (int)(text_colour & 0xff);
+
+    for (int ty = 0; ty < rgba->h; ty++) {
+        const int dy = y + ty;
+        if (dy < 0 || dy >= dhei) continue;
+        const uint32_t *src = (const uint32_t *)((const uint8_t *)rgba->pixels
+                                                 + (size_t)ty * (size_t)rgba->pitch);
+        uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
+        for (int tx = 0; tx < rgba->w; tx++) {
+            const int dx = x + tx;
+            if (dx < 0 || dx >= dwid) continue;
+            const int a = (int)(src[tx] >> 24);
+            if (!a) continue;
+            const uint32_t bg = dst[dx];
+            const int br = (int)((bg >> 16) & 0xff), bgc = (int)((bg >> 8) & 0xff);
+            const int bb = (int)(bg & 0xff);
+            const int r = (tr * a + br * (255 - a)) / 255;
+            const int g = (tg * a + bgc * (255 - a)) / 255;
+            const int b = (tb * a + bb * (255 - a)) / 255;
+            dst[dx] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+        }
+    }
+    SDL_DestroySurface(rgba);
+    return 1;
+}
+#endif /* LF2_HAVE_TTF */
+
 static void h_TextOutA(void)
 {
     const uint32_t hdc = ARG(0), str = ARG(3);
@@ -426,6 +542,14 @@ static void h_TextOutA(void)
      * on" in the menu corner was traced back to the ad updater. */
     if (getenv("LF2_TEXT_DEBUG"))
         fprintf(stderr, "text (%d,%d) %d %s\n", x, y, len, text);
+
+#ifdef LF2_HAVE_TTF
+    if (text_draw_ttf(text, x, y, dpix, dwid, dhei, dpitch)) {
+        ddraw_surface_present(hdc);
+        ret_stdcall(5, 1);
+        return;
+    }
+#endif
 
     const int w = len * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE;
     const int h = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE;
