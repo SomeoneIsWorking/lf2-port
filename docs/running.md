@@ -613,6 +613,14 @@ tables doing two `strcmp`s per entry, **on every call**. Caching the resolution 
 took the data load from **13.1 s to 10.2 s** (measured twice, identical), and the cache is
 correct by construction: the guest's import table is fixed once the image is loaded.
 
+**Is 10 s slow?** Not obviously. Wine running the same binary on the same machine takes
+about the same order of time to get past its main menu after the equivalent click (screen
+content stops changing at ~11 s, measured by perceptual hash of the framebuffer). That
+comparison is coarse — a hash cannot tell the loading screen from the mode menu, so no
+precise ratio should be read into it — but it is enough to say the recompiled code is not
+grossly slower than the original. There is no obvious win left here, which is why the
+investigation stopped.
+
 The obvious follow-up did **not** pay off, which is worth recording so it is not tried
 again: `h_fscanf` called `getenv` on every one of those 2.5M invocations, and caching it
 changed the load time by nothing measurable (10.1 s / 10.3 s against 10.2 s). glibc's
