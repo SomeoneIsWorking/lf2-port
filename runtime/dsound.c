@@ -334,8 +334,13 @@ static void ds_CreateSoundBuffer(uint32_t self)
 {
     (void)self;
     const uint32_t desc = ARG(1), out = ARG(2);
-    const uint32_t bytes = LD32(desc + 12);      /* DSBUFFERDESC.dwBufferBytes */
-    const uint32_t wfx = LD32(desc + 20);        /* .lpwfxFormat */
+    /* DSBUFFERDESC: dwSize +0, dwFlags +4, dwBufferBytes +8, dwReserved +12,
+     * lpwfxFormat +16, guid3DAlgorithm +20. These were read at +12 and +20, i.e.
+     * dwReserved and the GUID, so every buffer came out as the 4-byte fallback with the
+     * default format -- 116 buffers all reporting "4 bytes, 22050 Hz 1ch 8bit" while the
+     * oracle creates them at 7006, 34156, 41096, 144384, 352800 bytes. */
+    const uint32_t bytes = LD32(desc + 8);
+    const uint32_t wfx = LD32(desc + 16);
 
     SBuf *b = SDL_calloc(1, sizeof *b);
     b->bytes = bytes ? bytes : 4;
@@ -352,6 +357,9 @@ static void ds_CreateSoundBuffer(uint32_t self)
         if (b->bits != 8 && b->bits != 16) b->bits = 8;
     }
     if (nbufs < MAX_BUFS) { bufs[nbufs++] = b; au_bufs++; }
+    if (getenv("LF2_AUDIO_DEBUG"))
+        fprintf(stderr, "buffer created: %u bytes, %d Hz %dch %dbit\n",
+                b->bytes, b->rate, b->channels, b->bits);
     ST32(out, com_create(IF_DSBUFFER, b));
     com_ret(4, DD_OK);
 }
@@ -370,6 +378,9 @@ static void ds_DuplicateSoundBuffer(uint32_t self)
     b->playing = 0;
     b->pos = 0;
     if (nbufs < MAX_BUFS) { bufs[nbufs++] = b; au_bufs++; }
+    if (getenv("LF2_AUDIO_DEBUG"))
+        fprintf(stderr, "buffer created: %u bytes, %d Hz %dch %dbit\n",
+                b->bytes, b->rate, b->channels, b->bits);
     ST32(out, com_create(IF_DSBUFFER, b));
     com_ret(3, DD_OK);
 }
