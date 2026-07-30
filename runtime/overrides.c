@@ -182,10 +182,18 @@ static void menu_sync_from_pointer(const Item *items, int n)
     if (best >= 0 && best_d <= 90) menu_index = best;
 }
 
+/* The top-level mode, cached for the input gather's routing: everything before the game
+ * proper routes every device to player one, the game proper assigns devices first come
+ * first served. Written by the menu override because fn_004246b0 runs every frame and is
+ * the function whose `this` holds the mode. */
+static uint32_t top_mode = 0xffffffffu;
+
 void fn_004246b0(void)
 {
     const uint32_t mode = R(ECX) ? LD32(R(ECX)) : 0xffffffffu;
     const uint32_t screen = LD32(GX_SCREEN);
+    top_mode = mode;
+    controls_hint_enable(mode != MODE_IN_GAME);
     if (getenv("LF2_MENU_DEBUG")) {
         static uint32_t last_screen = 0xfffffffdu, last_mode = 0xfffffffdu;
         if (screen != last_screen || mode != last_mode) {
@@ -320,49 +328,106 @@ void input_report(void)
             in_frames, in_live, in_padded, in_presses);
 }
 
+/* ---- devices, first come first served ----
+ *
+ * One keyboard layout (arrows to move, Z attack, X jump, C defend) plus every connected
+ * pad form a pool of DEVICES. Outside the game proper every device drives player one, so
+ * anyone can work the menus. Inside it (top-level mode 2: character selection and the
+ * match) the first device to press anything claims player one, the next player two, and
+ * so on; a claim holds until the game returns to the front end. Joining stays the game's
+ * own logic -- a claimed device's attack lands in its player's buttons, and that is what
+ * fn_0041bc90 already treats as "join".
+ *
+ * The original gather still runs first for everything that is not a live device: slot
+ * bookkeeping, recording playback (device selector -1) and the packed-mask plumbing. Its
+ * BUTTONS for live slots are then overwritten, not merged -- the control.txt keyboard
+ * layouts are exactly what "only one keyboard layout" removes. */
+enum { MAX_DEV = 5 };                    /* the keyboard, then up to four pads */
+
+static int dev_player[MAX_DEV] = { -1, -1, -1, -1, -1 };
+static unsigned char dev_prev[MAX_DEV][7];
+
+static int device_buttons(int dev, unsigned char out[7])
+{
+    if (dev == 0) {
+        /* up, down, left, right, attack, jump, defend -- the game's button order */
+        static const uint8_t VKS[7] = { 0x26, 0x28, 0x25, 0x27, 0x5A, 0x58, 0x43 };
+        for (int b = 0; b < 7; b++) out[b] = (unsigned char)(hostwin_key_held(VKS[b]) != 0);
+        return 1;                        /* a keyboard is always there */
+    }
+    return gamepad_player_buttons(dev - 1, out);
+}
+
 void fn_00419a60(void)
 {
     const uint32_t self = R(ECX);              /* __thiscall */
     const uint32_t mask_buf = LD32(R(ESP) + 12);
 
-    fn_00419a60__orig();                       /* configured devices, unchanged */
+    fn_00419a60__orig();                       /* slots, recording, masks, unchanged */
 
     const int want_mask   = LD32(NET_OR_RECORD) != 0;
     const int want_mirror = (int8_t)LD8(RECORDING) > 0;
+    const int in_game     = top_mode == MODE_IN_GAME;
 
-    /* Counters, not a hit log: the interesting failure is that this never merges anything,
-     * and a diagnostic that only prints when it does would be silent in exactly that case.
-     * live/pads/merges together say which of "no player slot", "no controller" and "nothing
-     * pressed" actually happened. */
     in_frames++;
-    /* Pads are handed to live slots in order, so pad 0 is the first joined player and
-     * pad 1 the second. A slot the game has filled with a computer is still a live slot,
-     * which sounds like a problem and is not: an unjoined slot shows "Join?" until player
-     * one PROCEEDS past character selection, so a second pad that presses before then owns
-     * the slot itself. Measured, after this was documented wrongly twice -- see
-     * docs/running.md and tools/controller_2p_test.sh.
-     */
-    int pad_index = 0;
-    for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END; sel += 4, i++) {
-        if ((int32_t)LD32(sel) <= 0) continue;         /* slot takes no live input */
+
+    /* Assignments live only inside the game proper; leaving it (or never having entered)
+     * clears them, so the next character selection is first come first served again. */
+    if (!in_game)
+        for (int d = 0; d < MAX_DEV; d++) dev_player[d] = -1;
+
+    /* Device states this frame, claims on a fresh press. A device's FIRST press both
+     * claims the next free player and lands in that player's buttons, so pressing attack
+     * on the join screen claims and joins in one stroke. */
+    unsigned char btn[MAX_DEV][7];
+    int present[MAX_DEV];
+    for (int d = 0; d < MAX_DEV; d++) {
+        present[d] = device_buttons(d, btn[d]);
+        if (!present[d]) { memset(dev_prev[d], 0, 7); continue; }
+        if (in_game && dev_player[d] < 0) {
+            int fresh = 0;
+            for (int b = 0; b < 7; b++) fresh |= btn[d][b] && !dev_prev[d][b];
+            if (fresh) {
+                int used[4] = { 0, 0, 0, 0 };
+                for (int e = 0; e < MAX_DEV; e++)
+                    if (dev_player[e] >= 0 && dev_player[e] < 4) used[dev_player[e]] = 1;
+                for (int p = 0; p < 4; p++)
+                    if (!used[p]) { dev_player[d] = p; break; }
+            }
+        }
+        memcpy(dev_prev[d], btn[d], 7);
+    }
+
+    for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END && i < 4; sel += 4, i++) {
+        if ((int32_t)LD32(sel) <= 0) continue;         /* recording or demo: not ours */
         in_live++;
 
-        unsigned char btn[7];
-        if (!gamepad_player_buttons(pad_index++, btn)) continue;
-        in_padded++;
+        /* This slot's buttons from OUR devices only: outside the game everything routes
+         * to the first slot; inside it, whatever claimed this player. A slot the game
+         * has filled with a computer is still a live slot and its AI writes its buttons
+         * after this gather, so writing here is harmless -- measured back when pads
+         * merged by slot order (see tools/controller_2p_test.sh). */
+        unsigned char out[7] = { 0, 0, 0, 0, 0, 0, 0 };
+        int fed = 0;
+        for (int d = 0; d < MAX_DEV; d++) {
+            if (!present[d]) continue;
+            const int target = in_game ? dev_player[d] : 0;
+            if (target != (int)i) continue;
+            fed = 1;
+            for (int b = 0; b < 7; b++) out[b] |= btn[d][b];
+        }
+        if (fed) in_padded++;
 
         const uint32_t obj = LD32(self + PLAYER_PTRS + 4 * i);
         if (!obj) continue;
-        for (int b = 0; b < 7; b++) in_presses += btn[b];
 
+        uint8_t mask = 0;
         for (int b = 0; b < 7; b++) {
-            if (!btn[b]) continue;
-            ST8(obj + BTN_CUR + b, 1);
-            if (want_mask)
-                ST8(mask_buf + i, (uint8_t)(LD8(mask_buf + i) | BTN_BIT[b]));
-            if (want_mirror)
-                ST8(MASK_MIRROR + i, (uint8_t)(LD8(MASK_MIRROR + i) | BTN_BIT[b]));
+            ST8(obj + BTN_CUR + b, out[b]);
+            if (out[b]) { mask |= BTN_BIT[b]; in_presses++; }
         }
+        if (want_mask)   ST8(mask_buf + i, mask);
+        if (want_mirror) ST8(MASK_MIRROR + i, mask);
     }
 }
 

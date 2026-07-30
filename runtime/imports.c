@@ -457,6 +457,7 @@ enum { SCAN_MAX = 12, SCAN_SLOT = 512 };
 typedef struct {
     char conv;
     int  suppressed;
+    int  is_long;                 /* %lf stores a DOUBLE -- 8 bytes, not 4 */
     uint32_t out;                 /* guest destination */
 } ScanArg;
 
@@ -468,14 +469,15 @@ static int scan_parse(const char *fmt, uint32_t argp, ScanArg *args)
         if (*f != '%') continue;
         f++;
         if (*f == '%') continue;
-        int suppressed = 0;
+        int suppressed = 0, is_long = 0;
         if (*f == '*') { suppressed = 1; f++; }
-        while (*f && !strchr("diouxXcsfgeEnp[", *f)) f++;
+        while (*f && !strchr("diouxXcsfgeEnp[", *f)) { if (*f == 'l') is_long = 1; f++; }
         if (!*f) break;
         if (*f == '[' || *f == 'n' || *f == 'p') return -1;   /* not used by this game */
         if (n >= SCAN_MAX) return -1;
         args[n].conv = *f;
         args[n].suppressed = suppressed;
+        args[n].is_long = is_long;
         args[n].out = suppressed ? 0 : LD32(argp);
         if (!suppressed) argp += 4;
         n++;
@@ -491,9 +493,16 @@ static void scan_store(const ScanArg *a, const void *slot)
         ST32(a->out, (uint32_t)*(const int *)slot);
         break;
     case 'f': case 'g': case 'e': case 'E': {
-        uint32_t bits;
-        __builtin_memcpy(&bits, slot, 4);
-        ST32(a->out, bits);
+        /* %lf is a DOUBLE: the host wrote 8 bytes, and MSVC's scanf stores 8 into the
+         * caller's variable. Storing only the low half left the value's entire magnitude
+         * in whatever guest memory previously held -- every %lf in the game is a
+         * character-header physics field (walking_speed, jump_height, ...), so this was
+         * a physics bug wearing a portability costume: right on a heap whose stale
+         * contents happened to hold the old default, zero or garbage elsewhere. */
+        uint64_t bits = 0;
+        __builtin_memcpy(&bits, slot, a->is_long ? 8 : 4);
+        ST32(a->out, (uint32_t)bits);
+        if (a->is_long) ST32(a->out + 4, (uint32_t)(bits >> 32));
         break;
     }
     case 'c':
