@@ -81,3 +81,13 @@ add_custom_command(
 add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c runtime/test_insn.c runtime/flags.c runtime/strops.c runtime/rwatch.c)
 target_include_directories(test_insn PRIVATE runtime)
 add_test(NAME instructions COMMAND test_insn)
+
+# End-to-end: drives the port to a running match and asserts the things that have actually
+# broken before. Slow (~75 s) and needs the extracted game tree, so it is labelled and can
+# be skipped with `ctest -LE slow`. It skips itself (exit 77) if the tree is absent.
+add_test(NAME smoke
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/smoke_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(smoke PROPERTIES
+                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
