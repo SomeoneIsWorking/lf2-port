@@ -320,12 +320,16 @@ static void surf_Blt(uint32_t self)
         const int keyed = ((flags & DDBLT_KEYSRC) || getenv("LF2_CK_FORCE")) && s->has_key;
         if (keyed) ck_blt_keyed++; else ck_blt_plain++;
         if (getenv("LF2_CK_DEBUG")) {
-            static long seen[8]; static uint32_t fv[8]; static int nf;
+            /* Keyed by (flags, caller): the caller is the part that leads anywhere, since
+             * it names the guest code that decides whether to ask for the key. */
+            static long seen[16]; static uint32_t fv[16], cv[16]; static int nf;
+            const uint32_t caller = LD32(R(ESP));
             int hit = -1;
-            for (int i = 0; i < nf; i++) if (fv[i] == flags) hit = i;
-            if (hit < 0 && nf < 8) { fv[nf] = flags; hit = nf++; }
+            for (int i = 0; i < nf; i++) if (fv[i] == flags && cv[i] == caller) hit = i;
+            if (hit < 0 && nf < 16) { fv[nf] = flags; cv[nf] = caller; hit = nf++; }
             if (hit >= 0 && seen[hit]++ == 0)
-                fprintf(stderr, "Blt flags=%08x (has_key=%d)\n", flags, s->has_key);
+                fprintf(stderr, "Blt flags=%08x has_key=%d from guest %08x\n",
+                        flags, s->has_key, caller);
         }
         blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
              keyed, s->key_lo, s->key_hi);
