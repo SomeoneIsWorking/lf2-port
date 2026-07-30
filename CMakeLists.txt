@@ -96,6 +96,7 @@ endif()
 add_executable(test_flags runtime/test_flags.c runtime/flags.c)
 target_include_directories(test_flags PRIVATE runtime)
 add_test(NAME flags COMMAND test_flags)
+set_tests_properties(flags PROPERTIES SKIP_RETURN_CODE 77)
 
 if(EXISTS ${CMAKE_SOURCE_DIR}/re/instructions.tsv)
     set(INSN_TSV ${CMAKE_SOURCE_DIR}/re/instructions.tsv)

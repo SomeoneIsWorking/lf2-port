@@ -7,12 +7,22 @@
 
 #include <stdio.h>
 
+/* The reference flags come from executing the same operation on the host, so the whole
+ * test only means anything on an x86 host -- and the asm does not even compile elsewhere. */
+#if defined(__x86_64__) || defined(__i386__)
+#define HOST_IS_X86 1
+#else
+#define HOST_IS_X86 0
+#endif
+
 /* The flag module needs the CPU record and guest memory; the test drives them
  * directly and never touches memory. */
 Cpu cpu;
 uint8_t *g_mem;
 
 enum { CF = 1u << 0, PF = 1u << 2, ZF = 1u << 6, SF = 1u << 7, OF = 1u << 11 };
+
+#if HOST_IS_X86
 
 static long failures, checks;
 
@@ -125,8 +135,14 @@ static void t_sar(uint32_t a, unsigned n)
     compare("sarl32", a, n, (uint32_t)fl);
 }
 
+#endif /* HOST_IS_X86 */
+
 int main(void)
 {
+#if !HOST_IS_X86
+    printf("skipped: the flag differential needs an x86 host to compare against\n");
+    return 77;
+#else
     static const uint32_t V[] = {
         0, 1, 2, 7, 0x7f, 0x80, 0xff, 0x100, 0x7fff, 0x8000, 0xffff,
         0x7ffffffeu, 0x7fffffffu, 0x80000000u, 0x80000001u, 0xfffffffeu, 0xffffffffu,
@@ -147,4 +163,5 @@ int main(void)
 
     printf("%ld flag checks, %ld failures\n", checks, failures);
     return failures ? 1 : 0;
+#endif
 }
