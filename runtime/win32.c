@@ -563,7 +563,7 @@ static void h_GetKeyState(void)
     const SDL_Scancode sc = vk_to_scancode(ARG(0));
     int n = 0;
     const bool *state = SDL_GetKeyboardState(&n);
-    const int down = (sc != SDL_SCANCODE_UNKNOWN && sc < n && state[sc]);
+    const int down = (sc != SDL_SCANCODE_UNKNOWN && (int)sc < n && state[sc]);
     ret_stdcall(1, down ? 0xFF80u : 0u);   /* high bit set while held */
 }
 
@@ -593,12 +593,10 @@ static void h_ClientToScreen(void)
     ret_stdcall(2, 1);
 }
 
-static void h_u0_1(void) { ret_stdcall(1, 0); }
 static void h_u1_1(void) { ret_stdcall(1, 1); }
 static void h_u1_2(void) { ret_stdcall(2, 1); }
 static void h_u1_3(void) { ret_stdcall(3, 1); }
 static void h_u1_6(void) { ret_stdcall(6, 1); }
-static void h_u1_0(void) { ret_stdcall(0, 1); }
 static void h_u1_4_defwnd(void) { ret_stdcall(4, 0); }
 
 /* ole32: the game only uses COM to reach DirectSound. */

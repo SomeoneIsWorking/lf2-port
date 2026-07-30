@@ -122,11 +122,6 @@ static void h_GetVersionExA(void)
 static void h_ret0_0(void) { ret_stdcall(0, 0); }
 static void h_ret1_0(void) { ret_stdcall(0, 1); }
 static void h_ret0_1(void) { ret_stdcall(1, 0); }
-static void h_ret0_2(void) { ret_stdcall(2, 0); }
-static void h_ret0_3(void) { ret_stdcall(3, 0); }
-static void h_ret0_4(void) { ret_stdcall(4, 0); }
-static void h_ret1_1(void) { ret_stdcall(1, 1); }
-static void h_ret1_2(void) { ret_stdcall(2, 1); }
 static void h_ret1_4(void) { ret_stdcall(4, 1); }
 
 static void h_GetCurrentProcess(void)   { ret_stdcall(0, 0xFFFFFFFFu); }
@@ -775,16 +770,6 @@ static void h_timeGetTime(void)
     clock_gettime(CLOCK_MONOTONIC, &ts);
     ret_stdcall(0, (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000));
 }
-
-/* Joystick: reports no devices for now. The SDL3 gamepad backend replaces these, and
- * that is where hotplug support arrives -- see docs/platform-boundary.md. */
-enum { JOYERR_UNPLUGGED = 167 };
-static void h_joyGetNumDevs(void)  { ret_stdcall(0, 0); }
-static void h_joyGetDevCaps(void)  { ret_stdcall(3, JOYERR_UNPLUGGED); }
-static void h_joyGetPosEx(void)    { ret_stdcall(2, JOYERR_UNPLUGGED); }
-static void h_joyGetPos(void)      { ret_stdcall(2, JOYERR_UNPLUGGED); }
-static void h_joySetCapture(void)  { ret_stdcall(4, JOYERR_UNPLUGGED); }
-static void h_joySetThreshold(void){ ret_stdcall(2, JOYERR_UNPLUGGED); }
 
 /* ---- table ---- */
 

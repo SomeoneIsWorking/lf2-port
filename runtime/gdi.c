@@ -147,7 +147,7 @@ static Bitmap *bmp_load(const char *path)
 
 static uint32_t bitmap_handle(Bitmap *b)
 {
-    if (!b || nbitmaps >= MAX_GDI) return 0;
+    if (!b || nbitmaps >= (int)MAX_GDI) return 0;
     bitmaps[nbitmaps] = b;
     return H_BITMAP + (uint32_t)nbitmaps++;
 }
@@ -288,7 +288,7 @@ static void h_LoadImageA(void)
 
 static void h_CreateCompatibleDC(void)
 {
-    if (ndcs >= MAX_GDI) { ret_stdcall(1, 0); return; }
+    if (ndcs >= (int)MAX_GDI) { ret_stdcall(1, 0); return; }
     dc_bitmap[ndcs] = 0;
     ret_stdcall(1, H_DC + (uint32_t)ndcs++);
 }

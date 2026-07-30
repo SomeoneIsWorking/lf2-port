@@ -16,7 +16,9 @@ typedef struct {
 
 extern HostWin hw;
 void hostwin_pump(void);
-void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int h, int src_pitch);
+/* Surfaces are 32-bit XRGB; the palette parameter this used to take was dead from
+ * the point the 8-bit assumption was dropped, and every caller passed NULL. */
+void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch);
 
 #endif
 
