@@ -61,15 +61,20 @@ static const int MENU_ITEM_Y[] = { 228, 259, 292, 322, 353 };
 enum { MENU_ITEM_X = 403,
        N_MENU_ITEMS = (int)(sizeof MENU_ITEM_Y / sizeof MENU_ITEM_Y[0]) };
 
+enum { GX_SCREEN = 0x0044d064, SCREEN_MAIN_MENU = 0 };
+
 static int menu_index;
 static int menu_confirm_frames;
+static int menu_owns_pointer;        /* set once the selection has been moved by a pad */
+static uint32_t menu_wrote_x, menu_wrote_y;
 
-/* Called from the controller layer. Returns nonzero if the menu consumed the input. */
+/* Called from the controller layer. */
 int menu_move(int delta)
 {
     menu_index += delta;
     if (menu_index < 0) menu_index = N_MENU_ITEMS - 1;
     if (menu_index >= N_MENU_ITEMS) menu_index = 0;
+    menu_owns_pointer = 1;
     return 1;
 }
 
@@ -78,13 +83,38 @@ void menu_confirm(void)
     menu_confirm_frames = 2;          /* held long enough for the menu to sample it */
 }
 
+/* Keep the two input methods consistent. If the pointer has moved to somewhere the port
+ * did not put it, a real mouse is being used: adopt whatever it is pointing at as the
+ * selection and hand control back, so picking up the mouse after using a pad does not
+ * fight it, and vice versa. */
+static void menu_sync_from_pointer(void)
+{
+    const uint32_t px = LD32(GX_MOUSE_X), py = LD32(GX_MOUSE_Y);
+    if (menu_owns_pointer && px == menu_wrote_x && py == menu_wrote_y) return;
+
+    menu_owns_pointer = 0;
+    int best = -1, best_d = 1 << 30;
+    for (int i = 0; i < N_MENU_ITEMS; i++) {
+        const int d = (int)py - MENU_ITEM_Y[i];
+        const int ad = d < 0 ? -d : d;
+        if (ad < best_d) { best_d = ad; best = i; }
+    }
+    if (best >= 0 && best_d <= 16) menu_index = best;
+}
+
 void fn_004246b0(void)
 {
-    /* Place the pointer on the selected item so the game highlights it. Skipped while the
-     * real mouse is being used, so a mouse still works normally. */
-    if (menu_index > 0 || menu_confirm_frames) {
-        ST32(GX_MOUSE_X, (uint32_t)MENU_ITEM_X);
-        ST32(GX_MOUSE_Y, (uint32_t)MENU_ITEM_Y[menu_index]);
+    /* Only the main menu is ported. On every other screen this is pure delegation, so
+     * nothing here can disturb the control settings or recording pages. */
+    if (LD32(GX_SCREEN) != SCREEN_MAIN_MENU) { fn_004246b0__orig(); return; }
+
+    menu_sync_from_pointer();
+
+    if (menu_owns_pointer || menu_confirm_frames) {
+        menu_wrote_x = (uint32_t)MENU_ITEM_X;
+        menu_wrote_y = (uint32_t)MENU_ITEM_Y[menu_index];
+        ST32(GX_MOUSE_X, menu_wrote_x);
+        ST32(GX_MOUSE_Y, menu_wrote_y);
     }
     if (menu_confirm_frames > 0) {
         menu_confirm_frames--;
