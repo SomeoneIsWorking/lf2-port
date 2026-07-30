@@ -91,6 +91,13 @@ static const Item RECORDING_INFO[] = {
     { 480, 428 },  /* cancel */
 };
 
+/* fn_004246b0 is a __thiscall method and [this+0] is the TOP-level mode: 0 while loading,
+ * 1 the front-end menu, 2 character selection (which it dispatches to fn_0041bc90).
+ * 0x0044d064 is only the sub-screen within mode 1, so keying off it alone would let these
+ * tables fire on the character-select screen whenever that variable happened to hold a
+ * matching value. Both are checked. */
+enum { MODE_FRONT_END = 1 };
+
 static const struct { uint32_t screen; const Item *items; int n; } SCREENS[] = {
     { 0, MAIN_MENU,        (int)(sizeof MAIN_MENU / sizeof MAIN_MENU[0]) },
     { 6, CONTROL_SETTINGS, (int)(sizeof CONTROL_SETTINGS / sizeof CONTROL_SETTINGS[0]) },
@@ -148,15 +155,19 @@ static void menu_sync_from_pointer(const Item *items, int n)
 
 void fn_004246b0(void)
 {
+    const uint32_t mode = R(ECX) ? LD32(R(ECX)) : 0xffffffffu;
     const uint32_t screen = LD32(GX_SCREEN);
     if (getenv("LF2_MENU_DEBUG")) {
         static uint32_t last = 0xfffffffdu;
         if (screen != last) { last = screen; fprintf(stderr, "menu screen = %u\n", screen); }
+        static uint32_t last_mode = 0xfffffffdu;
+        const uint32_t mode = R(ECX) ? LD32(R(ECX)) : 0xffffffffu;
+        if (mode != last_mode) { last_mode = mode; fprintf(stderr, "menu mode [this] = %u\n", mode); }
     }
     int n = 0;
-    const Item *items = screen_items(screen, &n);
+    const Item *items = (mode == MODE_FRONT_END) ? screen_items(screen, &n) : NULL;
 
-    /* Screens without an item table are pure delegation. */
+    /* Anything outside the front-end menu, or without an item table, is pure delegation. */
     if (!items) { fn_004246b0__orig(); return; }
 
     if (screen != menu_last_screen) {      /* entering a screen starts at its first item */

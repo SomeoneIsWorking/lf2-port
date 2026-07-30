@@ -687,6 +687,18 @@ The two are kept consistent: if the pointer moves to somewhere the port did not 
 mouse is being used, so whatever it is pointing at becomes the selection and the port hands
 control back. Picking up the mouse after using a pad does not fight it, and vice versa.
 
+`fn_004246b0` is a `__thiscall` method and **`[this+0]` is the top-level mode**: 0 while
+loading, 1 the front-end menu, 2 character selection (which it dispatches to
+`fn_0041bc90`). `0x0044d064` is only the sub-screen *within* mode 1, so both are checked —
+keying off the sub-screen alone would let these tables fire during character selection
+whenever that variable happened to hold a matching value.
+
+**Character selection needs none of this.** `fn_0041bc90` is 7499 lines and reads the mouse
+zero times: it is driven entirely by the player keys. A controller already drives it,
+because the pad maps to those keys, which is the input idiom the game itself uses there.
+Verified by pad alone from the main menu through mode select, VS mode and the
+computer-player count into character selection with both slots joined.
+
 Screens are ported one at a time, each with a table of selectable items taken from the
 game's **own hit-test constants** — the centre of each band it brackets the pointer
 against. Anything without a table is pure delegation.
