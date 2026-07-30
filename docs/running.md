@@ -695,9 +695,15 @@ against. Anything without a table is pure delegation.
 |---|---|
 | 0 — main menu | five entries, x 260..547 |
 | 6 — control settings | ok (x 405..560, y 441..465), cancel (x 582..737, y 441..465) |
+| 7 — recording info | ok (x 231..386, y 416..440), cancel (x 403..558, y 416..440) |
 
 Adding a screen means reading its comparisons out of the disassembly, not inventing
-coordinates. `0xFFFFFFFE` appears during loading.
+coordinates — worth insisting on, since a screenshot estimate of the control-settings
+button row was out by 26 pixels. `0xFFFFFFFE` appears during loading.
+
+The recording page's "click here to know more" link is deliberately **not** selectable: it
+opens a web page, and a controller should not be able to land on something that leaves the
+game.
 
 Verified with `LF2_VIRTUAL_PAD`: three d-pad downs highlight "recording info", two downs
 plus A lands on the control settings page, and the mouse-driven smoke test is unaffected.
