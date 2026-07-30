@@ -2,6 +2,8 @@
 #include "com.h"
 #include "hostwin.h"
 
+void import_stats_report(void);
+
 void ddraw_register(void);
 void dsound_register(void);
 void dshow_register(void);
@@ -26,6 +28,7 @@ int main(int argc, char **argv)
      * teardown has to be an atexit hook -- calling it after dispatch() would never run.
      * Registered here at startup rather than lazily, so it is armed on every path. */
     atexit(hostwin_shutdown);
+    atexit(import_stats_report);
 
     dispatch(ENTRY);
     printf("returned from entry point\n");
