@@ -211,6 +211,16 @@ static void keydebug_selftest(void);
 
 void hostwin_pump(void)
 {
+    /* LF2_QUIT_AFTER=<frames> posts WM_QUIT once that many frames have been presented.
+     * Closing the window from a bare X server does not exercise this: with no window
+     * manager the close becomes an XDestroyWindow, SDL then touches a dead window and
+     * Xlib kills the process, so the game's own shutdown never runs. This drives the same
+     * path the game takes when the user quits. */
+    {
+        const char *qa = getenv("LF2_QUIT_AFTER");
+        if (qa && hostwin_frames() >= strtol(qa, NULL, 10)) quit_posted = 1;
+    }
+
     if (getenv("LF2_KEY_DEBUG")) {
         static int pumps;
         if (pumps == 0 && getenv("LF2_KEY_DEBUG_SELFTEST")) keydebug_selftest();

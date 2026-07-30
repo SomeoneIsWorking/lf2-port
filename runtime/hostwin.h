@@ -27,3 +27,5 @@ int  music_load(const char *path);
 void music_start(void);
 void music_stop(void);
 void music_set_volume(int32_t centibels);
+long hostwin_frames(void);
+void hostwin_shutdown(void);

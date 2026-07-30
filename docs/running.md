@@ -574,3 +574,20 @@ remaining variance is at the pre-fight overlay: depending on when it opens, the 
 "up" presses either move the highlight to `Fight!` or close the overlay and leave character
 selection with both slots re-rolled. Verified by frame dump, not inferred. Driving that step
 reliably needs a signal for the overlay itself, which does not exist yet.
+
+## Quitting
+
+The game exits through the CRT's `exit()`, not by returning from its entry point, so SDL
+teardown is registered with `atexit` — a call placed after `dispatch()` in `main` would
+never run. Before this there was no teardown at all.
+
+`LF2_QUIT_AFTER=<frames>` posts `WM_QUIT` once that many frames have been presented, which
+is how the shutdown path gets exercised in tests. Closing the window from a bare X server
+does **not** exercise it: with no window manager the close becomes an `XDestroyWindow`, SDL
+then touches a dead window, and Xlib kills the process before the game's own shutdown runs.
+That produced a `BadWindow` error and exit status 1 which looked like a port bug and was an
+artefact of the test.
+
+The smoke test uses this so its run ends through the game's own shutdown rather than
+`SIGTERM`, and asserts the exit status. Previously every run ended in `timeout`, so a
+genuine crash on exit would have been indistinguishable from the kill.

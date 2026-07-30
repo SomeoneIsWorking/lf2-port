@@ -1,11 +1,13 @@
 #include "guest.h"
 #include "com.h"
+#include "hostwin.h"
 
 void ddraw_register(void);
 void dsound_register(void);
 void dshow_register(void);
 
 #include <stdio.h>
+#include <stdlib.h>
 
 /* PE AddressOfEntryPoint + image base. */
 enum { ENTRY = 0x445560 };
@@ -20,6 +22,11 @@ int main(int argc, char **argv)
     com_init();
     guest_load_image(exe);
     printf("image loaded, %d functions, entering at %08x\n", g_nfuncs, ENTRY);
+    /* The game exits through the CRT's exit(), not by returning from its entry point, so
+     * teardown has to be an atexit hook -- calling it after dispatch() would never run.
+     * Registered here at startup rather than lazily, so it is armed on every path. */
+    atexit(hostwin_shutdown);
+
     dispatch(ENTRY);
     printf("returned from entry point\n");
     return 0;

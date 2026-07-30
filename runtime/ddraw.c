@@ -171,11 +171,26 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
     fprintf(stderr, "frame dump: wrote %s (%dx%d)\n", path, w, h);
 }
 
+/* Release SDL explicitly at exit. Leaving it to process teardown is usually harmless, but
+ * it means the audio device and window outlive the game's own shutdown, and a diagnostic
+ * that runs at exit cannot tell an orderly stop from a crash. */
+void hostwin_shutdown(void)
+{
+    if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
+    if (hw.texture)  { SDL_DestroyTexture(hw.texture);   hw.texture = NULL; }
+    if (hw.renderer) { SDL_DestroyRenderer(hw.renderer); hw.renderer = NULL; }
+    if (hw.window)   { SDL_DestroyWindow(hw.window);     hw.window = NULL; }
+    SDL_Quit();
+}
+
 /* ---- presentation ---- */
+
+/* File scope so the quit hook can read it; the counter was previously function-local. */
+static long frames;
+long hostwin_frames(void) { return frames; }
 
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
 {
-    static long frames;
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
     screen_change_check(pixels, w, h, src_pitch, frames);

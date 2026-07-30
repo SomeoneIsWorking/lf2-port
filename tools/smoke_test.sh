@@ -36,6 +36,10 @@ trap 'rm -f "$LOG"' EXIT
 if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi
 if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; fi
 
+# LF2_QUIT_AFTER makes the run end through the game's own shutdown instead of SIGTERM, so
+# a hang or a crash on exit shows up as a non-zero status rather than being masked by the
+# timeout that would have killed it anyway. timeout stays as a backstop.
+#
 # CPU time is captured because a regression to busy-waiting is invisible to every other
 # assertion here: the game renders, sounds and plays correctly at 96% of a core, which is
 # exactly how the unimplemented Sleep survived unnoticed.
@@ -51,8 +55,10 @@ echo "running a match headless (about 75s)..."
   LF2_AUTOKEY_ONCE=1 \
   LF2_AUTOKEY=0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x65,0x68,0x68,0x65 \
   LF2_AUTOKEY_START=32000 LF2_AUTOKEY_EVERY=1800 \
+  LF2_QUIT_AFTER=2100 \
   ${TIMER:+$TIMER -f "%U %S %e" -o "$CPUFILE"} \
-  timeout 75 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
+  timeout 90 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
+rc=$?
 
 fail=0
 check() {   # check <description> <actual> <minimum>
@@ -104,6 +110,15 @@ if [ -n "$TIMER" ] && [ -s "$CPUFILE" ]; then
     fi
 else
     echo "  skip  cpu usage: no /usr/bin/time available"
+fi
+
+# The run now ends through the game's own shutdown, so a non-zero status means something
+# actually went wrong rather than "timeout killed it", which is what it always meant before.
+if [ "$rc" -eq 0 ]; then
+    echo "  ok    exit status: 0 (clean shutdown)"
+else
+    echo "  FAIL  exit status: $rc ($([ "$rc" -eq 124 ] && echo 'timed out -- never reached LF2_QUIT_AFTER' || echo 'crashed or aborted'))"
+    fail=1
 fi
 
 if grep -qE "unimplemented opcode|fell off the end|Aborted" "$LOG"; then
