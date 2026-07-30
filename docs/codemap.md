@@ -219,3 +219,27 @@ of those. Nothing short of comparing against a real DirectSound would have caugh
 
 *Still open:* the game does not enter its streaming path here (`GetCurrentPosition` remains
 at zero calls).
+
+## GDI text: proportional advance
+
+The game imports no `CreateFont`, so it draws with the device context's default font —
+proportional on Windows — and sizes its own layout to that. Blitting SDL's fixed-pitch 8x8
+debug font straight out overran the layout: the main menu's copyright block rendered as
+
+```
+by Marti Wong, Starsky Won        <- clipped
+1999-2008, all rights rese        <- clipped
+http://www.LittleFighter.c        <- clipped
+```
+
+against Wine, which shows all three lines complete. Character selection lost the end of
+`(Press Left/Right to change music)` the same way.
+
+`TextOutA` now advances by each glyph's measured ink width plus one pixel of side bearing,
+with a half-cell for blanks. The widths are measured from the rendered glyphs rather than
+tabulated, so there is nothing to keep in step if the font changes. All three lines now
+render in full and match the oracle's content.
+
+It is an approximation of a proportional face, not that face — matching Windows' System
+font exactly would need the font itself. The remaining difference is glyph shape, not
+layout.
