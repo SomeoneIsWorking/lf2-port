@@ -308,3 +308,20 @@ than firing on a timer. The latter is the honest next step if it is worth automa
 That is a choreography problem rather than a port defect: every screen renders, and input
 is verified all the way into the game's key-state array. It wants a human at the keyboard,
 or a more careful script than a fixed cycling sequence.
+
+## Following the game's input
+
+`LF2_KEY_DEBUG=1` traces which virtual keys the game polls. The set it polls is a screen
+signature — the title screen asks about very different keys than character select — so the
+trace prints a set only when it *changes* from the previous sweep, giving a transition
+timeline rather than one line per key.
+
+**It will tell you it is blind, because on this game it is.** LF2 never calls
+`GetKeyState`; it keeps its own key array at `0x455378`, filled from `WM_KEYDOWN`, and
+reads that. The trace says so explicitly after 400 frames rather than printing nothing and
+letting silence read as "no input". To actually follow input, probe reads of `0x455378`.
+
+`LF2_KEY_DEBUG_SELFTEST=1` feeds the detector two synthetic sweeps, which must produce
+exactly two `poll set changed` lines. Since the game never exercises this path, that
+self-test is the only evidence the detector works at all — run it before trusting a
+negative result from it.
