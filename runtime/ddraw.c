@@ -67,6 +67,47 @@ void blt_stack_report(void)
             want, blt_stack_best_l, blt_stack_best_t);
 }
 
+/* ---- the game's own text ----
+ *
+ * The overrides layer recognises a glyph blit -- a clip drawn from one of the three 8x16
+ * font sheets, with the character code as the clip index -- and leaves the code here for
+ * the blit that follows. This is where the substitution has to happen, because this is the
+ * only place that knows BOTH the character (from the hint) and the destination surface.
+ *
+ * A hint rather than a lookup: the alternative is deriving the character from the source
+ * rectangle, which needs the sheet's cell layout, and that is not something worth guessing
+ * at when the caller already knows the answer.
+ */
+static int glyph_hint = -1;
+long glyphs_drawn;
+
+void glyph_hint_set(int ch) { glyph_hint = ch; }
+void glyph_hint_clear(void) { glyph_hint = -1; }
+
+int game_glyph_draw(int ch, int x, int y, uint32_t ink,
+                    uint32_t dpix, int dwid, int dhei, int dpitch);
+
+/* The ink colour comes from the sheet's own glyph, so each of the three sheets keeps its
+ * colour without the port having to know what they are. Taken as the brightest non-keyed
+ * pixel in the cell: a bitmap glyph is one colour plus anti-aliasing towards the key. */
+static uint32_t glyph_ink(const Surface *s, int sl, int st, int sr, int sb)
+{
+    uint32_t best = 0x00ffffffu;
+    int best_lum = -1;
+    for (int y = st; y < sb && y < s->h; y++) {
+        const uint32_t *row = (const uint32_t *)(g_mem + s->pixels
+                                                 + (size_t)y * (size_t)s->pitch);
+        for (int x = sl; x < sr && x < s->w; x++) {
+            const uint32_t px = row[x] & 0x00ffffffu;
+            if (s->has_key && px >= s->key_lo && px <= s->key_hi) continue;
+            const int lum = (int)((px >> 16) & 0xff) + (int)((px >> 8) & 0xff)
+                          + (int)(px & 0xff);
+            if (lum > best_lum) { best_lum = lum; best = px; }
+        }
+    }
+    return best;
+}
+
 void vram_report(void)
 {
     /* Reported relative to VRAM_BASE. Printing the raw cursor makes a 316 MB arena look
@@ -515,8 +556,17 @@ static void surf_Blt(uint32_t self)
                 fprintf(stderr, "Blt flags=%08x has_key=%d from guest %08x\n",
                         flags, s->has_key, caller);
         }
-        blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
-             keyed, s->key_lo, s->key_hi);
+        /* A glyph the port can draw better is drawn instead of copied. Anything it
+         * declines -- no font, or a character outside printable ASCII, which is how the
+         * sheets' CJK stays correct -- falls through to the original copy. */
+        if (glyph_hint >= 0
+            && game_glyph_draw(glyph_hint, dl, dt, glyph_ink(s, sl, st_, sr, sb),
+                               d->pixels, d->w, d->h, d->pitch)) {
+            glyphs_drawn++;
+        } else {
+            blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
+                 keyed, s->key_lo, s->key_hi);
+        }
     }
     if (d->primary) {
         if (getenv("LF2_BLT_DEBUG")) {

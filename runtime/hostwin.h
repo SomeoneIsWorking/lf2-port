@@ -36,3 +36,5 @@ int  menu_move(int delta);
 void menu_confirm(void);
 int  gamepad_player_buttons(int index, unsigned char out[7]);
 void input_report(void);
+void glyph_hint_set(int ch);
+void glyph_hint_clear(void);
