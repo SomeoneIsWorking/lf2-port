@@ -363,7 +363,10 @@ static void h_StretchBlt(void)
     if (getenv("LF2_DUMP_SURF")) {
         static int n;
         char path[128];
-        snprintf(path, sizeof path, "./scratch/surf_%02d.ppm", n++);
+        /* Relative, and overridable with LF2_DUMP_DIR -- see runtime/ddraw.c. An
+         * absolute home path in a committed file is unusable for anyone else. */
+        const char *dir = getenv("LF2_DUMP_DIR");
+        snprintf(path, sizeof path, "%s/surf_%02d.ppm", (dir && *dir) ? dir : "scratch", n++);
         FILE *f = fopen(path, "wb");
         if (f) {
             fprintf(f, "P6\n%d %d\n255\n", dwid, dhei);
