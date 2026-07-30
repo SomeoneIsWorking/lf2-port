@@ -162,3 +162,34 @@ two allocations out of 394 is the wrong trade, so it is deliberately not impleme
 *What would change the decision:* the release counter climbing. If a stage-change path ever
 released and reallocated surfaces in bulk, `com releases: IDirectDrawSurface=…` would show
 it, and the arena would then need a free path rather than a bigger base.
+
+## Open: the game does not use its streaming sound buffer here
+
+Comparing DirectSound call mix against the Wine oracle over the same 25 s window:
+
+| call | oracle | port |
+|---|---|---|
+| `Lock` | 12371 | 5 |
+| `GetCurrentPosition` | 8668 | **0** |
+| `Unlock` | 4125 | 5 |
+| `CreateSoundBuffer` | 41 | 5 |
+
+Against real DirectSound the game streams: it polls `GetCurrentPosition`, then locks and
+writes 3528 bytes into a looping 352800-byte (4 s) buffer, roughly 500 times a second. In
+this port it fills five buffers once and never streams at all — it never calls
+`GetCurrentPosition` even once.
+
+Audio nonetheless works: effects fire during a match and music plays. So this is a path the
+game takes on Windows and not here, rather than an outright failure, and what that path
+carries is not yet established.
+
+One real bug was found and fixed on the way: `GetCurrentPosition` returned the same value
+for the play and write cursors. The write cursor must **lead** — Wine reports playpos
+246960 against writepos 250488, a 3528-byte (40 ms) lead — and reporting them equal tells a
+streaming caller there is no room to write. That fix changes nothing measurable *yet*,
+precisely because the game never reaches the call, but the old behaviour would have stalled
+the stream the moment it did.
+
+*Next step:* find why the game creates 41 buffers under Wine and 5 here, since the streaming
+buffer is presumably among the missing ones. Comparing `CreateSoundBuffer` flags between the
+two would say.
