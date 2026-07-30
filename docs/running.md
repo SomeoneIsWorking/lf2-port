@@ -591,3 +591,24 @@ artefact of the test.
 The smoke test uses this so its run ends through the game's own shutdown rather than
 `SIGTERM`, and asserts the exit status. Previously every run ended in `timeout`, so a
 genuine crash on exit would have been indistinguishable from the kill.
+
+## Import call volume
+
+`LF2_IMPORT_STATS=1` reports the most-called imports at exit. The numbers are larger than
+they look like they should be:
+
+```
+import calls: 7166995 total across 163 imports
+  fscanf     2546142      timeGetTime   164614
+  feof       2167756      PeekMessageA   80828
+  fprintf    2161434      malloc          7108
+```
+
+Nearly seven million of those come from three CRT functions, because LF2 decrypts each
+`.dat` into a temporary file and then parses it back token by token. That is the game's
+design, not a port artefact.
+
+It does mean the import path is hot. Resolving a handler used to walk up to seven lookup
+tables doing two `strcmp`s per entry, **on every call**. Caching the resolution per import
+took the data load from **13.1 s to 10.2 s** (measured twice, identical), and the cache is
+correct by construction: the guest's import table is fixed once the image is loaded.

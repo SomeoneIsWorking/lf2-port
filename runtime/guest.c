@@ -126,6 +126,31 @@ Handler gamepad_lookup(const char *dll, const char *name);
 Handler wsock_lookup(const char *dll, const char *name);
 void com_call(uint32_t sentinel);
 
+/* LF2_IMPORT_STATS=1 reports the most-called imports at exit. A frequently-called no-op
+ * stub and a correctly implemented function are indistinguishable from the outside, so
+ * knowing which stubs are hot is the only way to tell which ones matter. */
+static long import_calls[MAX_IMPORTS];
+static Handler import_handler[MAX_IMPORTS];
+
+void import_stats_report(void)
+{
+    if (!getenv("LF2_IMPORT_STATS")) return;
+    int idx[MAX_IMPORTS], n = nimports;
+    for (int k = 0; k < n; k++) idx[k] = k;
+    for (int a = 0; a < n; a++)                    /* selection sort; n is ~130 */
+        for (int b = a + 1; b < n; b++)
+            if (import_calls[idx[b]] > import_calls[idx[a]]) {
+                const int t = idx[a]; idx[a] = idx[b]; idx[b] = t;
+            }
+    long total = 0;
+    for (int k = 0; k < n; k++) total += import_calls[k];
+    fprintf(stderr, "import calls: %ld total across %d imports\n", total, n);
+    for (int k = 0; k < n && k < 12; k++) {
+        if (!import_calls[idx[k]]) break;
+        fprintf(stderr, "  %-34s %8ld\n", imports[idx[k]].name, import_calls[idx[k]]);
+    }
+}
+
 void host_import(uint32_t sentinel)
 {
     const uint32_t i = sentinel - IMPORT_SENTINEL;
@@ -133,16 +158,26 @@ void host_import(uint32_t sentinel)
         fprintf(stderr, "call to unknown import sentinel %08x\n", sentinel);
         abort();
     }
-    Handler h = host_lookup(imports[i].dll, imports[i].name);
-    if (!h) h = win32_lookup(imports[i].dll, imports[i].name);
-    if (!h) h = gfx_lookup(imports[i].dll, imports[i].name);
-    if (!h) h = dsound_lookup(imports[i].dll, imports[i].name);
-    if (!h) h = gdi_lookup(imports[i].dll, imports[i].name);
-    if (!h) h = gamepad_lookup(imports[i].dll, imports[i].name);
-    if (!h) h = wsock_lookup(imports[i].dll, imports[i].name);
+    import_calls[i]++;
+
+    /* Resolved once per import, not once per call. The lookup walks up to seven tables
+     * doing two strcmps per entry, and the game makes over seven million import calls in a
+     * single load -- it decrypts each .dat to a temporary file and parses it back with
+     * fscanf, so fscanf, feof and fprintf alone account for 6.9M of them. */
+    Handler h = import_handler[i];
     if (!h) {
-        fprintf(stderr, "unimplemented import: %s.%s\n", imports[i].dll, imports[i].name);
-        abort();
+        h = host_lookup(imports[i].dll, imports[i].name);
+        if (!h) h = win32_lookup(imports[i].dll, imports[i].name);
+        if (!h) h = gfx_lookup(imports[i].dll, imports[i].name);
+        if (!h) h = dsound_lookup(imports[i].dll, imports[i].name);
+        if (!h) h = gdi_lookup(imports[i].dll, imports[i].name);
+        if (!h) h = gamepad_lookup(imports[i].dll, imports[i].name);
+        if (!h) h = wsock_lookup(imports[i].dll, imports[i].name);
+        if (!h) {
+            fprintf(stderr, "unimplemented import: %s.%s\n", imports[i].dll, imports[i].name);
+            abort();
+        }
+        import_handler[i] = h;
     }
     h();
 }
