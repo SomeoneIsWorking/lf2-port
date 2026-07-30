@@ -707,3 +707,24 @@ game.
 
 Verified with `LF2_VIRTUAL_PAD`: three d-pad downs highlight "recording info", two downs
 plus A lands on the control settings page, and the mouse-driven smoke test is unaffected.
+
+## Finding which code draws something
+
+Two hooks in `runtime/ddraw.c`, both of which were needed to port the ads out:
+
+- **`LF2_BLT_RECTS=1`** logs every blit destination rectangle. That is how the ad regions
+  were enumerated: top strip `(0,0)-(397,34)`, right panel `(590,199)-(788,393)`, its arrows,
+  and the bottom row — against the character art at `(0,0)-(330,546)`.
+- **`LF2_BLT_STACK=<x>,<y>`** walks the guest stack at the first blit landing on that
+  destination and prints everything that looks like a `.text` address. It is a rough
+  backtrace, not an exact one, but it is enough to **diff two chains**.
+
+The diff is the point. The chain for the ad panel and the chain for the character art share
+their entire outer frame and differ in one hop: the art goes out through `fn_00423840`, the
+ad through `fn_00423b00` with descriptor `0x0044d060`. Neither could be identified by
+reading the code — the ad-file strings have no cross-references in the disassembly at all,
+and the one function that *does* reference the advertise URL turned out to be a shared
+helper whose stubbing garbled the artwork.
+
+Use these before stubbing anything. Two functions were stubbed on a plausible reading and
+both were wrong; the differential trace got it right first time.
