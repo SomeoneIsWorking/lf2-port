@@ -661,3 +661,27 @@ been untestable and were therefore pure assumption:
 
 Real hardware is still worth testing, since SDL's virtual device cannot reproduce every
 driver quirk. But the code path is no longer unexercised.
+
+## The ported menu
+
+`fn_004246b0` (the menu) is being ported incrementally in `runtime/overrides.c`. What is
+native so far is the **selection**: a real index the port owns, rather than something
+derived from where a pointer happens to be. Everything else still delegates to the original
+body through `fn_004246b0__orig`.
+
+The menu's own state, from its disassembly:
+
+| address | meaning |
+|---|---|
+| `0x004546f0` / `0x00453cdc` | mouse x / y, which the hit test brackets at x 260..547 |
+| `0x00457580` | click flag, compared against 1 before an item activates |
+| `0x0044d064` | the action the chosen item sets |
+
+The port moves the selection, places the pointer on the chosen item so the **game's own**
+renderer highlights it, and raises the game's click flag to activate — so the highlight,
+the click sound, and the screen change all remain the game's code. Nothing is drawn or
+dispatched by the port.
+
+A controller drives it directly (`runtime/gamepad.c`), and a mouse still works as before.
+Verified with `LF2_VIRTUAL_PAD`: three d-pad downs highlight "recording info", and two
+downs plus A lands on the control settings page.

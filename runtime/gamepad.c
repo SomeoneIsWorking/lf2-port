@@ -101,29 +101,15 @@ static SDL_Gamepad *pad_for(uint32_t id)
  * controller is translated here into the input the menus actually respond to.
  *
  * Directions become player 1's keys, which drives every keyboard menu (mode select,
- * character selection, the pre-fight overlay). Up and down ALSO walk the main menu's
- * clickable bands by moving the pointer, which makes the game highlight the entry under it
- * exactly as a mouse would -- so the highlight comes from the game, not from anything drawn
- * here. The confirm button sends both the attack key and a click, so it works on whichever
- * kind of screen is up.
- *
- * The band coordinates come from the game's own hit-test constants, recovered by
- * tools/click_bands.py; see docs/running.md.
+ * character selection, the pre-fight overlay), and they also move the selection index in
+ * the ported main menu (runtime/overrides.c). The confirm button sends the attack key and
+ * activates the ported menu's selection, so it works on whichever kind of screen is up.
  */
-static const struct { int x, y; } MENU_BANDS[] = {
-    { 403, 228 },  /* game start      */
-    { 403, 259 },  /* network game    */
-    { 403, 292 },  /* control settings*/
-    { 403, 322 },  /* recording info  */
-    { 403, 353 },  /* official website*/
-};
-enum { N_MENU_BANDS = (int)(sizeof MENU_BANDS / sizeof MENU_BANDS[0]) };
 
 /* Player 1's defaults, as shown on the control settings screen. */
 enum { VK_P1_UP = 0x68, VK_P1_DOWN = 0x62, VK_P1_LEFT = 0x64, VK_P1_RIGHT = 0x66,
        VK_P1_ATTACK = 0x65, VK_P1_JUMP = 0x60, VK_P1_DEFEND = 0x6B };
 
-static int band_index;
 
 void gamepad_drive_ui(void)
 {
@@ -154,16 +140,10 @@ void gamepad_drive_ui(void)
 
         hostwin_inject_key(MAP[i].vk, down);
 
-        /* Up and down also walk the pointer over the main menu's bands. Harmless on
-         * screens that have none: nothing is under the pointer, so nothing highlights. */
-        if (down && (MAP[i].vk == VK_P1_UP || MAP[i].vk == VK_P1_DOWN)) {
-            band_index += (MAP[i].vk == VK_P1_DOWN) ? 1 : -1;
-            if (band_index < 0) band_index = N_MENU_BANDS - 1;
-            if (band_index >= N_MENU_BANDS) band_index = 0;
-            hostwin_inject_pointer(MENU_BANDS[band_index].x, MENU_BANDS[band_index].y, -1);
-        }
-        if (MAP[i].vk == VK_P1_ATTACK)
-            hostwin_inject_pointer(MENU_BANDS[band_index].x, MENU_BANDS[band_index].y, down);
+        /* Directions also move the ported menu's selection index. */
+        if (down && MAP[i].vk == VK_P1_UP)   menu_move(-1);
+        if (down && MAP[i].vk == VK_P1_DOWN) menu_move(+1);
+        if (down && MAP[i].vk == VK_P1_ATTACK) menu_confirm();
     }
 }
 

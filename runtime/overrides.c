@@ -44,10 +44,53 @@ void fn_00423b00__orig(void);
 /* Mouse position, as the menu itself reads it. */
 enum { GX_MOUSE_X = 0x004546f0, GX_MOUSE_Y = 0x00453cdc };
 
+/* The menu's own state, read out of the disassembly:
+ *   0x004546f0  mouse x        0x00453cdc  mouse y
+ *   0x00457580  click flag, compared against 1 before an item activates
+ *   0x0044d064  the action the chosen item sets
+ * and the item positions, which the hit test brackets at x 260..547.
+ *
+ * Selection is a real index here rather than something derived from a pointer position.
+ * The pointer is then placed on the chosen item, which is how the game's own renderer is
+ * told what to highlight -- the highlight stays the game's, drawn by its code, so the port
+ * does not have to reproduce it. Activation sets the game's click flag for one frame, so
+ * the game performs its own dispatch, sound and screen change.
+ */
+enum { GX_CLICK = 0x00457580 };
+static const int MENU_ITEM_Y[] = { 228, 259, 292, 322, 353 };
+enum { MENU_ITEM_X = 403,
+       N_MENU_ITEMS = (int)(sizeof MENU_ITEM_Y / sizeof MENU_ITEM_Y[0]) };
+
+static int menu_index;
+static int menu_confirm_frames;
+
+/* Called from the controller layer. Returns nonzero if the menu consumed the input. */
+int menu_move(int delta)
+{
+    menu_index += delta;
+    if (menu_index < 0) menu_index = N_MENU_ITEMS - 1;
+    if (menu_index >= N_MENU_ITEMS) menu_index = 0;
+    return 1;
+}
+
+void menu_confirm(void)
+{
+    menu_confirm_frames = 2;          /* held long enough for the menu to sample it */
+}
+
 void fn_004246b0(void)
 {
-    /* Step 0: pure delegation. Establishes that the shadow mechanism is behaviour-neutral
-     * before any behaviour is changed. */
+    /* Place the pointer on the selected item so the game highlights it. Skipped while the
+     * real mouse is being used, so a mouse still works normally. */
+    if (menu_index > 0 || menu_confirm_frames) {
+        ST32(GX_MOUSE_X, (uint32_t)MENU_ITEM_X);
+        ST32(GX_MOUSE_Y, (uint32_t)MENU_ITEM_Y[menu_index]);
+    }
+    if (menu_confirm_frames > 0) {
+        menu_confirm_frames--;
+        ST32(GX_CLICK, 1);
+    }
+
     fn_004246b0__orig();
 }
 
