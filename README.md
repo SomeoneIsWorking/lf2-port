@@ -55,7 +55,7 @@ variables, are in [`docs/running.md`](docs/running.md).
 | Background music (WMA) | works, needs `ffmpeg` on PATH |
 | Modern anti-aliased text | menu and character-select text, with `SDL3_ttf` (optional) |
 | Controller auto-detect and hotswap, no configuration | implemented, **untested on real hardware** |
-| Two controllers | attaches and routes, but a second pad can land on a computer-controlled slot |
+| Two controllers, two players | works — second pad joins as Player 2, no configuration |
 | Borderless / windowed / fullscreen, Alt+Enter | works |
 | Linux | works |
 | macOS | portability blockers removed, builds and passes under clang, **never built on a Mac** |

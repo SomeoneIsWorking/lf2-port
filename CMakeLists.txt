@@ -143,3 +143,12 @@ add_test(NAME controller
 set_tests_properties(controller PROPERTIES
                      LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
+# Two controllers, two players. Separate because it needs two runs -- one as a control --
+# and because "a second pad is player two" has been got wrong in both directions already.
+add_test(NAME controller_2p
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/controller_2p_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(controller_2p PROPERTIES
+                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
