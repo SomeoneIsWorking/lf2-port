@@ -456,8 +456,13 @@ audio: buffers=116 plays=1 device-pulls=1320 peak=31420/32767 music-frames=33259
 ```
 
 `peak` is the one that proves sound would actually be heard; the rest can all be non-zero
-while the output is silent. In a menu-only run music alone gives a peak of 16384 (it mixes
-at half gain), and effects push it higher in gameplay.
+while the output is silent. `clipped` exists because a saturated peak cannot say how much
+it saturated by — in a full match it is 15 samples in 4 million (0.0004%), i.e. inaudible,
+where the peak alone reads as an alarming `32768/32767`.
+
+**Report periodically, not once.** A single report early in a run lands before the match has
+started and measures only the menus: it shows `plays=1` and reads as if effects never fire.
+Across a match it goes to 8, which is the CPU opponent hitting an idle player.
 
 Two things this turned up. The filename arrives as UTF-16 but with a **zero BSTR length
 prefix**, so the terminator is what to trust, not the prefix. And the audio device was only

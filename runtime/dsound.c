@@ -39,7 +39,7 @@ static SDL_Mutex *mix_lock;
  * game may never create a buffer, never start one, never have the device pull from us, or
  * pull and get silence. A single "audio works" flag cannot tell those apart, and peak
  * amplitude is the only one of them that proves sound would actually be heard. */
-long au_bufs, au_plays, au_pulls, au_peak;
+long au_bufs, au_plays, au_pulls, au_peak, au_clipped, au_samples;
 
 /* ---- background music ----
  * The game's BGM is WMA, which nothing here decodes. Rather than ship a decoder, the
@@ -214,9 +214,14 @@ static void SDLCALL feed(void *ud, SDL_AudioStream *s, int additional, int total
         b->pos = (uint32_t)cursor * (uint32_t)bps;
     }
     SDL_UnlockMutex(mix_lock);
+    /* A peak that saturates cannot say how much it saturated by, so count the samples
+     * that hit the rail as well. One clipped sample is inaudible; a steady percentage is
+     * audible distortion. */
     for (int i = 0; i < chunk * MIX_CHANNELS; i++) {
         const long v = out[i] < 0 ? -(long)out[i] : (long)out[i];
         if (v > au_peak) au_peak = v;
+        if (out[i] >= 32767 || out[i] <= -32768) au_clipped++;
+        au_samples++;
     }
 
     SDL_PutAudioStreamData(s, out, chunk * (int)sizeof(int16_t) * MIX_CHANNELS);
@@ -363,8 +368,10 @@ static void ds_ret_ok3(uint32_t self) { (void)self; com_ret(3, DD_OK); }
 void audio_report(void)
 {
     fprintf(stderr, "audio: buffers=%ld plays=%ld device-pulls=%ld peak=%ld/32767 "
-                    "music-frames=%ld\n",
-            au_bufs, au_plays, au_pulls, au_peak, au_music_frames);
+                    "clipped=%ld/%ld (%.3f%%) music-frames=%ld\n",
+            au_bufs, au_plays, au_pulls, au_peak, au_clipped, au_samples,
+            au_samples ? 100.0 * (double)au_clipped / (double)au_samples : 0.0,
+            au_music_frames);
     if (!au_bufs)  fprintf(stderr, "  the game never created a sound buffer\n");
     else if (!au_plays) fprintf(stderr, "  buffers exist but none was ever started\n");
     else if (!au_pulls) fprintf(stderr, "  buffers played but the device never pulled -- "
