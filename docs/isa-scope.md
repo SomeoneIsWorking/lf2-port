@@ -122,33 +122,43 @@ Two things are **assumed, not proven**:
 Check this once the harness can compare state; if it fires, the fallback is software
 80-bit for the affected functions only, not globally.
 
-## x87 differential harness — status
+## x87 differential harness — working, and it found a real bug
 
-The x87 cases in `runtime/test_insn.c` are gated off by default (`LF2_INSN_X87=1` enables
-them) because the harness is not yet trustworthy.
+The x87 cases run by default. 8373 encodings x 8 rounds = 66,984 checks against the host
+CPU, 0 mismatches.
 
-**The fault is in the harness round-trip, not in any instruction.** `LF2_X87_NULL=1`
-omits the instruction under test, leaving a bare `FRSTOR`/`FNSAVE` pair. State still does
-not survive it: the tag word returns `0x55ff`, marking R4–R7 zero when they were seeded
-valid. Nothing the harness reports about an x87 instruction can mean anything until that
-round-trip holds.
+**Root cause of the long-running harness failure: the FSAVE image is in stack order, not
+physical-register order.** Slot *i* is ST(*i*); TOP does not enter the indexing at all.
+The harness was indexing slots as physical `R[(TOP + i) & 7]`, which reads correctly only
+when nothing pushes. After a push the seeded values appear one slot further along -- old
+ST(4) genuinely has become ST(5) -- which looks exactly like a corrupted round-trip and is
+not one. `scratch/x87/probe3.c` is the ten-line standalone that pins the convention down.
 
-What is ruled out, by measurement:
+A second, separate bug: the tag word *is* indexed by physical register, unlike the slots,
+so it must be derived from TOP. Hardcoding it marks the wrong registers empty and every
+operand then reads as a masked stack underflow returning indefinite QNaN.
 
-- **The seeding.** `LF2_X87_DUMP=1` shows R4 seeded as `00 00 00 00 06 02 f3 9a 0d 40` —
-  exponent `0x400d`, i.e. 2^14, mantissa giving 19833.5, exactly the input double. The
-  80-bit conversion is correct.
-- **The stub offsets and encodings.** `41 DD A4 24 40000000` is `FRSTOR [r12+0x40]` and
-  `41 DD B4 24 B0000000` is `FNSAVE [r12+0xB0]`; both match `State`'s layout.
-- **The save-area layout.** Registers start at offset 28 — forced, since 28 + 8×10 is
-  exactly the 108-byte image.
-- **Reaching the FPU at all.** The seeded control word `0x027f` and TOP both round-trip,
-  so `FRSTOR` is reading the right memory. Only the register values are lost.
+### The port bug this uncovered
 
-So it is narrowly the 80-bit register transfer, in a round-trip whose every other field
-survives. Resume from the negative control, not from the instruction cases.
+`FSUB`/`FDIV` at the `DC` and `DE` escapes had their operands reversed. The reverse-form
+encoding is *inverted* relative to `D8`: at a `ST(i)` destination, g=4 (`FSUBR`) and g=6
+(`FDIVR`) are the reversed ones, whereas at the `ST(0)` destination it is g=5 and g=7. The
+lifter used the `D8` rule for all of them, so `FDIVP ST(1),ST(0)` computed the reciprocal
+of the correct result and `FSUBP` the negation. Silent, plausible-looking wrong numbers in
+game arithmetic.
 
-**Lesson:** this was first written up as a seeding bug, on inference rather than
-measurement, and committed that way. The negative control — omit the instruction, test the
-harness against itself — should have been the first move, not the fourth; it took one
-patch and disproved the write-up immediately.
+### Validation
+
+The test is validated the way the integer path is, by a negative control: putting the
+reversal back into the lifter makes exactly 24 cases fail, removing it makes them pass. So
+the comparison demonstrably detects a wrong answer rather than merely reporting success.
+`LF2_X87_NULL=1` drops the instruction under test entirely, leaving a bare `FRSTOR`/
+`FNSAVE` round-trip -- that is the control that separates a harness fault from a lifter
+fault, and it is what should have been run first.
+
+**Lesson, recorded because it cost four rounds.** This was twice written up as a
+confidently-wrong diagnosis -- first "the seeding is broken", then "the round-trip is
+broken" -- both from inference over a misread tag word rather than from measurement. Two
+cheap moves would have skipped all of it: comparing register *values* in and out instead
+of squinting at tag bits, and reproducing the round-trip in a standalone probe with no
+harness to blame. The bug was never in the code being tested.
