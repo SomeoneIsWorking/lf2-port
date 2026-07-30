@@ -626,3 +626,38 @@ again: `h_fscanf` called `getenv` on every one of those 2.5M invocations, and ca
 changed the load time by nothing measurable (10.1 s / 10.3 s against 10.2 s). glibc's
 `getenv` is cheap next to the surrounding parse. The caching was kept because it is the
 right shape for a flag on a hot path, not because it bought anything.
+
+## Playing with a controller
+
+The game's own joystick support only covers fighting — its menus are driven by the mouse
+(clickable bands) or by the player keys, and neither reads a joystick. A controller is
+therefore translated in the runtime into the input the menus actually respond to:
+
+| control | effect |
+|---|---|
+| d-pad / left stick | player 1's direction keys, **and** walks the main menu's bands |
+| A (south) | player 1's attack, **and** a click at the selected band |
+| B / X | jump / defend |
+| Start | Enter |
+
+Walking the bands works by moving the pointer, so the game highlights the entry under it
+exactly as a mouse would — the highlight is the game's, not something drawn on top. The
+band coordinates come from the game's own hit-test constants (`tools/click_bands.py`).
+
+### Testing it without a controller
+
+`LF2_VIRTUAL_PAD="down:220,down:250,south:290"` attaches a **software** gamepad through
+SDL and plays a script of button presses into it — names are SDL button short names, the
+number is the frame to press on, released eight frames later.
+
+This is how the controller support is tested at all, and it verified three things that had
+been untestable and were therefore pure assumption:
+
+- **auto-detect** — the runtime reports `controller 0 connected: lf2 virtual pad`
+- **hotswap** — the pad attaches *after* the game has started and already probed its
+  joysticks, and is still picked up, which is exactly the case the stock game cannot handle
+- **menu driving** — two d-pad downs then A reaches the control settings page, confirmed by
+  frame dump
+
+Real hardware is still worth testing, since SDL's virtual device cannot reproduce every
+driver quirk. But the code path is no longer unexercised.

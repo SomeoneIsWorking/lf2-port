@@ -19,7 +19,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Recompiler: lifter (x86 → C) | `recompiler/lift.c` | **done** | 74,135 / 74,136 lifted (100.00%); 1 TODO is decoded data, see below |
 | Runtime | `runtime/guest.h`, `runtime/guest_ops.h` | **done** | CPU state, lazy flags, 4 GiB lazily-committed memory, PE load, import binding; ~13% of a core in play |
 | Runtime (SDL3) | `runtime/ddraw.c`, `win32.c`, `gdi.c`, `gamepad.c`, `dsound.c` | **done** | video / input / Win32 shim; effects via DirectSound, music via ffmpeg |
-| Controllers | `runtime/gamepad.c` | **done** | SDL3 gamepad; auto-detect and hotswap (untested on hardware) |
+| Controllers | `runtime/gamepad.c` | **done** | SDL3 gamepad; auto-detect, hotswap and full menu navigation, tested via SDL virtual pad |
 | Input path | `runtime/win32.c` | **done** | keyboard and mouse verified into game state; menu navigates |
 | Window modes | `runtime/win32.c` | **done** | windowed / borderless / fullscreen, Alt+Enter toggle |
 | Netplay | `runtime/wsock.c` | **stubbed** | reports started-but-no-network, which the game handles |
