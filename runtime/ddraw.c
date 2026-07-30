@@ -64,6 +64,43 @@ static void write_pixelformat(uint32_t pf)
     ST32(pf + 28, 0);
 }
 
+/* ---- screen-change detection ----
+ * Whether a scripted click actually did anything is not answerable from the key array --
+ * every screen reads the same keys -- so LF2_SCREEN_HASH watches the framebuffer instead.
+ *
+ * The comparison is deliberately coarse. Menus animate (cursors blink, banners scroll), so
+ * an exact hash changes every frame and reports nothing useful. Instead a subsampled
+ * signature is compared byte-for-byte and a change is reported only when a large fraction
+ * of it differs, which is what a screen transition looks like and what local animation
+ * does not.
+ */
+enum { SIG_N = 1024, SCREEN_CHANGE_PCT = 25 };
+
+static void screen_change_check(const uint8_t *px, int w, int h, int pitch, long frame)
+{
+    if (!getenv("LF2_SCREEN_HASH") || !px || w <= 0 || h <= 0) return;
+
+    static uint8_t sig[SIG_N], prev[SIG_N];
+    static int have_prev;
+    for (int i = 0; i < SIG_N; i++) {
+        const int x = (int)((long)i * 7919 % w);
+        const int y = (int)((long)i * 6271 % h);
+        sig[i] = px[(long)y * pitch + x];
+    }
+    if (!have_prev) {
+        memcpy(prev, sig, SIG_N); have_prev = 1;
+        fprintf(stderr, "screen: first frame %ld\n", frame);
+        return;
+    }
+    int diff = 0;
+    for (int i = 0; i < SIG_N; i++) if (sig[i] != prev[i]) diff++;
+    const int pct = diff * 100 / SIG_N;
+    if (pct >= SCREEN_CHANGE_PCT) {
+        fprintf(stderr, "screen: CHANGED at frame %ld (%d%% of samples)\n", frame, pct);
+        memcpy(prev, sig, SIG_N);
+    }
+}
+
 /* ---- presentation ---- */
 
 void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int h, int src_pitch)
@@ -71,6 +108,7 @@ void hostwin_present(const uint8_t *indexed, const uint32_t *palette, int w, int
     static long frames;
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
+    screen_change_check(indexed, w, h, src_pitch, frames);
     if (!hw.renderer) return;
     if (!hw.texture) {
         hw.texture = SDL_CreateTexture(hw.renderer, SDL_PIXELFORMAT_XRGB8888,
