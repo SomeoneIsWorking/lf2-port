@@ -744,23 +744,31 @@ time.
 | B / X | jump / defend |
 | Start | activates the front-end menu's selection |
 
-Pads are handed to live player slots in order.
+Pads are handed to live player slots in order, so **a second controller is player two**,
+with no configuration either. `LF2_VIRTUAL_PAD2` attaches a second software pad and
+`tools/controller_2p_test.sh` (ctest target `controller_2p`) asserts it.
 
-**A second pad is not finished.** It attaches and its input does reach a second slot — two
-virtual pads measure 1408 merges across 704 gathers, exactly two per gather, and 64 → 80
-button presses — but "live slot" includes one the game has filled with a *computer*. With
-one human and one CPU the second pad therefore drives the CPU's fighter, fighting its AI
-for the same button bytes. One pad is unaffected, which is why this was written up as
-working before anyone attached a second one.
+This claim has been wrong in both directions, which is worth recording:
 
-Fixing it needs the per-slot "this one is AI" marker, which is not pinned down. What is
-known: the character-select drawer classifies a slot from a per-slot value (≤ 0 empty, 1–10
-human, ≥ 11 computer), and `0x0045128c` is measured going 0 → 11 exactly when the computer
-appears. But `0x00451288` / `0x451268` / `0x451248` are written as separate scalars 0x20
-apart, so those are fields of a per-slot **struct** rather than one flat array, and the base
-and stride are unconfirmed. An earlier guess of `0x004517c8`, taken from one of three
-"Computer" call sites, measured as all zeros — the wrong call site. `LF2_VIRTUAL_PAD2`
-exists so the next attempt can be measured rather than reasoned about.
+- It was first written down when only **one** virtual pad had ever been attached, so the
+  slot-assignment code had never run with two. True by luck, not by test.
+- It was then **retracted** on the finding that a second pad drives a *computer's* fighter.
+  That was a mistake in the test, not a defect in the port: on the character-select screen
+  an unjoined slot shows `Join?`, and it is filled with a computer only once **player one
+  proceeds** past the screen. The second pad had been pressing after that point, so the
+  slot was already taken.
+
+That it is not a countdown was measured rather than assumed — with one pad and no further
+input, slot 2 was still `Join?` at frame 2400 and the word `Computer` was never drawn.
+
+Verified: two pads attach and bind; the second joins as **Player 2** and picks its own
+fighter (its d-pad selected Davis while player one stayed on Random); the merge counters
+read 1408 across 704 gathers, exactly two per gather.
+
+The test is two-sided on purpose. "The word `Computer` was never drawn" also holds for a run
+that never reached the screen, so a control run without the second pad asserts that
+`Computer` **is** drawn. Two drafts of the test stopped too early and the control caught
+both.
 
 ### Why this needed a port rather than a shim
 

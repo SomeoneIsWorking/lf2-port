@@ -334,19 +334,12 @@ void fn_00419a60(void)
      * live/pads/merges together say which of "no player slot", "no controller" and "nothing
      * pressed" actually happened. */
     in_frames++;
-    /* KNOWN LIMITATION: pads are handed to live slots in order, and a slot the game has
-     * filled with a computer is still a live slot. With one human and one computer, a
-     * second pad therefore drives the COMPUTER's fighter, fighting its AI for the same
-     * button bytes. One pad is unaffected, which is why this went unnoticed.
-     *
-     * The fix needs the per-slot marker for "this one is AI", and that is not yet pinned
-     * down. What is known: the character-select drawer picks its label from a per-slot
-     * value with <= 0 empty, 1..10 human, >= 11 computer, and 0x0045128c is measured going
-     * 0 -> 11 exactly when the computer appears. But 0x00451288/0x451268/0x451248 are
-     * written as separate scalars 0x20 apart, so these are fields of a per-slot STRUCT
-     * rather than one flat array, and the base and stride are not confirmed. An earlier
-     * guess at 0x004517c8, read from one of three "Computer" call sites, measured as all
-     * zeros -- the wrong call site. Not guessing again without a measurement.
+    /* Pads are handed to live slots in order, so pad 0 is the first joined player and
+     * pad 1 the second. A slot the game has filled with a computer is still a live slot,
+     * which sounds like a problem and is not: an unjoined slot shows "Join?" until player
+     * one PROCEEDS past character selection, so a second pad that presses before then owns
+     * the slot itself. Measured, after this was documented wrongly twice -- see
+     * docs/running.md and tools/controller_2p_test.sh.
      */
     int pad_index = 0;
     for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END; sel += 4, i++) {
