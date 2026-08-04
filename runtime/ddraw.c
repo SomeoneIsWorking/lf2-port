@@ -455,6 +455,71 @@ static void dump_surface(uint32_t obj, const char *tag)
     fclose(f);
 }
 
+/* LF2_CURSOR_FIND=1 -- which blit is the game's own mouse cursor?
+ *
+ * "Lands near the pointer" is NOT the test: the full-screen background blits at (0,0) and
+ * scores 96% whenever the pointer happens to rest near the origin, which is exactly the
+ * false positive the first version of this hook produced.
+ *
+ * A cursor keeps a CONSTANT offset from the pointer wherever the pointer goes. So the
+ * measure is the spread of (dest - pointer) across many different pointer positions: a
+ * cursor's spread is a few pixels, a fixed decoration's spread is as large as the
+ * pointer's travel. The pointer's own travel is reported alongside, because a spread of
+ * zero proves nothing if the pointer never moved.
+ *
+ * Called from BOTH surf_Blt and surf_BltFast. Hooking only Blt reported "no blit tracks
+ * the pointer" while the cursor was plainly in the framebuffer -- a clean-looking negative
+ * produced by not looking at the other half of the drawing paths. */
+void cursor_find_note(int dl, int dt, const char *via)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("LF2_CURSOR_FIND") != NULL;   /* cached: this is on every blit */
+    if (!on) return;
+    enum { MAX_SITES = 64 };
+    static struct { uint32_t ra; const char *via; long n; int lo_x, hi_x, lo_y, hi_y; }
+        site[MAX_SITES];
+    static int nsite;
+    static long frames;
+    static int p_lo_x = 1 << 30, p_hi_x = -(1 << 30), p_lo_y = 1 << 30, p_hi_y = -(1 << 30);
+
+    const int mx = (int)LD32(0x004546f0), my = (int)LD32(0x00453cdc);
+    if (mx < p_lo_x) p_lo_x = mx;
+    if (mx > p_hi_x) p_hi_x = mx;
+    if (my < p_lo_y) p_lo_y = my;
+    if (my > p_hi_y) p_hi_y = my;
+
+    const uint32_t ra = LD32(R(ESP));
+    const int ox = dl - mx, oy = dt - my;
+    int k = 0;
+    for (; k < nsite; k++) if (site[k].ra == ra) break;
+    if (k == nsite && nsite < MAX_SITES) {
+        site[k].ra = ra; site[k].via = via; site[k].n = 0;
+        site[k].lo_x = site[k].hi_x = ox;
+        site[k].lo_y = site[k].hi_y = oy;
+        nsite++;
+    }
+    if (k < MAX_SITES) {
+        site[k].n++;
+        if (ox < site[k].lo_x) site[k].lo_x = ox;
+        if (ox > site[k].hi_x) site[k].hi_x = ox;
+        if (oy < site[k].lo_y) site[k].lo_y = oy;
+        if (oy > site[k].hi_y) site[k].hi_y = oy;
+    }
+    if (++frames % 4000 == 0) {
+        fprintf(stderr, "cursor-find: pointer travelled x %d..%d, y %d..%d\n",
+                p_lo_x, p_hi_x, p_lo_y, p_hi_y);
+        if (p_hi_x - p_lo_x < 40 && p_hi_y - p_lo_y < 40)
+            fprintf(stderr, "  POINTER BARELY MOVED -- this cannot identify a cursor\n");
+        for (int i = 0; i < nsite; i++) {
+            const int sx = site[i].hi_x - site[i].lo_x, sy = site[i].hi_y - site[i].lo_y;
+            if (site[i].n < 50) continue;
+            fprintf(stderr, "  %-8s ra=%08x n=%-6ld spread x=%-5d y=%-5d offset(%d,%d) %s\n",
+                    site[i].via, site[i].ra, site[i].n, sx, sy, site[i].lo_x, site[i].lo_y,
+                    (sx <= 8 && sy <= 8) ? "<== TRACKS THE POINTER" : "");
+        }
+    }
+}
+
 static void surf_Blt(uint32_t self)
 {
     Surface *d = com_host(self);
@@ -536,6 +601,7 @@ static void surf_Blt(uint32_t self)
             }
         }
     }
+    cursor_find_note(dl, dt, "Blt");
     if (getenv("LF2_BLT_STACK")) {
         int wx = 0, wy = 0;
         sscanf(getenv("LF2_BLT_STACK"), "%d,%d", &wx, &wy);
@@ -628,6 +694,7 @@ static void surf_BltFast(uint32_t self)
             if (hit >= 0 && seen[hit]++ == 0)
                 fprintf(stderr, "BltFast flags=%08x (has_key=%d)\n", flags, s->has_key);
         }
+        cursor_find_note(dx, dy, "BltFast");
         blit(d, dx, dy, sr - sl, sb - st_, s, sl, st_, sr - sl, sb - st_,
              (flags & 1) && s->has_key, s->key_lo, s->key_hi);
     }
