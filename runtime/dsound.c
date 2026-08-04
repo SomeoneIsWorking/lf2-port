@@ -21,7 +21,12 @@ typedef struct {
     uint32_t pixels;      /* guest address of the PCM data */
     uint32_t bytes;
     int      playing, looping;
-    uint32_t pos;         /* play cursor, in bytes */
+    uint32_t pos;         /* play cursor in bytes -- what the guest sees */
+    /* The authoritative cursor, in FRACTIONAL source frames. `pos` cannot hold it: a
+     * buffer whose rate differs from the device advances by a non-integer step, and
+     * rounding that into a byte offset once per callback resets the phase on every pull.
+     * That is why only the 22050 Hz sounds (step exactly 1.0) came out right. */
+    double   cur;
     int      channels, rate, bits;
     int      volume;      /* millibels, 0 = full */
 } SBuf;
@@ -31,6 +36,7 @@ static SBuf *bufs[MAX_BUFS];
 static int nbufs;
 
 enum { MIX_RATE = 22050, MIX_CHANNELS = 2 };
+enum { MIX_SLICE = 4096 };        /* frames mixed per pass; a pull may need several */
 
 static SDL_AudioStream *stream;
 static SDL_Mutex *mix_lock;
@@ -40,6 +46,7 @@ static SDL_Mutex *mix_lock;
  * pull and get silence. A single "audio works" flag cannot tell those apart, and peak
  * amplitude is the only one of them that proves sound would actually be heard. */
 long au_bufs, au_plays, au_pulls, au_peak, au_clipped, au_samples;
+long au_multislice_pulls, au_would_drop_frames, au_max_req;
 
 /* ---- background music ----
  * The game's BGM is WMA, which nothing here decodes. Rather than ship a decoder, the
@@ -155,19 +162,27 @@ static float gain_of(const SBuf *b)
     return SDL_powf(10.0f, (float)b->volume / 2000.0f);
 }
 
-/* Additive mix of every playing buffer. Buffers are 8- or 16-bit mono/stereo at their
- * own rate; stepping the source cursor by a ratio handles the resample crudely but
- * audibly, which is enough until the audio path is worth tuning. */
-static void SDLCALL feed(void *ud, SDL_AudioStream *s, int additional, int total)
+/* One sample of frame `i`, channel `ch`, as a float on the int16 scale. 8-bit PCM is
+ * unsigned with 128 as silence, which is why it is biased before scaling. */
+static float samp_at(const SBuf *b, uint32_t i, int ch)
 {
-    (void)ud; (void)total;
-    if (additional <= 0) return;
-    const int frames = additional / (int)(sizeof(int16_t) * MIX_CHANNELS);
-    static int16_t out[4096 * MIX_CHANNELS];
-    const int chunk = frames > 4096 ? 4096 : frames;
-    memset(out, 0, (size_t)chunk * sizeof(int16_t) * MIX_CHANNELS);
+    const uint32_t bps = (uint32_t)(b->bits / 8) * (uint32_t)b->channels;
+    const uint32_t off = i * bps;
+    const int sc = (ch < b->channels) ? ch : 0;
+    if (b->bits == 8)
+        return (float)(((int32_t)LD8(b->pixels + off + (uint32_t)sc) - 128) << 8);
+    return (float)(int16_t)LD16(b->pixels + off + (uint32_t)(sc * 2));
+}
 
-    au_pulls++;
+/* Additive mix of every playing buffer. Buffers are 8- or 16-bit mono/stereo at their own
+ * rate, so each is resampled to the device rate with a persistent fractional cursor and
+ * linear interpolation. Both parts matter: the cursor has to survive across callbacks or
+ * the phase resets on every pull, and nearest-neighbour picking made non-22050 content
+ * sound wrong even when its average rate was right. */
+static void mix_slice(SDL_AudioStream *s, int chunk)
+{
+    static int16_t out[MIX_SLICE * MIX_CHANNELS];
+    memset(out, 0, (size_t)chunk * sizeof(int16_t) * MIX_CHANNELS);
 
     /* Music first, so the effect mixing below saturates against it the same way it does
      * against other effects. */
@@ -189,29 +204,31 @@ static void SDLCALL feed(void *ud, SDL_AudioStream *s, int additional, int total
         if (bps <= 0) continue;
         const float gain = gain_of(b);
         const double step = (double)b->rate / (double)MIX_RATE;
-        double cursor = (double)b->pos / (double)bps;
+        const uint32_t nframes = b->bytes / (uint32_t)bps;
+        if (!nframes) continue;
 
         for (int f = 0; f < chunk; f++) {
-            const uint32_t off = (uint32_t)cursor * (uint32_t)bps;
-            if (off + (uint32_t)bps > b->bytes) {
-                if (b->looping) { cursor = 0; continue; }
-                b->playing = 0;
-                break;
+            if (b->cur < 0) b->cur = 0;
+            uint32_t i0 = (uint32_t)b->cur;
+            if (i0 + 1 >= nframes) {
+                /* Out of source material for an interpolated pair. */
+                if (!b->looping) { b->playing = 0; break; }
+                b->cur -= (double)nframes;
+                if (b->cur < 0) b->cur = 0;
+                i0 = (uint32_t)b->cur;
+                if (i0 + 1 >= nframes) break;      /* buffer shorter than one pair */
             }
+            const float frac = (float)(b->cur - (double)i0);
             for (int c = 0; c < MIX_CHANNELS; c++) {
-                const int sc = (c < b->channels) ? c : 0;
-                int32_t v;
-                if (b->bits == 8)
-                    v = ((int32_t)LD8(b->pixels + off + (uint32_t)sc) - 128) << 8;
-                else
-                    v = (int16_t)LD16(b->pixels + off + (uint32_t)(sc * 2));
-                int32_t acc = out[f * MIX_CHANNELS + c] + (int32_t)((float)v * gain);
+                const float v = samp_at(b, i0, c) * (1.0f - frac)
+                              + samp_at(b, i0 + 1, c) * frac;
+                int32_t acc = out[f * MIX_CHANNELS + c] + (int32_t)(v * gain);
                 out[f * MIX_CHANNELS + c] = (int16_t)(acc > 32767 ? 32767 :
                                                       acc < -32768 ? -32768 : acc);
             }
-            cursor += step;
+            b->cur += step;
         }
-        b->pos = (uint32_t)cursor * (uint32_t)bps;
+        b->pos = (uint32_t)b->cur * (uint32_t)bps;   /* what the guest polls */
     }
     SDL_UnlockMutex(mix_lock);
     /* A peak that saturates cannot say how much it saturated by, so count the samples
@@ -225,6 +242,24 @@ static void SDLCALL feed(void *ud, SDL_AudioStream *s, int additional, int total
     }
 
     SDL_PutAudioStreamData(s, out, chunk * (int)sizeof(int16_t) * MIX_CHANNELS);
+}
+
+/* SDL asks for `additional` bytes and expects all of them. The previous version mixed at
+ * most one 4096-frame slice per pull and returned whatever that produced, so any larger
+ * request was silently short-changed and the stream starved -- audible as dropouts. */
+static void SDLCALL feed(void *ud, SDL_AudioStream *s, int additional, int total)
+{
+    (void)ud; (void)total;
+    if (additional <= 0) return;
+    const int frames = additional / (int)(sizeof(int16_t) * MIX_CHANNELS);
+    au_pulls++;
+    if (frames > au_max_req) au_max_req = frames;
+    if (frames > MIX_SLICE) { au_multislice_pulls++; au_would_drop_frames += frames - MIX_SLICE; }
+    for (int done = 0; done < frames; ) {
+        const int chunk = (frames - done) > MIX_SLICE ? MIX_SLICE : (frames - done);
+        mix_slice(s, chunk);
+        done += chunk;
+    }
 }
 
 static void audio_start(void)
@@ -298,6 +333,9 @@ static void sb_SetCurrentPosition(uint32_t self)
 {
     SBuf *b = com_host(self);
     b->pos = ARG(1);
+    /* The guest owns `pos`; the mixer runs off `cur`. Resync or the seek is ignored. */
+    const int bps = (b->bits / 8) * b->channels;
+    b->cur = bps > 0 ? (double)b->pos / (double)bps : 0.0;
     com_ret(2, DD_OK);
 }
 
@@ -377,6 +415,7 @@ static void ds_DuplicateSoundBuffer(uint32_t self)
     *b = *o;                     /* shares the PCM; its own play cursor */
     b->playing = 0;
     b->pos = 0;
+    b->cur = 0.0;
     if (nbufs < MAX_BUFS) { bufs[nbufs++] = b; au_bufs++; }
     if (getenv("LF2_AUDIO_DEBUG"))
         fprintf(stderr, "buffer created: %u bytes, %d Hz %dch %dbit\n",
@@ -395,6 +434,13 @@ void audio_report(void)
             au_bufs, au_plays, au_pulls, au_peak, au_clipped, au_samples,
             au_samples ? 100.0 * (double)au_clipped / (double)au_samples : 0.0,
             au_music_frames);
+    /* Deliberately NOT prefixed "audio:" -- tools/smoke_test.sh takes the last line with
+     * that prefix, so a second one silently blanked every audio assertion. */
+    fprintf(stderr, "mixer: multi-slice pulls=%ld (%ld frames the old single-slice mixer "
+                    "would have dropped), max request=%ld frames, slice=%d\n",
+            au_multislice_pulls, au_would_drop_frames, au_max_req, MIX_SLICE);
+    if (!au_multislice_pulls && au_pulls)
+        fprintf(stderr, "  no under-delivery: every pull was satisfied in full\n");
     if (!au_bufs)  fprintf(stderr, "  the game never created a sound buffer\n");
     else if (!au_plays) fprintf(stderr, "  buffers exist but none was ever started\n");
     else if (!au_pulls) fprintf(stderr, "  buffers played but the device never pulled -- "
