@@ -60,7 +60,12 @@ else
 fi
 
 echo "two pads, the second joins before player one proceeds (about 60s)..."
-run "$LOG2" "south:1360"
+# The join frame is a stopwatch, and it had to move when the data load got faster: with
+# frame pacing skipped during the load the game reaches character selection sooner, and
+# 1360 now lands after player one has already proceeded (the "How many Computer Players?"
+# dialog is up by then). Measured window under the current pacing: 1160-1340 all join,
+# 1360 does not, so this sits in the middle with margin either side.
+run "$LOG2" "south:1250"
 if grep -q "^text .*Computer" "$LOG2"; then
     echo "  FAIL  two pads: slot 2 still became a computer -- the second pad did not join"
     fail=1
