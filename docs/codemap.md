@@ -30,7 +30,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Menus: one input model | `runtime/overrides.c` | **wip** | launcher (screens 0/6/7) takes mouse+keyboard+pad; the post-load **mode menu** takes mouse hover and click; **character selection** takes mouse hover. Remaining: pre-fight overlay, stage/difficulty sub-screens |
 | Game's own mouse cursor | `runtime/overrides.c` | **done** | declined in `fn_0043f010`; the host cursor is the only one. `LF2_CURSOR_ON=1` restores it |
 | Audio: PCM integrity | `runtime/guest_map.h` | **done** | the surface arena used to overrun the sound arena and the game played bitmaps as audio; arenas are now declared in one place with build-time overlap checks and runtime bounds |
-| Load time | `docs/running.md` | **⛔ open** | 14.4 s, and it is WALL-CLOCK bounded, not work bounded: 9.3 s sleeping, 5.1 s working, 0.34 s of that parsing. `fn_004242e0` gates the loading screen to one step per 33 ms. Forcing that gate open made it *slower* (34.8 s) because each step redraws the screen. Not solved |
+| Load time | `runtime/imports.c`, issue #8 | **wip** | the load advances one data file per 33 ms tick, so it cost (files x 33 ms). Frame pacing is now skipped while loading: **active loading 8.4-10.5 s -> 4.3-6.3 s**. The remaining 4-6 s is drawing, not parsing (parsing is 0.34 s). Throttling the drawing is a **dead end** at the blit level -- `surf_Blt` composes surfaces as well as displaying them, so skipping blits aborts the game; see issue #8 |
 | Sprite colour-key | `recompiler/lift.c` | **fixed** | root cause was ADC/SBB dropping the carry; see below |
 
 ## The binary

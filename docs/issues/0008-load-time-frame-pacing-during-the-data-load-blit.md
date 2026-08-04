@@ -1,0 +1,24 @@
+---
+id: 8
+title: Load time: frame pacing during the data load; blit throttling is a dead end
+status: open
+symptom: loading takes ~10-15 s; optimising parsing and import dispatch changed nothing
+tags: load,performance,pacing,rendering,dead-end
+created: 2026-08-05
+updated: 2026-08-05
+---
+
+FIXED PART: the load advances one data file per main-loop tick and the tick period is 33 ms, so the load costs (files x 33 ms) -- 315 files. h_Sleep now returns immediately while the game is loading, restoring pacing the moment it stops. Active loading 8.4-10.5 s -> 4.3-6.3 s, ~110k sleeps skipped.
+
+SIGNAL: 'is the game loading' = the game opening its own .dat/.txt/.bmp, 300 ms window. Chosen after keying off fn_004242e0 (the loading screen presenter) engaged for NINE frames of a whole run -- that function is the ad grid and is NOT called during the loading itself.
+
+METRIC WARNING: both the 'parse span' (first fscanf to last) and a first-open-to-last-open span START AT BOOT, because the menu reads .txt indexes before the player chooses anything. Both therefore include menu idle and understate any improvement. Use active-loading time (gaps under the window only).
+
+DEAD END -- do not retry throttling repaints:
+  1. fn_0043f010 throttle: no effect. Not the paint path during loading; sampling shows fn_00415160, fn_00401250, GDI StretchBlt.
+  2. Skipping blits in surf_Blt/surf_BltFast: ABORTS the game (TerminateProcess). Two separate reasons, both real: (a) lf2_loading_now() is true at boot from the menu's .txt files, so init blits were skipped and the game's DirectDraw verification failed; (b) even gated on the game proper it still aborts, because surf_Blt is how the game COMPOSES surfaces, not just how it displays them -- skipping blits corrupts content the game later depends on. Throttling at the blit level is the wrong idea, not a wrong implementation.
+  3. Deciding per blit rather than per frame latches: with every blit skipped there is no present, so a decision taken in present_primary() never updates again and drawing stops for ever.
+
+REMAINING: ~4-6 s, and sampling says it is drawing, not parsing (parsing is 0.34 s). A safe throttle would have to target only the loading screen's own full-screen repaint, identified specifically, leaving composition blits alone. Not attempted.
+
+Also: a faster load shifts the frame-scheduled input in tools/*_test.sh, so controller_2p may flake more often.
