@@ -327,6 +327,8 @@ static void h_GetObjectA(void)
     ret_stdcall(3, 0);
 }
 
+void cursor_find_note(int dl, int dt, const char *via);   /* ddraw.c */
+
 static void h_StretchBlt(void)
 {
     /* StretchBlt(hdcDst, x, y, w, h, hdcSrc, sx, sy, sw, sh, rop) */
@@ -350,6 +352,7 @@ static void h_StretchBlt(void)
         ret_stdcall(11, 0); return;
     }
 
+    cursor_find_note(dx, dy, "StretchBlt");
     for (int y = 0; y < dh; y++) {
         const int ty = dy + y;
         if (ty < 0 || ty >= dhei) continue;
