@@ -36,6 +36,17 @@ static int mouse_left_down, mouse_right_down;
  * mouse hit-testing on character selection never fired. */
 static int host_ptr_x = -1, host_ptr_y = -1;
 
+/* One-shot edge: true once per physical press, so a held button does not auto-repeat
+ * through a menu. Consumed by the reader. */
+static int mouse_click_pending;
+
+int hostwin_mouse_clicked(void)
+{
+    const int c = mouse_click_pending;
+    mouse_click_pending = 0;
+    return c;
+}
+
 int hostwin_pointer(int *x, int *y)
 {
     if (host_ptr_x < 0) return 0;
@@ -289,6 +300,7 @@ void hostwin_inject_pointer(int x, int y, int down)
     if (down < 0) return;
     if ((down != 0) == mouse_left_down) return;
     mouse_left_down = down != 0;
+    if (mouse_left_down) mouse_click_pending = 1;
     push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
 }
 
@@ -336,6 +348,7 @@ void hostwin_pump(void)
             const int down = (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
             const uint32_t lp = mouse_lparam(e.button.x, e.button.y);
             if (e.button.button == SDL_BUTTON_LEFT) {
+                if (down && !mouse_left_down) mouse_click_pending = 1;
                 mouse_left_down = down;
                 push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
             } else if (e.button.button == SDL_BUTTON_RIGHT) {

@@ -135,6 +135,8 @@ static const struct { uint32_t screen; const Item *items; int n; } SCREENS[] = {
 
 static int menu_index;
 static int menu_confirm_frames;
+/* Set when a mouse click should read as the attack button for one gather. */
+int mouse_confirm_frames;
 static int menu_owns_pointer;
 static uint32_t menu_wrote_x, menu_wrote_y;
 static uint32_t menu_last_screen = 0xffffffffu;
@@ -188,7 +190,9 @@ static void menu_sync_from_pointer(const Item *items, int n)
  * the function whose `this` holds the mode. */
 static uint32_t top_mode = 0xffffffffu;
 void charselect_mouse(void);
-int hostwin_pointer(int *x, int *y);   /* win32.c */
+void modemenu_mouse(void);
+int hostwin_pointer(int *x, int *y);        /* win32.c */
+int hostwin_mouse_clicked(void);            /* win32.c: one-shot, per press */
 
 void fn_004246b0(void)
 {
@@ -231,6 +235,7 @@ void fn_004246b0(void)
                        && (int32_t)LD32(GX_MOUSE_Y) < 18)
         ST32(GX_CLICK, 0);
 
+    modemenu_mouse();            /* pointer -> selection on the post-load mode menu */
     charselect_mouse();          /* pointer -> slot cursor on character selection */
 
     int n = 0;
@@ -370,6 +375,9 @@ static int device_buttons(int dev, unsigned char out[7])
         /* up, down, left, right, attack, jump, defend -- the game's button order */
         static const uint8_t VKS[7] = { 0x26, 0x28, 0x25, 0x27, 0x5A, 0x58, 0x43 };
         for (int b = 0; b < 7; b++) out[b] = (unsigned char)(hostwin_key_held(VKS[b]) != 0);
+        /* A mouse click on a ported menu reads as this device's attack, so the game does
+         * its own dispatch, sound and screen change rather than the port simulating them. */
+        if (mouse_confirm_frames > 0) { mouse_confirm_frames--; out[4] = 1; }
         return 1;                        /* a keyboard is always there */
     }
     return gamepad_player_buttons(dev - 1, out);
@@ -692,4 +700,63 @@ void charselect_mouse(void)
     const uint32_t cur = LD32(objp + OBJ_SEL);
     if (cur >= CS_SLOTS) return;              /* not holding a slot index: not this screen */
     if ((uint32_t)slot != cur) ST32(objp + OBJ_SEL, (uint32_t)slot);
+}
+
+/* ---------------------------------------------------------------------------
+ * The post-load mode menu -- VS mode / Stage mode / the two championships / Battle mode /
+ * Demo / Playback Recording / Quit. This is the screen the front-end launcher hands over
+ * to, and the one that makes the two menus feel like different programs: the launcher is
+ * mouse-only and this is keyboard-only. Same treatment as character selection, pointer to
+ * index, so all three input devices drive it.
+ *
+ *   .data 0x00451160   the selection, 0..7
+ *
+ * Located by diffing .data across one down-press against a no-press control -- one dword
+ * differed in the test and not in the control -- and confirmed by stepping down/down/up
+ * and watching 0 -> 2 -> 1. (The heap diff was empty for this screen; unlike character
+ * selection, this selection really is in .data.)
+ *
+ * The item rows come from the game's own frame: the eight labels sit at ~27.3 px spacing
+ * from y 215, in the x band the labels occupy. Measured by scanning a dumped frame for
+ * ink rows rather than by reading coordinates off a screenshot.
+ * ------------------------------------------------------------------------ */
+enum { MODEMENU_SEL = 0x00451160, MODEMENU_ITEMS = 8 };
+enum { MM_X0 = 250, MM_X1 = 560, MM_Y0 = 202, MM_STEP_Q = 273 };   /* step 27.3 px, x10 */
+
+static int modemenu_item_at(int x, int y)
+{
+    if (x < MM_X0 || x > MM_X1) return -1;
+    const int rel = (y - MM_Y0) * 10;
+    if (rel < 0) return -1;
+    const int i = rel / MM_STEP_Q;
+    return (i >= 0 && i < MODEMENU_ITEMS) ? i : -1;
+}
+
+void modemenu_mouse(void)
+{
+    if (top_mode != MODE_IN_GAME) return;
+
+    int mx, my;
+    if (!hostwin_pointer(&mx, &my)) return;
+
+    const uint32_t cur = LD32(MODEMENU_SEL);
+    if (cur >= MODEMENU_ITEMS) return;      /* not holding a menu index: not this screen */
+
+    static int last_x = -1, last_y = -1;
+    const int moved = (mx != last_x || my != last_y);
+    last_x = mx; last_y = my;
+
+    const int item = modemenu_item_at(mx, my);
+    if (item < 0) return;
+
+    /* Hover selects, but only when the pointer actually moved, so an idle mouse resting
+     * over an item never fights the keyboard or a pad. */
+    if (moved && (uint32_t)item != cur) ST32(MODEMENU_SEL, (uint32_t)item);
+
+    /* A click activates. The game acts on its own attack button, so the click is turned
+     * into one, which keeps the dispatch, the sound and the screen change the game's. */
+    if (hostwin_mouse_clicked()) {
+        ST32(MODEMENU_SEL, (uint32_t)item);
+        mouse_confirm_frames = 2;
+    }
 }
