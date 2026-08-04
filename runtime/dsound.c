@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -63,8 +64,29 @@ static void mix_dump_open(void)
 {
     const char *path = getenv("LF2_AUDIO_DUMP_MIX");
     if (!path || !*path || mix_dump) return;
+    /* Create the parent directories. A relative path here is resolved against the game
+     * tree, because run.sh chdirs into it before exec -- so the obvious invocation
+     * (LF2_AUDIO_DUMP_MIX=scratch/wav/mix.wav ./run.sh) aimed at a directory that does
+     * not exist, fopen failed, and the run recorded nothing while looking fine. */
+    {
+        char dirs[512];
+        snprintf(dirs, sizeof dirs, "%s", path);
+        for (char *q = dirs + 1; *q; q++)
+            if (*q == '/') { *q = 0; mkdir(dirs, 0777); *q = '/'; }
+    }
     mix_dump = fopen(path, "wb");
-    if (!mix_dump) { fprintf(stderr, "audio dump: cannot write %s\n", path); return; }
+    if (!mix_dump) {
+        char cwd[512];
+        /* Loud, and it names the resolved location -- "cannot write" without saying where
+         * it tried is what made this look like a recording that simply came out empty. */
+        fprintf(stderr,
+                "\n*** audio dump FAILED: cannot open \"%s\"\n"
+                "*** working directory is %s\n"
+                "*** a relative path lands inside the game tree; use an absolute one.\n"
+                "*** NOTHING WILL BE RECORDED.\n\n",
+                path, getcwd(cwd, sizeof cwd) ? cwd : "?");
+        return;
+    }
     unsigned char hdr[44] = {0};
     memcpy(hdr, "RIFF", 4); memcpy(hdr + 8, "WAVEfmt ", 8); memcpy(hdr + 36, "data", 4);
     hdr[16] = 16; hdr[20] = 1; hdr[22] = MIX_CHANNELS;
