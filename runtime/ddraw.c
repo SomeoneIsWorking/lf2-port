@@ -4,6 +4,7 @@
  * address and the GDI text path can scribble into the same buffer. Everything is 8-bit
  * indexed, which is what the game's BMPs are. */
 #include "com.h"
+#include "guest_map.h"
 #include "guest_ops.h"
 #include "hostwin.h"
 
@@ -43,8 +44,9 @@ static uint32_t primary_surface;
 static uint32_t active_palette;
 
 /* Surfaces live here rather than on the guest heap so a huge sprite sheet cannot
- * collide with malloc'd game data. */
-enum { VRAM_BASE = 0x50000000u };
+ * collide with malloc'd game data. The range is declared in guest_map.h, which is also
+ * what stops it colliding with the sound PCM arena -- it used to, silently. */
+enum { VRAM_BASE = GUEST_VRAM_BASE };
 static uint32_t vram_next = VRAM_BASE;
 
 long vram_allocs, vram_bytes;
@@ -118,6 +120,17 @@ void vram_report(void)
 
 static uint32_t vram_alloc(uint32_t n)
 {
+    /* Refuse past the reservation instead of walking into the next arena. Running off
+     * the end used to be invisible: the allocator handed out addresses belonging to the
+     * sound PCM, the surfaces overwrote it, and the only symptom was that the game
+     * sounded broken. An arena that cannot overflow loudly will overflow quietly. */
+    if (vram_next + n < vram_next || vram_next + n > GUEST_VRAM_END) {
+        fprintf(stderr,
+                "vram arena exhausted: %u bytes requested at %08x, reservation ends at %08x\n"
+                "  (%ld allocations, %ld KB so far). Raise GUEST_VRAM_SIZE in guest_map.h.\n",
+                n, vram_next, (unsigned)GUEST_VRAM_END, vram_allocs, vram_bytes / 1024);
+        abort();
+    }
     vram_allocs++; vram_bytes += n;
     uint32_t p = vram_next;
     vram_next = (vram_next + n + 4095u) & ~4095u;

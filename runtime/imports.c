@@ -4,6 +4,7 @@
  * entry [ESP] is the return address and [ESP+4+4n] is argument n. stdcall (Win32) pops
  * its own arguments; cdecl (CRT) leaves that to the caller. */
 #include "guest_ops.h"
+#include "guest_map.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -32,7 +33,7 @@ static void ret_cdecl(uint32_t value)
  * Bump allocator over a dedicated region. Free is a no-op for now: the game allocates
  * its sprite and stage data once at load, so this holds for a session, but it will need
  * a real free list before anything long-running. */
-enum { HEAP_BASE = 0x20000000u, HEAP_SIZE = 0x20000000u };
+enum { HEAP_BASE = GUEST_HEAP_BASE, HEAP_SIZE = GUEST_HEAP_SIZE };
 static uint32_t heap_next = HEAP_BASE;
 
 static uint32_t guest_alloc(uint32_t size)
