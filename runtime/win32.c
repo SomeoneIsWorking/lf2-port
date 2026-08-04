@@ -27,6 +27,21 @@ enum { WM_KEYDOWN_FWD = 0x0100, WM_KEYUP_FWD = 0x0101,
        WM_RBUTTONDOWN = 0x0204, WM_RBUTTONUP = 0x0205 };
 
 static int mouse_left_down, mouse_right_down;
+
+/* The pointer in GAME coordinates, kept by the port itself.
+ *
+ * The game's own 0x004546f0/0x00453cdc are written by its WM_MOUSEMOVE handler, which only
+ * runs in the front end -- after loading they go stale, so anything in the game proper that
+ * reads them sees a pointer frozen wherever it last was. That is why the first attempt at
+ * mouse hit-testing on character selection never fired. */
+static int host_ptr_x = -1, host_ptr_y = -1;
+
+int hostwin_pointer(int *x, int *y)
+{
+    if (host_ptr_x < 0) return 0;
+    *x = host_ptr_x; *y = host_ptr_y;
+    return 1;
+}
 static unsigned autokey_pumps;
 void gamepad_handle_event(const SDL_Event *e);
 void gamepad_drive_ui(void);
@@ -211,6 +226,10 @@ static void pump_autoclick(void)
     /* Resend periodically rather than once: a single move pushed before the game starts
      * draining its queue is simply lost. Every pump is far too often -- that floods the
      * ring and starves the render loop -- so this repeats at a slow interval. */
+    /* The scripted pointer is the pointer, as far as the rest of the port is concerned.
+     * This path built the lparam inline and bypassed both mouse_lparam and
+     * hostwin_inject_pointer, so hostwin_pointer() stayed unset for the whole run. */
+    host_ptr_x = x; host_ptr_y = y;
     const uint32_t lp = ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
     static uint64_t last_sent;
     const uint64_t now_ms = SDL_GetTicks();
@@ -260,6 +279,11 @@ void hostwin_inject_key(uint32_t vk, int down)
 
 void hostwin_inject_pointer(int x, int y, int down)
 {
+    /* An injected pointer must be indistinguishable from a physical one to the rest of
+     * the port, so it updates hostwin_pointer() exactly as a real motion event does.
+     * Without this the scripted pointer moved the GAME's copy but not the port's, and
+     * anything reading the port's copy saw a pointer that never moved. */
+    host_ptr_x = x; host_ptr_y = y;
     const uint32_t lp = ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
     push_message(WM_MOUSEMOVE, (uint32_t)(mouse_left_down ? 1 : 0), lp);
     if (down < 0) return;
@@ -644,6 +668,7 @@ static uint32_t mouse_lparam(float wx, float wy)
     float lx = wx, ly = wy;
     if (hw.renderer) SDL_RenderCoordinatesFromWindow(hw.renderer, wx, wy, &lx, &ly);
     const int x = (int)lx, y = (int)ly;
+    host_ptr_x = x; host_ptr_y = y;
     return ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
 }
 

@@ -235,6 +235,25 @@ static int frame_wanted(long frame) { return spec_lists(getenv("LF2_FRAME_DUMP")
  * little would drop the answer and look like "nothing changed". */
 enum { DATA_BASE = 0x0044d000, DATA_SIZE = 0xc724 };
 
+/* LF2_HEAP_DUMP=<frame>[,...] snapshots the guest heap in use, for the same
+ * before/after diffing as LF2_MEM_DUMP but over the region .data cannot reach.
+ * tools/diff_data.py --base 0x20000000 reads it. */
+uint32_t guest_heap_used(void);          /* imports.c */
+
+static void dump_heap(long frame)
+{
+    if (!spec_lists(getenv("LF2_HEAP_DUMP"), frame)) return;
+    const uint32_t used = guest_heap_used();
+    char path[256];
+    dump_path(path, sizeof path, "heap_%06ld.bin", frame);
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "heap dump: cannot write %s\n", path); return; }
+    fwrite(g_mem + GUEST_HEAP_BASE, 1, used, f);
+    fclose(f);
+    fprintf(stderr, "heap dump: wrote %s (%u bytes from %08x)\n",
+            path, used, (unsigned)GUEST_HEAP_BASE);
+}
+
 static void dump_data(long frame)
 {
     if (!spec_lists(getenv("LF2_MEM_DUMP"), frame)) return;
@@ -292,6 +311,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     screen_change_check(pixels, w, h, src_pitch, frames);
     dump_frame(pixels, w, h, src_pitch, frames);
     dump_data(frames);
+    dump_heap(frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
     if (frames % 900 == 0) { colorkey_report(); vram_report(); com_release_report(); input_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }

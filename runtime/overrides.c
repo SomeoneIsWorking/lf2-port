@@ -187,6 +187,8 @@ static void menu_sync_from_pointer(const Item *items, int n)
  * first served. Written by the menu override because fn_004246b0 runs every frame and is
  * the function whose `this` holds the mode. */
 static uint32_t top_mode = 0xffffffffu;
+void charselect_mouse(void);
+int hostwin_pointer(int *x, int *y);   /* win32.c */
 
 void fn_004246b0(void)
 {
@@ -228,6 +230,8 @@ void fn_004246b0(void)
     if (LD32(GX_CLICK) && (int32_t)LD32(GX_MOUSE_X) >= NOTICE_X
                        && (int32_t)LD32(GX_MOUSE_Y) < 18)
         ST32(GX_CLICK, 0);
+
+    charselect_mouse();          /* pointer -> slot cursor on character selection */
 
     int n = 0;
     const int front_end = (mode != MODE_ENTER && mode != MODE_IN_GAME);
@@ -355,6 +359,10 @@ enum { MAX_DEV = 5 };                    /* the keyboard, then up to four pads *
 
 static int dev_player[MAX_DEV] = { -1, -1, -1, -1, -1 };
 static unsigned char dev_prev[MAX_DEV][7];
+
+/* Which player the keyboard claimed, or -1. The mouse drives the same one, so the two
+ * never disagree about who they are. */
+int keyboard_player(void) { return dev_player[0]; }
 
 static int device_buttons(int dev, unsigned char out[7])
 {
@@ -585,4 +593,103 @@ void fn_0043c4a0(void)
     if (getenv("LF2_ADS_ON")) { void fn_0043c4a0__orig(void); fn_0043c4a0__orig(); return; }
     R(EAX) = 0;
     R(ESP) += 4;                             /* pop the return address only */
+}
+
+/* ---------------------------------------------------------------------------
+ * Character selection: make the mouse work, alongside the keyboard and pads.
+ *
+ * The front-end menu is mouse-native and the port adds keyboard/pad to it by moving an
+ * index and writing the POINTER onto the chosen item, letting the game's own highlight and
+ * dispatch run. Everything after loading is the opposite problem: fn_0041bc90's screens
+ * are keyboard-native and hit-test nothing, so here the port goes the other way, pointer
+ * -> index, and again lets the game draw and act on it.
+ *
+ * The state, located rather than guessed:
+ *   .data 0x00458c94  an array of object pointers, stride 0x420
+ *   OBJ[e] + 0x364    that object's character-select slot cursor
+ *
+ * Found by diffing the guest HEAP across one right-arrow press with a no-press control:
+ * exactly one dword of 25,071,560 changed in the test and none in the control. Confirmed
+ * as a cursor rather than a coincidence by stepping it right/right/left and watching
+ * 0 -> 2 -> 1. It is NOT in .data, which is why diffing .data found only free-running
+ * counters -- see docs/issues for that dead end.
+ *
+ * The slot rectangles come from the game's own frame, not from measuring a screenshot:
+ * the portrait panels are near-black, so scanning a dumped frame for dark runs gives the
+ * columns and rows below exactly.
+ *
+ * Safety, since this writes into a live game object: the write happens only while the
+ * top-level mode is the game proper, only when the pointer actually MOVED this frame (so
+ * it never fights the keyboard or pad), only when the pointer is inside a slot, and only
+ * when the cursor already holds a slot index. A screen id that reliably separates
+ * character select from the match has not been found yet -- two candidates next to the
+ * known screen variables both turned out to track route progress instead -- so the gate is
+ * built to be harmless without one rather than to depend on a guess.
+ * ------------------------------------------------------------------------ */
+/* OBJ_TABLE is an array of pointers; the objects they point at are 0x420 apart, which is
+ * how the table was recognised as a table. Only the pointers are indexed here. */
+enum { OBJ_TABLE = 0x00458c94, OBJ_SEL = 0x364, CS_SLOTS = 8 };
+
+/* x runs and y runs of the eight portrait panels, read off a frame dump. */
+static const struct { int x0, x1; } CS_COL[4] = {
+    { 147, 266 }, { 300, 419 }, { 453, 572 }, { 606, 725 },
+};
+static const struct { int y0, y1; } CS_ROW[2] = {
+    {  95, 282 },      /* portrait 95..213 plus its Player/Fighter/Team rows */
+    { 306, 495 },
+};
+
+static int cs_slot_at(int x, int y)
+{
+    for (int r = 0; r < 2; r++) {
+        if (y < CS_ROW[r].y0 || y > CS_ROW[r].y1) continue;
+        for (int c = 0; c < 4; c++)
+            if (x >= CS_COL[c].x0 && x <= CS_COL[c].x1) return r * 4 + c;
+    }
+    return -1;
+}
+
+/* The keyboard is device 0; whichever player it claimed is the one the mouse should also
+ * drive, so the two never disagree about who they are. The observed pairing is entry
+ * 1 + player, which is what a right-arrow press moved. */
+void charselect_mouse(void)
+{
+    static int dbg0 = -1;
+    if (dbg0 < 0) dbg0 = getenv("LF2_CS_DEBUG") != NULL;
+    if (dbg0) {
+        static long n; int px=-1, py=-1; const int have = hostwin_pointer(&px, &py);
+        if (++n % 120 == 0)
+            fprintf(stderr, "cs-gate: top_mode=%u have_ptr=%d ptr=(%d,%d)\n",
+                    top_mode, have, px, py);
+    }
+    if (top_mode != MODE_IN_GAME) return;
+
+    /* The port's own pointer, not the game's stale copy -- see hostwin_pointer(). */
+    int mx, my;
+    if (!hostwin_pointer(&mx, &my)) return;
+    static int last_x = -1, last_y = -1;
+    const int moved = (mx != last_x || my != last_y);
+    last_x = mx; last_y = my;
+    if (!moved) return;                       /* idle mouse never overrides the keyboard */
+
+    const int slot = cs_slot_at(mx, my);
+    static int dbg = -1;
+    if (dbg < 0) dbg = getenv("LF2_CS_DEBUG") != NULL;
+    if (dbg) {
+        const int kp0 = keyboard_player();
+        const uint32_t e0 = (uint32_t)(1 + (kp0 >= 0 ? kp0 : 0));
+        const uint32_t p0 = LD32(OBJ_TABLE + e0 * 4);
+        fprintf(stderr, "cs: ptr=(%d,%d) slot=%d kbplayer=%d entry=%u obj=%08x cur=%u\n",
+                mx, my, slot, kp0, e0, p0, p0 ? LD32(p0 + OBJ_SEL) : 0xffffffffu);
+    }
+    if (slot < 0) return;
+
+    const int kp = keyboard_player();
+    const uint32_t e = (uint32_t)(1 + (kp >= 0 ? kp : 0));
+    const uint32_t objp = LD32(OBJ_TABLE + e * 4);   /* a table of POINTERS, 4 bytes each */
+    if (!objp) return;
+
+    const uint32_t cur = LD32(objp + OBJ_SEL);
+    if (cur >= CS_SLOTS) return;              /* not holding a slot index: not this screen */
+    if ((uint32_t)slot != cur) ST32(objp + OBJ_SEL, (uint32_t)slot);
 }
