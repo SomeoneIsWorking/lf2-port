@@ -210,6 +210,15 @@ void fn_004246b0(void)
             fprintf(stderr, "overlay selection = %u\n", overlay);
         }
     }
+    /* LF2_OVERLAY_FORCE=<n> pins the pre-fight overlay's selection so each item's screen
+     * position can be read off a frame dump. Diagnostic scaffolding for building the
+     * mouse hit-test table -- the positions have to come from the game, not from me
+     * measuring a screenshot by eye. */
+    if (getenv("LF2_OVERLAY_FORCE")) {
+        const uint32_t want = (uint32_t)atoi(getenv("LF2_OVERLAY_FORCE"));
+        if (LD32(OVERLAY_SEL) != want) ST32(OVERLAY_SEL, want);
+    }
+
     /* The update notice in the top-right corner is gone (see fn_0043f010), so its hit box
      * must go with it, or the menu keeps an invisible control that opens sub-screen -3. The
      * game's own test is `mouse.x >= 725 && mouse.y < 18` with no upper bound on x or lower
