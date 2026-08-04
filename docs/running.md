@@ -764,13 +764,39 @@ tables doing two `strcmp`s per entry, **on every call**. Caching the resolution 
 took the data load from **13.1 s to 10.2 s** (measured twice, identical), and the cache is
 correct by construction: the guest's import table is fixed once the image is loaded.
 
-**Is 10 s slow?** Not obviously. Wine running the same binary on the same machine takes
-about the same order of time to get past its main menu after the equivalent click (screen
-content stops changing at ~11 s, measured by perceptual hash of the framebuffer). That
-comparison is coarse — a hash cannot tell the loading screen from the mode menu, so no
-precise ratio should be read into it — but it is enough to say the recompiled code is not
-grossly slower than the original. There is no obvious win left here, which is why the
-investigation stopped.
+**Is 10 s slow? Yes, and the reason it looked acceptable was a bad question.** This
+paragraph used to argue that Wine takes about as long, so nothing was left to win. Both
+halves were wrong. The standard is not "no worse than Wine" — this is our port, and ten
+seconds to a loading screen is unacceptable on its own terms. And the measurement was
+weak: "screen content stops changing at ~11 s" by perceptual hash cannot tell the loading
+screen from the mode menu, as the original text admitted while drawing a conclusion from
+it anyway.
+
+What the load actually is, measured with `LF2_SCAN_PROF=1` (which reports the span from
+the first parse to the last, split into sleeping and working):
+
+| component | time | share |
+|---|---|---|
+| `Sleep` (2036 calls) | 9.3 s | 65 % |
+| other work | 5.1 s | 35 % |
+| …of which `.dat` parsing | 0.34 s | 2.4 % |
+
+**The load is bounded by wall-clock time, not by work.** `LF2_NO_SLEEP=1` only takes the
+span from 14.4 s to 10.5 s, because the same loop spins more iterations against the same
+deadline. That is why caching import resolution (13.1 → 10.2 s) disappointed: it was
+optimising 5 % of the load. Ranking imports by *time* rather than call count says `Sleep`
+is 24.7 s of the 27.1 s spent in handlers, while the 6.9 M `fscanf`/`feof`/`fprintf` calls
+cost 0.79 s combined.
+
+The gate is `fn_004242e0`, the loading screen's own frame limiter: it advances one step
+per 33 ms and sleeps otherwise, so a load is `steps × 33 ms` whatever the machine can do.
+
+**An attempt to open that gate was reverted, and it is worth recording why.** Making the
+deadline already-expired on entry — leaving the game's own work path untouched and only
+removing the waiting — made loading *slower*, 34.8 s against 23.4 s, because each step
+calls `fn_0043f010` to redraw the screen. Removing the wait does not advance the load
+faster; it just performs thousands more full redraws. Whatever advances the load is not
+one-unit-per-call, and has not been found yet.
 
 The obvious follow-up did **not** pay off, which is worth recording so it is not tried
 again: `h_fscanf` called `getenv` on every one of those 2.5M invocations, and caching it
