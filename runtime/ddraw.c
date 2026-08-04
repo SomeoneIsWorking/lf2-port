@@ -622,6 +622,29 @@ static void surf_Blt(uint32_t self)
         }
     }
     cursor_find_note(dl, dt, "Blt");
+    /* LF2_SMALL_BLT=1 -- a cursor is a SMALL sprite, so list the small destinations
+     * distinctly. The correlation hook asks "does this track the pointer" and answers no
+     * for every site; this asks the simpler question of what tiny things get drawn at all,
+     * which is what a cursor would be hiding among. Distinct rects only, so a per-frame
+     * redraw does not bury the list. */
+    if (getenv("LF2_SMALL_BLT")) {
+        const int w = dr - dl, h = db - dt;
+        if (w > 0 && h > 0 && w <= 40 && h <= 40) {
+            enum { MAXS = 64 };
+            static struct { int l, t, w, h; uint32_t ra; } seen[MAXS];
+            static int n;
+            int known = 0;
+            for (int i = 0; i < n; i++)
+                if (seen[i].l == dl && seen[i].t == dt && seen[i].w == w && seen[i].h == h) { known = 1; break; }
+            if (!known && n < MAXS) {
+                seen[n].l = dl; seen[n].t = dt; seen[n].w = w; seen[n].h = h;
+                seen[n].ra = LD32(R(ESP));
+                fprintf(stderr, "small blt (%d,%d) %dx%d from guest %08x\n",
+                        dl, dt, w, h, seen[n].ra);
+                n++;
+            }
+        }
+    }
     if (getenv("LF2_BLT_STACK")) {
         int wx = 0, wy = 0;
         sscanf(getenv("LF2_BLT_STACK"), "%d,%d", &wx, &wy);
