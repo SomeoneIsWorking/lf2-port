@@ -436,22 +436,70 @@ static void read_rect(uint32_t p, int *l, int *t, int *r, int *b, int dw, int dh
 /* DirectDraw stretches when the destination rectangle differs in size from the source,
  * and a NULL source rectangle means the whole surface. Copying 1:1 and ignoring the
  * destination extent draws the wrong part of the source wherever the game scales. */
+/* The source column for each destination column, computed once per blit.
+ *
+ * The inner loop used to evaluate `sx + (int64_t)x * sw / dw` PER PIXEL -- a 64-bit
+ * multiply and an integer divide for every one of the 437,000 pixels in a full-screen
+ * paint. Stack sampling during a load put three of six samples inside this function and
+ * StretchBlt, and each full-screen paint measured around 20 ms, which is ~46 ns a pixel.
+ *
+ * The mapping depends only on x, so it is hoisted to one divide per COLUMN. That is the
+ * same arithmetic, not an approximation: a fixed-point stepper would round differently and
+ * shift pixels, and this path draws every sprite in the game. */
+enum { BLIT_MAXW = 4096 };
+
 static void blit(Surface *d, int dx, int dy, int dw, int dh,
                  Surface *s, int sx, int sy, int sw, int sh,
                  int keyed, uint32_t klo, uint32_t khi)
 {
     if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+
+    const uint32_t lo = klo & 0x00ffffffu, hi = khi & 0x00ffffffu;
+
+    /* Destination columns that land inside both surfaces, and their source column.
+     * Clipping here as well means the inner loop carries no per-pixel branches. */
+    static int col_src[BLIT_MAXW], col_dst[BLIT_MAXW];
+    int ncol = 0;
+    const int wlim = dw < BLIT_MAXW ? dw : BLIT_MAXW;
+    for (int x = 0; x < wlim; x++) {
+        const int sxx = sx + (int)((int64_t)x * sw / dw), dxx = dx + x;
+        if (sxx < 0 || sxx >= s->w || dxx < 0 || dxx >= d->w) continue;
+        col_src[ncol] = sxx; col_dst[ncol] = dxx; ncol++;
+    }
+    if (!ncol) return;
+
+    /* A run of columns that is contiguous and 1:1 (the unscaled case, which is most of
+     * them) can be copied without indirection. */
+    const int direct = (ncol > 1) && (col_src[1] - col_src[0] == 1)
+                    && (col_src[ncol - 1] - col_src[0] == ncol - 1)
+                    && (col_dst[ncol - 1] - col_dst[0] == ncol - 1);
+
     for (int y = 0; y < dh; y++) {
         const int syy = sy + (int)((int64_t)y * sh / dh), dyy = dy + y;
         if (syy < 0 || syy >= s->h || dyy < 0 || dyy >= d->h) continue;
         const uint32_t *sp = (const uint32_t *)(g_mem + s->pixels + (size_t)syy * (size_t)s->pitch);
         uint32_t *dp = (uint32_t *)(g_mem + d->pixels + (size_t)dyy * (size_t)d->pitch);
-        for (int x = 0; x < dw; x++) {
-            const int sxx = sx + (int)((int64_t)x * sw / dw), dxx = dx + x;
-            if (sxx < 0 || sxx >= s->w || dxx < 0 || dxx >= d->w) continue;
-            const uint32_t v = sp[sxx] & 0x00ffffffu;
-            if (keyed && v >= (klo & 0x00ffffffu) && v <= (khi & 0x00ffffffu)) continue;
-            dp[dxx] = v;
+
+        if (direct) {
+            const uint32_t *srow = sp + col_src[0];
+            uint32_t *drow = dp + col_dst[0];
+            if (!keyed) {
+                for (int i = 0; i < ncol; i++) drow[i] = srow[i] & 0x00ffffffu;
+            } else {
+                for (int i = 0; i < ncol; i++) {
+                    const uint32_t v = srow[i] & 0x00ffffffu;
+                    if (v >= lo && v <= hi) continue;
+                    drow[i] = v;
+                }
+            }
+        } else if (!keyed) {
+            for (int i = 0; i < ncol; i++) dp[col_dst[i]] = sp[col_src[i]] & 0x00ffffffu;
+        } else {
+            for (int i = 0; i < ncol; i++) {
+                const uint32_t v = sp[col_src[i]] & 0x00ffffffu;
+                if (v >= lo && v <= hi) continue;
+                dp[col_dst[i]] = v;
+            }
         }
     }
 }
