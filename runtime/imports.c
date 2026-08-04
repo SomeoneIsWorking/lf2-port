@@ -64,6 +64,17 @@ static void h_GetSystemTimeAsFileTime(void)
     ret_stdcall(1, 0);
 }
 
+/* Sleep requested, accumulated so the load span can be split into "sleeping" versus
+ * "working". Ranking imports by CALL COUNT hid this completely: Sleep is 0.07% of the
+ * calls and the overwhelming majority of the time. */
+static double sleep_ns_total;
+static long   sleep_calls_total;
+enum { SLEEP_SITES = 16 };
+static uint32_t sleep_site[SLEEP_SITES];
+static long     sleep_site_n[SLEEP_SITES];
+static long     sleep_site_at_first[SLEEP_SITES], sleep_site_at_last[SLEEP_SITES];
+static int      sleep_nsites;
+
 /* Sleep was a no-op returning immediately, so the game's frame pacing -- which is a
  * Sleep in a loop -- became a spin, pegging a core at ~96% for a 30 fps 2D fighter.
  * Honouring it is also the faithful behaviour: on Windows this blocks the thread, and the
@@ -87,6 +98,19 @@ static void h_Sleep(void)
     else {
         struct timespec req = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
         nanosleep(&req, NULL);
+    }
+    sleep_ns_total += (double)ms * 1e6;
+    sleep_calls_total++;
+    /* Which guest loop is sleeping? [ESP] held the return address on entry, and
+     * ret_stdcall has not run yet. Distinct sites, not a sample: there are only a
+     * handful, and a sample of a rare site would read as absent. */
+    {
+        const uint32_t ra = LD32(R(ESP));
+        int k = 0;
+        for (; k < sleep_nsites; k++) if (sleep_site[k] == ra) break;
+        if (k == sleep_nsites && sleep_nsites < (int)(sizeof sleep_site / sizeof *sleep_site))
+            sleep_site[sleep_nsites++] = ra;
+        if (k < (int)(sizeof sleep_site / sizeof *sleep_site)) sleep_site_n[k]++;
     }
     ret_stdcall(1, 0);
 }
@@ -519,7 +543,48 @@ static void scan_store(const ScanArg *a, const void *slot)
     }
 }
 
-static int gscan(FILE *fh, const char *input, const char *fmt, uint32_t argp)
+/* LF2_SCAN_PROF=1 measures the scanf path, which dominates the data load: the game
+ * decrypts each .dat into a temp file and parses it back token by token, so this is
+ * where a multi-second load is won or lost. It reports unconditionally when enabled --
+ * a profiler that prints nothing when the count is zero cannot be told apart from one
+ * that never ran, and this path is easy to route around by accident. The two
+ * clock_gettime calls cost tens of ns each, which is itself a few percent at this call
+ * count, so read the per-call figure as an upper bound. */
+static long   scan_calls;
+static double scan_ns;
+static struct timespec scan_first, scan_last;   /* the load SPAN, not just time in gscan */
+static double sleep_ns_at_first, sleep_ns_at_last;
+static long   sleep_calls_at_first, sleep_calls_at_last;
+
+void scan_prof_report(void)
+{
+    if (!getenv("LF2_SCAN_PROF")) return;
+    fprintf(stderr, "gscan: %ld calls, %.3f s inside gscan, %.0f ns/call (timer overhead included)\n",
+            scan_calls, scan_ns / 1e9,
+            scan_calls ? scan_ns / (double)scan_calls : 0.0);
+    if (!scan_calls) {
+        fprintf(stderr, "gscan: no parse span -- the data load never ran in this route\n");
+        return;
+    }
+    const double span = (double)(scan_last.tv_sec - scan_first.tv_sec)
+                      + (double)(scan_last.tv_nsec - scan_first.tv_nsec) / 1e9;
+    const double slept = (sleep_ns_at_last - sleep_ns_at_first) / 1e9;
+    fprintf(stderr, "gscan: parse span %.3f s (first to last call), %.1f%% of it inside gscan\n",
+            span, span > 0 ? 100.0 * (scan_ns / 1e9) / span : 0.0);
+    fprintf(stderr, "load:  %.3f s span = %.3f s slept (%ld Sleep calls) + %.3f s not sleeping"
+                    " -- %.1f%% of the load is Sleep\n",
+            span, slept, sleep_calls_at_last - sleep_calls_at_first, span - slept,
+            span > 0 ? 100.0 * slept / span : 0.0);
+    fprintf(stderr, "sleep call sites (guest return address), during the load:\n");
+    for (int k = 0; k < sleep_nsites; k++) {
+        const long during = sleep_site_at_last[k] - sleep_site_at_first[k];
+        fprintf(stderr, "  ra=%08x  %8ld during load  %8ld total\n",
+                sleep_site[k], during, sleep_site_n[k]);
+    }
+    if (!sleep_nsites) fprintf(stderr, "  (none -- Sleep was never called)\n");
+}
+
+static int gscan_inner(FILE *fh, const char *input, const char *fmt, uint32_t argp)
 {
     ScanArg args[SCAN_MAX];
     const int nargs = scan_parse(fmt, argp, args);
@@ -550,6 +615,29 @@ static int gscan(FILE *fh, const char *input, const char *fmt, uint32_t argp)
         scan_store(&args[i], slots[i]);
         filled++;
     }
+    return got;
+}
+
+/* Wrapper rather than a timer at each return, so a later return cannot escape it. */
+static int gscan(FILE *fh, const char *input, const char *fmt, uint32_t argp)
+{
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    const int got = gscan_inner(fh, input, fmt, argp);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    if (!scan_calls) {
+        scan_first = t0;
+        sleep_ns_at_first = sleep_ns_total;
+        sleep_calls_at_first = sleep_calls_total;
+        memcpy(sleep_site_at_first, sleep_site_n, sizeof sleep_site_n);
+    }
+    scan_last = t1;
+    sleep_ns_at_last = sleep_ns_total;
+    sleep_calls_at_last = sleep_calls_total;
+    /* Snapshot every call, so the final one lands exactly on the end of the load. */
+    memcpy(sleep_site_at_last, sleep_site_n, sizeof sleep_site_n);
+    scan_calls++;
+    scan_ns += (double)(t1.tv_sec - t0.tv_sec) * 1e9 + (double)(t1.tv_nsec - t0.tv_nsec);
     return got;
 }
 

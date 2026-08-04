@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include <sys/mman.h>
 
 /* macOS has no MAP_NORESERVE -- it never over-commits the way Linux does, so the flag is
@@ -131,6 +132,11 @@ void com_call(uint32_t sentinel);
  * knowing which stubs are hot is the only way to tell which ones matter. */
 static long import_calls[MAX_IMPORTS];
 static Handler import_handler[MAX_IMPORTS];
+/* Total wall time inside import handlers. Measured under LF2_IMPORT_STATS so the two
+ * clock_gettime calls (tens of ns against ~7M calls) are not paid on a normal run. */
+static double import_ns;
+static double import_ns_each[MAX_IMPORTS];
+static int import_timing = -1;   /* resolved once; -1 = not yet checked */
 
 void import_stats_report(void)
 {
@@ -145,9 +151,28 @@ void import_stats_report(void)
     long total = 0;
     for (int k = 0; k < n; k++) total += import_calls[k];
     fprintf(stderr, "import calls: %ld total across %d imports\n", total, n);
+    fprintf(stderr, "import time:  %.3f s inside handlers, %.0f ns/call (timer overhead included)\n",
+            import_ns / 1e9, total ? import_ns / (double)total : 0.0);
     for (int k = 0; k < n && k < 12; k++) {
         if (!import_calls[idx[k]]) break;
         fprintf(stderr, "  %-34s %8ld\n", imports[idx[k]].name, import_calls[idx[k]]);
+    }
+
+    /* Ranked by TIME, not by count. Sleep is called rarely and blocks for milliseconds,
+     * while fscanf is called millions of times and returns in nanoseconds -- the two
+     * rankings disagree completely, and only this one says where the load goes. */
+    for (int k = 0; k < n; k++) idx[k] = k;
+    for (int a = 0; a < n; a++)
+        for (int b = a + 1; b < n; b++)
+            if (import_ns_each[idx[b]] > import_ns_each[idx[a]]) {
+                const int t = idx[a]; idx[a] = idx[b]; idx[b] = t;
+            }
+    fprintf(stderr, "import time by handler:\n");
+    for (int k = 0; k < n && k < 12; k++) {
+        if (import_ns_each[idx[k]] <= 0) break;
+        fprintf(stderr, "  %-34s %8.3f s  %8ld calls  %8.0f ns/call\n",
+                imports[idx[k]].name, import_ns_each[idx[k]] / 1e9, import_calls[idx[k]],
+                import_ns_each[idx[k]] / (double)import_calls[idx[k]]);
     }
 }
 
@@ -159,6 +184,7 @@ void host_import(uint32_t sentinel)
         abort();
     }
     import_calls[i]++;
+    if (import_timing < 0) import_timing = getenv("LF2_IMPORT_STATS") != NULL;
 
     /* Resolved once per import, not once per call. The lookup walks up to seven tables
      * doing two strcmps per entry, and the game makes over seven million import calls in a
@@ -179,7 +205,14 @@ void host_import(uint32_t sentinel)
         }
         import_handler[i] = h;
     }
+    if (!import_timing) { h(); return; }
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
     h();
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    const double d = (double)(t1.tv_sec - t0.tv_sec) * 1e9 + (double)(t1.tv_nsec - t0.tv_nsec);
+    import_ns += d;
+    import_ns_each[i] += d;
 }
 
 static int cmp_addr(const void *k, const void *e)
