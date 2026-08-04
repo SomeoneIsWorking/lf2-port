@@ -791,12 +791,29 @@ cost 0.79 s combined.
 The gate is `fn_004242e0`, the loading screen's own frame limiter: it advances one step
 per 33 ms and sleeps otherwise, so a load is `steps × 33 ms` whatever the machine can do.
 
-**An attempt to open that gate was reverted, and it is worth recording why.** Making the
-deadline already-expired on entry — leaving the game's own work path untouched and only
-removing the waiting — made loading *slower*, 34.8 s against 23.4 s, because each step
-calls `fn_0043f010` to redraw the screen. Removing the wait does not advance the load
-faster; it just performs thousands more full redraws. Whatever advances the load is not
-one-unit-per-call, and has not been found yet.
+**Correction to the blit-optimisation claim.** The commit that hoisted the per-pixel
+divide out of `blit()` reported the non-sleeping component falling from 9.7-11.5 s to
+6.0-9.4 s. That was measurement noise, not the change: those "before" numbers were taken
+while this machine carried a load average above 20 from other work, and the "after" ones
+while it had quietened. Measured properly, before and after are the same -- ~14.8 s span,
+9.5 s asleep, 5.3 s working. The optimisation is real (417 equivalence cases, and it does
+strictly less arithmetic per pixel) but it does **not** shorten the load, because the load
+is sleep-bound rather than work-bound. Any load-time figure taken on this machine while
+`uptime` shows a load average above ~5 should be discarded.
+
+**Attempts to open the gate, all reverted, and why each failed.** 1. Pre-expiring the loading screen's own 33 ms deadline made loading *slower* — 34.8 s
+   against 23.4 s — because each step calls `fn_0043f010` to redraw the screen. Removing
+   the wait does not advance the load faster, it performs thousands more full redraws.
+2. The same, with the repaint throttled to 33 ms: 19.2 s against 18.2 s, no gain.
+3. Forcing the main loop's 3 ms tick path (`DAT_0044d02c = 0`) while the loading screen is
+   up: the fast path **engaged for 9 frames of an entire run**. `fn_004242e0` is not called
+   during the loading itself, so keying off it does not detect loading at all. The counter
+   that reported this was added precisely because the previous attempt was judged by its
+   effect rather than by whether it fired.
+
+What is still not known is what advances the load per tick. Until that is identified, every
+"fix" is aimed at a gate that is not the binding one. The next step is the per-tick work
+function (`FUN_0043e9a0`, called once per tick from `fn_0043cf40`).
 
 The obvious follow-up did **not** pay off, which is worth recording so it is not tried
 again: `h_fscanf` called `getenv` on every one of those 2.5M invocations, and caching it
