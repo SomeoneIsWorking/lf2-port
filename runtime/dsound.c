@@ -29,6 +29,7 @@ typedef struct {
     double   cur;
     int      channels, rate, bits;
     int      volume;      /* millibels, 0 = full */
+    int      dumped;      /* LF2_AUDIO_DUMP_SRC: written once, at first Unlock */
 } SBuf;
 
 enum { MAX_BUFS = 128 };
@@ -47,6 +48,47 @@ static SDL_Mutex *mix_lock;
  * amplitude is the only one of them that proves sound would actually be heard. */
 long au_bufs, au_plays, au_pulls, au_peak, au_clipped, au_samples;
 long au_multislice_pulls, au_would_drop_frames, au_max_req;
+/* Buffers the game created past MAX_BUFS. They are not in bufs[], so the mixer
+ * never sees them and the sound is silently absent -- indistinguishable from a
+ * dropout unless it is counted. */
+long au_unregistered;
+
+static FILE *mix_dump;
+static long  mix_dump_frames;
+
+/* A WAV header needs the final length, so it is written as a placeholder and patched on
+ * close. If the process dies without closing, the file is still playable by anything that
+ * reads to EOF, but the sizes will read as zero -- so it says so rather than pretending. */
+static void mix_dump_open(void)
+{
+    const char *path = getenv("LF2_AUDIO_DUMP_MIX");
+    if (!path || !*path || mix_dump) return;
+    mix_dump = fopen(path, "wb");
+    if (!mix_dump) { fprintf(stderr, "audio dump: cannot write %s\n", path); return; }
+    unsigned char hdr[44] = {0};
+    memcpy(hdr, "RIFF", 4); memcpy(hdr + 8, "WAVEfmt ", 8); memcpy(hdr + 36, "data", 4);
+    hdr[16] = 16; hdr[20] = 1; hdr[22] = MIX_CHANNELS;
+    hdr[24] = (unsigned char)(MIX_RATE & 0xff); hdr[25] = (unsigned char)(MIX_RATE >> 8);
+    const int abps = MIX_RATE * MIX_CHANNELS * 2;
+    hdr[28] = (unsigned char)(abps & 0xff);       hdr[29] = (unsigned char)((abps >> 8) & 0xff);
+    hdr[30] = (unsigned char)((abps >> 16) & 0xff); hdr[31] = (unsigned char)((abps >> 24) & 0xff);
+    hdr[32] = MIX_CHANNELS * 2; hdr[34] = 16;
+    fwrite(hdr, 1, sizeof hdr, mix_dump);
+    fprintf(stderr, "audio dump: recording the mix to %s\n", path);
+}
+
+void mix_dump_close(void)
+{
+    if (!mix_dump) return;
+    const uint32_t data = (uint32_t)mix_dump_frames * MIX_CHANNELS * 2u;
+    const uint32_t riff = 36u + data;
+    fseek(mix_dump, 4, SEEK_SET);  fwrite(&riff, 4, 1, mix_dump);
+    fseek(mix_dump, 40, SEEK_SET); fwrite(&data, 4, 1, mix_dump);
+    fclose(mix_dump);
+    mix_dump = NULL;
+    fprintf(stderr, "audio dump: wrote %ld frames (%.1f s)\n",
+            mix_dump_frames, (double)mix_dump_frames / (double)MIX_RATE);
+}
 
 /* ---- background music ----
  * The game's BGM is WMA, which nothing here decodes. Rather than ship a decoder, the
@@ -241,6 +283,19 @@ static void mix_slice(SDL_AudioStream *s, int chunk)
         au_samples++;
     }
 
+    /* LF2_AUDIO_DUMP_MIX=<path.wav> records exactly what goes to the device.
+     *
+     * Every stage before this point has been verified in isolation -- the PCM matches the
+     * files on disk byte for byte, the formats match their headers, and the resampler has
+     * unit tests with a control that fails on the old implementation. When the parts are
+     * all correct and the whole still sounds wrong, the only thing left to examine is the
+     * output itself, and it has to come from a real session rather than a scripted route
+     * that fires six sounds. The header is patched at exit by mix_dump_close(). */
+    if (mix_dump) {
+        fwrite(out, sizeof(int16_t) * MIX_CHANNELS, (size_t)chunk, mix_dump);
+        mix_dump_frames += (long)chunk;
+    }
+
     SDL_PutAudioStreamData(s, out, chunk * (int)sizeof(int16_t) * MIX_CHANNELS);
 }
 
@@ -267,6 +322,7 @@ static void audio_start(void)
     if (stream) return;
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) return;
     mix_lock = SDL_CreateMutex();
+    mix_dump_open();
     SDL_AudioSpec spec = { SDL_AUDIO_S16, MIX_CHANNELS, MIX_RATE };
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, NULL);
     if (stream) SDL_ResumeAudioStreamDevice(stream);
@@ -288,7 +344,53 @@ static void sb_Lock(uint32_t self)
     com_ret(8, DD_OK);
 }
 
-static void sb_Unlock(uint32_t self) { (void)self; com_ret(5, DD_OK); }
+static void dump_src(const SBuf *b);
+
+/* Dumped here rather than at Play: the game writes the PCM under Lock/Unlock, and only a
+ * handful of buffers are ever played in a scripted route, so dumping at Play would show
+ * exactly the sounds that already work and none of the ones being investigated. */
+static void sb_Unlock(uint32_t self)
+{
+    SBuf *b = com_host(self);
+    if (b && !b->dumped) { b->dumped = 1; dump_src(b); }
+    com_ret(5, DD_OK);
+}
+
+/* LF2_AUDIO_DUMP_SRC=<dir> writes each buffer's PCM, exactly as the game left it, as a
+ * WAV in the buffer's own declared format -- the moment before it is first played.
+ *
+ * This is the bisect between "the game handed us bad samples" and "we play good samples
+ * badly". The mixer is unit-tested and the WAVEFORMATEX parse matches the files on disk,
+ * so if these dumps match the WAV files under data/ the fault is in playback, and if they
+ * do not, the fault is upstream in mmio/Lock and the mixer was never involved. */
+static void dump_src(const SBuf *b)
+{
+    const char *dir = getenv("LF2_AUDIO_DUMP_SRC");
+    if (!dir || !*dir || !b->bytes) return;
+    static int n;
+    char path[512];
+    snprintf(path, sizeof path, "%s/buf_%03d_%dHz_%dch_%dbit.wav",
+             dir, n++, b->rate, b->channels, b->bits);
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "audio dump: cannot write %s\n", path); return; }
+
+    const uint32_t data = b->bytes;
+    const uint16_t ch = (uint16_t)b->channels, bits = (uint16_t)b->bits;
+    const uint32_t rate = (uint32_t)b->rate;
+    const uint16_t align = (uint16_t)(ch * (bits / 8));
+    const uint32_t abps = rate * align;
+    const uint32_t riff = 36 + data;
+    const uint16_t fmt_tag = 1;
+    const uint32_t fmt_len = 16;
+    fwrite("RIFF", 1, 4, f); fwrite(&riff, 4, 1, f); fwrite("WAVE", 1, 4, f);
+    fwrite("fmt ", 1, 4, f); fwrite(&fmt_len, 4, 1, f);
+    fwrite(&fmt_tag, 2, 1, f); fwrite(&ch, 2, 1, f);
+    fwrite(&rate, 4, 1, f); fwrite(&abps, 4, 1, f);
+    fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f);
+    fwrite("data", 1, 4, f); fwrite(&data, 4, 1, f);
+    fwrite(g_mem + b->pixels, 1, data, f);
+    fclose(f);
+}
 
 static void sb_Play(uint32_t self)
 {
@@ -395,6 +497,7 @@ static void ds_CreateSoundBuffer(uint32_t self)
         if (b->bits != 8 && b->bits != 16) b->bits = 8;
     }
     if (nbufs < MAX_BUFS) { bufs[nbufs++] = b; au_bufs++; }
+    else au_unregistered++;   /* created but never mixed: it plays as silence */
     if (getenv("LF2_AUDIO_DEBUG"))
         fprintf(stderr, "buffer created: %u bytes, %d Hz %dch %dbit\n",
                 b->bytes, b->rate, b->channels, b->bits);
@@ -417,6 +520,7 @@ static void ds_DuplicateSoundBuffer(uint32_t self)
     b->pos = 0;
     b->cur = 0.0;
     if (nbufs < MAX_BUFS) { bufs[nbufs++] = b; au_bufs++; }
+    else au_unregistered++;   /* created but never mixed: it plays as silence */
     if (getenv("LF2_AUDIO_DEBUG"))
         fprintf(stderr, "buffer created: %u bytes, %d Hz %dch %dbit\n",
                 b->bytes, b->rate, b->channels, b->bits);
@@ -439,6 +543,7 @@ void audio_report(void)
     fprintf(stderr, "mixer: multi-slice pulls=%ld (%ld frames the old single-slice mixer "
                     "would have dropped), max request=%ld frames, slice=%d\n",
             au_multislice_pulls, au_would_drop_frames, au_max_req, MIX_SLICE);
+    fprintf(stderr, "mixer: buffers unregistered past MAX_BUFS=%d: %ld (each one plays as silence)\n", MAX_BUFS, au_unregistered);
     if (!au_multislice_pulls && au_pulls)
         fprintf(stderr, "  no under-delivery: every pull was satisfied in full\n");
     if (!au_bufs)  fprintf(stderr, "  the game never created a sound buffer\n");
