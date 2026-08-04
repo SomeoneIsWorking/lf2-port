@@ -4,6 +4,7 @@
  * PCM straight into it, which is what it does. Mixing is a simple additive S16 mix of
  * every playing buffer, driven from an SDL audio stream callback. */
 #include "com.h"
+#include "guest_map.h"
 #include "guest_ops.h"
 
 #include <SDL3/SDL.h>
@@ -31,6 +32,8 @@ typedef struct {
     int      channels, rate, bits;
     int      volume;      /* millibels, 0 = full */
     int      dumped;      /* LF2_AUDIO_DUMP_SRC: written once, at first Unlock */
+    uint32_t sum;         /* PCM checksum taken at Unlock; re-checked at Play */
+    int      summed;
 } SBuf;
 
 enum { MAX_BUFS = 128 };
@@ -121,6 +124,13 @@ void mix_dump_close(void)
  */
 static void audio_start(void);    /* defined below; music must be able to open the device */
 
+/* The mixer lock guards the music buffer as well as bufs[], and music can be loaded
+ * before the device is ever opened, so it cannot be created in audio_start alone. */
+static void ensure_mix_lock(void)
+{
+    if (!mix_lock) mix_lock = SDL_CreateMutex();
+}
+
 static int16_t *mus_pcm;          /* interleaved stereo at MIX_RATE */
 static size_t   mus_frames, mus_pos;
 static int      mus_playing;
@@ -143,8 +153,12 @@ void music_start(void)
 {
     if (!mus_pcm) return;
     audio_start();
-    mus_playing = 1;
+    /* Rewind and start together: setting mus_playing before mus_pos let a pull in flight
+     * begin from the previous track's cursor. */
+    SDL_LockMutex(mix_lock);
     mus_pos = 0;
+    mus_playing = 1;
+    SDL_UnlockMutex(mix_lock);
 }
 
 /* Returns 0 and explains itself on any failure; never leaves a half-loaded track.
@@ -183,8 +197,14 @@ static FILE *ffmpeg_open(const char *path, pid_t *out_pid)
 int music_load(const char *path)
 {
     music_stop();
-    free(mus_pcm); mus_pcm = NULL; mus_frames = 0; au_music_frames = 0;
-
+    /* The old track is NOT freed here. It stays live and playable until the replacement
+     * has been fully decoded, and the swap happens under the mixer lock at the end.
+     *
+     * Freeing it up front was a use-after-free: the mixer callback runs on the audio
+     * thread and reads mus_pcm without holding anything, so a track change while a pull
+     * was in flight had it mixing freed heap at full scale. That is a ~1s burst of
+     * full-amplitude garbage immediately after the music changes, which is what a
+     * recording of a real session actually shows. */
     pid_t pid = -1;
     FILE *pipe = ffmpeg_open(path, &pid);
     if (!pipe) { fprintf(stderr, "music: could not start ffmpeg\n"); return 0; }
@@ -208,13 +228,33 @@ int music_load(const char *path)
 
     if (len == 0) {
         free(buf);
+        /* A failed load still replaces the track -- the game asked for a different one and
+         * leaving the previous one playing would be worse than silence. Cleared through
+         * the same locked swap, never by freeing under the mixer's feet. */
+        ensure_mix_lock();
+        SDL_LockMutex(mix_lock);
+        int16_t *stale = mus_pcm;
+        mus_pcm = NULL; mus_frames = 0; mus_pos = 0;
+        SDL_UnlockMutex(mix_lock);
+        free(stale);
+        au_music_frames = 0;
+
         const int exited = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
         fprintf(stderr, "music: no audio decoded from %s%s\n", path,
                 exited == 127 ? " (ffmpeg not found on PATH)" : "");
         return 0;
     }
-    mus_pcm = buf;
+    /* Publish pointer, length and cursor together, with the mixer excluded. Assigning
+     * mus_pcm before mus_frames let the callback read a new buffer with a stale length. */
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
+    int16_t *old = mus_pcm;
+    mus_pcm    = buf;
     mus_frames = len / (sizeof(int16_t) * MIX_CHANNELS);
+    mus_pos    = 0;
+    SDL_UnlockMutex(mix_lock);
+    free(old);                       /* safe now: the mixer can no longer reach it */
+
     au_music_frames = (long)mus_frames;
     return 1;
 }
@@ -248,6 +288,10 @@ static void mix_slice(SDL_AudioStream *s, int chunk)
     static int16_t out[MIX_SLICE * MIX_CHANNELS];
     memset(out, 0, (size_t)chunk * sizeof(int16_t) * MIX_CHANNELS);
 
+    /* The lock covers the music read as well as bufs[]. It used to start below this
+     * block, leaving mus_pcm entirely unguarded against music_load on the main thread. */
+    SDL_LockMutex(mix_lock);
+
     /* Music first, so the effect mixing below saturates against it the same way it does
      * against other effects. */
     if (mus_playing && mus_pcm) {
@@ -260,7 +304,6 @@ static void mix_slice(SDL_AudioStream *s, int chunk)
         }
     }
 
-    SDL_LockMutex(mix_lock);
     for (int i = 0; i < nbufs; i++) {
         SBuf *b = bufs[i];
         if (!b || !b->playing || !b->bytes) continue;
@@ -343,7 +386,7 @@ static void audio_start(void)
 {
     if (stream) return;
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) return;
-    mix_lock = SDL_CreateMutex();
+    ensure_mix_lock();
     mix_dump_open();
     SDL_AudioSpec spec = { SDL_AUDIO_S16, MIX_CHANNELS, MIX_RATE };
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, NULL);
@@ -368,6 +411,16 @@ static void sb_Lock(uint32_t self)
 
 static void dump_src(const SBuf *b);
 
+/* The PCM was verified byte-identical to the file on disk at Unlock. Whether it is STILL
+ * that data when the sound is played is a different question, and the answer decides
+ * whether the fault is in playback or in something overwriting guest memory underneath. */
+static uint32_t pcm_sum(const SBuf *b)
+{
+    uint32_t h = 2166136261u;
+    for (uint32_t i = 0; i < b->bytes; i++) { h ^= LD8(b->pixels + i); h *= 16777619u; }
+    return h;
+}
+
 /* Dumped here rather than at Play: the game writes the PCM under Lock/Unlock, and only a
  * handful of buffers are ever played in a scripted route, so dumping at Play would show
  * exactly the sounds that already work and none of the ones being investigated. */
@@ -375,6 +428,11 @@ static void sb_Unlock(uint32_t self)
 {
     SBuf *b = com_host(self);
     if (b && !b->dumped) { b->dumped = 1; dump_src(b); }
+    if (b) {
+        b->sum = pcm_sum(b); b->summed = 1;
+        if (getenv("LF2_PCM_DEBUG"))
+            fprintf(stderr, "unlock pcm=%08x bytes=%u sum=%08x\n", b->pixels, b->bytes, b->sum);
+    }
     com_ret(5, DD_OK);
 }
 
@@ -418,6 +476,27 @@ static void sb_Play(uint32_t self)
 {
     SBuf *b = com_host(self);
     audio_start();
+    /* Correlates a Play with the recorded mix: mix_dump_frames is the exact sample
+     * position in the dumped WAV, so a garbage burst in the recording can be traced to
+     * the buffer that started it rather than guessed at from timing. */
+    if (b->summed) {
+        const uint32_t now = pcm_sum(b);
+        if (now != b->sum) {
+            static long n;
+            if (++n <= 20 || n % 100 == 0)
+                fprintf(stderr, "*** PCM CLOBBERED before play: buf bytes=%u at %08x "
+                        "(sum %08x -> %08x), occurrence %ld\n",
+                        b->bytes, b->pixels, b->sum, now, n);
+            b->sum = now;
+        }
+    }
+    if (getenv("LF2_PLAY_DEBUG")) {
+        int idx = -1;
+        for (int k = 0; k < nbufs; k++) if (bufs[k] == b) { idx = k; break; }
+        fprintf(stderr, "play buf=%d t=%.2fs rate=%d bits=%d ch=%d bytes=%u vol=%d dumped=%d\n",
+                idx, (double)mix_dump_frames / (double)MIX_RATE,
+                b->rate, b->bits, b->channels, b->bytes, b->volume, b->dumped);
+    }
     SDL_LockMutex(mix_lock);
     b->looping = (ARG(3) & 1) != 0;      /* DSBPLAY_LOOPING */
     b->playing = 1;
@@ -489,7 +568,11 @@ static void obj_Release(uint32_t self) { (void)self; com_ret(1, 0); }
 
 /* ---- IDirectSound ---- */
 
-enum { PCM_ARENA = 0x60000000u };
+/* Declared in guest_map.h alongside every other arena. It used to sit at 0x60000000,
+ * only 256 MB above the surface arena, which needs ~322 MB -- so surfaces overwrote the
+ * sound data and the game played bitmaps as audio. Menu sounds survived only because they
+ * play before the surface arena grows that far. */
+enum { PCM_ARENA = GUEST_PCM_BASE };
 static uint32_t pcm_next = PCM_ARENA;
 
 static void ds_CreateSoundBuffer(uint32_t self)
@@ -506,6 +589,12 @@ static void ds_CreateSoundBuffer(uint32_t self)
 
     SBuf *b = SDL_calloc(1, sizeof *b);
     b->bytes = bytes ? bytes : 4;
+    if (pcm_next + b->bytes > GUEST_PCM_END) {
+        fprintf(stderr, "pcm arena exhausted: %u bytes at %08x, reservation ends at %08x. "
+                        "Raise GUEST_PCM_SIZE in guest_map.h.\n",
+                b->bytes, pcm_next, (unsigned)GUEST_PCM_END);
+        abort();
+    }
     b->pixels = pcm_next;
     pcm_next = (pcm_next + b->bytes + 4095u) & ~4095u;
     memset(g_mem + b->pixels, 0, b->bytes);
