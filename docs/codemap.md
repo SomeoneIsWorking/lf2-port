@@ -27,6 +27,10 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Rendering | `runtime/ddraw.c`, `runtime/gdi.c` | **done** | menus, screens, GDI text and colour-keyed sprites all render; GDI text is anti-aliased through a system font when `SDL3_ttf` is present |
 | Advertising removed | `runtime/overrides.c` | **done** | panel + strips (`fn_00423b00`, descriptor `0x0044d060`) and the corner update notice (`fn_0043f010`, MENU_CLIP7 at 725,5) with its click target; verified by rect scan, no blits left in either region |
 | Game flow | `docs/running.md` | **done** | reaches gameplay deterministically every run, by pad and by mouse+keyboard, on a presented-frame input schedule |
+| Menus: one input model | `runtime/overrides.c` | **wip** | launcher (screens 0/6/7) takes mouse+keyboard+pad; the post-load **mode menu** takes mouse hover and click; **character selection** takes mouse hover. Remaining: pre-fight overlay, stage/difficulty sub-screens |
+| Game's own mouse cursor | `runtime/overrides.c` | **done** | declined in `fn_0043f010`; the host cursor is the only one. `LF2_CURSOR_ON=1` restores it |
+| Audio: PCM integrity | `runtime/guest_map.h` | **done** | the surface arena used to overrun the sound arena and the game played bitmaps as audio; arenas are now declared in one place with build-time overlap checks and runtime bounds |
+| Load time | `docs/running.md` | **⛔ open** | 14.4 s, and it is WALL-CLOCK bounded, not work bounded: 9.3 s sleeping, 5.1 s working, 0.34 s of that parsing. `fn_004242e0` gates the loading screen to one step per 33 ms. Forcing that gate open made it *slower* (34.8 s) because each step redraws the screen. Not solved |
 | Sprite colour-key | `recompiler/lift.c` | **fixed** | root cause was ADC/SBB dropping the carry; see below |
 
 ## The binary
