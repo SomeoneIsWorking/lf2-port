@@ -72,6 +72,9 @@ static void h_GetSystemTimeAsFileTime(void)
     ret_stdcall(1, 0);
 }
 
+int  lf2_loading_now(void);          /* defined with the file handlers below */
+extern long load_skipped_sleeps;
+
 /* Sleep requested, accumulated so the load span can be split into "sleeping" versus
  * "working". Ranking imports by CALL COUNT hid this completely: Sleep is 0.07% of the
  * calls and the overwhelming majority of the time. */
@@ -102,6 +105,15 @@ static void h_Sleep(void)
                             "6-15:%ld 16-50:%ld 50+:%ld\n", n, total_ms,
                     hist[0], hist[1], hist[2], hist[3], hist[4], hist[5]);
     }
+    /* While the data load is running, do not sleep out the frame. The loop advances one
+     * data file per tick and then waits ~33 ms for a deadline that exists to pace a 30 fps
+     * game, not a loading screen -- so the wait is pure latency, 9.5 s of a 14.8 s load.
+     * Frame pacing is restored the moment the load stops; this is not LF2_NO_SLEEP, which
+     * disables it everywhere and burns a core during play. */
+    static int fast = -1;
+    if (fast < 0) fast = getenv("LF2_SLOW_LOAD") == NULL;
+    if (fast && lf2_loading_now()) { load_skipped_sleeps++; ret_stdcall(1, 0); return; }
+
     if (ms == 0) sched_yield();
     else {
         struct timespec req = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
@@ -377,6 +389,73 @@ static FILE *open_translated(const char *path)
     return fh;
 }
 
+/* ---- "is the game loading right now?" ----
+ *
+ * The data load runs one file per main-loop tick, and the tick period is 33 ms, so a load
+ * is (files x 33 ms) -- 315 files measured, which is the ~10 s. The game is therefore
+ * loading exactly while it is opening its data files, and that is a far more reliable
+ * signal than the loading screen's presenter: keying off fn_004242e0 engaged for nine
+ * frames of an entire run, because that function is the ad grid, not the loader.
+ *
+ * Time-based rather than a frame counter, so a slow file cannot end the window early. */
+static uint32_t load_last_open_ms;
+static uint32_t load_first_open_ms;
+static long     load_files;
+static uint32_t load_active_ms;
+long load_skipped_sleeps;
+
+/* The DATA LOAD's own span, first data file opened to last. The parse span reported
+ * alongside it starts at the first fscanf anywhere, which happens on the menu before the
+ * player has even chosen a mode, so it carries menu idle time that no amount of load
+ * work affects. This is the number the loading work is actually judged by. */
+void load_span_report(void)
+{
+    if (!getenv("LF2_SCAN_PROF")) return;
+    if (!load_files) {
+        fprintf(stderr, "data load: no data files were opened in this run\n");
+        return;
+    }
+    /* ACTIVE loading time, not first-open-to-last-open. The first data file is opened at
+     * boot for the menu, so a first-to-last span silently includes however long the player
+     * sat on the menu -- which is why the earlier figure looked barely improved. Only gaps
+     * shorter than the loading window are counted, so idle time between bursts is not. */
+    fprintf(stderr, "data load: %ld files, %.3f s actively loading (span %.3f s incl. idle), "
+                    "%ld frame-pacing sleeps skipped\n",
+            load_files, (double)load_active_ms / 1000.0,
+            (double)(load_last_open_ms - load_first_open_ms) / 1000.0,
+            load_skipped_sleeps);
+}
+
+
+static uint32_t now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+int lf2_loading_now(void)
+{
+    return load_last_open_ms && (now_ms() - load_last_open_ms) < 300u;
+}
+
+static void note_data_open(const char *path)
+{
+    if (!path) return;
+    const size_t n = strlen(path);
+    /* the game's own data: data\*.dat, *.txt indexes, and the sprite sheets it pulls in */
+    if (n > 4 && (strcasecmp(path + n - 4, ".dat") == 0 ||
+                  strcasecmp(path + n - 4, ".txt") == 0 ||
+                  strcasecmp(path + n - 4, ".bmp") == 0)) {
+        const uint32_t t = now_ms();
+        if (load_last_open_ms && (t - load_last_open_ms) < 300u)
+            load_active_ms += t - load_last_open_ms;
+        load_last_open_ms = t;
+        if (!load_first_open_ms) load_first_open_ms = t;
+        load_files++;
+    }
+}
+
 static void h_fopen(void)
 {
     const char *mode = gstr(ARG(1));
@@ -387,6 +466,7 @@ static void h_fopen(void)
                                  : fopen(host_path(ARG(0)), mode);
     if (!fh) { ret_cdecl(0); return; }
     const uint32_t tok = file_token(fh);
+    note_data_open(host_path(ARG(0)));
     if (getenv("LF2_STR_DEBUG"))
         fprintf(stderr, "fopen[%08x] %s (%s)\n", tok, host_path(ARG(0)), mode);
     ret_cdecl(tok);

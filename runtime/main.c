@@ -4,6 +4,7 @@
 
 void import_stats_report(void);
 void scan_prof_report(void);
+void load_span_report(void);
 void mix_dump_close(void);
 void blt_stack_report(void);
 
@@ -33,6 +34,7 @@ int main(int argc, char **argv)
     atexit(hostwin_shutdown);
     atexit(import_stats_report);
     atexit(scan_prof_report);
+    atexit(load_span_report);
     atexit(mix_dump_close);
     atexit(blt_stack_report);
 
