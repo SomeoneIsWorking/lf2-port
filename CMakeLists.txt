@@ -93,6 +93,11 @@ else()
     message(STATUS "SDL3_ttf not found: GDI text will use SDL's built-in debug font")
 endif()
 
+add_executable(test_blit runtime/test_blit.c)
+target_include_directories(test_blit PRIVATE runtime)
+target_compile_options(test_blit PRIVATE -Wall -Wextra)
+add_test(NAME blit COMMAND test_blit)
+
 add_executable(test_mixer runtime/test_mixer.c runtime/mixer.c)
 target_include_directories(test_mixer PRIVATE runtime)
 target_compile_options(test_mixer PRIVATE -Wall -Wextra)
