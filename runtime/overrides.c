@@ -75,6 +75,7 @@ enum { OVERLAY_SEL = 0x0044d06c };
 
 /* The ad system's update notice in the top-right corner; see fn_0043f010 below. */
 enum { MENU_CLIP7 = 0x00451188 };            /* sheet handle, loaded from "MENU_CLIP7" */
+enum { CURSOR_SHEET = 0x00451170 };          /* sheet handle of the game's own mouse cursor */
 enum { NOTICE_X = 725, NOTICE_Y = 5 };       /* the game's own constants for the notice */
 
 /* Selectable items per screen, taken from the game's own hit-test constants -- the centre
@@ -521,6 +522,60 @@ void fn_0043f010(void)
         LD32(R(ESP) + 4) == NOTICE_X && LD32(R(ESP) + 8) == NOTICE_Y) {
         R(ESP) += 4 + 24;                    /* RET 0x18: return address and six args */
         return;
+    }
+
+    /* The game draws its own mouse cursor -- an 11x19 sprite at the pointer, from its own
+     * sheet -- on top of whatever the host is already showing. Two cursors, one of which
+     * is not the user's.
+     *
+     * Identified rather than guessed: LF2_SMALL_BLT listed it as the only 11x19 blit, and
+     * it lands at (pointer.x, pointer.y + 2) every time. The correlation hook
+     * (LF2_CURSOR_FIND) could not see it, because the blit is issued from inside
+     * fn_0043f010, which draws EVERYTHING -- aggregating by call site drowned an 11x19
+     * sprite among full-screen backgrounds. Aggregating by call site is the wrong key when
+     * one call site draws the whole game.
+     *
+     * The sheet handle is a heap pointer with no identity across runs, so the test is the
+     * .data slot that holds it, found by scanning .data for the handle at the moment of the
+     * draw. Three call sites use it (0x428778, 0x424660, 0x4329ea -- front end, mode menu,
+     * in game), so declining by sheet removes it on every screen at once rather than one
+     * call site at a time.
+     *
+     * LF2_CURSOR_ON=1 restores it. */
+    if (R(ECX) && R(ECX) == LD32(CURSOR_SHEET) && !getenv("LF2_CURSOR_ON")) {
+        /* Declining the whole SHEET was wrong: it is shared with the menu's character
+         * artwork, and dropping it blanked 51492 pixels down the left of the screen. The
+         * cursor is the draw of that sheet that lands ON the pointer, so that is the test.
+         * The +2 is the sprite's own vertical offset, measured from the blit. */
+        const int ax = (int)LD32(R(ESP) + 4), ay = (int)LD32(R(ESP) + 8);
+        if (ax == (int)LD32(GX_MOUSE_X) && ay == (int)LD32(GX_MOUSE_Y) + 2) {
+            R(ESP) += 4 + 24;                /* RET 0x18: return address and six args */
+            return;
+        }
+    }
+
+    /* Which call draws the mouse cursor? It reaches Blt as an 11x19 sprite at the
+     * pointer, but that blit is issued from inside this function, which draws everything
+     * -- so the identity has to come from this call's own arguments and caller. */
+    if (getenv("LF2_CURSOR_TRACE")) {
+        const int ax = (int)LD32(R(ESP) + 4), ay = (int)LD32(R(ESP) + 8);
+        const int mx = (int)LD32(GX_MOUSE_X), my = (int)LD32(GX_MOUSE_Y);
+        if (ax >= mx - 4 && ax <= mx + 4 && ay >= my - 4 && ay <= my + 4) {
+            static uint32_t seen[8]; static int n;
+            const uint32_t ra = LD32(R(ESP));
+            int known = 0;
+            for (int i = 0; i < n; i++) if (seen[i] == ra) { known = 1; break; }
+            if (!known && n < 8) {
+                seen[n++] = ra;
+                fprintf(stderr, "cursor draw: caller=%08x args x=%d y=%d clip=%d sheet=%08x "
+                        "(pointer %d,%d)\n", ra, ax, ay, (int32_t)LD32(R(ESP) + 12), R(ECX), mx, my);
+                /* The handle is a heap pointer with no stable identity across runs; the
+                 * .data slot that HOLDS it does have one. Find it. */
+                for (uint32_t a = 0x0044d000; a < 0x00459724; a += 4)
+                    if (LD32(a) == R(ECX))
+                        fprintf(stderr, "    sheet handle also lives at .data %08x\n", a);
+            }
+        }
     }
 
     /* The loading screen's "To advertise on LF2" link. Its sheet handle is a heap pointer
