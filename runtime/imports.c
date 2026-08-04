@@ -36,6 +36,13 @@ static void ret_cdecl(uint32_t value)
 enum { HEAP_BASE = GUEST_HEAP_BASE, HEAP_SIZE = GUEST_HEAP_SIZE };
 static uint32_t heap_next = HEAP_BASE;
 
+/* How far the bump allocator has grown. The character-select slot state lives in a
+ * malloc'd structure, so a .data-only snapshot cannot see it -- diffing .data across a
+ * cursor move found only free-running counters, and the negative control changed the
+ * same ones. Exposed so the dump can cover the heap that is actually in use rather than
+ * a fixed guess at its size. */
+uint32_t guest_heap_used(void) { return heap_next - HEAP_BASE; }
+
 static uint32_t guest_alloc(uint32_t size)
 {
     size = (size + 15u) & ~15u;
