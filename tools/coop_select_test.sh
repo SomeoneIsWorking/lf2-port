@@ -8,10 +8,16 @@
 #   roster   the cycle runs over the GAME's characters, more than one of them. A build that
 #            failed to read the registry would still "cycle" over a list of one, and every
 #            other assertion here would pass while the player had no choice at all.
-#   flash    the fighter's gate byte really goes down and up again. This is the one part of
-#            the feature that is a schedule rather than a press, so it is the part that can
-#            silently not happen -- and a fighter that never flashes looks, from outside,
+#   flash    the joiner's HUD panel really goes dark and lights again. This is the one part
+#            of the feature that is a schedule rather than a press, so it is the part that
+#            can silently not happen -- and a panel that never flashes looks, from outside,
 #            exactly like one that does.
+#   offstage the joiner is NOT IN THE WORLD while it chooses -- issue #19, reported in play
+#            as a blinking body standing in the middle of a fight. The gate byte at
+#            0x00458b04+slot is what the stage pass and the world step both read, and it is
+#            asserted 0 on EVERY frame the selection reports, not merely once: it is raised
+#            for the duration of the HUD pass alone (runtime/overrides/hud.c), so a 1 seen
+#            from anywhere else means the window has leaked.
 #   cycle    right ADVANCES and left goes BACK to where right came from. Asserting only
 #            that the id changed would pass for a build that ignored the direction, and
 #            asserting only on right would pass for one that cycled on any press at all.
@@ -74,14 +80,32 @@ else
     say_fail "roster: '${n:-}' characters -- a cycle over one character is not a choice"
 fi
 
-# flash -- the gate really went down and came back up.
-hidden=$(grep -c "coop select: slot .* -- hidden" "$LOG" || true)
-shown=$(grep -c "coop select: slot .* -- shown" "$LOG" || true)
+# flash -- the panel really went dark and came back.
+hidden=$(grep -c "coop select: slot .* -- panel hidden" "$LOG" || true)
+shown=$(grep -c "coop select: slot .* -- panel shown" "$LOG" || true)
 if [ "${hidden:-0}" -ge 1 ] && [ "${shown:-0}" -ge 1 ]; then
-    say_ok "flash: the fighter went out of the world $hidden time(s) and back in $shown"
+    say_ok "flash: the joiner's HUD panel went dark $hidden time(s) and lit $shown"
 else
-    say_fail "flash: hidden=$hidden shown=$shown -- the joiner never flashed, so nothing on"
-    say_fail "       screen distinguished it from a fighter already in the fight"
+    say_fail "flash: hidden=$hidden shown=$shown -- the joiner's panel never flashed, so"
+    say_fail "       nothing on screen distinguished a player choosing from one playing"
+fi
+
+# offstage -- issue #19. Every line the selection prints carries the gate byte as read from
+# OUTSIDE the HUD pass, and every one of them must be 0. Counting the lines matters as much
+# as counting the bad ones: a run where the selection printed nothing would otherwise pass
+# this by having no counter-example, which is the same shape of lie as "(no matches)" from a
+# directory that does not exist.
+gate_lines=$(grep -c "outside the HUD pass" "$LOG" || true)
+gate_up=$(grep "outside the HUD pass" "$LOG" | grep -c "= 1 outside" || true)
+if [ "${gate_lines:-0}" -lt 1 ]; then
+    say_fail "offstage: the selection reported the gate byte on NO frame, so whether the"
+    say_fail "          joiner was standing on the stage was never measured"
+elif [ "${gate_up:-0}" = 0 ]; then
+    say_ok "offstage: over $gate_lines reported frames the joiner's gate byte was 0 every"
+    say_ok "          time -- the stage pass and the world step never saw it (issue #19)"
+else
+    say_fail "offstage: $gate_up of $gate_lines reported frames had the gate byte UP outside"
+    say_fail "          the HUD pass -- the joiner is standing in the match while choosing"
 fi
 
 # cycle -- right advances, left returns to where right came from.

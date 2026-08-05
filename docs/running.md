@@ -623,10 +623,22 @@ block at `+872`.
 
 Always on; there is nothing to switch on. A device that presses anything for the first time
 while a match is already running claims a free player slot, and since character selection is
-over, it gets one **on the stage**: a fighter appears flashing, **left/right** cycle the
+over, it chooses **in its own HUD panel**: the candidate's portrait and bars appear in that
+player's empty box along the top of the screen and flash there, **left/right** cycle the
 game's roster and **attack** (A on a pad, Z on the keyboard) locks it in. From the lock-in
 the device drives it like any other player. Unplugging that device takes its fighter back
 out again.
+
+**The fighter is not on the stage until the lock-in** — it cannot walk, be hit, or be seen,
+and the match carries on around a player who is still deciding. That takes some doing,
+because the HUD strip (`fn_0041ae60`), the stage pass (`fn_0041a5a0`) and the world step
+(`fn_004064d0`) all read the same per-slot byte, `this+4+i`: not building the fighter leaves
+no panel to choose in, and building it puts a body in the middle of a fight (issue #19, which
+is what shipped first). The two passes are made to disagree in the only place they can, which
+is between them — `runtime/overrides/hud.c` raises the byte for a choosing slot, calls the
+game's own panel drawing, and puts it back down. So the panel you choose in is the game's,
+drawn by its code from its record; the port is not painting a character-select screen over
+the match.
 
 ```sh
 cd game && ../scratch/build/lf2 lf2.exe
@@ -636,11 +648,14 @@ The remaining `LF2_COOP_*` variables are the **diagnostics** over this — `_SPA
 `_TABLE`, `_REGISTRY`, `_PAIR`, `_REFS`, `_TRACK`, `_DEBUG` — with one exception:
 `LF2_COOP_CHAR` pins where the cycle starts, so a test gets the same fighter every run.
 
-The slot it takes is the first the **game's own roster** considers empty — selector 0 — not
-merely one no other device holds. A slot that character selection filled with a computer
-carries a non-zero selector and that computer's fighter is already on the stage at a high
-index, so joining it would add a fighter rather than replace one. When nothing else is free
-that is what happens, and the run says so rather than doing it quietly.
+The slot it takes is the **lowest one with no fighter in it** — a second human is Player 2.
+It used to prefer the lowest slot whose device *selector* was zero, on the reasoning that a
+non-zero selector means character selection put a computer there. The reasoning is right and
+the conclusion was wrong: that computer's fighter sits at its own high table index, unbound
+by the gather, so the selector says nothing about whether slot 1 can hold a human — and what
+it produced was a joiner in slot 4 with Player 2's box empty beside it (issue #21). Joining a
+slot the roster listed as a computer does not replace that computer; the match gains a
+fighter, which is what a drop-in is, and the run says so rather than doing it quietly.
 
 The roster it cycles is **the game's own**: the
 registry entries whose type field (`+1784`) says character, less the template at id 0. That

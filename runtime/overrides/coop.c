@@ -294,10 +294,10 @@ int coop_match_running(uint32_t self)
  * to abandon a choice in progress -- a slot cannot leave and still be choosing. */
 static int  sel_active[PLAYER_SLOTS];
 static int  sel_pick[PLAYER_SLOTS];       /* index into the roster below */
-static int  sel_shown[PLAYER_SLOTS];      /* whether the gate is currently up */
+static int  sel_shown[PLAYER_SLOTS];      /* whether the HUD panel shows the candidate now */
 static long sel_flash0[PLAYER_SLOTS];     /* frame the current flash cycle started */
 static long sel_since[PLAYER_SLOTS];      /* frame selection began */
-static long sel_flashes[PLAYER_SLOTS];    /* times the fighter went from shown to hidden */
+static long sel_flashes[PLAYER_SLOTS];    /* times the panel went from shown to hidden */
 static struct coop_pos sel_pos[PLAYER_SLOTS];
 
 /* Slots THIS PORT put a fighter into. Drop-out only ever undoes a join this code made: a
@@ -379,32 +379,53 @@ void coop_leave(uint32_t self, int slot, const char *why)
 /* ---- a late joiner's character selection ----
  *
  * A player who joins after the match started missed the character-select screen, so the
- * choice is made ON THE STAGE: the fighter is built straight away and left FLASHING in
- * place while its device cycles left/right through the game's roster and confirms with
- * attack (A on a pad). Locking in is the same record simply stopping flashing -- there is
- * no second spawn, so what was previewed is exactly what plays.
+ * choice is made IN THAT PLAYER'S HUD PANEL: the candidate's portrait and bars appear in
+ * the empty box along the top of the screen and flash there, while its device cycles
+ * left/right through the game's roster and confirms with attack (A on a pad). THE FIGHTER
+ * IS NOT ON THE STAGE until the lock-in. It cannot walk, be hit, or be seen; the match
+ * carries on around a player who is still deciding.
+ *
+ * It was built the other way first -- the fighter standing in the match, flashing, while
+ * its player chose -- and that is issue #19: a blinking body in the middle of a fight.
+ *
+ * HOW ONE SLOT CAN HAVE A PANEL AND NO FIGHTER, because the first attempt at this failed
+ * on exactly that and the reason is worth keeping. Both the HUD and the stage read the SAME
+ * per-slot byte, `this+4+i` -- the port's EXISTS:
+ *
+ *     fn_0041ae60  (the HUD strip)   for i in 0..7: if (this[4+i]) draw the panel from
+ *                                    this+404+4i; else if (this[0xe+i]) draw a computer's
+ *                                    from this+404+4(i+10); else leave the box empty
+ *     fn_0041a5a0  (the stage)       collect every k in 0..399 with this[4+k], depth-sort
+ *                                    them, draw each
+ *     fn_004064d0  (the world step)  the same byte again
+ *
+ * so simply not building the fighter leaves no panel to choose in, and building it puts a
+ * body on the stage. The two passes have to disagree, and the only place they can is
+ * BETWEEN them: fn_0041ae60 is overridden in hud.c to raise the byte for a slot that is
+ * still choosing, call the game's own panel drawing, and put it back down. The stage pass
+ * and the world step run outside that window and never see the slot, so the joiner is a
+ * HUD entry and nothing else -- and the panel that appears is the game's own, drawn by the
+ * game's own code from the game's own record, not a picture this port painted.
  *
  * WHAT THE FLASH IS, stated plainly because it is not what "fade in/out" would mean on a
- * modern renderer: it is the object's own EXISTENCE GATE toggled on and off, so the fighter
- * is drawn on some frames and not on others. It is NOT an alpha fade. The port's blit path
- * is a colour-keyed copy of 8-bit paletted sprites -- there is no blend anywhere in it, and
- * nothing in the game's own data carries an alpha channel -- so a true fade would mean
- * inventing per-object blending in the porting layer rather than using the game's. That is
- * a bigger change than the feature needs, and it would be this port's invention rather than
- * the game's mechanism.
+ * modern renderer: the panel is drawn on some frames and skipped on others. It is NOT an
+ * alpha fade. The port's blit path is a colour-keyed copy of 8-bit paletted sprites --
+ * there is no blend anywhere in it, and nothing in the game's own data carries an alpha
+ * channel -- so a true fade would mean inventing per-object blending in the porting layer
+ * rather than using the game's.
  *
  * Cycling REBUILDS the record: gate off, the game's own reset, the new character's data
  * block, the same position back. That is the spawn sequence, not an edit -- a character's
  * animation frame numbers do not carry over to another character, so keeping the record and
  * only swapping its data pointer would leave the new fighter holding a frame that belongs
- * to the old one.
+ * to the old one. The rebuild is also where the panel's portrait, name and bars come from:
+ * they are read off that record, so the panel follows the cycle without this port knowing
+ * anything about how a portrait is drawn.
  *
- * A flashing joiner is REBUILT at every flash, which is also what keeps it out of the
- * fight: the rebuild restores its position and its full health, so the seconds it spends
- * choosing cannot leave it dead or across the stage. Its device's buttons are withheld from
- * the record for the same reason -- left and right are choosing a character, and a fighter
- * that also walked while its player chose would be doing both. */
-enum { SELECT_FLASH = 8 };                /* frames shown, then the same hidden */
+ * The device's buttons are withheld from the record as well, so that nothing is left in it
+ * when the fighter does arrive -- left and right are choosing a character, and the record
+ * must not be holding a direction on the frame it enters the world. */
+enum { SELECT_FLASH = 8 };                /* frames the panel shows, then the same hidden */
 
 
 static int roster_ids[128];
@@ -444,6 +465,13 @@ int coop_select_begin(uint32_t self, int slot, int dev)
 
     if (!coop_join(self, slot, roster_ids[start], &sel_pos[slot], 0)) return 0;
 
+    /* And straight back OUT of the world. coop_join leaves the gate up because that is what
+     * joining means; a player who is still choosing has not joined the fight yet, and the
+     * panel it chooses in is raised for the HUD pass alone (hud.c). Everything else the join
+     * set -- the record, the device selector, the bit in the joined mask -- stays, because
+     * the slot IS taken; it just has nobody standing in it. */
+    ST8(EXISTS + (uint32_t)slot, 0);
+
     sel_active[slot] = 1;
     sel_pick[slot]   = start;
     sel_shown[slot]  = 1;
@@ -453,6 +481,10 @@ int coop_select_begin(uint32_t self, int slot, int dev)
     fprintf(stderr, "coop select: slot %d is choosing -- %d characters on the roster, "
                     "starting at id %d; left/right cycles, attack locks in\n",
             slot, roster_n, roster_ids[start]);
+    fprintf(stderr, "coop select: slot %d is OUT of the world while it chooses -- its panel "
+                    "is raised for the HUD pass alone (gate byte %08x = %d outside the HUD "
+                    "pass)\n",
+            slot, EXISTS + (uint32_t)slot, LD8(EXISTS + (uint32_t)slot));
     return 1;
 }
 
@@ -485,13 +517,17 @@ void coop_select_tick(uint32_t self, int slot, const unsigned char btn[7],
 
     if (lock) {
         sel_active[slot] = 0;
-        /* Built once more so the fighter that plays is whole and visible, whichever half of
-         * the flash the press landed in -- and watched from HERE, because the fighter's
-         * life as a player starts at the lock-in, not at the first preview. */
+        /* THE ONE PLACE THE FIGHTER ENTERS THE WORLD. coop_build leaves the gate up, and
+         * with the selection over nothing puts it back down, so from this frame the record
+         * is on the stage, stepped by the world and driven by its pad. Watched from HERE,
+         * because the fighter's life as a player starts at the lock-in, not at the first
+         * preview. */
         coop_build(self, slot, roster_ids[sel_pick[slot]], &sel_pos[slot], -1, 1);
         fprintf(stderr, "coop select: slot %d LOCKED IN character id %d after %ld frames "
-                        "of choosing, having flashed %ld times\n",
-                slot, roster_ids[sel_pick[slot]], f - sel_since[slot], sel_flashes[slot]);
+                        "of choosing, having flashed %ld times; it enters the world NOW "
+                        "(gate byte %08x = %d)\n",
+                slot, roster_ids[sel_pick[slot]], f - sel_since[slot], sel_flashes[slot],
+                EXISTS + (uint32_t)slot, LD8(EXISTS + (uint32_t)slot));
         return;
     }
 
@@ -503,6 +539,7 @@ void coop_select_tick(uint32_t self, int slot, const unsigned char btn[7],
         sel_flash0[slot] = f;
         sel_shown[slot]  = 1;
         coop_build(self, slot, roster_ids[sel_pick[slot]], &sel_pos[slot], -1, 0);
+        ST8(EXISTS + (uint32_t)slot, 0);      /* rebuilt, still not in the fight */
         fprintf(stderr, "coop select: slot %d cycled %s, id %d -> %d (%d of %d)\n",
                 slot, right ? "right" : "left", before, roster_ids[sel_pick[slot]],
                 sel_pick[slot] + 1, roster_n);
@@ -512,20 +549,30 @@ void coop_select_tick(uint32_t self, int slot, const unsigned char btn[7],
     const int show = (((f - sel_flash0[slot]) / SELECT_FLASH) & 1) == 0;
     if (show == sel_shown[slot]) return;
     sel_shown[slot] = show;
-    if (show) coop_build(self, slot, roster_ids[sel_pick[slot]], &sel_pos[slot], -1, 0);
-    else      { ST8(EXISTS + (uint32_t)slot, 0); sel_flashes[slot]++; }
+    if (!show) sel_flashes[slot]++;
 
     /* The flash is the one part of this that is a SCHEDULE rather than a press, so it is
-     * the part that can silently not happen -- and a fighter that simply stands there
-     * looks, from outside, exactly like one that is flashing too fast to see. The first
-     * few transitions are printed with the frame they happened on, so the period is
-     * readable, and the total is reported at lock-in. Capped at four rather than gated
-     * off, because a player may spend a minute choosing and a line every eight frames
-     * would be a wall. */
+     * the part that can silently not happen -- and a panel that simply sits there looks,
+     * from outside, exactly like one that is flashing too fast to see. The first few
+     * transitions are printed with the frame they happened on, so the period is readable,
+     * and the total is reported at lock-in. Capped at four rather than gated off, because a
+     * player may spend a minute choosing and a line every eight frames would be a wall.
+     *
+     * The gate byte is printed with them, and it must read 0 in BOTH halves: it is raised
+     * only for the duration of the HUD pass, which is not now. A 1 here would mean the
+     * joiner is standing on the stage, which is the whole of issue #19. */
     if (sel_flashes[slot] <= 4)
-        fprintf(stderr, "coop select: slot %d frame %ld -- %s (gate byte %08x = %d)\n",
+        fprintf(stderr, "coop select: slot %d frame %ld -- panel %s (gate byte %08x = %d "
+                        "outside the HUD pass)\n",
                 slot, f, show ? "shown" : "hidden", EXISTS + (uint32_t)slot,
                 LD8(EXISTS + (uint32_t)slot));
+}
+
+/* For hud.c: should this slot's panel be drawn this frame from a record that is not in the
+ * world? True only while it is choosing and only in the lit half of the flash. */
+int coop_hud_preview(int slot)
+{
+    return slot >= 0 && slot < PLAYER_SLOTS && sel_active[slot] && sel_shown[slot];
 }
 
 /* What the input gather needs to know about a slot without reaching into the state above.
