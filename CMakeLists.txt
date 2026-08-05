@@ -239,6 +239,15 @@ set_tests_properties(coop_select PROPERTIES
                      LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
+# The composition's width follows the WINDOW's aspect, in both directions and with the
+# native and taller-than-native cases as the negatives (issue #20).
+add_test(NAME widescreen
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/widescreen_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(widescreen PROPERTIES
+                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
 # Two humans in a MATCH. controller_2p proves the second pad joins at character selection
 # and stops there; this one reaches the fight and asserts pad two actually drives its
 # fighter, two-sided.

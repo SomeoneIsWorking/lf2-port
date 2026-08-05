@@ -9,7 +9,6 @@
 #include "hostwin.h"
 #include "loadprof.h"
 
-int lf2_wide_width(void);   /* overrides.c */
 
 #include <SDL3/SDL.h>
 #include <stdarg.h>
@@ -317,6 +316,7 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
 void hostwin_shutdown(void)
 {
     virtual_pad_report();
+    window_resize_report();
     if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
     if (hw.texture)  { SDL_DestroyTexture(hw.texture);   hw.texture = NULL; }
     if (hw.renderer) { SDL_DestroyRenderer(hw.renderer); hw.renderer = NULL; }
@@ -350,10 +350,19 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
         rwatch_raw_flush(when);
     }
     if (!hw.renderer) return;
+    /* The texture is the size of the composition, and the composition follows the window, so
+     * it is checked against the frame in hand rather than created once. Sizes are kept here
+     * because SDL_GetTextureSize is a call per frame to learn what this port already knows. */
+    static int tex_w, tex_h;
+    if (hw.texture && (tex_w != w || tex_h != h)) {
+        SDL_DestroyTexture(hw.texture);
+        hw.texture = NULL;
+    }
     if (!hw.texture) {
         hw.texture = SDL_CreateTexture(hw.renderer, SDL_PIXELFORMAT_XRGB8888,
                                        SDL_TEXTUREACCESS_STREAMING, w, h);
         SDL_SetTextureScaleMode(hw.texture, SDL_SCALEMODE_NEAREST);
+        tex_w = w; tex_h = h;
     }
     void *dst = NULL;
     int pitch = 0;
@@ -686,7 +695,19 @@ int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_
  * where the world is not on screen, and subtracted again from the pointer so the game's own
  * hit tests and the ported menus still line up with what the player sees. The band either
  * side is the game's own full-screen clear, which already covers the whole viewport. */
-enum { NATIVE_W = 794 };
+enum { NATIVE_W = 794, NATIVE_H = 550 };   /* the composition the game asks for */
+
+/* The widest composition this port will hand the game, and the width every resizable
+ * surface's PITCH is fixed at. It is not a taste: vram_alloc is a bump allocator with no
+ * free, so a surface reallocated on every resize event would exhaust the arena during one
+ * drag of a window edge (issue #20). Allocating once at the maximum and moving only s->w
+ * costs 4096*4*550 = 9 MB of a 1 GiB arena per resizable surface, and keeps the pitch
+ * constant so anything the game cached from an earlier Lock stays valid.
+ *
+ * 4096 is the bound the port already validated widths against when this was an env var,
+ * kept so the two do not disagree. A 32:9 monitor at full height asks for 1956; the rest of
+ * the range is for a window someone has dragged very short and very wide. */
+enum { WIDE_MAX = 4096 };
 enum { HUD_W = 792, HUD_BAND_H = 118 };   /* the in-match HUD strip and the band it owns */
 
 /* The in-match HUD's own centring offset, exposed because the GDI text path draws straight
@@ -1164,15 +1185,100 @@ static void surf_GetPixelFormat(uint32_t self)
 
 /* ---- IDirectDraw ---- */
 
-static uint32_t make_surface(int w, int h, int primary)
+/* `maxw` is the width the PITCH is fixed at, which is not always the width the surface
+ * starts out being: a surface that follows the window is allocated at WIDE_MAX so a resize
+ * can move s->w without reallocating. See surfaces_follow_window. */
+static uint32_t make_surface(int w, int h, int primary, int maxw)
 {
     Surface *s = SDL_calloc(1, sizeof *s);
+    if (maxw < w) maxw = w;
     s->w = w; s->h = h;
-    s->pitch = w * 4;
+    s->pitch = maxw * 4;
     s->pixels = vram_alloc((uint32_t)s->pitch * (uint32_t)h);
     s->primary = primary;
     memset(g_mem + s->pixels, 0, (size_t)s->pitch * (size_t)h);
     return com_create(IF_SURFACE, s);
+}
+
+/* The surfaces whose width follows the window: the primary, and every surface the game
+ * asked for at exactly the 794x550 it composes the world into. They are held so a resize
+ * can move them; the game keeps its own pointers and never learns anything changed except
+ * through Lock, which reports w/h/pitch fresh on every call.
+ *
+ * A fixed array with a loud refusal rather than a growing one: the game creates a handful of
+ * these once at startup, so a run that reaches the cap means the assumption is wrong, and
+ * that is worth a line on stderr rather than a silent realloc. */
+enum { FOLLOW_MAX = 8 };
+static uint32_t follow[FOLLOW_MAX];
+static int follow_n;
+
+static void follow_add(uint32_t obj)
+{
+    if (follow_n < FOLLOW_MAX) { follow[follow_n++] = obj; return; }
+    fprintf(stderr, "widescreen: more than %d window-following surfaces exist; %08x will "
+                    "NOT follow a resize and will keep the width it was created at\n",
+            FOLLOW_MAX, obj);
+}
+
+static void surfaces_follow_window(int w)
+{
+    for (int i = 0; i < follow_n; i++) {
+        Surface *s = com_host(follow[i]);
+        if (!s) continue;
+        /* Never past the pitch it was allocated with -- a surface created before the cap was
+         * known (there are none today) would otherwise write off the end of its buffer. */
+        s->w = w * 4 <= s->pitch ? w : s->pitch / 4;
+    }
+}
+
+/* The window changed size. The compose width follows its ASPECT, not its pixel width: a
+ * 1920x1080 window wants 978x550 of world scaled up to fill it, not 1920x550 sitting in a
+ * 1080-tall window with the pixels shrunk to a quarter. Anything narrower in aspect than the
+ * game's own 794x550 gets 794 and is letterboxed, because the HUD strip is 792 wide and
+ * there is nothing sensible below that. */
+void hostwin_window_geometry(int win_w, int win_h)
+{
+    if (win_w <= 0 || win_h <= 0) return;
+    hw.win_w = win_w;
+    hw.win_h = win_h;
+
+    long w = ((long)NATIVE_H * win_w + win_h / 2) / win_h;
+    if (w < NATIVE_W) w = NATIVE_W;
+    if (w > WIDE_MAX) {
+        static int said;
+        if (!said) {
+            said = 1;
+            fprintf(stderr, "widescreen: a %dx%d window asks for a %ld-wide composition, "
+                            "past the %d this build allocates for; clamped, so the picture "
+                            "is letterboxed at the sides from here on\n",
+                    win_w, win_h, w, WIDE_MAX);
+        }
+        w = WIDE_MAX;
+    }
+
+    if ((int)w == hw.width && hw.height == NATIVE_H) return;   /* the aspect did not move */
+    fprintf(stderr, "widescreen: window %dx%d -> composition %ldx%d (was %dx%d)\n",
+            win_w, win_h, w, NATIVE_H, hw.width, hw.height);
+    hw.width = (int)w;
+    hw.height = NATIVE_H;
+
+    surfaces_follow_window(hw.width);
+    if (hw.renderer)
+        SDL_SetRenderLogicalPresentation(hw.renderer, hw.width, hw.height,
+                                         SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    /* The texture is sized to the composition, so it has to go with it. Recreated on the
+     * next present rather than here, where the renderer may not exist yet. */
+    if (hw.texture) { SDL_DestroyTexture(hw.texture); hw.texture = NULL; }
+}
+
+/* Widescreen is ON whenever the window is wider in aspect than the game's own picture, and
+ * OFF when it is not. There is no switch: an env var read once at startup was a developer's
+ * escape hatch rather than a feature (issue #20). The guest half -- the game's own viewport
+ * width words -- is wide_apply() in runtime/overrides/menu.c, and it reads this, so there is
+ * one source of truth and not two that can disagree. */
+int lf2_wide_width(void)
+{
+    return hw.width > NATIVE_W ? hw.width : 0;
 }
 
 static void dd_CreateSurface(uint32_t self)
@@ -1187,16 +1293,20 @@ static void dd_CreateSurface(uint32_t self)
     /* Widescreen: the game composes the world into an off-screen surface it asks for at
      * exactly its own 794x550 and then scales that onto the primary, so enlarging the
      * primary alone only STRETCHES the picture. Widening this surface too is half of what a
-     * wider field of view needs; the other half is the game's own width variables,
-     * patched in runtime/overrides.c. */
-    if (lf2_wide_width() && w == 794 && h == 550) w = lf2_wide_width();
+     * wider field of view needs; the other half is the game's own width variables, patched
+     * in runtime/overrides/menu.c.
+     *
+     * Both this and the primary FOLLOW THE WINDOW from here on, so they are allocated at
+     * WIDE_MAX and start at whatever the window's aspect asks for now. */
     const int primary = (caps & DDSCAPS_PRIMARYSURFACE) != 0;
-    if (primary) { w = hw.width; h = hw.height; }
+    const int follows = primary || (w == NATIVE_W && h == NATIVE_H);
+    if (follows) { w = hw.width; h = hw.height; }
     if (w <= 0) w = 1;
     if (h <= 0) h = 1;
 
-    const uint32_t obj = make_surface(w, h, primary);
+    const uint32_t obj = make_surface(w, h, primary, follows ? WIDE_MAX : w);
     if (primary) primary_surface = obj;
+    if (follows) follow_add(obj);
     ST32(out, obj);
     com_ret(4, DD_OK);
 }
@@ -1227,15 +1337,18 @@ static void dd_SetCooperativeLevel(uint32_t self) { (void)self; com_ret(3, DD_OK
 static void dd_SetDisplayMode(uint32_t self)
 {
     (void)self;
+    /* The game asking for a display mode does NOT resize the window any more. The window is
+     * the source of truth for how wide the game is (issue #20), and a request for 794x550
+     * that snapped a user's resized window back would undo the resize on the next mode set.
+     * The composition it would have produced is whatever the window's aspect already gives,
+     * so there is nothing to do but say the mode was set. */
     const int w = (int)ARG(1), h = (int)ARG(2);
-    if (w > 0 && h > 0) {
-        hw.width = w; hw.height = h;
-        hostwin_apply_screen_override();      /* the override outranks the game's request */
-        if (hw.window) SDL_SetWindowSize(hw.window, hw.width, hw.height);
-        if (hw.texture) { SDL_DestroyTexture(hw.texture); hw.texture = NULL; }
-        if (hw.renderer)
-            SDL_SetRenderLogicalPresentation(hw.renderer, hw.width, hw.height,
-                                             SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    static int said;
+    if (!said && w > 0 && h > 0 && (w != hw.width || h != hw.height)) {
+        said = 1;
+        fprintf(stderr, "ddraw: the game asked for a %dx%d display mode; the window is "
+                        "%dx%d and gives a %dx%d composition, which is what it gets\n",
+                w, h, hw.win_w, hw.win_h, hw.width, hw.height);
     }
     com_ret(4, DD_OK);
 }
