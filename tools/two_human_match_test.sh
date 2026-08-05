@@ -26,10 +26,11 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 # player for a Fighter and then a Team, and player one cannot proceed until every joined
 # player has finished. Without those, the screen sits there with both players joined and
 # nothing happening -- which is what the first attempts at this route did.
-PAD1="south:900,south:960,south:1020,south:1080,south:1140,south:1200,south:1260,south:1320"
-PAD1="$PAD1,up:1380,up:1440,south:1500,south:1700,south:1920,up:2020,up:2080,south:2140"
-JOIN="south:1250,south:1380,south:1560"
-PRESS="$JOIN,right:2250,right:2280,right:2310,right:2340,right:2370,right:2400"
+PAD1="south:900,south:960,south:1020,south:1080"        # the front end, before any screen
+PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358"
+PAD1="$PAD1,south@charselect+418,south@charselect+618,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
+JOIN="south@charselect+168,south@charselect+298,south@charselect+478"
+PRESS="$JOIN,right@match+108,right@match+138,right@match+168,right@match+198,right@match+228,right@match+258"
 
 run() {   # run <logfile> <pad2 script>
     ( cd "$GAME" && \

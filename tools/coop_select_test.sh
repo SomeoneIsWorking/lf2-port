@@ -40,9 +40,10 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 
 # Pad one takes the usual deterministic route into a VS match; see tools/controller_test.sh
 # for how the pre-fight overlay was made reproducible.
-PAD1="south:900,south:960,south:1020,south:1080,south:1140,south:1200,south:1260,south:1320"
-PAD1="$PAD1,up:1380,up:1440,south:1500,south:1700,south:1920,up:2020,up:2080,south:2140"
-PAD1="$PAD1,right:2250,south:2300"
+PAD1="south:900,south:960,south:1020,south:1080"        # the front end, before any screen
+PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358"
+PAD1="$PAD1,south@charselect+418,south@charselect+618,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
+PAD1="$PAD1,right@match+108,south@match+158"
 
 # Pad two: one press to claim and open the choice, a long enough gap for the flash to run
 # several cycles, then right twice, left once, and attack to lock in.
@@ -51,7 +52,7 @@ PAD1="$PAD1,right:2250,south:2300"
 # would be a lock-in, and this run needs the selection to still be open when the directions
 # arrive. The cost is that a run whose scripted route missed the match window proves
 # nothing -- so the first assertion below is that the selection opened at all.
-PAD2="south:2300,right:2400,right:2440,left:2480,south:2560"
+PAD2="south@match+158,right@match+258,right@match+298,left@match+338,south@match+418"
 
 echo "coop select: a late joiner picks a character (about 2 min)..."
 ( cd "$GAME" && \

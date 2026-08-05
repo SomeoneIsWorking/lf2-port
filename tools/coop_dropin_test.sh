@@ -39,15 +39,17 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 
 # Pad one takes the usual deterministic route into a VS match (see tools/controller_test.sh
 # for how the pre-fight overlay was made reproducible).
-PAD1="south:900,south:960,south:1020,south:1080,south:1140,south:1200,south:1260,south:1320"
-PAD1="$PAD1,up:1380,up:1440,south:1500,south:1700,south:1920,up:2020,up:2080,south:2140"
-PAD1="$PAD1,right:2250,south:2300"
+PAD1="south:900,south:960,south:1020,south:1080"        # the front end, before any screen
+PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358"
+PAD1="$PAD1,south@charselect+418,south@charselect+618,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
+PAD1="$PAD1,right@match+108,south@match+158"
 
-# Pad two's first press is the join, and it must land INSIDE the match. The data load does
-# not take a fixed number of frames, so a single press at a chosen frame sometimes arrives
-# before the fight starts -- which it did, giving one arm a join and the other none, and a
-# comparison between them would have been meaningless. Two join presses spread across the
-# window make that miss unlikely.
+# Pad two's first press is the join, and it must land INSIDE the match. That used to be a
+# frame number, and the data load does not take a fixed number of frames, so it sometimes
+# arrived before the fight started -- giving one arm a join and the other none, which makes
+# the comparison between them meaningless. It is now keyed to the match being DRAWN
+# (`@match+N`), so it lands inside the fight however long the load took; the second press is
+# still there because it is what LOCKS THE CHARACTER IN, not as a hedge against missing.
 #
 # The second press is now also what LOCKS IN the character: a joiner gets a choice first
 # (tools/coop_select_test.sh measures that part), and its pad's buttons are withheld from
@@ -60,8 +62,8 @@ PAD1="$PAD1,right:2250,south:2300"
 # live fight an idle fighter gets knocked about, so over ~5 seconds the quiet arm drifted 56
 # px while the pressed arm managed 102, and the two are not distinguishable. Displacement is
 # only a clean signal while the fight has not had time to move things on its own.
-JOIN="south:2300,south:2360"
-PRESS="$JOIN,right:2380,right:2410,right:2440,right:2470,right:2500,right:2530"
+JOIN="south@match+158,south@match+218"
+PRESS="$JOIN,right@match+238,right@match+268,right@match+298,right@match+328,right@match+358,right@match+388"
 
 run() {   # run <logfile> <pad2 script>
     ( cd "$GAME" && \

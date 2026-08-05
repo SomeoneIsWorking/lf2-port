@@ -34,8 +34,9 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 
 # Player one walks to character selection and then proceeds, which is what fills the
 # remaining slots with computers. The second pad, when present, joins before that.
-PAD1="south:900,south:960,south:1020,south:1080,south:1140,south:1200,south:1260,south:1320"
-PAD1="$PAD1,up:1380,up:1440,south:1500,south:1700"
+PAD1="south:900,south:960,south:1020,south:1080"        # the front end, before any screen
+PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358"
+PAD1="$PAD1,south@charselect+418,south@charselect+618"
 
 run() {   # run <logfile> [second-pad script]
     # LF2_VIRTUAL_PAD2 is exported rather than set inline: `${2:+VAR="$2"}` expands to a
@@ -60,12 +61,12 @@ else
 fi
 
 echo "two pads, the second joins before player one proceeds (about 60s)..."
-# The join frame is a stopwatch, and it had to move when the data load got faster: with
-# frame pacing skipped during the load the game reaches character selection sooner, and
-# 1360 now lands after player one has already proceeded (the "How many Computer Players?"
-# dialog is up by then). Measured window under the current pacing: 1160-1340 all join,
-# 1360 does not, so this sits in the middle with margin either side.
-run "$LOG2" "south:1250"
+# The join press is keyed to the SCREEN, not to a frame number. It used to be `south:1250`,
+# and that number had already had to move once when the data load got faster -- a stopwatch
+# aimed at a screen whose arrival time is not fixed. `@charselect+168` fires 168 frames after
+# character selection is first DRAWN, so it lands in the same place however long the load
+# took, and if that screen never appears the press never fires and the run says so.
+run "$LOG2" "south@charselect+168"
 if grep -q "^text .*Computer" "$LOG2"; then
     echo "  FAIL  two pads: slot 2 still became a computer -- the second pad did not join"
     fail=1
