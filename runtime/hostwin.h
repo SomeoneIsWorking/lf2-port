@@ -28,10 +28,13 @@ void music_start(void);
 void music_stop(void);
 void music_set_volume(int32_t centibels);
 long hostwin_frames(void);
+void hostwin_apply_screen_override(void);   /* LF2_SCREEN=<w>x<h>, see runtime/win32.c */
 
 /* Which post-load screen the game is drawing this frame; see runtime/ddraw.c. */
 int  panel_charselect_up(void);
 int  panel_overlay_up(void);
+int  panel_hud_up(void);
+int  screen_offset_x(void);   /* centring offset for fixed-width screens */
 void hostwin_shutdown(void);
 void hostwin_inject_key(uint32_t vk, int down);
 void hostwin_inject_pointer(int x, int y, int down);

@@ -9,6 +9,8 @@
 #include "hostwin.h"
 #include "loadprof.h"
 
+int lf2_wide_width(void);   /* overrides.c */
+
 #include <SDL3/SDL.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -359,7 +361,10 @@ void controls_hint_enable(int on) { hint_on = on; }
 static void controls_hint_draw(const Surface *s)
 {
     static const char TEXT[] = "KEYBOARD:  ARROWS MOVE   Z ATTACK   X JUMP   C DEFEND";
-    const int x0 = 8;                        /* left: the game's own URL owns the right */
+    /* Left, because the game's own URL owns the right -- but inside the centred picture,
+     * not inside the black band beside it, or the line starts in the margin and crosses
+     * the edge halfway through a word. */
+    const int x0 = 8 + screen_offset_x();
     for (int i = 0; TEXT[i]; i++)
         game_glyph_draw(TEXT[i], x0 + i * 8, s->h - 16,
                         0xffffffu, s->pixels, s->w, s->h, s->pitch);
@@ -622,15 +627,43 @@ void cursor_find_note(int dl, int dt, const char *via)
  * because a screen that stopped being drawn two frames ago is gone. */
 enum { PANEL_FRESH = 2 };
 static long panel_charselect_frame = -1000, panel_overlay_frame = -1000;
+static long panel_hud_frame = -1000;
 
 static void panel_note(int l, int t, int r, int b)
 {
     if (l == 40 && t == 33 && r == 745 && b == 520) panel_charselect_frame = frames;
     else if (l == 3 && t == 3 && r == 307 && b == 159) panel_overlay_frame = frames;
+    /* The in-match HUD strip: eight player slots as two rows of four 198x54 panels. It is
+     * drawn only while a match is on screen, which makes it the signal for "the world view
+     * is up" -- the one screen that should be WIDE rather than centred. */
+    else if (r - l == 198 && b - t == 54 && (t == 0 || t == 54)) panel_hud_frame = frames;
 }
 
 int panel_charselect_up(void) { return frames - panel_charselect_frame <= PANEL_FRESH; }
 int panel_overlay_up(void)    { return frames - panel_overlay_frame    <= PANEL_FRESH; }
+int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_FRESH; }
+
+/* ---- centring what cannot be made wide ----
+ *
+ * Widescreen gives the MATCH more world, because the world is drawn from a camera and the
+ * game's own viewport width drives it. Nothing else in the game works that way: the front
+ * end, the mode menu, character selection and the pre-fight overlay are fixed 794-wide
+ * compositions, and on a wider viewport they simply sat against the left edge with a black
+ * band down the right.
+ *
+ * So they are centred instead. One offset, applied to every blit destination in the frames
+ * where the world is not on screen, and subtracted again from the pointer so the game's own
+ * hit tests and the ported menus still line up with what the player sees. The band either
+ * side is the game's own full-screen clear, which already covers the whole viewport. */
+enum { NATIVE_W = 794 };
+
+int screen_offset_x(void)
+{
+    const int wide = lf2_wide_width();
+    if (!wide || panel_hud_up()) return 0;
+    const int off = (hw.width - NATIVE_W) / 2;
+    return off > 0 ? off : 0;
+}
 
 /* LF2_BLT_FRAME=<frame>[,...] -- every blit that composes those presented frames, with both
  * rectangles, the source surface and the caller. This replaces LF2_BLT_ALL, which was capped
@@ -702,11 +735,25 @@ static void surf_Blt(uint32_t self)
 
     int dl, dt, dr, db;
     read_rect(drect, &dl, &dt, &dr, &db, d->w, d->h);
+    /* Only on the way OUT, never while composing. The game builds its frame in an
+     * off-screen surface and copies that to the primary in one blit, so shifting just that
+     * copy centres the whole composition once. Offsetting during composition as well moved
+     * everything twice -- a 132 px margin came out at 264. */
+    if (d->primary) {
+        const int off = screen_offset_x();
+        dl += off; dr += off;
+    }
 
     blt_frame_log(dl, dt, dr, db, srcobj, srect, flags);
 
     if (flags & DDBLT_COLORFILL) {
         const uint32_t fill = ARG(5) ? LD32(ARG(5) + DDBLTFX_FILLCOLOR) : 0;
+        /* Widescreen: a fill that spans the whole native width is a full-width band -- the
+         * sky, the ground, the road -- so it should span the whole viewport. The width is
+         * an immediate in the game rather than one of the viewport variables, which is why
+         * these did not follow the layers: without this the ground simply stopped at 794
+         * and the rest of the stage floor was black. */
+        if (lf2_wide_width() && dl == 0 && dr == NATIVE_W && d->w > NATIVE_W) dr = d->w;
         for (int y = dt; y < db && y < d->h; y++) {
             if (y < 0) continue;
             uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
@@ -758,6 +805,19 @@ static void surf_Blt(uint32_t self)
             }
         }
     }
+    /* Widescreen: a background layer drawn from x 0 across the whole native width is a
+     * full-width backdrop -- the sky, a distant panorama -- and the game draws it as ONE
+     * blit clipped to 794 rather than by looping it. Those are the only pieces that cannot
+     * be made wider by drawing more of them, so they are stretched across the viewport
+     * instead. It is a soft gradient over a third more width; the alternative is the black
+     * band that was there before.
+     *
+     * Gated on the world view being up, or it would also stretch the fixed 794-wide menu
+     * backdrops that are deliberately being CENTRED. */
+    if (lf2_wide_width() && panel_hud_up() && srcobj
+        && dl == 0 && dr == NATIVE_W && d->w > NATIVE_W)
+        dr = d->w;
+
     panel_note(dl, dt, dr, db);
     cursor_find_note(dl, dt, "Blt");
     /* LF2_SMALL_BLT=1 -- a cursor is a SMALL sprite, so list the small destinations
@@ -846,6 +906,26 @@ static void surf_Blt(uint32_t self)
                  keyed, s->key_lo, s->key_hi);
         }
     }
+    /* Widescreen: carry the HUD strip out to the new right edge.
+     *
+     * The strip is not width-driven -- it is eight player slots drawn as two rows of four
+     * 198x54 panels, 792 px total, so on a wider screen everything past 792 stayed black.
+     * The panel is the game's own artwork and an unused slot already looks exactly like an
+     * empty panel, so continuing the row with more copies of the SAME source is the design
+     * carried on rather than invented: it reads as further empty slots.
+     *
+     * Keyed on the last panel of a row (x 594 = 3 x 198) so it fires once per row, and only
+     * when the port has actually been asked to widen the view. */
+    if (lf2_wide_width() && srcobj && dr == 792 && (dt == 0 || dt == 54)
+        && dr - dl == 198 && db - dt == 54) {
+        Surface *hud = com_host(srcobj);
+        int sl, st, sr, sb;
+        read_rect(srect, &sl, &st, &sr, &sb, hud->w, hud->h);
+        for (int x = 792; x < d->w; x += 198)
+            blit(d, x, dt, 198, 54, hud, sl, st, sr - sl, sb - st,
+                 (flags & DDBLT_KEYSRC) && hud->has_key, hud->key_lo, hud->key_hi);
+    }
+
     if (d->primary) {
         if (getenv("LF2_BLT_DEBUG")) {
             static long n;
@@ -1029,6 +1109,13 @@ static void dd_CreateSurface(uint32_t self)
     const uint32_t caps = LD32(desc + SD_CAPS);
     int w = (flags & DDSD_WIDTH) ? (int)LD32(desc + SD_WIDTH) : hw.width;
     int h = (flags & DDSD_HEIGHT) ? (int)LD32(desc + SD_HEIGHT) : hw.height;
+
+    /* Widescreen: the game composes the world into an off-screen surface it asks for at
+     * exactly its own 794x550 and then scales that onto the primary, so enlarging the
+     * primary alone only STRETCHES the picture. Widening this surface too is half of what a
+     * wider field of view needs; the other half is the game's own width variables,
+     * patched in runtime/overrides.c. */
+    if (lf2_wide_width() && w == 794 && h == 550) w = lf2_wide_width();
     const int primary = (caps & DDSCAPS_PRIMARYSURFACE) != 0;
     if (primary) { w = hw.width; h = hw.height; }
     if (w <= 0) w = 1;
@@ -1069,10 +1156,12 @@ static void dd_SetDisplayMode(uint32_t self)
     const int w = (int)ARG(1), h = (int)ARG(2);
     if (w > 0 && h > 0) {
         hw.width = w; hw.height = h;
-        if (hw.window) SDL_SetWindowSize(hw.window, w, h);
+        hostwin_apply_screen_override();      /* the override outranks the game's request */
+        if (hw.window) SDL_SetWindowSize(hw.window, hw.width, hw.height);
         if (hw.texture) { SDL_DestroyTexture(hw.texture); hw.texture = NULL; }
         if (hw.renderer)
-            SDL_SetRenderLogicalPresentation(hw.renderer, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+            SDL_SetRenderLogicalPresentation(hw.renderer, hw.width, hw.height,
+                                             SDL_LOGICAL_PRESENTATION_LETTERBOX);
     }
     com_ret(4, DD_OK);
 }

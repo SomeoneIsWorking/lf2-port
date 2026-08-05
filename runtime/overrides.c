@@ -224,8 +224,55 @@ int  overlay_open(void);
 int hostwin_pointer(int *x, int *y);        /* win32.c */
 int hostwin_mouse_clicked(void);            /* win32.c: one-shot, per press */
 
+/* LF2_WIDESCREEN=<w>[x<h>] -- a real wider field of view, not a stretched picture.
+ *
+ * The distinction is the whole feature. Enlarging only the window makes the game scale its
+ * 794-wide composition up, which is the same picture with bigger pixels. What is wanted is
+ * MORE WORLD, and that needs the surface the game composes into to be wider AND the game's
+ * own idea of its viewport to match.
+ *
+ * The game keeps its viewport size in .data rather than only as immediates, which is what
+ * makes this worth trying at all. Three width/height pairs hold 794/550 at runtime, found
+ * by scanning a mid-match .data dump for the literal values:
+ *
+ *   0x0044d014 / 0x0044d018
+ *   0x0044d78c / 0x0044d790
+ *   0x00453cd4 / 0x00453cd8
+ *
+ * All three are written every frame here, because which one the world draw reads is the
+ * question this probe exists to answer -- narrowing comes after the effect is seen. */
+int lf2_wide_width(void)
+{
+    static int w = -1;
+    if (w < 0) {
+        const char *e = getenv("LF2_WIDESCREEN");
+        int hh = 0;
+        w = 0;
+        if (e && sscanf(e, "%dx%d", &w, &hh) >= 1) {
+            if (w < 794 || w > 4096) {
+                fprintf(stderr, "LF2_WIDESCREEN width %d is outside 794..4096; ignored\n", w);
+                w = 0;
+            }
+        } else if (e) {
+            fprintf(stderr, "LF2_WIDESCREEN=\"%s\" is not <w> or <w>x<h>; ignored\n", e);
+            w = 0;
+        }
+    }
+    return w;
+}
+
+static void wide_apply(void)
+{
+    const int w = lf2_wide_width();
+    if (!w) return;
+    static const uint32_t WIDTHS[] = { 0x0044d014, 0x0044d78c, 0x00453cd4 };
+    for (unsigned i = 0; i < sizeof WIDTHS / sizeof WIDTHS[0]; i++)
+        if (LD32(WIDTHS[i]) == 794u) ST32(WIDTHS[i], (uint32_t)w);
+}
+
 void fn_004246b0(void)
 {
+    wide_apply();
     const uint32_t mode = R(ECX) ? LD32(R(ECX)) : 0xffffffffu;
     const uint32_t screen = LD32(GX_SCREEN);
     top_mode = mode;
