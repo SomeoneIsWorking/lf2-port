@@ -73,6 +73,10 @@ static void h_GetSystemTimeAsFileTime(void)
 }
 
 int  lf2_loading_now(void);          /* defined with the file handlers below */
+
+/* See "the guest clock" below: the offset the port owes the guest for waits it
+ * decided not to take. Declared here because h_Sleep is what pays into it. */
+static uint64_t guest_clock_offset_ns;
 extern long load_skipped_sleeps;
 
 /* Sleep requested, accumulated so the load span can be split into "sleeping" versus
@@ -112,7 +116,18 @@ static void h_Sleep(void)
      * disables it everywhere and burns a core during play. */
     static int fast = -1;
     if (fast < 0) fast = getenv("LF2_SLOW_LOAD") == NULL;
-    if (fast && lf2_loading_now()) { load_skipped_sleeps++; ret_stdcall(1, 0); return; }
+    if (fast && lf2_loading_now()) {
+        /* Fast-forward rather than no-op. The caller is a deadline loop -- it sleeps, then
+         * re-reads the clock, and goes round again if the deadline has not passed -- so a
+         * Sleep that returns instantly without moving the clock does not shorten the wait,
+         * it converts it into a spin. Crediting the requested time (a 0 ms sleep is a yield,
+         * so it counts as the shortest tick the loop can distinguish) makes the deadline
+         * arrive on the next check instead of hundreds of checks later. */
+        guest_clock_offset_ns += (uint64_t)(ms ? ms : 1u) * 1000000ull;
+        load_skipped_sleeps++;
+        ret_stdcall(1, 0);
+        return;
+    }
 
     if (ms == 0) sched_yield();
     else {
@@ -135,18 +150,37 @@ static void h_Sleep(void)
     ret_stdcall(1, 0);
 }
 
-static void h_GetTickCount(void)
+/* ---- the guest clock ----
+ *
+ * Real time plus an offset that only ever grows, and only where the port fast-forwards
+ * through a wait it decided not to take. That is the whole trick: a skipped Sleep is a
+ * promise that the time passed, and the clock has to keep it. Without that, skipping the
+ * sleep does not end the game's wait -- it just turns the wait into a spin, which is
+ * exactly what the load was doing (142,721 skipped sleeps in 3.35 s, 453 per data file,
+ * because the loop kept asking the real clock whether 33 ms had elapsed yet).
+ *
+ * The offset is monotonic and never rewinds, and it stops growing when the load does, so
+ * the deltas the game computes during play are real time exactly.
+ *
+ * Not to be confused with SCALING time, which was tried and measured and is worse: running
+ * the clock 4x/16x/32x faster during the load gave 3.5 s / 4.7 s / 7.0 s against 3.6 s at
+ * 1x. A jumping clock makes the game do more catch-up work, not less. */
+static uint64_t guest_ns(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    ret_stdcall(0, (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000));
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec
+         + guest_clock_offset_ns;
+}
+
+static void h_GetTickCount(void)
+{
+    ret_stdcall(0, (uint32_t)(guest_ns() / 1000000ull));
 }
 
 static void h_QueryPerformanceCounter(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    uint64_t v = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+    const uint64_t v = guest_ns();
     ST32(ARG(0), (uint32_t)v);
     ST32(ARG(0) + 4, (uint32_t)(v >> 32));
     ret_stdcall(1, 1);
@@ -300,6 +334,7 @@ static const char *gstr(uint32_t p) { return (const char *)(g_mem + p); }
  * that still misses we retry component-by-component case-insensitively, because the
  * original filesystem was case-insensitive and the data files are not consistent. */
 static const char *host_path(uint32_t guest_str);
+static const char *host_path_resolve(char *path, size_t cap);
 
 static int find_ci(const char *dir, const char *want, char *out, size_t cap)
 {
@@ -318,6 +353,19 @@ static int find_ci(const char *dir, const char *want, char *out, size_t cap)
     return found;
 }
 
+/* Same resolution for a path the PORT names, not the guest: overrides that do a guest
+ * function's file work themselves have to find the file the same way, or they resolve
+ * "data\\temporary.txt" against a tree whose directory is called "Data". */
+const char *lf2_host_path(const char *guest_style)
+{
+    static char path[1024];
+    size_t n = 0;
+    for (; guest_style[n] && n + 1 < sizeof path; n++)
+        path[n] = (guest_style[n] == '\\') ? '/' : guest_style[n];
+    path[n] = 0;
+    return host_path_resolve(path, sizeof path);
+}
+
 static const char *host_path(uint32_t guest_str)
 {
     static char path[1024];
@@ -325,7 +373,13 @@ static const char *host_path(uint32_t guest_str)
     size_t n = 0;
     for (; src[n] && n + 1 < sizeof path; n++) path[n] = (src[n] == '\\') ? '/' : src[n];
     path[n] = 0;
+    return host_path_resolve(path, sizeof path);
+}
 
+/* `path` is already in host form; returns it unchanged if it exists, otherwise rebuilds it
+ * component by component matching case-insensitively. */
+static const char *host_path_resolve(char *path, size_t cap)
+{
     if (access(path, F_OK) == 0) return path;
 
     /* Rebuild the path one component at a time, matching case-insensitively. */
@@ -346,14 +400,40 @@ static const char *host_path(uint32_t guest_str)
         if (!find_ci(dir, tok, match, sizeof match)) return path;   /* give up, report original */
         snprintf(built + strlen(built), sizeof built - strlen(built), "%s/", match);
     }
-    n = strlen(built);
-    if (n && built[n - 1] == '/') built[n - 1] = 0;
-    snprintf(path, sizeof path, "%s", built);
+    const size_t bn = strlen(built);
+    if (bn && built[bn - 1] == '/') built[bn - 1] = 0;
+    snprintf(path, cap, "%s", built);
     return path;
 }
 
 
 const char *host_path_of(uint32_t g) { return host_path(g); }
+
+/* Slurp a file with the CRT's text-mode translation applied, for overrides that read a
+ * file the guest would otherwise have read through fopen("r"). Same CRLF handling as
+ * open_translated below, so a ported reader and the guest's own reader see identical
+ * bytes. Returns NULL if the file cannot be read; the caller frees. */
+char *lf2_read_text(const char *path, size_t *len)
+{
+    FILE *raw = fopen(path, "rb");
+    if (!raw) return NULL;
+    fseek(raw, 0, SEEK_END);
+    const long n = ftell(raw);
+    rewind(raw);
+    if (n < 0) { fclose(raw); return NULL; }
+    char *buf = malloc((size_t)n + 1);
+    if (!buf) { fclose(raw); return NULL; }
+    const size_t got = fread(buf, 1, (size_t)n, raw);
+    fclose(raw);
+    size_t out = 0;
+    for (size_t i = 0; i < got; i++) {
+        if (buf[i] == '\r' && i + 1 < got && buf[i + 1] == '\n') continue;
+        buf[out++] = buf[i];
+    }
+    buf[out] = 0;
+    *len = out;
+    return buf;
+}
 
 /* Text-mode translation.
  *
@@ -398,6 +478,12 @@ static FILE *open_translated(const char *path)
  * frames of an entire run, because that function is the ad grid, not the loader.
  *
  * Time-based rather than a frame counter, so a slow file cannot end the window early. */
+enum { LOAD_MAXSITES = 24 };
+static uint32_t load_site[LOAD_MAXSITES];
+static long     load_site_n[LOAD_MAXSITES];
+static char     load_site_path[LOAD_MAXSITES][80];
+static int      load_nsites;
+
 static uint32_t load_last_open_ms;
 static uint32_t load_first_open_ms;
 static long     load_files;
@@ -410,6 +496,15 @@ long load_skipped_sleeps;
  * work affects. This is the number the loading work is actually judged by. */
 void load_span_report(void)
 {
+    if (getenv("LF2_LOAD_SITES")) {
+        fprintf(stderr, "load sites: %d distinct guest callers of fopen on data files\n",
+                load_nsites);
+        for (int i = 0; i < load_nsites; i++)
+            fprintf(stderr, "  %08x  %8ld files  first: %s\n",
+                    load_site[i], load_site_n[i], load_site_path[i]);
+        if (!load_nsites)
+            fprintf(stderr, "  none -- no data file was opened in this run at all\n");
+    }
     if (!getenv("LF2_SCAN_PROF")) return;
     if (!load_files) {
         fprintf(stderr, "data load: no data files were opened in this run\n");
@@ -434,6 +529,8 @@ static uint32_t now_ms(void)
     return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 
+long lf2_load_active_ms(void) { return (long)load_active_ms; }
+
 int lf2_loading_now(void)
 {
     return load_last_open_ms && (now_ms() - load_last_open_ms) < 300u;
@@ -453,6 +550,21 @@ static void note_data_open(const char *path)
         load_last_open_ms = t;
         if (!load_first_open_ms) load_first_open_ms = t;
         load_files++;
+        /* LF2_LOAD_SITES=1 -- which guest code opens the data. Distinct return addresses,
+         * with a count each, because the question is "is there ONE loader step function"
+         * and a sample cannot answer that. Printed as it is discovered, so a run that
+         * finds none says so by printing nothing under a header that was still emitted. */
+        if (getenv("LF2_LOAD_SITES")) {
+            const uint32_t ra = LD32(R(ESP));
+            int k = 0;
+            for (; k < load_nsites; k++) if (load_site[k] == ra) break;
+            if (k == load_nsites && load_nsites < LOAD_MAXSITES) {
+                load_site[load_nsites] = ra;
+                snprintf(load_site_path[load_nsites], sizeof load_site_path[0], "%s", path);
+                load_nsites++;
+            }
+            if (k < LOAD_MAXSITES) load_site_n[k]++;
+        }
     }
 }
 
@@ -952,9 +1064,7 @@ static void h_CreateThread(void)
 
 static void h_timeGetTime(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    ret_stdcall(0, (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000));
+    ret_stdcall(0, (uint32_t)(guest_ns() / 1000000ull));
 }
 
 /* ---- table ---- */

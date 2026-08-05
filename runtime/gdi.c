@@ -10,6 +10,7 @@
 #include "com.h"
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "loadprof.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -331,6 +332,7 @@ void cursor_find_note(int dl, int dt, const char *via);   /* ddraw.c */
 
 static void h_StretchBlt(void)
 {
+    LOADPROF_SCOPE(LP_STRETCH);
     /* StretchBlt(hdcDst, x, y, w, h, hdcSrc, sx, sy, sw, sh, rop) */
     const uint32_t hdst = ARG(0), hsrc = ARG(5);
     const int dx = (int)ARG(1), dy = (int)ARG(2), dw = (int)ARG(3), dh = (int)ARG(4);
@@ -342,6 +344,7 @@ static void h_StretchBlt(void)
         if (++n % 200 == 1)
             fprintf(stderr, "stretchblt: dest %08x is not a surface (#%ld, %dx%d)\n",
                     hdst, n, dw, dh);
+        LOADPROF_END();
         ret_stdcall(11, 0);
         return;
     }
@@ -349,7 +352,7 @@ static void h_StretchBlt(void)
     Bitmap *b = (si < (uint32_t)ndcs) ? bitmap_of(dc_bitmap[si]) : NULL;
     if (!b || sw <= 0 || sh <= 0) {
         { static long f; if (++f % 200 == 1) fprintf(stderr, "stretchblt FAILED #%ld src_dc=%08x bitmap=%s\n", f, hsrc, b ? "ok" : "none"); }
-        ret_stdcall(11, 0); return;
+        LOADPROF_END(); ret_stdcall(11, 0); return;
     }
 
     cursor_find_note(dx, dy, "StretchBlt");
@@ -390,6 +393,7 @@ static void h_StretchBlt(void)
     }
     ddraw_surface_present(hdst);
     { static long n; if (getenv("LF2_RSRC_DEBUG")) fprintf(stderr, "stretchblt #%ld %dx%d -> %dx%d\n", ++n, sw, sh, dw, dh); }
+    LOADPROF_END();
     ret_stdcall(11, 1);
 }
 

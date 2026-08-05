@@ -1,7 +1,7 @@
 ---
 id: 8
 title: Load time: frame pacing during the data load; blit throttling is a dead end
-status: open
+status: resolved
 symptom: loading takes ~10-15 s; optimising parsing and import dispatch changed nothing
 tags: load,performance,pacing,rendering,dead-end
 created: 2026-08-05
@@ -54,3 +54,50 @@ needs the exact stack contract of the recompiled body established first, not ass
 REMAINING: ~4-6 s, and sampling says it is drawing, not parsing (parsing is 0.34 s). A safe throttle would have to target only the loading screen's own full-screen repaint, identified specifically, leaving composition blits alone. Not attempted.
 
 Also: a faster load shifts the frame-scheduled input in tools/*_test.sh, so controller_2p may flake more often.
+
+### Resolution (2026-08-05)
+RESOLVED: 8.4-10.5 s -> 1.2 s of active loading. The cause was NOT drawing.
+
+The note below said "the remaining 4-6 s is drawing, not parsing". That was wrong, and it
+was wrong because it came from stack sampling rather than from timing the sections with a
+denominator. LF2_LOAD_PROF=1 (new, runtime/loadprof.[ch]) times surf_Blt, StretchBlt,
+present and the colour fill while the game is opening its data files and prints their total
+against the active loading time. It measured drawing at 0.48 s of 3.35 s -- 14%.
+
+THE REAL COST: the game decrypts every data file ONE BYTE AT A TIME through the C runtime.
+FUN_004148a0 is fscanf(in,"%c",&c) / fprintf(out,"%c",c-key[i]) in a loop, which is fine
+natively and is not fine through a recompiled CPU where each is a guest->host import call.
+2,546,141 fscanf calls per load; after the port 466,509.
+
+It is now a native override (fn_004148a0 in runtime/overrides.c):
+  key    "SiuHungIsAGoodBearBecauseHeIsVeryGood", 37 bytes
+  header the first 0x7b = 123 bytes are discarded and the key index advances with them, so
+         the payload starts at key index 123 % 37 = 12
+  byte   out = (in - key[i]) mod 256, i = (i+1) % 37
+Text-mode CRLF collapsing on input and raw output are both reproduced, because the CRT does
+them and the game's parser depends on the result.
+
+Proved rather than eyeballed: LF2_DECRYPT_DUMP=<dir> copies each decrypted file out, and it
+lives in the OVERRIDE so the control run dumps too. Run once with LF2_SLOW_DECRYPT=1 (the
+game's own loop) and once without: 77 files, 2.2 MB, all byte-identical.
+
+SECOND FIX: a skipped Sleep now credits the guest clock. Skipping the sleep without moving
+the clock does not end the caller's deadline loop, it turns the wait into a spin -- 142,721
+skipped sleeps in a 3.35 s load, 453 per data file. Crediting the requested time drops that
+to ~1,900. It costs about 0.10 s of loading time (1.08 s vs 1.19 s measured) and buys back
+145,000 pointless import dispatches, and the whole run finishes 2.7 s sooner.
+
+DEAD END, measured, do not retry: SCALING the guest clock during the load. 1x = 3.6 s,
+2x = 3.5 s, 4x = 3.5 s, 8x = 3.8 s, 16x = 4.7 s, 32x = 7.0 s. A jumping clock makes the game
+do more catch-up work, not less. The lever is fast-forwarding through waits the port decides
+to skip, not running time faster.
+
+HOW THE LOADER WAS FOUND: LF2_LOAD_SITES=1 lists the distinct guest return addresses that
+open data files, with a count and the first path each. 13 sites, and the shape gives it away
+-- every object file is opened, decrypted to data/temporary.txt, and reopened, so the sites
+come in pairs with matching counts (77/77, 65/65, 12/12).
+
+REMAINING: 1.2 s, of which 74% is now genuinely drawing (0.9 s: 2782 surf_Blt, 363
+StretchBlt, 394 colour fills, 342 presents over the load). Cutting it further means fewer
+loading-screen repaints, and note that presented frames are what tools/*_test.sh schedule
+input against, so anything that changes the frame count shifts every scripted route.

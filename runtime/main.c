@@ -7,6 +7,7 @@ void scan_prof_report(void);
 void load_span_report(void);
 void mix_dump_close(void);
 void blt_stack_report(void);
+void loadprof_report(void);
 
 void ddraw_register(void);
 void dsound_register(void);
@@ -37,6 +38,7 @@ int main(int argc, char **argv)
     atexit(load_span_report);
     atexit(mix_dump_close);
     atexit(blt_stack_report);
+    atexit(loadprof_report);
 
     dispatch(ENTRY);
     printf("returned from entry point\n");

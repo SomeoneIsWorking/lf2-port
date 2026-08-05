@@ -788,8 +788,14 @@ optimising 5 % of the load. Ranking imports by *time* rather than call count say
 is 24.7 s of the 27.1 s spent in handlers, while the 6.9 M `fscanf`/`feof`/`fprintf` calls
 cost 0.79 s combined.
 
-The gate is `fn_004242e0`, the loading screen's own frame limiter: it advances one step
-per 33 ms and sleeps otherwise, so a load is `steps × 33 ms` whatever the machine can do.
+That paragraph's conclusion — "bounded by wall-clock time, not by work" — was **half right
+and is superseded**; see the resolution below. The sleep really was 65% of it, and removing
+it really did help. What the table could not show is that most of the *remaining* work was
+not parsing or drawing either, but the game decrypting its data one byte at a time.
+
+An earlier line here named `fn_004242e0`, the loading screen's own frame limiter, as the
+gate. That was disproved by attempt 3 below: it is the ad grid and is not called during the
+load at all.
 
 **Correction to the blit-optimisation claim.** The commit that hoisted the per-pixel
 divide out of `blit()` reported the non-sleeping component falling from 9.7-11.5 s to
@@ -811,15 +817,67 @@ is sleep-bound rather than work-bound. Any load-time figure taken on this machin
    that reported this was added precisely because the previous attempt was judged by its
    effect rather than by whether it fired.
 
-What is still not known is what advances the load per tick. Until that is identified, every
-"fix" is aimed at a gate that is not the binding one. The next step is the per-tick work
-function (`FUN_0043e9a0`, called once per tick from `fn_0043cf40`).
+### Resolved: 8.4-10.5 s to 1.2 s, and it was never the drawing
 
-The obvious follow-up did **not** pay off, which is worth recording so it is not tried
-again: `h_fscanf` called `getenv` on every one of those 2.5M invocations, and caching it
-changed the load time by nothing measurable (10.1 s / 10.3 s against 10.2 s). glibc's
-`getenv` is cheap next to the surrounding parse. The caching was kept because it is the
-right shape for a flag on a hot path, not because it bought anything.
+Every attempt above aimed at the rendering because stack sampling pointed there. It was
+wrong, and the way it was settled is the point: `LF2_LOAD_PROF=1` times `surf_Blt`,
+`StretchBlt`, `present` and the colour fill **while the game is opening its data files**,
+and prints their total against the active loading time. Drawing measured **0.48 s of
+3.35 s — 14%**. A profile with a denominator ended an argument three guesses could not.
+
+**The cost was the decryption.** `FUN_004148a0` turns one encrypted `.dat` into
+`data\temporary.txt`, and it does it one byte at a time through the C runtime:
+
+```c
+fscanf(in, "%c", &c);  ...  fprintf(out, "%c", c - key[i]);
+```
+
+which is nothing natively and is 2.5 million guest→host import calls through a recompiled
+CPU. It is now a native override:
+
+| | |
+|---|---|
+| key | `SiuHungIsAGoodBearBecauseHeIsVeryGood`, 37 bytes |
+| header | the first `0x7b` = 123 bytes are discarded, and the key index advances with them, so the payload starts at key index `123 % 37` = **12** |
+| byte | `out = (in - key[i]) mod 256`, then `i = (i + 1) % 37` |
+
+Index 12 is where `odBearBecauseHeIsVeryGood` begins, which is why that 25-character key —
+the one that circulates — decrypts the first 25 bytes of a file and then turns to noise. It
+is this key seen from its offset, with the wrap missing.
+
+Byte-exactness is proved, not eyeballed: `LF2_DECRYPT_DUMP=<dir>` copies each decrypted file
+out, and it lives in the **override** so the control run dumps too. One run with
+`LF2_SLOW_DECRYPT=1` (the game's own loop) against one without gives 77 files, 2.2 MB,
+**all byte-identical**.
+
+**And a skipped sleep now credits the guest clock.** Skipping the frame-pacing `Sleep`
+without moving the clock does not end the caller's deadline loop — it converts the wait into
+a spin. That was 142,721 skipped sleeps in a 3.35 s load, 453 per data file. Crediting the
+requested time drops it to ~1,900. It costs about 0.10 s of loading (1.08 s against 1.19 s,
+measured both ways) and buys back 145,000 pointless import dispatches; the whole run
+finishes 2.7 s sooner.
+
+**Dead end, measured, do not retry: scaling the guest clock.** Running time faster during
+the load gives 3.6 s at 1x, 3.5 s at 4x, 4.7 s at 16x, 7.0 s at 32x. A jumping clock makes
+the game do *more* catch-up work. The lever is fast-forwarding through a wait the port
+decided to skip, not running the clock fast.
+
+**How the loader was found.** `LF2_LOAD_SITES=1` lists the distinct guest return addresses
+that open data files, with a count and the first path for each. Thirteen sites, and the
+shape gives the structure away: every object file is opened, decrypted to
+`data/temporary.txt`, and reopened, so the sites come in pairs with matching counts —
+77/77, 65/65, 12/12.
+
+**What is left.** 1.2 s, of which 74% now genuinely *is* drawing: 2782 `surf_Blt`, 363
+`StretchBlt`, 394 colour fills and 342 presents across the load. Cutting it means fewer
+loading-screen repaints — and note that presented frames are what `tools/*_test.sh` schedule
+their input against, so anything that changes the frame count shifts every scripted route.
+
+An earlier follow-up did **not** pay off, recorded so it is not tried again: `h_fscanf`
+called `getenv` on every one of those 2.5M invocations, and caching it changed the load time
+by nothing measurable (10.1 s / 10.3 s against 10.2 s). glibc's `getenv` is cheap next to the
+surrounding parse. The caching was kept because it is the right shape for a flag on a hot
+path, not because it bought anything.
 
 ## One keyboard, first come first served
 
