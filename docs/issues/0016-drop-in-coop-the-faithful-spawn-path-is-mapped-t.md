@@ -223,3 +223,44 @@ drop-in joiner (two-sided, press vs quiet); the character-select route for two h
 still uncovered, and a route that reaches a match with two joined humans is the thing to
 build for it -- the scripted attempts here stalled on character selection, where both
 joined players have to confirm before player one can proceed.
+
+### Note (2026-08-05)
+TEST GAP CLOSED, and closing it found a defect in the drop-in feature itself.
+
+tools/two_human_match_test.sh (ctest `two_human_match`) now reaches a match with TWO HUMAN
+players and asserts, two-sided, that pad two drives its fighter: ~1350 px of travel with a
+direction pressed, 0 px without. It also asserts player two's fighter is at OBJECT INDEX 1,
+which is the dynamic half of a claim that was only static before.
+
+THE ROUTE, since two earlier attempts stalled: character selection asks each joined player
+for a Fighter and then a Team, and player one cannot proceed until every joined player has
+finished. Pad two therefore needs three presses, not one -- join at 1250 (the window
+controller_2p_test measured), then 1380 and 1560. With only the join press the screen sits
+there with both players joined and nothing happening, which is not obviously a missing
+press until you look at the actual screen: player two's rows are drawn in cyan, still being
+chosen, while player one's are white and done.
+
+THE DEFECT, found because the test failed for the right reason. The drop-in fires when a
+device claims a slot "while a match is running", and my test for that was "some object has
+its gate byte set". That is FALSE as a match test: tracking entry 1 through character
+selection shows its gate byte going up and down there with the object still at the origin.
+The drop-in never actually misfired in any run -- the byte happened to be clear at the
+instant a joining pad was seen -- but that is luck, and a join screen that spawned a fighter
+would be a real defect.
+
+A second attempt (also exclude panel_charselect_up) was still wrong: there is a window
+before that panel is first drawn where a gate byte is already set, and a position sampled in
+it enters a movement measurement as a jump from x=0, which is what made the test's quiet arm
+report 835 px of movement for a fighter that was provably stationary.
+
+THE FIX IS NOT A THIRD HEURISTIC. The port already had the signal: panel_hud_up() is the
+in-match HUD strip, drawn only while the world view is up, and the widescreen code depends
+on it for exactly this distinction. coop_match_running() uses it now. The lesson is the one
+worth keeping: two home-made screen tests were invented before checking what the codebase
+already had for the same question.
+
++0x354 IS NOW READABLE AS THE OBJECT'S OWN TABLE INDEX, on four consistent observations
+rather than the single imitation it was: player one at index 0 reads 0, player two at index
+1 reads 1, the computer opponent at index 11 reads 11, and a non-fighter object at index 50
+reads 99 -- the same 99 an untouched record carries. Still not derived from code, but it is
+a rule that four cases agree on instead of one case copied.

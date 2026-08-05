@@ -852,13 +852,23 @@ static void coop_spawn(uint32_t self, int dst, int id, int posref, int sel)
  * A consequence worth knowing before it surprises someone: joining into a slot the game
  * filled with a computer does NOT replace that computer. Its fighter is at its own high
  * index and stays on the stage, so the match gains a fighter rather than swapping one. */
-/* A match is running when SOMETHING is in the world. Character selection is the same
- * top-level mode as the match, and the port has never found a screen id that separates
- * them, so this stands in for one: during character selection no object has its gate byte
- * set, and during a match the fighters do. A drop-in join must not fire on the join screen,
- * where the game's own joining already works. */
-static int coop_world_running(uint32_t self)
+/* Is a MATCH on screen? Character selection and the fight share a top-level mode, so this
+ * needs a real signal, and two home-made ones were wrong before the right one was used.
+ *
+ *   1. "something has its gate byte set". FALSE: tracking entry 1 through character
+ *      selection shows its gate byte going up and down there with the object still at the
+ *      origin. It merely happened to be clear at the instant a joining pad was seen, so the
+ *      drop-in never misfired -- luck, not a guarantee.
+ *   2. "and the character-select panel is not up". Still wrong: there is a window before
+ *      that panel is first drawn where a gate byte is already set, and a position sampled
+ *      in it enters a movement measurement as a jump from x=0.
+ *
+ * The port already HAD the answer. panel_hud_up() is the in-match HUD strip, drawn only
+ * while the world view is up -- the widescreen code depends on it for exactly this
+ * distinction. Using it is not a third heuristic; it is the established one. */
+static int coop_match_running(uint32_t self)
 {
+    if (!panel_hud_up() || panel_charselect_up() || panel_overlay_up()) return 0;
     for (int k = 0; k < TABLE_N; k++)
         if (LD8(EXISTS + (uint32_t)k) && LD32(self + PLAYER_PTRS + 4u * (uint32_t)k))
             return 1;
@@ -1210,7 +1220,7 @@ void fn_00419a60(void)
                  * is there, which for slots the game filled is a computer's fighter. */
                 const char *dropin = getenv("LF2_COOP");
                 const int p = dev_player[d];
-                if (dropin && p >= 0 && !LD8(EXISTS + (uint32_t)p) && coop_world_running(self)) {
+                if (dropin && p >= 0 && !LD8(EXISTS + (uint32_t)p) && coop_match_running(self)) {
                     const int id = atoi(dropin) > 0 ? atoi(dropin) : 1;
                     fprintf(stderr, "coop: device %d claimed player slot %d mid-match, "
                                     "building it a fighter (object id %d)\n", d, p, id);
@@ -1313,6 +1323,38 @@ void fn_00419a60(void)
     }
 
     coop_spawn_watch(self);
+
+    /* LF2_COOP_TRACK=<index> -- that table entry's position, every 30 frames while it is in
+     * the world. The spawn watch only follows a fighter this port created; this follows any
+     * of them, which is what a test of "does the pad drive PLAYER TWO's fighter" needs,
+     * since that fighter is placed by the game's own character selection.
+     *
+     * It prints a line saying the entry is NOT in the world too, rather than going quiet:
+     * silence would otherwise be indistinguishable from a run that never reached a match,
+     * which is the exact confusion a movement assertion must not inherit. */
+    {
+        const char *tr = getenv("LF2_COOP_TRACK");
+        if (tr) {
+            const int k = atoi(tr);
+            static long last_print;
+            const long f = hostwin_frames();
+            if (k >= 0 && k < TABLE_N && f - last_print >= 30) {
+                last_print = f;
+                const uint32_t o = LD32(self + PLAYER_PTRS + 4u * (uint32_t)k);
+                /* Only inside a match. The gate byte alone is not enough: it goes up and
+                 * down on the character-select screen with the object still at the origin,
+                 * so a position sampled there would enter a movement measurement as a jump
+                 * from x=0 -- which is exactly the false failure that found this. */
+                if (o && LD8(EXISTS + (uint32_t)k) && coop_match_running(self))
+                    fprintf(stderr, "coop track: frame %ld entry %d x=%d y=%d +000=%d\n",
+                            f, k, (int32_t)LD32(o + 0x10), (int32_t)LD32(o + 0x18),
+                            (int32_t)LD32(o + 0x000));
+                else
+                    fprintf(stderr, "coop track: frame %ld entry %d is NOT in the world\n",
+                            f, k);
+            }
+        }
+    }
 
     /* LF2_COOP_DEBUG=1 -- the player slot table as the game maintains it, printed whenever
      * it changes: the device selector per slot and the object pointer per slot. This is the

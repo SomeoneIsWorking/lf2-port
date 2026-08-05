@@ -587,6 +587,7 @@ updated nor reset.
 | `LF2_COOP_REFS=<frame>` | scan the image, heap and stack for pointers to the player records |
 | `LF2_COOP_JOIN=<slot>[,<id>]` | spawn into player slot 0..7 and set its selector and mask bit |
 | `LF2_COOP=<object id>` | **drop-in coop**: a device pressing mid-match joins as a player |
+| `LF2_COOP_TRACK=<index>` | that entry's position every 30 frames, while a match is on screen |
 | `LF2_COOP_DEBUG=1` | the player slot table, printed on change |
 
 **Prefer `live+<n>` to a frame number.** The data load does not take a fixed number of
@@ -639,6 +640,26 @@ wrong reason.
 
 The eight-player cap comes from the device-selector table's own size now, not a literal.
 A fighter placed in slot 4 is drawn by the game's own name plate as "5".
+
+**"Is a match on screen" is `panel_hud_up()`, not a gate byte.** Two home-made versions of
+that test were wrong first. An object's gate byte goes up and down during *character
+selection*, with the object still at the origin — so "something is in the world" admits the
+join screen, and even excluding the character-select panel leaves a window before that panel
+is first drawn. The HUD strip is the signal the widescreen code already relies on for the
+same distinction, and the drop-in and `LF2_COOP_TRACK` both use it now.
+
+### Two humans in a match
+
+`tools/two_human_match_test.sh` (ctest `two_human_match`) covers what `controller_2p` never
+reached: `controller_2p` proves the second pad *joins at character selection* and quits at
+frame 1900, so "a second human's fighter is actually driven once the fight starts" had no
+coverage.
+
+Getting there needs three presses from pad two, not one: character selection asks each
+joined player for a **Fighter** and then a **Team**, and player one cannot proceed until
+every joined player has finished. With only the join press the screen sits there with both
+players joined and nothing happening — player two's rows drawn in cyan, still being chosen,
+against player one's in white.
 
 **Player slot `i` is object index `i`** — the game's own code, not this port's assumption.
 `fn_00419a60__orig` walks `&devsel[0]` and `this+404` in lockstep, `EBP += 4; EAX += 4`,
