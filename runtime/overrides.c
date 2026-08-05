@@ -46,7 +46,17 @@ void fn_00423940__orig(void);
  * the original lifted body, so the game keeps working while the port proceeds screen by
  * screen. Landing 4689 lines in one step is not a thing that can be done correctly.
  *
- * Calling convention: no arguments, RET c3, so nothing to pop.
+ * Calling convention: ONE stack argument, RET 4. The generated body ends in
+ * `R(ESP) += 8` -- it pops the return address AND four bytes of argument -- and the
+ * decompiler agrees, calling it as FUN_004246b0(DAT_00455608).
+ *
+ * This said "no arguments, RET c3, so nothing to pop" and was wrong. It cost real work:
+ * an experiment that re-invoked the original body in a loop pushed back only the return
+ * address, leaked four bytes an iteration, and aborted the game a long way from the
+ * cause. A recompiled body's contract is readable straight out of the generated C --
+ * `R(ESP) += n` at its return -- so read it rather than recall it. Measured for every
+ * override here: fn_00423b00 +4, fn_004246b0 +8, fn_0043f010 +28, fn_00419a60 +16,
+ * fn_0043c4a0 +4, fn_00423940 +4.
  * ------------------------------------------------------------------------ */
 
 /* Mouse position, as the menu itself reads it. */
