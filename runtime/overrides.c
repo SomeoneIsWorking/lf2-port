@@ -912,6 +912,19 @@ static void coop_spawn_watch(uint32_t self)
 {
     if (spawn_dst_idx < 0) return;
     const long age = hostwin_frames() - spawn_frame;
+
+    /* Which of the seven buttons have EVER reached this fighter's record since it joined.
+     * Accumulated every frame rather than sampled, because a press lasting a few frames
+     * would fall between samples and read as "the pad never reached it".
+     *
+     * This exists because DISPLACEMENT is the wrong signal for a fighter that joins into an
+     * ongoing fight: it gets knocked about, so an idle joiner drifted 56 and then 69 px
+     * across runs while a driven one managed ~120, and no threshold separates those. The
+     * claim tested here is that the pad's input reaches THIS record; that the game turns
+     * such input into movement is what two_human_match measures, on a fighter standing at
+     * its own start position where displacement IS clean. */
+    static unsigned char seen[7];
+    for (int b = 0; b < 7; b++) seen[b] |= LD8(spawn_dst_obj + BTN_CUR + b);
     static int was_live = 1, said_reset;
     const int live = coop_entry_live(spawn_dst_obj);
     if (was_live && !live && !said_reset) {
@@ -929,6 +942,11 @@ static void coop_spawn_watch(uint32_t self)
                 (int32_t)LD32(spawn_dst_obj + 0x2fc), (int32_t)LD32(spawn_dst_obj + 0x10),
                 (int32_t)LD32(spawn_dst_obj + 0x18),  (int32_t)LD32(spawn_dst_obj + 0x354),
                 (int32_t)LD32(spawn_dst_obj + 0x418));
+    if (age == 1 || age == 5 || age == 30 || age == 120 || age == 300)
+        fprintf(stderr, "coop spawn: +%3ld frames  entry %d buttons seen: "
+                        "up=%d down=%d left=%d right=%d attack=%d jump=%d defend=%d\n",
+                age, spawn_dst_idx, seen[0], seen[1], seen[2], seen[3], seen[4], seen[5],
+                seen[6]);
 
     /* The spawned fighter draws and fights, but its HUD PORTRAIT is not its character. So
      * something reads identity from a field the spawn does not set. The shortest way to
@@ -1209,19 +1227,52 @@ void fn_00419a60(void)
                 for (int p = 0; p < PLAYER_SLOTS; p++)
                     if (!used[p]) { dev_player[d] = p; break; }
 
-                /* DROP-IN: a device that claims a slot while a match is ALREADY running has
-                 * no fighter waiting for it -- character selection is over. So the fighter
-                 * is built here, in the slot the device just claimed.
+                /* DROP-IN: a device that claims a slot while a match is ALREADY running
+                 * has no fighter waiting for it -- character selection is over -- so one is
+                 * built for it here.
                  *
-                 * Opt-in for now (LF2_COOP=<object id>, default off) because the character a
-                 * late joiner gets is a design question with no answer in the game: there is
-                 * no character select to show them. Off, the claim behaves exactly as it did
-                 * before -- the device is bound to a slot and writes buttons into whatever
-                 * is there, which for slots the game filled is a computer's fighter. */
+                 * The slot it takes is not simply the one the claim loop above picked. That
+                 * loop only avoids slots another DEVICE holds, and the game's own roster has
+                 * its own opinion: a slot the character-select screen filled with a computer
+                 * carries a non-zero device selector, and that computer's fighter is already
+                 * on the stage at a high index. Joining such a slot does not replace it --
+                 * the match just gains a fighter. So a slot the roster considers empty
+                 * (selector 0) is preferred, and taking a computer's is announced rather
+                 * than done quietly.
+                 *
+                 * Opt-in (LF2_COOP=1) because of one thing that is genuinely undecided: a
+                 * late joiner has no character-select screen, so the character comes from
+                 * LF2_COOP_CHAR and defaults to 1. Picking at random would need the game's
+                 * own roster of playable characters, which is NOT located -- the registry
+                 * holds every object, fighters and weapons and effects alike, and nothing
+                 * here separates them. Guessing an id range would be a magic constant. */
                 const char *dropin = getenv("LF2_COOP");
-                const int p = dev_player[d];
+                int p = dev_player[d];
                 if (dropin && p >= 0 && !LD8(EXISTS + (uint32_t)p) && coop_match_running(self)) {
-                    const int id = atoi(dropin) > 0 ? atoi(dropin) : 1;
+                    if ((int32_t)LD32(DEVSEL + 4u * (uint32_t)p) != 0) {
+                        int free_slot = -1;
+                        for (int q = 0; q < PLAYER_SLOTS; q++) {
+                            if (LD8(EXISTS + (uint32_t)q)) continue;
+                            if ((int32_t)LD32(DEVSEL + 4u * (uint32_t)q) != 0) continue;
+                            int taken = 0;
+                            for (int e = 0; e < MAX_DEV; e++) if (dev_player[e] == q) taken = 1;
+                            if (!taken) { free_slot = q; break; }
+                        }
+                        if (free_slot >= 0) {
+                            fprintf(stderr, "coop: slot %d is on the game's roster already "
+                                            "(selector %d), taking empty slot %d instead\n",
+                                    p, (int32_t)LD32(DEVSEL + 4u * (uint32_t)p), free_slot);
+                            dev_player[d] = free_slot;
+                            p = free_slot;
+                        } else {
+                            fprintf(stderr, "coop: every slot is on the game's roster, so "
+                                            "device %d joins slot %d -- the computer whose "
+                                            "slot this is keeps its own fighter, and the "
+                                            "match gains one rather than swapping\n", d, p);
+                        }
+                    }
+                    const char *ch = getenv("LF2_COOP_CHAR");
+                    const int id = (ch && atoi(ch) > 0) ? atoi(ch) : 1;
                     fprintf(stderr, "coop: device %d claimed player slot %d mid-match, "
                                     "building it a fighter (object id %d)\n", d, p, id);
                     coop_join(self, p, id);

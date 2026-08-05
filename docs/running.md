@@ -586,7 +586,8 @@ updated nor reset.
 | `LF2_COOP_SHOT=<n>` | capture the frame `<n>` frames after the spawn |
 | `LF2_COOP_REFS=<frame>` | scan the image, heap and stack for pointers to the player records |
 | `LF2_COOP_JOIN=<slot>[,<id>]` | spawn into player slot 0..7 and set its selector and mask bit |
-| `LF2_COOP=<object id>` | **drop-in coop**: a device pressing mid-match joins as a player |
+| `LF2_COOP=1` | **drop-in coop**: a device pressing mid-match joins as a player |
+| `LF2_COOP_CHAR=<object id>` | the character a late joiner gets (default 1, Bandit) |
 | `LF2_COOP_TRACK=<index>` | that entry's position every 30 frames, while a match is on screen |
 | `LF2_COOP_DEBUG=1` | the player slot table, printed on change |
 
@@ -620,23 +621,45 @@ block at `+872`.
 
 ### Drop-in coop
 
-`LF2_COOP=<object id>` turns it on. A device that presses for the first time while a match
-is already running claims a free player slot; character selection is over, so no fighter is
-waiting for it and one is built there. The pad then drives it like any other player.
+`LF2_COOP=1` turns it on. A device that presses for the first time while a match is already
+running claims a free player slot; character selection is over, so no fighter is waiting for
+it and one is built there. The pad then drives it like any other player.
 
 ```sh
-cd game && LF2_COOP=52 ../scratch/build/lf2 lf2.exe
+cd game && LF2_COOP=1 LF2_COOP_CHAR=52 ../scratch/build/lf2 lf2.exe
 ```
 
+The slot it takes is the first the **game's own roster** considers empty — selector 0 — not
+merely one no other device holds. A slot that character selection filled with a computer
+carries a non-zero selector and that computer's fighter is already on the stage at a high
+index, so joining it would add a fighter rather than replace one. When nothing else is free
+that is what happens, and the run says so rather than doing it quietly.
+
 It is **opt-in rather than on** because of an interface question the game does not answer:
-there is no character select to show a late joiner, so the character comes from the variable
-and defaults to 1 (Bandit). The mechanism is settled; the interface is not.
+there is no character select to show a late joiner, so the character comes from
+`LF2_COOP_CHAR`. Picking at **random** would need the game's own roster of playable
+characters, and that is not located — the registry holds every object, fighters and weapons
+and effects alike, and nothing separates them yet. The observed ids do fall in suggestive
+ranges, but hard-coding one would be a magic constant that any mod breaks.
 
 `tools/coop_dropin_test.sh` (ctest `coop_dropin`) guards it two-sided — the same join with
-and without a direction pressed afterwards, which is the only way to tell a pad-driven
-fighter from one wandering under its own AI. Both arms assert the join happened first,
+and without a direction pressed afterwards. Both arms assert the join happened first,
 because a run that never reached the match would otherwise pass the quiet assertion for the
 wrong reason.
+
+**It does not measure displacement, and that is deliberate.** A fighter that joins mid-fight
+lands beside the brawl and gets knocked about: the idle arm drifted 56 px in one run and 69
+in the next against ~120 for the driven arm, so no threshold separates them and the first
+version of the test passed twice by luck. The claim splits in two instead, each half
+measured where it is clean:
+
+| Test | What it establishes |
+|---|---|
+| `coop_dropin` | the pad's input reaches the **joined fighter's record** |
+| `two_human_match` | the game turns input in a player record into **movement** — on a fighter at its own start position, ~1350 px against 0 |
+
+Together they cover "the pad drives the fighter it joined", and neither is confounded by the
+fight moving things on its own.
 
 The eight-player cap comes from the device-selector table's own size now, not a literal.
 A fighter placed in slot 4 is drawn by the game's own name plate as "5".

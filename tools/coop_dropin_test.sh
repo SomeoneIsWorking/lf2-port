@@ -6,12 +6,27 @@
 # one-sided check exactly as well. So the same join is run twice, differing only in whether
 # the pad presses a direction afterwards:
 #
-#   press  the joined fighter must travel a real distance
-#   quiet  it must stay put
+#   press  the pressed direction must reach the joined fighter's record
+#   quiet  it must never reach it
+#
+# WHY NOT DISPLACEMENT, which is the obvious measure and is what this test used first: a
+# fighter that joins mid-fight lands next to the brawl and gets knocked about, so an idle
+# joiner drifted 56 px in one run and 69 in the next while a driven one managed ~120. No
+# threshold separates those, and picking one that happened to pass would have been a test
+# that lies. The claim splits cleanly in two instead:
+#
+#   here                  the pad's input reaches the JOINED fighter's record
+#   two_human_match       the game turns input in a player record into movement -- measured
+#                         on a fighter standing at its own start position, where
+#                         displacement is clean (~1350 px against 0)
+#
+# Together those cover "the pad drives the fighter it joined". Neither is confounded by the
+# fight moving things on its own.
 #
 # And both arms first assert that the join HAPPENED. Without that, a run whose scripted
-# route never reached the match would sail through the `quiet` assertion -- a fighter that
-# does not exist does not move either, and that is the failure this test exists to catch.
+# route never reached the match would sail through the `quiet` assertion -- a pad that
+# joined nothing presses nothing into nothing, and that is the failure this test exists to
+# catch.
 set -eu
 
 BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
@@ -28,21 +43,33 @@ PAD1="south:900,south:960,south:1020,south:1080,south:1140,south:1200,south:1260
 PAD1="$PAD1,up:1380,up:1440,south:1500,south:1700,south:1920,up:2020,up:2080,south:2140"
 PAD1="$PAD1,right:2250,south:2300"
 
-# Pad two presses for the first time at 2350, well after the match starts. That press is the
-# join; the rights after it are what must move the fighter.
-JOIN="south:2350"
-PRESS="$JOIN,right:2400,right:2430,right:2460,right:2490,right:2520,right:2550"
+# Pad two's first press is the join, and it must land INSIDE the match. The data load does
+# not take a fixed number of frames, so a single press at a chosen frame sometimes arrives
+# before the fight starts -- which it did, giving one arm a join and the other none, and a
+# comparison between them would have been meaningless. Two join presses spread across the
+# window make that miss unlikely; a second press once already joined is just a button press
+# in a fight, which is harmless.
+#
+# The measurement window is SHORT on purpose -- the watch's +5 and +120 samples -- and the
+# directions cover it. Measuring over a long window instead made both arms meaningless: in a
+# live fight an idle fighter gets knocked about, so over ~5 seconds the quiet arm drifted 56
+# px while the pressed arm managed 102, and the two are not distinguishable. Displacement is
+# only a clean signal while the fight has not had time to move things on its own.
+JOIN="south:2300,south:2360"
+PRESS="$JOIN,right:2380,right:2410,right:2440,right:2470,right:2500,right:2530"
 
 run() {   # run <logfile> <pad2 script>
     ( cd "$GAME" && \
       SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
-      LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$2" LF2_COOP=52 \
-      LF2_QUIT_AFTER=2650 timeout 200 "$BUILD/lf2" lf2.exe ) > "$1" 2>&1
+      LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$2" LF2_COOP=1 LF2_COOP_CHAR=52 \
+      LF2_QUIT_AFTER=2800 timeout 220 "$BUILD/lf2" lf2.exe ) > "$1" 2>&1
 }
 
-# x of the joined fighter at a given age, from the spawn watch's own report.
-xat() {   # xat <logfile> <age>
-    grep "coop spawn: + *$2 frames" "$1" | sed -n 's/.* x=\([0-9-]*\) .*/\1/p' | head -1
+# Did the pressed direction ever reach the joined fighter's record? The watch accumulates
+# the buttons it has seen since the join, so this does not depend on a press coinciding with
+# a sample.
+right_seen() {   # right_seen <logfile>
+    grep "coop spawn: .* buttons seen:" "$1" | tail -1 | sed -n 's/.* right=\([0-9]*\) .*/\1/p'
 }
 
 echo "drop-in coop: pad two joins a running match (about 3 min for both arms)..."
@@ -61,31 +88,24 @@ for arm in press quiet; do
     fi
 done
 
-x0p=$(xat "$LOGP" 5);   x1p=$(xat "$LOGP" 120)
-x0q=$(xat "$LOGQ" 5);   x1q=$(xat "$LOGQ" 120)
-
-if [ -z "${x0p:-}" ] || [ -z "${x1p:-}" ] || [ -z "${x0q:-}" ] || [ -z "${x1q:-}" ]; then
-    echo "  FAIL  the spawn watch did not report a position in both arms"
-    echo "        press: '${x0p:-}' -> '${x1p:-}'   quiet: '${x0q:-}' -> '${x1q:-}'"
+rp=$(right_seen "$LOGP"); rq=$(right_seen "$LOGQ")
+if [ -z "${rp:-}" ] || [ -z "${rq:-}" ]; then
+    echo "  FAIL  the spawn watch reported no button state in both arms"
+    echo "        press: '${rp:-}'   quiet: '${rq:-}'"
     exit 1
 fi
 
-dp=$(( x1p - x0p )); [ "$dp" -lt 0 ] && dp=$(( -dp ))
-dq=$(( x1q - x0q )); [ "$dq" -lt 0 ] && dq=$(( -dq ))
-
-# The threshold sits between the two measured behaviours: a driven fighter covers ~180 px
-# over these frames, an undriven one drifts under 10 while it lands.
-if [ "$dp" -ge 60 ]; then
-    echo "  ok    press: the joined fighter moved $dp px under the pad"
+if [ "$rp" -eq 1 ]; then
+    echo "  ok    press: the pressed direction reached the joined fighter's record"
 else
-    echo "  FAIL  press: the joined fighter moved only $dp px (want >= 60) -- it exists but"
-    echo "        the pad is not driving it"
+    echo "  FAIL  press: the direction never reached the joined fighter -- it exists but the"
+    echo "        pad is not wired to it"
     fail=1
 fi
-if [ "$dq" -le 30 ]; then
-    echo "  ok    quiet: with no direction pressed it stayed put ($dq px)"
+if [ "$rq" -eq 0 ]; then
+    echo "  ok    quiet: with nothing pressed, no direction reached it"
 else
-    echo "  FAIL  quiet: it moved $dq px with nothing pressed, so the movement in the press"
+    echo "  FAIL  quiet: a direction reached the fighter with nothing pressed, so the press"
     echo "        arm cannot be attributed to the pad"
     fail=1
 fi

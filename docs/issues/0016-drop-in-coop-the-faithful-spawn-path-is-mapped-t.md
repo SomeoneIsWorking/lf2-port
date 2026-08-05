@@ -264,3 +264,47 @@ rather than the single imitation it was: player one at index 0 reads 0, player t
 1 reads 1, the computer opponent at index 11 reads 11, and a non-fighter object at index 50
 reads 99 -- the same 99 an untouched record carries. Still not derived from code, but it is
 a rule that four cases agree on instead of one case copied.
+
+### Note (2026-08-05)
+THE LATE-JOINER DESIGN QUESTIONS, settled where they can be and NAMED where they cannot.
+
+1. WHICH SLOT. The drop-in no longer simply takes the slot the device-claim loop picked.
+   That loop only avoids slots another DEVICE holds, while the game's own roster has its own
+   opinion: a slot the character-select screen filled with a computer carries a non-zero
+   device selector, and that computer's fighter is already on the stage at a high index.
+   Joining such a slot does not replace it -- the match just gains a fighter. So a slot the
+   roster considers empty (selector 0) is preferred now, and taking a computer's slot
+   because nothing else is free is ANNOUNCED rather than done quietly.
+
+2. WHICH CHARACTER. Split out: LF2_COOP=1 enables the feature, LF2_COOP_CHAR=<object id>
+   picks the character and defaults to 1. Overloading one variable with both was awkward and
+   made "on" and "Bandit" the same value.
+
+   NOT solved, and deliberately not faked: picking at RANDOM would need the game's own
+   roster of playable characters, and that is not located. The registry at this+2004 holds
+   every object -- fighters, weapons and effects alike -- and nothing found so far separates
+   them. The observed ids do fall in suggestive ranges (1-11, 30-39, 50-52 against 100+),
+   but hard-coding a range is a magic constant, and it would break on any mod that adds
+   characters. Finding the roster the character-select screen iterates is the next RE step
+   for this, and it is small: that screen draws a portrait per selectable character, so
+   whatever it walks IS the roster.
+
+3. A TEST THAT LIED, caught and replaced rather than tuned. coop_dropin measured "the pad
+   drives the joined fighter" as DISPLACEMENT, and that is the wrong signal for a fighter
+   that joins mid-fight: it lands beside the brawl and gets knocked about. The idle arm
+   drifted 56 px in one run and 69 in the next, against ~120 for the driven arm -- no
+   threshold separates those, and the first version passed twice by luck before failing.
+   Picking a threshold that happened to pass would have been a test that lies.
+
+   The claim splits in two instead, and each half is measured where it is clean:
+
+     coop_dropin        the pad's input reaches the JOINED fighter's record (the watch
+                        accumulates every button seen since the join, so a press cannot fall
+                        between samples)
+     two_human_match    the game turns input in a player record into movement -- on a
+                        fighter at its own start position, where displacement is clean:
+                        ~1350 px against 0
+
+   Together they cover "the pad drives the fighter it joined", and neither is confounded by
+   the fight moving things on its own. Three consecutive runs of the new coop_dropin pass,
+   where the displacement version flipped between runs.
