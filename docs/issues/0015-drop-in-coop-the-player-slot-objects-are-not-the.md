@@ -88,3 +88,23 @@ LF2_COOP_TEST=<frame> (the mask + clone probe above).
 METHOD NOTE worth keeping: LF2_COOP_DIFF must be pointed at a frame that is VERIFIABLY a
 match. Dump the frame alongside it. A diff of two idle records looks like a clean, confident
 result -- two differing dwords -- and says nothing.
+
+### Note (2026-08-05)
+NEXT LEAD, and where a fresh session should start.
+
+.data records nothing that looks like a registration at match start: the four-way diff across
+"Fight!" gives 8 dwords, all small counters/timers (0x00452170, 0x00452180, 0x00452194,
+0x004554e0, 0x00457bc8..0x00457bd0, 0x00457cfc). So whatever list a fighter has to be in is
+on the heap, not in .data.
+
+The heap diff across "Fight!" has one cluster that is not a player record: 1052 bytes at
+0x25f149a0. Its CHANGED-OFFSET PATTERN matches the player record's layout closely -- +0x10,
++0x18, +0x5c, +0x6c, +0x70..0x7c, +0x308, +0x418, ending at 0x418 against a 0x420 stride --
+which reads like a second object of the same type. That is the shape of a world-object array
+separate from the eight player records, and it is the first thing to confirm.
+
+Not confirmed: it is not on the 0x420 grid of the player array
+((0x25f149a0 - 0x25f11c40) / 0x420 is not an integer), so if it is the same type it belongs
+to a different array with its own base. Find that base and its count, and the question
+becomes whether adding an entry there (plus the mask bit and the record init already known)
+is what puts a fighter in the world.
