@@ -462,6 +462,21 @@ enum { EXISTS = 0x00458b04 };          /* this+4: one byte per object index, 1 =
  * a block is the object id from data.txt. Both offsets are the game's own, read off the
  * spawn inlined in fn_0041bc90. */
 enum { REG_PTR = 2004, REG_COUNT_OFF = 81273728 };
+
+/* A data block's id and its TYPE, adjacent. Both are located against the game's own
+ * data.txt, whose <object> section declares an id and a type for each entry -- and the
+ * registry is that list, in file order, all 65 of them. The type offset was required to
+ * match the declared type on EVERY entry, not a sample: +1784 is the only offset in the
+ * first 2048 bytes that does, at byte, word and dword width alike.
+ *
+ * type 0 is a character. The rest are weapons, throwables, effects and the criminal. */
+enum { DATA_ID = 1780, DATA_TYPE = 1784, DATA_TYPE_CHARACTER = 0 };
+
+/* The template object, data\\template.dat. It is type 0 and so counts as a character, but
+ * it is the template rather than a playable fighter, and the character-select screen does
+ * not offer it. Named by id because that is what it is -- not an offset that happened to
+ * work. */
+enum { DATA_ID_TEMPLATE = 0 };
 enum { BTN_CUR = 205 };                /* obj+205..211: this frame's seven buttons */
 enum { NET_OR_RECORD = 0x00450b80 };   /* non-zero: the packed masks are being consumed */
 enum { RECORDING = 0x0044f1af, MASK_MIRROR = 0x0044d040 };
@@ -744,12 +759,54 @@ static uint32_t coop_data_for_id(uint32_t self, int id)
     }
     for (int i = 0; i < count; i++) {
         const uint32_t d = LD32(reg + 4u * (uint32_t)i);
-        if (d >= GUEST_HEAP_BASE && d < GUEST_HEAP_END && (int32_t)LD32(d + 1780) == id)
+        if (d >= GUEST_HEAP_BASE && d < GUEST_HEAP_END && (int32_t)LD32(d + DATA_ID) == id)
             return d;
     }
     fprintf(stderr, "coop spawn: REFUSED -- no data block with object id %d among the %d "
                     "registry entries (they were ALL examined)\n", id, count);
     return 0;
+}
+
+/* A playable character's object id, chosen from the game's own roster: the registry entries
+ * whose type field says character, less the template. Returns 0 and says why if the roster
+ * cannot be read, rather than falling back to a hard-coded id -- a silent fallback would
+ * make a broken registry read look like a working feature.
+ *
+ * The pick is DETERMINISTIC, from the frame the join happens on. A late joiner wants a
+ * varied character, not an unpredictable one, and a run that cannot be reproduced is worse
+ * to debug than a run that always picks the same fighter. */
+static int coop_random_character(uint32_t self, long seed)
+{
+    const uint32_t reg = LD32(self + REG_PTR);
+    if (!reg || reg < GUEST_HEAP_BASE || reg >= GUEST_HEAP_END) {
+        fprintf(stderr, "coop: cannot read the object registry, so no character can be "
+                        "chosen at random\n");
+        return 0;
+    }
+    const int32_t count = (int32_t)LD32(reg + (uint32_t)REG_COUNT_OFF);
+    if (count <= 0 || count > 512) {
+        fprintf(stderr, "coop: registry count reads %d, so no character can be chosen at "
+                        "random\n", count);
+        return 0;
+    }
+    int ids[256], n = 0;
+    for (int i = 0; i < count && n < (int)(sizeof ids / sizeof ids[0]); i++) {
+        const uint32_t d = LD32(reg + 4u * (uint32_t)i);
+        if (d < GUEST_HEAP_BASE || d >= GUEST_HEAP_END) continue;
+        if ((int32_t)LD32(d + DATA_TYPE) != DATA_TYPE_CHARACTER) continue;
+        const int id = (int32_t)LD32(d + DATA_ID);
+        if (id == DATA_ID_TEMPLATE) continue;
+        ids[n++] = id;
+    }
+    if (n == 0) {
+        fprintf(stderr, "coop: the registry has %d entries and NONE of them is a playable "
+                        "character -- not choosing one\n", count);
+        return 0;
+    }
+    const int pick = ids[(int)(((unsigned long)seed) % (unsigned long)n)];
+    fprintf(stderr, "coop: %d playable characters on the game's roster, picked id %d\n",
+            n, pick);
+    return pick;
 }
 
 static void coop_spawn(uint32_t self, int dst, int id, int posref, int sel)
@@ -1039,6 +1096,40 @@ static void coop_registry_dump(uint32_t self)
                 k, (int32_t)LD32(o + 0x364), data, which);
     }
 
+    /* LF2_COOP_REGDUMP=<file> -- the head of every data block, for finding a field whose
+     * value matches something the game's own data.txt declares. data.txt gives an id AND a
+     * type per object (type 0 is a character), and the registry is in data.txt order, so a
+     * candidate offset can be required to match ALL 65 entries rather than a sample. That
+     * is the difference between locating a field and guessing one. */
+    {
+        const char *dump = getenv("LF2_COOP_REGDUMP");
+        if (dump) {
+            FILE *f = fopen(dump, "wb");
+            if (!f) {
+                fprintf(stderr, "coop registry: cannot write %s -- nothing dumped\n", dump);
+            } else {
+                enum { HEAD = 2048 };
+                const uint32_t n = (uint32_t)count, head = HEAD;
+                fwrite(&n, 4, 1, f);
+                fwrite(&head, 4, 1, f);
+                int written = 0;
+                for (int i = 0; i < count; i++) {
+                    const uint32_t d = LD32(reg + 4u * (uint32_t)i);
+                    if (d < GUEST_HEAP_BASE || d + HEAD > GUEST_HEAP_END) {
+                        static const uint8_t zero[HEAD];
+                        fwrite(zero, 1, HEAD, f);
+                        continue;
+                    }
+                    fwrite(g_mem + d, 1, HEAD, f);
+                    written++;
+                }
+                fclose(f);
+                fprintf(stderr, "coop registry: wrote %s -- %d entries of %d bytes, %d of "
+                                "them real blocks\n", dump, count, HEAD, written);
+            }
+        }
+    }
+
     fprintf(stderr, "coop registry: %d entries -- ptr, +1780, +144, and the first printable "
                     "run in the block:\n", count);
     for (int i = 0; i < count; i++) {
@@ -1048,8 +1139,8 @@ static void coop_registry_dump(uint32_t self)
             fprintf(stderr, "  NOT A HEAP POINTER -- not read\n");
             continue;
         }
-        fprintf(stderr, "  +1780=%-6d +144=%-6d  \"", (int32_t)LD32(d + 1780),
-                (int32_t)LD32(d + 144));
+        fprintf(stderr, "  id=%-6d type=%-3d +144=%-6d  \"", (int32_t)LD32(d + DATA_ID),
+                (int32_t)LD32(d + DATA_TYPE), (int32_t)LD32(d + 144));
         for (uint32_t o = 0; o < 64; o++) {
             const uint8_t c = LD8(d + o);
             fputc(c >= 32 && c < 127 ? c : '.', stderr);
@@ -1271,11 +1362,24 @@ void fn_00419a60(void)
                                             "match gains one rather than swapping\n", d, p);
                         }
                     }
+                    /* LF2_COOP_CHAR pins a character; without it one is taken from the
+                     * game's own roster. That roster is the registry entries whose type
+                     * field says character -- a field located against data.txt rather than
+                     * an id range, so it holds for a mod that adds characters too. */
                     const char *ch = getenv("LF2_COOP_CHAR");
-                    const int id = (ch && atoi(ch) > 0) ? atoi(ch) : 1;
-                    fprintf(stderr, "coop: device %d claimed player slot %d mid-match, "
-                                    "building it a fighter (object id %d)\n", d, p, id);
-                    coop_join(self, p, id);
+                    int id = (ch && atoi(ch) > 0) ? atoi(ch) : 0;
+                    if (!id) id = coop_random_character(self, hostwin_frames() + d);
+                    /* No early exit here: this sits inside the per-device loop, and
+                     * leaving it would skip the remaining devices' button bookkeeping for
+                     * the frame. */
+                    if (id) {
+                        fprintf(stderr, "coop: device %d claimed player slot %d mid-match, "
+                                        "building it a fighter (object id %d)\n", d, p, id);
+                        coop_join(self, p, id);
+                    } else {
+                        fprintf(stderr, "coop: no character to build, so device %d joins "
+                                        "nothing this time\n", d);
+                    }
                 }
             }
         }

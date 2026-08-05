@@ -308,3 +308,38 @@ THE LATE-JOINER DESIGN QUESTIONS, settled where they can be and NAMED where they
    Together they cover "the pad drives the fighter it joined", and neither is confounded by
    the fight moving things on its own. Three consecutive runs of the new coop_dropin pass,
    where the displacement version flipped between runs.
+
+### Note (2026-08-05)
+THE ROSTER IS FOUND, and the last open design item is closed properly rather than by a
+range check.
+
+A data block's TYPE is at +1784, next to its id at +1780. Located against the game's own
+data.txt, whose <object> section declares an id AND a type for each entry -- and the
+registry at this+2004 IS that list, in file order, all 65 of them. The offset was required
+to match the declared type on EVERY entry rather than on a sample: +1784 is the only offset
+in the first 2048 bytes that does, and it does so at byte, word and dword width alike.
+
+  type 0 = character.  The rest are weapons, throwables, effects and the criminal.
+
+So the roster of playable characters is "registry entries whose type is 0, less the
+template at id 0" -- and the game agrees: that comes to 23, which is LF2's selectable
+roster. The template is excluded by ID, because that is what it is (data\template.dat, the
+template object, which character selection does not offer), not by an offset that happened
+to work.
+
+A late joiner with no LF2_COOP_CHAR now gets a character from that roster. The pick is
+DETERMINISTIC, from the frame the join lands on: a joiner wants a varied character, not an
+unpredictable one, and a run that cannot be reproduced is worse to debug than one that
+always picks the same fighter. If the roster cannot be read the join is REFUSED with the
+reason, rather than falling back to a hard-coded id -- a silent fallback would make a broken
+registry read look like a working feature.
+
+Why this matters beyond the feature: the alternative was hard-coding the id ranges the
+characters happen to occupy (1-11, 30-39, 50-52). That would have worked on this data.txt
+and broken on any mod that adds a character, and nothing in the code would have said why.
+
+A BUG CAUGHT WHILE WRITING IT, worth recording because it was invisible: the first version
+of the "no character, do not join" path used `break`. That sits inside the per-device loop,
+so it would have skipped the remaining devices' button bookkeeping for the frame -- a
+keyboard going dead for a frame whenever a pad failed to join. Restructured so no control
+flow escapes the loop.

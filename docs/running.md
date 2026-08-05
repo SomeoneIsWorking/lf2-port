@@ -568,6 +568,7 @@ The state a fighter lives in, all located rather than guessed (issues #15 and #1
 | `this+404` = `0x00458c94` | **400** object pointers, stride `0x420`; the player slots are the first eight |
 | `this+2004` | the object-data registry: an array of block pointers, count at `+0x4d82000` |
 | block `+1780` | the object's id from `data.txt` |
+| block `+1784` | the object's **type** — 0 is a character |
 | object `+872` (`+0x368`) | the object's data block |
 | `fn_004064d0` | walks the table and applies the gate |
 | `fn_004061d0` | `__thiscall` reset of one object record |
@@ -587,7 +588,7 @@ updated nor reset.
 | `LF2_COOP_REFS=<frame>` | scan the image, heap and stack for pointers to the player records |
 | `LF2_COOP_JOIN=<slot>[,<id>]` | spawn into player slot 0..7 and set its selector and mask bit |
 | `LF2_COOP=1` | **drop-in coop**: a device pressing mid-match joins as a player |
-| `LF2_COOP_CHAR=<object id>` | the character a late joiner gets (default 1, Bandit) |
+| `LF2_COOP_CHAR=<object id>` | pin the character a late joiner gets; without it, one is taken from the game's roster |
 | `LF2_COOP_TRACK=<index>` | that entry's position every 30 frames, while a match is on screen |
 | `LF2_COOP_DEBUG=1` | the player slot table, printed on change |
 
@@ -635,12 +636,22 @@ carries a non-zero selector and that computer's fighter is already on the stage 
 index, so joining it would add a fighter rather than replace one. When nothing else is free
 that is what happens, and the run says so rather than doing it quietly.
 
-It is **opt-in rather than on** because of an interface question the game does not answer:
-there is no character select to show a late joiner, so the character comes from
-`LF2_COOP_CHAR`. Picking at **random** would need the game's own roster of playable
-characters, and that is not located — the registry holds every object, fighters and weapons
-and effects alike, and nothing separates them yet. The observed ids do fall in suggestive
-ranges, but hard-coding one would be a magic constant that any mod breaks.
+Without `LF2_COOP_CHAR` the joiner gets a character from **the game's own roster**: the
+registry entries whose type field (`+1784`) says character, less the template at id 0. That
+comes to 23, which is LF2's selectable roster. The type field was located against `data.txt`
+— whose `<object>` section declares an id *and* a type per entry, and which the registry
+reproduces in file order — by requiring a candidate offset to match the declared type on
+**all 65** entries; `+1784` is the only offset in 2048 bytes that does. The alternative,
+hard-coding the id ranges characters happen to occupy (1–11, 30–39, 50–52), would have
+worked on this `data.txt` and broken on any mod that adds a character.
+
+The pick is **deterministic**, from the frame the join lands on — a joiner wants a varied
+character, not an unpredictable one, and a run you cannot reproduce is worse to debug than
+one that always picks the same fighter. If the roster cannot be read the join is refused
+with the reason rather than falling back to a hard-coded id.
+
+It stays **opt-in** because a late joiner still gets no character-select screen; what they
+get is chosen for them.
 
 `tools/coop_dropin_test.sh` (ctest `coop_dropin`) guards it two-sided — the same join with
 and without a direction pressed afterwards. Both arms assert the join happened first,
