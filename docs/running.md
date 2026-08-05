@@ -1022,8 +1022,18 @@ plus A lands on the control settings page, and the mouse-driven smoke test is un
 
 ## Finding which code draws something
 
-Two hooks in `runtime/ddraw.c`, both of which were needed to port the ads out:
+Three hooks in `runtime/ddraw.c`:
 
+- **`LF2_BLT_FRAME=<frame>[,...]`** logs *every* blit that composes those presented frames —
+  both rectangles, the source surface and its size, the flags, the calling guest address —
+  and finishes with `bltframe <n>: N blits total`. A match frame is about 140 blits, so the
+  list is complete and still readable, and the frame numbers are the ones `LF2_FRAME_DUMP`
+  uses, so a dump and its blit list line up exactly.
+
+  Colour fills print `COLORFILL=<argb>`, and the hook runs **before** the colour-fill branch
+  on purpose: that branch returns early, so a hook after it cannot see a fill at all. That
+  blind spot produced a confident wrong answer once — "the stage ground is drawn by four
+  layer blits and nothing else", with the fill underneath them invisible (issue #9).
 - **`LF2_BLT_RECTS=1`** logs every blit destination rectangle. That is how the ad regions
   were enumerated: top strip `(0,0)-(397,34)`, right panel `(590,199)-(788,393)`, its arrows,
   and the bottom row — against the character art at `(0,0)-(330,546)`.

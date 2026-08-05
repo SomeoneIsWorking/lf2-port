@@ -32,6 +32,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 | Audio: PCM integrity | `runtime/guest_map.h` | **done** | the surface arena used to overrun the sound arena and the game played bitmaps as audio; arenas are now declared in one place with build-time overlap checks and runtime bounds |
 | Load time | `runtime/imports.c`, issue #8 | **wip** | the load advances one data file per 33 ms tick, so it cost (files x 33 ms). Frame pacing is now skipped while loading: **active loading 8.4-10.5 s -> 4.3-6.3 s**. The remaining 4-6 s is drawing, not parsing (parsing is 0.34 s). Throttling the drawing is a **dead end** at the blit level -- `surf_Blt` composes surfaces as well as displaying them, so skipping blits aborts the game; see issue #8 |
 | Sprite colour-key | `recompiler/lift.c` | **fixed** | root cause was ADC/SBB dropping the carry; see below |
+| Stage ground fill | `runtime/ddraw.c`, issue #9 | **fixed** | `DDBLTFX.dwFillColor` was read from offset 16 (`dwRotationAngle`), so every colour fill painted a leftover stack dword — the navy rectangles over stage 1-1's ground. It is at offset 80; verified on a stage 1-1 frame dump |
 
 ## The binary
 
