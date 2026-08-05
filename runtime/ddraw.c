@@ -7,6 +7,8 @@
 #include "guest_map.h"
 #include "guest_ops.h"
 #include "hostwin.h"
+
+#include <time.h>
 #include "loadprof.h"
 
 
@@ -331,6 +333,8 @@ void hostwin_shutdown(void)
 static long frames;
 long hostwin_frames(void) { return frames; }
 
+static void frame_pace(void);
+
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
 {
     rwatch_frame();
@@ -379,6 +383,49 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     SDL_RenderClear(hw.renderer);
     SDL_RenderTexture(hw.renderer, hw.texture, NULL, NULL);
     SDL_RenderPresent(hw.renderer);
+    frame_pace();
+}
+
+/* ---- real time, and it lives HERE now ----
+ *
+ * The guest clock is the frame counter (runtime/imports.c), so the game's main loop is
+ * always "overdue" by its own reckoning and never sleeps -- it runs frames as fast as it is
+ * given them. What makes those frames arrive thirty times a second is this: each present
+ * waits until the WALL reaches the frame's due time. The guest counts, the host paces.
+ *
+ * Waiting until a deadline rather than sleeping a fixed amount is what absorbs nanosleep's
+ * overshoot: a frame that ran long leaves the next one with less to wait, so the rate holds
+ * instead of drifting. When the machine cannot keep up there is nothing to wait for and the
+ * frames simply arrive late -- the guest's timeline does not notice, which is the point.
+ *
+ * NOT WHILE LOADING. The data load draws a frame per file and has no business being held to
+ * thirty a second; pacing it would put ten seconds back into a load this port spent real
+ * effort taking out. The anchor is re-taken when the debt passes a quarter second, so a load
+ * or a stall cannot leave the game sprinting through the following minute to catch up. */
+static void frame_pace(void)
+{
+    static uint64_t anchor_wall, anchor_frame;
+
+    /* The anchor is DROPPED while loading, not merely unused. Frames keep being counted
+     * through the load and the wall does not follow them, so an anchor taken before it
+     * would leave every frame after it due far in the future -- measured, the game then
+     * slept its way through a whole run at under 12 fps with 1.8 s of CPU used. Pacing
+     * re-anchors on the first frame after the load instead. */
+    if (lf2_loading_now()) { anchor_wall = 0; return; }
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    const uint64_t w = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+    const uint64_t f = (uint64_t)hostwin_frames();
+
+    if (!anchor_wall) { anchor_wall = w; anchor_frame = f; return; }
+    const uint64_t due = anchor_wall + (f - anchor_frame) * (uint64_t)GUEST_FRAME_NS;
+    if (due > w) {
+        const uint64_t d = due - w;
+        struct timespec req = { (time_t)(d / 1000000000ull), (long)(d % 1000000000ull) };
+        nanosleep(&req, NULL);
+    } else if (w - due > 250000000ull) {
+        anchor_wall = w; anchor_frame = f;
+    }
 }
 
 /* The one keyboard layout, shown where the advertising used to sit. Drawn onto the

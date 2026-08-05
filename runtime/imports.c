@@ -4,6 +4,7 @@
  * entry [ESP] is the return address and [ESP+4+4n] is argument n. stdcall (Win32) pops
  * its own arguments; cdecl (CRT) leaves that to the caller. */
 #include "guest_ops.h"
+#include "hostwin.h"
 #include "guest_map.h"
 
 #include <stdio.h>
@@ -207,6 +208,28 @@ static void h_Sleep(void)
         return;
     }
 
+    /* CREDITED HERE TOO, not only on the load's fast path. The clock is the frame counter,
+     * and a wait that produces no frames -- the startup waits before the load is even
+     * flagged -- would otherwise wait for a time that can never arrive. Measured: without
+     * this the run used 1.8 s of CPU in 200 s of wall and reached no screen at all.
+     *
+     * It costs nothing during play, and that is a property of the game rather than luck: a
+     * frame period of 33.33 ms is above the 33 ms threshold fn_0043cf40 compares against, so
+     * once frames are flowing the loop always takes its "overdue" branch and never sleeps.
+     * The credit is therefore constant from the end of the load onwards, and the clock is
+     * the frame counter plus a fixed startup offset.
+     *
+     * ONE MILLISECOND MORE THAN ASKED FOR, and that is not a fudge -- it is what a real
+     * Sleep does. Sleep(n) returns after AT LEAST n; nanosleep never returns early. Crediting
+     * exactly n models a sleep that returns exactly on time, and the game's pacer lands on
+     * its own boundary and stops dead there: it sleeps `remaining` when remaining <= 5, so it
+     * arrives at elapsed == 33 exactly, where `elapsed <= 33` sends it to the sleep path and
+     * `remaining == 0` sends it past the Sleep -- neither working nor waiting. Measured
+     * before the +1: 59,331,701 clock reads at frame 0 with no Sleep and no frame ever
+     * presented, at 99% of a core. A real clock crosses the boundary through overshoot; an
+     * exact one has to be told that a sleep is a floor, not an equality. */
+    guest_clock_offset_ns += ((uint64_t)(ms ? ms : 1u) + 1ull) * 1000000ull;
+
     if (ms == 0) sched_yield();
     else {
         struct timespec req = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
@@ -228,27 +251,45 @@ static void h_Sleep(void)
     ret_stdcall(1, 0);
 }
 
-/* ---- the guest clock ----
+/* ---- the guest clock, and it is the FRAME COUNTER ----
  *
- * Real time plus an offset that only ever grows, and only where the port fast-forwards
- * through a wait it decided not to take. That is the whole trick: a skipped Sleep is a
- * promise that the time passed, and the clock has to keep it. Without that, skipping the
- * sleep does not end the game's wait -- it just turns the wait into a spin, which is
- * exactly what the load was doing (142,721 skipped sleeps in 3.35 s, 453 per data file,
- * because the loop kept asking the real clock whether 33 ms had elapsed yet).
+ * Guest time is exactly `presented frames * 33.33 ms` and nothing else. It never reads the
+ * wall, so how much of the game's timeline has passed by frame N is a property of the game
+ * rather than of how fast or how busy the machine is. That is issue #18: every scripted
+ * route is a schedule of presented frames, and with a wall-derived clock the game's progress
+ * between two of them depended on load -- measured, a route that reaches a match every time
+ * on an idle box reported "screens reached -- NONE" under fourteen busy loops.
  *
- * The offset is monotonic and never rewinds, and it stops growing when the load does, so
- * the deltas the game computes during play are real time exactly.
+ * WHY THE FRAME COUNTER AND NOT A CREDIT PER SLEEP, which was the obvious first answer and
+ * is wrong. fn_0043cf40, the game's main loop, paces itself like this:
+ *
+ *     now = timeGetTime(); elapsed = now - last
+ *     if (elapsed <= 33)  { remaining = last + 33 - now; if (remaining > 0) Sleep(min(rem,5)); }
+ *     else                { if (elapsed > 100) last = now - 100;   // resync, still overdue
+ *                           run the frame; last += 33; ... }       // and round again
+ *
+ * When it is behind it does NOT sleep -- it runs frames back to back until it catches up. A
+ * clock that only sleeps advance therefore never lets it catch up, and it runs frames
+ * forever: measured at 111 s of user CPU against 20 s. LF2_CLOCK_SITES named the two reads
+ * (0x0043d162 and 0x0043d195, 218,937 reads each) and the frames they peak on -- 8 and 9,
+ * the data load, and 2141, the match starting. Every one of those iterations produces a
+ * frame, so a clock driven by the frame counter is exactly the one that lets the loop
+ * converge, and it converges by doing the work the loop exists to do.
+ *
+ * The other side of it: with a frame period at or above the game's own 33 ms threshold the
+ * loop is always "overdue", so it never sleeps and never waits -- which is why REAL-TIME
+ * PACING MOVES TO THE HOST, into the present (runtime/ddraw.c). The game runs its loop flat
+ * out and the host holds each frame until the wall catches up. That is the ordinary shape of
+ * an emulator: the guest counts, the host paces.
  *
  * Not to be confused with SCALING time, which was tried and measured and is worse: running
  * the clock 4x/16x/32x faster during the load gave 3.5 s / 4.7 s / 7.0 s against 3.6 s at
  * 1x. A jumping clock makes the game do more catch-up work, not less. */
+/* The tick is GUEST_FRAME_NS in hostwin.h, shared with the host pacer that honours it. */
+
 static uint64_t guest_ns(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec
-         + guest_clock_offset_ns;
+    return (uint64_t)hostwin_frames() * (uint64_t)GUEST_FRAME_NS + guest_clock_offset_ns;
 }
 
 static void h_GetTickCount(void)

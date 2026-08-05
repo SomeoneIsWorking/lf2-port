@@ -29,6 +29,8 @@ void music_start(void);
 void music_stop(void);
 void music_set_volume(int32_t centibels);
 long hostwin_frames(void);
+int  lf2_loading_now(void);              /* runtime/imports.c */
+enum { GUEST_FRAME_NS = 33333333 };      /* the guest clock's tick, shared with imports.c */
 /* The window changed size (or was just created): recompute the compose width from its
  * aspect and re-point everything that depends on it. In runtime/ddraw.c, because that is
  * where the surfaces and the presentation live. */

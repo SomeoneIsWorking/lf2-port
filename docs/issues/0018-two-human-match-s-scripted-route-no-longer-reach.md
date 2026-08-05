@@ -1,7 +1,7 @@
 ---
 id: 18
 title: two_human_match's scripted route no longer reaches the match on this machine -- the test fails at HEAD too
-status: open
+status: resolved
 symptom: ctest two_human_match fails both arms with 'no live fighter at object index 1'; coop_dropin and coop_select on the same build pass
 tags: test,flaky,timing,coop,two-player
 created: 2026-08-05
@@ -288,3 +288,48 @@ pacer would halve the speed.
 
 With that, the per-read credit can go entirely, and with it the distortion that is the
 likeliest cause of the smoke slowdown.
+
+### Resolution (2026-08-06)
+FIXED. The guest clock is now the FRAME COUNTER -- guest time is exactly
+presented_frames * 33.33 ms plus the sleeps the game took -- and real-time pacing moved to
+the host, into the present. The guest counts, the host paces.
+
+THE PROOF, which is the thing this entry existed for: the same route, same binary.
+
+  idle box:               charselect@906 overlay@1746 match@1968
+  under 14 busy loops:    charselect@906 overlay@1746 match@1968
+
+Identical. Before it, the loaded run reported 'screens reached -- NONE' -- character selection
+never appeared at all in 2800 frames. Full suite 15/15, smoke back to 82 s from the 150 s it
+took under the earlier attempt, 32 fps at 14% of a core.
+
+THREE THINGS THAT LOOK LIKE DETAILS AND ARE LOAD-BEARING, each measured rather than reasoned:
+
+1. A SLEEP MUST BE CREDITED AS A FLOOR, NOT AN EQUALITY -- credit ms + 1. Sleep(n) returns
+   after AT LEAST n; nanosleep never returns early. Credit exactly n and the game's pacer
+   lands on its own boundary and stops dead: it sleeps  when remaining <= 5, so it
+   arrives at elapsed == 33 exactly, where  sends it down the sleep path and
+    sends it straight past the Sleep. Neither working nor waiting. Measured:
+   59,331,701 clock reads at frame 0, no Sleep, no frame ever presented, 99% of a core. A
+   real clock crosses that boundary through overshoot; an exact one has to be told.
+
+2. SLEEPS MUST STILL BE CREDITED DURING PLAY, not only on the load's fast path. The startup
+   waits happen before the load is even flagged and produce no frames, so a clock that only
+   frames advance waits for a time that can never arrive -- measured, 1.8 s of CPU in 200 s
+   of wall and no screen reached. It costs nothing during play, and that is a property of the
+   game rather than luck: 33.33 ms is above the 33 ms threshold fn_0043cf40 compares against,
+   so once frames flow the loop always takes its overdue branch and never sleeps.
+
+3. THE HOST PACER MUST DROP ITS ANCHOR WHILE LOADING, not merely skip pacing. Frames keep
+   being counted through the load and the wall does not follow them, so an anchor taken
+   before it leaves every later frame due far in the future -- measured, the whole run slept
+   its way along at under 12 fps with 1.8 s of CPU.
+
+WHAT THIS REPLACES: the earlier attempt credited a microsecond per clock READ as a hang
+guard. That guarded the symptom, tied the guest's timeline to how often it happened to look
+at the clock, and is what made the smoke run -- the one with three debug variables on -- pay
+more virtual time per frame and slow to 150 s. It is gone. LF2_CLOCK_SITES (I005), the
+instrument that named the spin, stays.
+
+The routes being screen-keyed (commit d96993d) is still worth having and is unaffected: a
+press whose screen never appears still never fires and the run still says so.

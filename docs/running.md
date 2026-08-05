@@ -920,10 +920,36 @@ carries on silently.
 
 ## CPU use
 
-The port sits at roughly **13% of one core** during play. It was 96% until `Sleep` was
+The port sits at roughly **14% of one core** during play. It was 96% until `Sleep` was
 implemented: the import was mapped to a no-op that returned immediately, so the game's
-frame pacing — a `Sleep` in a loop — became a spin. Honouring it is also the faithful
-behaviour, since on Windows it blocks the thread and the game is written expecting that.
+frame pacing — a `Sleep` in a loop — became a spin.
+
+### The guest clock is the frame counter, and the host does the pacing
+
+Guest time is exactly `presented frames × 33.33 ms` plus the sleeps the game took. It never
+reads the wall, so how much of the game's timeline has passed by frame *N* is a property of
+the game rather than of how fast or how busy the machine is — which is what makes every
+frame-scheduled script mean the same thing everywhere (issue #18, claim C014). Real time then
+comes from the **present**: each frame is held until the wall reaches its due time, so the
+guest counts and the host paces.
+
+Three details are load-bearing, each found by its own failure:
+
+- **A `Sleep` is credited as a floor, `ms + 1`.** `Sleep(n)` returns after *at least* n, and
+  `nanosleep` never returns early. Credit exactly *n* and the game's pacer lands on its own
+  boundary and stops: it sleeps `remaining` when that is ≤ 5, arriving at `elapsed == 33`
+  exactly — where `elapsed <= 33` sends it down the sleep path and `remaining == 0` sends it
+  straight past the `Sleep`. Neither working nor waiting: 59 million clock reads at frame 0
+  with no frame ever presented.
+- **Sleeps are credited during play too**, not only on the load's fast path — the startup
+  waits happen before the load is flagged and produce no frames. It costs nothing once frames
+  flow, because 33.33 ms is above the 33 ms threshold the game compares against, so its loop
+  always takes the overdue branch and stops sleeping.
+- **The host pacer drops its anchor while loading.** Frames are counted through the load and
+  the wall does not follow them, so an anchor taken before it leaves every later frame due
+  far in the future.
+
+`LF2_CLOCK_SITES` is what found the loop this had to accommodate; see the debug switches.
 
 Frame rate is unchanged by the fix, measured rather than assumed: ~360 frames in 12 s
 before and after, across three runs each.
