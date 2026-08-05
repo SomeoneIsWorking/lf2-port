@@ -59,9 +59,15 @@ add_executable(lf2
     runtime/pause.c
     runtime/gamepad.c
     runtime/wsock.c
-    runtime/overrides.c
+    runtime/overrides/menu.c
+    runtime/overrides/screens.c
+    runtime/overrides/input.c
+    runtime/overrides/coop.c
+    runtime/overrides/coop_debug.c
+    runtime/overrides/text.c
+    runtime/overrides/assets.c
     runtime/main.c)
-target_include_directories(lf2 PRIVATE runtime)
+target_include_directories(lf2 PRIVATE runtime runtime/overrides)
 
 # Warnings on the hand-written runtime only. The recompiled output is machine-emitted and
 # would bury the signal, so it is compiled without them rather than the whole target being
@@ -69,7 +75,14 @@ target_include_directories(lf2 PRIVATE runtime)
 set_source_files_properties(
     runtime/guest.c runtime/flags.c runtime/strops.c runtime/rwatch.c runtime/imports.c
     runtime/com.c runtime/win32.c runtime/ddraw.c runtime/dsound.c runtime/dshow.c
-    runtime/gdi.c runtime/loadprof.c runtime/pause.c runtime/gamepad.c runtime/wsock.c runtime/overrides.c
+    runtime/gdi.c runtime/loadprof.c runtime/pause.c runtime/gamepad.c runtime/wsock.c
+    runtime/overrides/menu.c
+    runtime/overrides/screens.c
+    runtime/overrides/input.c
+    runtime/overrides/coop.c
+    runtime/overrides/coop_debug.c
+    runtime/overrides/text.c
+    runtime/overrides/assets.c
     runtime/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
@@ -211,6 +224,16 @@ add_test(NAME coop_dropin
          COMMAND sh ${CMAKE_SOURCE_DIR}/tools/coop_dropin_test.sh
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(coop_dropin PROPERTIES
+                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
+# A late joiner CHOOSES: the fighter flashes, left/right cycle the game's own roster and
+# attack locks in. Separate from coop_dropin because the two measure different halves --
+# coop_dropin that the pad drives the fighter it joined, this one that the player picked it.
+add_test(NAME coop_select
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/coop_select_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(coop_select PROPERTIES
                      LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
