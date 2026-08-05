@@ -476,6 +476,7 @@ All are environment variables read at run time, and all are off by default.
 | Variable | Effect |
 |---|---|
 | `LF2_COM_TRACE` | log every COM method call, in the form the trace harness compares |
+| `LF2_CLOCK_SITES` | every guest call site that reads the clock, with its total reads and its longest run of reads with **no Sleep between them** — the second is what separates a deadline loop from a spin |
 | `LF2_RSRC_DEBUG` | log bitmap loads, `StretchBlt` calls and resource lookups |
 | `LF2_STR_DEBUG` | log `sprintf`/`fscanf`/`fopen` with their formats and results |
 | `LF2_WATCH=<hex>` | report writes to a guest address; `LF2_WATCH_VAL` filters to one value |

@@ -316,6 +316,7 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
 void hostwin_shutdown(void)
 {
     virtual_pad_report();
+    clock_sites_report();
     window_resize_report();
     if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
     if (hw.texture)  { SDL_DestroyTexture(hw.texture);   hw.texture = NULL; }
