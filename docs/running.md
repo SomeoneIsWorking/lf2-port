@@ -557,6 +557,47 @@ walk mode select, player join and the computer-player count; the two ups move fr
 "Reset Random" to **Fight!** on the pre-fight overlay, and the last attack starts the
 match. Both scripts need their `_ONCE` flag: cycling walks straight back out again.
 
+## The object table, and adding a fighter to a running match
+
+The state a fighter lives in, all located rather than guessed (issues #15 and #16):
+
+| Address | What |
+|---|---|
+| `0x00458b00` | the game object, `this` for the input gather |
+| `this+4` = `0x00458b04` | **one byte per object index** — an object is in the world iff its byte is 1 |
+| `this+404` = `0x00458c94` | **400** object pointers, stride `0x420`; the player slots are the first eight |
+| `this+2004` | the object-data registry: an array of block pointers, count at `+0x4d82000` |
+| block `+1780` | the object's id from `data.txt` |
+| object `+872` (`+0x368`) | the object's data block |
+| `fn_004064d0` | walks the table and applies the gate |
+| `fn_004061d0` | `__thiscall` reset of one object record |
+
+Every entry of the table holds a live pointer to a pre-allocated record from the moment the
+data loads, so **being in the array is not being in the world** — the gate byte is. A
+filled-in record without it is inert: it survives untouched for hundreds of frames, neither
+updated nor reset.
+
+| Variable | Effect |
+|---|---|
+| `LF2_COOP_TABLE=<frame>` or `live[+<n>]` | dump the table with each entry's gate byte. `live` fires off the game's own state |
+| `LF2_COOP_REGISTRY=1` | with the above, dump the object-data registry and which block each live object uses |
+| `LF2_COOP_PAIR=<i>,<j>` or `auto` | the dwords where two table entries differ |
+| `LF2_COOP_SPAWN=<index>[,<id>]` | build object `<id>` (default 1, Bandit) at a free index and watch it afterwards |
+| `LF2_COOP_REFS=<frame>` | scan the image, heap and stack for pointers to the player records |
+| `LF2_COOP_DEBUG=1` | the player slot table, printed on change |
+
+**Prefer `live+<n>` to a frame number.** The data load does not take a fixed number of
+frames, so a probe aimed at frame 2400 can land on character selection instead — and a
+table dump taken there is 400 lines of untouched defaults, which reads exactly like a
+result. The dump now says `NOT A MATCH` outright in that case.
+
+```sh
+cd game && LF2_COOP_TABLE=live+60 LF2_COOP_SPAWN=13,1 ../scratch/build/lf2 lf2.exe
+```
+
+puts a Bandit into a running match: it animates, walks and collides. Spawning an id that is
+not in the registry is refused with the number of entries searched.
+
 ## The menu map, and how it was recovered
 
 `403,228` is **game start**. Clicking it loads the game data (`Now Loading… data\*.dat`,

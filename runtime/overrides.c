@@ -450,6 +450,12 @@ enum { JOINED_MASK = 0x00451288 };
  * be enough on its own. */
 enum { PLAYER_PTRS = 404, TABLE_N = 400, OBJ_STRIDE = 0x420 };
 enum { EXISTS = 0x00458b04 };          /* this+4: one byte per object index, 1 = exists */
+
+/* this+2004: a pointer to the object-data registry -- an array of pointers to per-object
+ * data blocks, with its entry count at a fixed (large) offset from the base. Field 1780 of
+ * a block is the object id from data.txt. Both offsets are the game's own, read off the
+ * spawn inlined in fn_0041bc90. */
+enum { REG_PTR = 2004, REG_COUNT_OFF = 81273728 };
 enum { BTN_CUR = 205 };                /* obj+205..211: this frame's seven buttons */
 enum { NET_OR_RECORD = 0x00450b80 };   /* non-zero: the packed masks are being consumed */
 enum { RECORDING = 0x0044f1af, MASK_MIRROR = 0x0044d040 };
@@ -673,17 +679,36 @@ static void coop_pair_diff(uint32_t self, int i, int j)
 
 /* ---- LF2_COOP_SPAWN=<dst>[,<src>] -- put a fighter in the world by imitating the game ----
  *
- * The earlier probe (LF2_COOP_TEST) cloned a playing record onto an idle PLAYER slot, set
- * the joined-mask bit, and produced no fighter. What the read profile adds is that idle
- * entries are not being ignored for lack of being visited: the update loop reads entries
- * 0..19 once every frame and never touches 20..49 or 53..399, so an idle fighter slot IS
- * visited each frame and skipped on something the clone did not reproduce.
+ * It builds the fighter the way the GAME does, not by copying a neighbour. A clone was the
+ * right probe for "is the gate the gate" -- it answered that -- but it can only ever
+ * duplicate a fighter already on the stage, because it copies the source's character, HP
+ * and everything else. The real sequence is inlined in fn_0041bc90 around 0x004211db:
  *
- * The one registration the game itself performed in a running match is the computer
- * opponent at entry 11, and the field that most looks like the difference is +0x354: the
- * idle default is 99, the player at entry 0 holds 0, and entry 11 holds 11 -- its own index.
- * So this clone also sets +0x354 to the destination index, which the previous probe could
- * not have done, since it copied the source's value.
+ *     reg   = LD32(this + 2004)                   // the object-data registry
+ *     count = LD32(reg + 81273728)
+ *     find i with LD32(LD32(reg + 4i) + 1780) == <the object id wanted>
+ *     obj = LD32(this + 404 + 4k)
+ *     ECX = obj; fn_004061d0()                    // __thiscall reset of the record
+ *     obj->872 = LD32(reg + 4i)                   // the object-data pointer
+ *     obj->796 = data->144
+ *     this[4 + k] = 1                             // the gate
+ *     obj->16 / +20 / +24 and the doubles at +88 / +96 / +104 <- position
+ *
+ * Field 1780 of a data block IS the object id from data.txt, and that is checked rather
+ * than assumed: all 65 registry entries carry an id that appears in the game's own
+ * data.txt, with no exceptions, and the only two data.txt ids NOT in the registry are 3 and
+ * 12, which are backgrounds rather than objects. It also settles fn_004064d0's comparison
+ * of the same field against 7 and 8 -- those are Firen and Freeze, not a type code.
+ *
+ * Position is copied from a live fighter and offset. That is not a leftover of the clone:
+ * it is what the game's own spawn site does, copying +16/+20/+24 and the doubles from
+ * another object.
+ *
+ * NOT ESTABLISHED, and written here rather than hidden: what +0x354 means. fn_004061d0
+ * resets it to 99, another spawn site copies it from the spawning object, and the computer
+ * opponent the game itself put at entry 11 holds 11 -- its own index. Setting it to the
+ * destination index is an imitation of the one in-match registration that can be observed,
+ * not a rule derived from the code, and it is what gives the new fighter its HUD bar.
  *
  * It then WATCHES the record for the following frames rather than declaring victory on the
  * write. The interesting failure is not "nothing appeared on screen" -- it is the record
@@ -693,36 +718,77 @@ static uint32_t spawn_dst_obj;
 static int spawn_dst_idx = -1;
 static long spawn_frame;
 
-static void coop_spawn(uint32_t self, int dst, int src)
+void fn_004061d0(void);                  /* __thiscall: reset the object record in ECX */
+
+/* The registry entry whose data block carries object id `id`, or 0. Refuses out loud
+ * rather than returning 0 for two different reasons. */
+static uint32_t coop_data_for_id(uint32_t self, int id)
 {
-    const uint32_t s = LD32(self + PLAYER_PTRS + 4u * (uint32_t)src);
+    const uint32_t reg = LD32(self + REG_PTR);
+    if (!reg || reg < GUEST_HEAP_BASE || reg >= GUEST_HEAP_END) {
+        fprintf(stderr, "coop spawn: REFUSED -- this+%d = %08x is not a heap pointer, so the "
+                        "registry was never read\n", REG_PTR, reg);
+        return 0;
+    }
+    const int32_t count = (int32_t)LD32(reg + (uint32_t)REG_COUNT_OFF);
+    if (count <= 0 || count > 512) {
+        fprintf(stderr, "coop spawn: REFUSED -- registry count reads %d, which is not "
+                        "plausible; nothing was searched\n", count);
+        return 0;
+    }
+    for (int i = 0; i < count; i++) {
+        const uint32_t d = LD32(reg + 4u * (uint32_t)i);
+        if (d >= GUEST_HEAP_BASE && d < GUEST_HEAP_END && (int32_t)LD32(d + 1780) == id)
+            return d;
+    }
+    fprintf(stderr, "coop spawn: REFUSED -- no data block with object id %d among the %d "
+                    "registry entries (they were ALL examined)\n", id, count);
+    return 0;
+}
+
+static void coop_spawn(uint32_t self, int dst, int id, int posref)
+{
     const uint32_t d = LD32(self + PLAYER_PTRS + 4u * (uint32_t)dst);
-    if (!s || !d) {
-        fprintf(stderr, "coop spawn: REFUSED -- entry %d=%08x or %d=%08x is null, "
-                        "nothing was written\n", src, s, dst, d);
+    const uint32_t ref = posref >= 0 ? LD32(self + PLAYER_PTRS + 4u * (uint32_t)posref) : 0;
+    if (!d) {
+        fprintf(stderr, "coop spawn: REFUSED -- table entry %d is null, nothing written\n", dst);
         return;
     }
-    if (!coop_entry_live(s)) {
-        fprintf(stderr, "coop spawn: REFUSED -- source entry %d is an untouched default, so "
-                        "cloning it would spawn nothing. This is not a failed spawn; the "
-                        "frame is not a match.\n", src);
-        return;
-    }
-    if (coop_entry_live(d)) {
-        fprintf(stderr, "coop spawn: REFUSED -- destination entry %d is ALREADY live, so a "
+    if (LD8(EXISTS + (uint32_t)dst)) {
+        fprintf(stderr, "coop spawn: REFUSED -- entry %d already has its gate byte set, so a "
                         "fighter appearing there would prove nothing\n", dst);
         return;
     }
+    if (!ref) {
+        fprintf(stderr, "coop spawn: REFUSED -- no live fighter to take a spawn position "
+                        "from, so this frame is not a match\n");
+        return;
+    }
+    const uint32_t data = coop_data_for_id(self, id);
+    if (!data) return;                    /* coop_data_for_id has already said why */
 
-    for (uint32_t o = 0; o < 0x420u; o += 4) ST32(d + o, LD32(s + o));
-    ST32(d + 0x354, (uint32_t)dst);                      /* its own index, as entry 11 holds */
-    ST32(d + 0x10, LD32(s + 0x10) + 120u);               /* x, as ints */
-    ST32(d + 0x5c, LD32(s + 0x5c) + 0x400u);             /* x, as a float */
-    ST8(EXISTS + (uint32_t)dst, 1);                      /* the gate fn_004064d0 tests */
+    /* The game's own reset, called in its own ABI: the lifted body pops the return address
+     * itself, so the caller pushes one. It preserves EBX/ESI/EBP, which is what the
+     * recompiled caller of this gather expects. */
+    PUSH32(0x00421243u);
+    R(ECX) = d;
+    fn_004061d0();
+
+    ST32(d + 872, data);                              /* the object-data pointer */
+    ST32(d + 796, LD32(data + 144));
+    ST32(d + 16, LD32(ref + 16) + 120u);              /* position, from a live fighter */
+    ST32(d + 20, LD32(ref + 20));
+    ST32(d + 24, LD32(ref + 24));
+    STF64(d + 88,  LDF64(ref + 88) + 120.0);
+    STF64(d + 96,  LDF64(ref + 96));
+    STF64(d + 104, LDF64(ref + 104));
+    ST32(d + 852, (uint32_t)dst);                     /* see the note above: imitation */
+    ST8(EXISTS + (uint32_t)dst, 1);                   /* the gate fn_004064d0 tests */
+
     spawn_dst_obj = d; spawn_dst_idx = dst; spawn_frame = hostwin_frames();
-    fprintf(stderr, "coop spawn: cloned entry %d (%08x) onto entry %d (%08x) at frame %ld, "
-                    "+354 set to %d, exists byte at %08x set to 1\n",
-            src, s, dst, d, spawn_frame, dst, EXISTS + (uint32_t)dst);
+    fprintf(stderr, "coop spawn: built object id %d at table entry %d (%08x) from registry "
+                    "data %08x at frame %ld; position from entry %d; gate byte %08x set\n",
+            id, dst, d, data, spawn_frame, posref, EXISTS + (uint32_t)dst);
 }
 
 /* Called every gather once a spawn has been attempted. Reports on a schedule AND on any
@@ -748,6 +814,82 @@ static void coop_spawn_watch(void)
                 (int32_t)LD32(spawn_dst_obj + 0x2fc), (int32_t)LD32(spawn_dst_obj + 0x10),
                 (int32_t)LD32(spawn_dst_obj + 0x18),  (int32_t)LD32(spawn_dst_obj + 0x354),
                 (int32_t)LD32(spawn_dst_obj + 0x418));
+}
+
+/* ---- LF2_COOP_REGISTRY: the object-data registry the game spawns from ----
+ *
+ * The spawn inlined in fn_0041bc90 reads
+ *
+ *     reg   = LD32(this + 2004)
+ *     count = LD32(reg + 81273728)
+ *     for (i = 0; i < count; i++)
+ *         if (LD32(LD32(reg + 4i) + 1780) == <wanted>) break;
+ *     obj->872 = LD32(reg + 4i);   obj->796 = data->144
+ *
+ * so the registry is an array of pointers to per-object data blocks, and every field named
+ * here is one the game itself indexes by. It is dumped raw because the one thing that must
+ * NOT happen is field 1780 being written down as "the character id" on the strength of one
+ * comparison: fn_0041bc90 compares it against 999 and fn_004064d0 compares it against 7 and
+ * 8, which are not the same kind of value. Printing the blocks side by side against entries
+ * whose character is already known from the table is what settles it.
+ *
+ * The count's offset from the registry base is enormous (81273728 = 0x4d82000), which is a
+ * real possibility for a struct this game's size but also exactly what a misread would look
+ * like. So the count is sanity-checked and the dump REFUSES rather than walking an array of
+ * whatever length a bad read produced. */
+static void coop_registry_dump(uint32_t self)
+{
+    const uint32_t reg = LD32(self + REG_PTR);
+    fprintf(stderr, "coop registry: frame %ld, this+%d = %08x\n",
+            hostwin_frames(), REG_PTR, reg);
+    if (!reg || reg < GUEST_HEAP_BASE || reg >= GUEST_HEAP_END) {
+        fprintf(stderr, "coop registry: REFUSED -- %08x is not a heap pointer, so this is "
+                        "not the registry and nothing was read\n", reg);
+        return;
+    }
+    const uint32_t count_at = reg + (uint32_t)REG_COUNT_OFF;
+    const int32_t count = (int32_t)LD32(count_at);
+    fprintf(stderr, "coop registry: count at %08x (reg + 0x%x) reads %d\n",
+            count_at, REG_COUNT_OFF, count);
+    if (count <= 0 || count > 512) {
+        fprintf(stderr, "coop registry: REFUSED -- a count of %d is not plausible for an "
+                        "object table, so the 0x%x offset is being read wrong. Nothing was "
+                        "walked; this is not an empty registry.\n", count, REG_COUNT_OFF);
+        return;
+    }
+
+    /* Which registry entry each LIVE object is using, so the dump can be read against
+     * characters whose identity is already known from the table. */
+    fprintf(stderr, "coop registry: live objects and the data block each points at:\n");
+    for (int k = 0; k < TABLE_N; k++) {
+        if (!LD8(EXISTS + (uint32_t)k)) continue;
+        const uint32_t o = LD32(self + PLAYER_PTRS + 4u * (uint32_t)k);
+        if (!o) continue;
+        const uint32_t data = LD32(o + 872);
+        int which = -1;
+        for (int i = 0; i < count; i++)
+            if (LD32(reg + 4u * (uint32_t)i) == data) { which = i; break; }
+        fprintf(stderr, "  object [%3d] char(+0x364)=%-4d data(+872)=%08x = registry[%d]\n",
+                k, (int32_t)LD32(o + 0x364), data, which);
+    }
+
+    fprintf(stderr, "coop registry: %d entries -- ptr, +1780, +144, and the first printable "
+                    "run in the block:\n", count);
+    for (int i = 0; i < count; i++) {
+        const uint32_t d = LD32(reg + 4u * (uint32_t)i);
+        fprintf(stderr, "  [%3d] %08x", i, d);
+        if (d < GUEST_HEAP_BASE || d >= GUEST_HEAP_END) {
+            fprintf(stderr, "  NOT A HEAP POINTER -- not read\n");
+            continue;
+        }
+        fprintf(stderr, "  +1780=%-6d +144=%-6d  \"", (int32_t)LD32(d + 1780),
+                (int32_t)LD32(d + 144));
+        for (uint32_t o = 0; o < 64; o++) {
+            const uint8_t c = LD8(d + o);
+            fputc(c >= 32 && c < 127 ? c : '.', stderr);
+        }
+        fprintf(stderr, "\"\n");
+    }
 }
 
 static void coop_table_dump(uint32_t self)
@@ -949,6 +1091,7 @@ void fn_00419a60(void)
                         fprintf(stderr, "coop table: slot 0 first became live at frame %ld\n",
                                 live_at);
                         coop_table_dump(self);
+                        if (getenv("LF2_COOP_REGISTRY")) coop_registry_dump(self);
                         /* `auto` picks the first LIVE entry past the eight player slots --
                          * the fighter the game put in the table itself -- against its next
                          * neighbour. Which index that is varies between runs, so naming it
@@ -969,26 +1112,21 @@ void fn_00419a60(void)
                         }
                         if (pi >= 0) coop_pair_diff(self, pi, pj);
 
-                        /* LF2_COOP_SPAWN=<dst>[,<src>] -- src defaults to the first live
-                         * entry, so the probe clones whatever fighter the run actually has
-                         * rather than assuming slot 0 is one. */
+                        /* LF2_COOP_SPAWN=<dst>[,<object id>] -- the id defaults to 1
+                         * (Bandit), which is a character every copy of the game has. The
+                         * spawn position is taken from whichever entry is live, found here
+                         * rather than assumed to be slot 0. */
                         const char *sp = getenv("LF2_COOP_SPAWN");
                         if (sp) {
-                            int sd = -1, ss = -1;
-                            const int got = sscanf(sp, "%d,%d", &sd, &ss);
-                            if (got >= 1) {
-                                if (ss < 0)
-                                    for (int k = 0; k < 400; k++) {
-                                        const uint32_t p =
-                                            LD32(self + PLAYER_PTRS + 4u * (uint32_t)k);
-                                        if (p && coop_entry_live(p) &&
-                                            (int32_t)LD32(p + 0x364) != 0) { ss = k; break; }
-                                    }
-                                if (ss < 0)
-                                    fprintf(stderr, "coop spawn: REFUSED -- no live entry "
-                                                    "with a character to clone from\n");
-                                else
-                                    coop_spawn(self, sd, ss);
+                            int sd = -1, sid = 1;
+                            if (sscanf(sp, "%d,%d", &sd, &sid) >= 1 && sd >= 0) {
+                                int posref = -1;
+                                for (int k = 0; k < TABLE_N; k++)
+                                    if (LD8(EXISTS + (uint32_t)k)) { posref = k; break; }
+                                coop_spawn(self, sd, sid, posref);
+                            } else {
+                                fprintf(stderr, "coop spawn: REFUSED -- LF2_COOP_SPAWN must be "
+                                                "<index>[,<object id>], got \"%s\"\n", sp);
                             }
                         }
                     }

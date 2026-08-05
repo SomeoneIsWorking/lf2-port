@@ -160,11 +160,18 @@ endif()
 # End-to-end: drives the port to a running match and asserts the things that have actually
 # broken before. Slow (~75 s) and needs the extracted game tree, so it is labelled and can
 # be skipped with `ctest -LE slow`. It skips itself (exit 77) if the tree is absent.
+#
+# Every `slow` test is RUN_SERIAL. Each one launches a full game instance and wraps it in a
+# wall-clock `timeout`, and two instances on one machine take long enough to trip it -- so
+# `ctest -j2` produced FAILURES from tests that pass individually and pass serially. A
+# flaky gate is worse than a slow one: it teaches you to re-run until green, which is how a
+# real regression gets waved through. They are serialised rather than given longer
+# timeouts, because the timeout is what stops a hung run from wedging the suite.
 add_test(NAME smoke
          COMMAND sh ${CMAKE_SOURCE_DIR}/tools/smoke_test.sh
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(smoke PROPERTIES
-                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77
+                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
 # The controller path, which the mouse-driven smoke test cannot see at all. Kept separate
@@ -174,7 +181,7 @@ add_test(NAME controller
          COMMAND sh ${CMAKE_SOURCE_DIR}/tools/controller_test.sh
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(controller PROPERTIES
-                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77
+                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
 # The mouse path, for the same reason the controller has its own test: the smoke test
@@ -185,7 +192,7 @@ add_test(NAME mouse
          COMMAND sh ${CMAKE_SOURCE_DIR}/tools/mouse_test.sh
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(mouse PROPERTIES
-                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77
+                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
 # Two controllers, two players. Separate because it needs two runs -- one as a control --
@@ -194,5 +201,5 @@ add_test(NAME controller_2p
          COMMAND sh ${CMAKE_SOURCE_DIR}/tools/controller_2p_test.sh
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(controller_2p PROPERTIES
-                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77
+                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
