@@ -316,6 +316,7 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
  * that runs at exit cannot tell an orderly stop from a crash. */
 void hostwin_shutdown(void)
 {
+    virtual_pad_report();
     if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
     if (hw.texture)  { SDL_DestroyTexture(hw.texture);   hw.texture = NULL; }
     if (hw.renderer) { SDL_DestroyRenderer(hw.renderer); hw.renderer = NULL; }
