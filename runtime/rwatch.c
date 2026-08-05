@@ -33,13 +33,63 @@ static uint8_t  rw_prev[RW_SPAN], rw_seen[RW_SPAN];
 static uint16_t rw_seq[RW_SEQ];
 static int rw_seqn, rw_have_prev, rw_sweeps;
 
+/* ---- raw mode ----
+ * The run-filter above exists for one question (which key does this screen check) and is
+ * wrong for another: when the span is an ARRAY the game sweeps, the sweep IS the finding.
+ * Raw mode counts every read per byte and reports the profile, so "does the update loop
+ * touch entry 12 at all" is answerable -- a bounded loop over a count leaves the tail of
+ * the array at zero, and a full sweep with a per-entry test does not. Those are different
+ * mechanisms and the filtered view cannot tell them apart. */
+static long rw_count[RW_SPAN];
+static int rw_raw = -1;
+
 void rwatch_hit(uint32_t a)
 {
     const uint32_t off = a - g_rwatch_lo;
-    if (off >= RW_SPAN || rw_seqn == RW_SEQ) return;
+    if (off >= RW_SPAN) return;
     rwatch_hits++;
+    if (rw_raw > 0) { rw_count[off]++; return; }
+    if (rw_seqn == RW_SEQ) return;
     rw_seen[off] = 1;
     rw_seq[rw_seqn++] = (uint16_t)off;
+}
+
+/* Prints the per-BYTE read profile, collapsing equal-count neighbours into a range so a
+ * 400-entry sweep is one line rather than 400. Zero counts are named explicitly rather
+ * than omitted: "entries 12..399 were read 0 times" is the result, and a report that only
+ * listed what WAS read would leave the reader to notice an absence. */
+static void rwatch_raw_report(const char *when)
+{
+    const int n = RW_SPAN;
+    long total = 0;
+    for (int i = 0; i < n; i++) total += rw_count[i];
+    fprintf(stderr, "read profile (%s) [%08x,%08x), %ld reads over %u bytes:\n",
+            when, g_rwatch_lo, g_rwatch_hi, total, g_rwatch_hi - g_rwatch_lo);
+    if (total == 0) {
+        fprintf(stderr, "  NOTHING in the span was read. The watch saw zero loads, which is\n"
+                        "  a statement about the watch as much as about the game -- check\n"
+                        "  the span is the one you meant before reading anything into it.\n");
+        return;
+    }
+    const int last = (int)(g_rwatch_hi - g_rwatch_lo);
+    for (int i = 0; i < last && i < n; ) {
+        int j = i + 1;
+        while (j < last && j < n && rw_count[j] == rw_count[i]) j++;
+        if (rw_count[i] == 0 && j - i > 1)
+            fprintf(stderr, "  +%03x..+%03x  0\n", i, j - 1);
+        else if (j - i == 1)
+            fprintf(stderr, "  +%03x         %ld\n", i, rw_count[i]);
+        else
+            fprintf(stderr, "  +%03x..+%03x  %ld each\n", i, j - 1, rw_count[i]);
+        i = j;
+    }
+}
+
+void rwatch_raw_flush(const char *when)
+{
+    if (rw_raw <= 0) return;
+    rwatch_raw_report(when);
+    memset(rw_count, 0, sizeof rw_count);
 }
 
 /* Called once per presented frame. */
@@ -53,6 +103,7 @@ int rwatch_triggered(void) { return trigger_seen; }
 
 void rwatch_frame(void)
 {
+    if (rw_raw > 0) return;              /* raw mode reports on demand, not per frame */
     if (!g_rwatch_hi || rw_seqn == 0) return;
     rw_sweeps++;
 
@@ -96,15 +147,29 @@ void rwatch_frame(void)
  * that discards everything. */
 void rwatch_selftest(void)
 {
-    fprintf(stderr, "LF2_READ_WATCH selftest: expect exactly '68 57 49 26' below\n");
     const uint32_t save_hi = g_rwatch_hi;
     g_rwatch_hi = g_rwatch_lo + RW_SPAN;
-    for (unsigned i = 0; i < 250; i++) rwatch_hit(g_rwatch_lo + i);
-    const unsigned keys[] = { 0x68, 0x57, 0x49, 0x26 };
-    for (unsigned i = 0; i < 4; i++) rwatch_hit(g_rwatch_lo + keys[i]);
-    rwatch_frame();
+    if (rw_raw > 0) {
+        /* Raw mode has its own failure to rule out: a counter that never increments, and a
+         * range collapse that hides the one entry that differs. Reading dword 3 four times
+         * and nothing else must come back as exactly that, with the rest at zero. */
+        fprintf(stderr, "LF2_READ_WATCH selftest (raw): expect +00c read 4 times, "
+                        "everything else 0\n");
+        for (unsigned i = 0; i < 4; i++) rwatch_hit(g_rwatch_lo + 12);
+        const uint32_t save_lo_hi = g_rwatch_hi;
+        g_rwatch_hi = g_rwatch_lo + 32;             /* report only the first 32 bytes */
+        rwatch_raw_flush("selftest");
+        g_rwatch_hi = save_lo_hi;
+    } else {
+        fprintf(stderr, "LF2_READ_WATCH selftest: expect exactly '68 57 49 26' below\n");
+        for (unsigned i = 0; i < 250; i++) rwatch_hit(g_rwatch_lo + i);
+        const unsigned keys[] = { 0x68, 0x57, 0x49, 0x26 };
+        for (unsigned i = 0; i < 4; i++) rwatch_hit(g_rwatch_lo + keys[i]);
+        rwatch_frame();
+    }
     g_rwatch_hi = save_hi;
     rw_have_prev = 0;
+    rwatch_hits = 0;
     fprintf(stderr, "LF2_READ_WATCH selftest: done\n");
 }
 
@@ -136,8 +201,16 @@ void rwatch_init(void)
         fprintf(stderr, "LF2_READ_WATCH: empty span %08x:%08x\n", lo, hi);
         exit(2);
     }
+    if (hi - lo > RW_SPAN) {
+        fprintf(stderr, "LF2_READ_WATCH: span %08x:%08x is %u bytes, past the %d-byte "
+                        "window -- reads past it would be dropped silently\n",
+                lo, hi, hi - lo, RW_SPAN);
+        exit(2);
+    }
     g_rwatch_lo = lo; g_rwatch_hi = hi;
+    rw_raw = getenv("LF2_READ_WATCH_RAW") != NULL;
     if (getenv("LF2_READ_WATCH_SELFTEST")) rwatch_selftest();
-    fprintf(stderr, "LF2_READ_WATCH watching [%08x,%08x)\n", lo, hi);
+    fprintf(stderr, "LF2_READ_WATCH watching [%08x,%08x)%s\n", lo, hi,
+            rw_raw > 0 ? " in raw per-byte counting mode" : "");
 }
 

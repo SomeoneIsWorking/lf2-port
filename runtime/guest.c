@@ -18,6 +18,11 @@ static void bind_imports(uint8_t *file, uint32_t base, uint32_t pe);
 Cpu cpu;
 uint8_t *g_mem;
 
+/* The mapped extent of the loaded image. A memory scan that wants to say "I looked at all
+ * of .text/.rdata/.data" has to know where they end; guessing a round number would make
+ * every negative result carry an unstated blind spot. */
+uint32_t g_image_lo, g_image_hi;
+
 enum { GUEST_SPACE = 0x100000000ull };   /* full 32-bit space, lazily committed */
 enum { STACK_TOP = 0x00300000, STACK_SIZE = 0x00100000 };
 
@@ -70,6 +75,9 @@ void guest_load_image(const char *exe_path)
     const uint32_t hdr_size = *(uint32_t *)(file + pe + 24 + 60);
     memcpy(g_mem + base, file, hdr_size ? hdr_size : 0x400);
 
+    g_image_lo = base;
+    g_image_hi = base + (hdr_size ? hdr_size : 0x400);
+
     for (int i = 0; i < nsec; i++) {
         const uint8_t *s = sec + i * 40;
         const uint32_t vsize = *(uint32_t *)(s + 8);
@@ -78,6 +86,7 @@ void guest_load_image(const char *exe_path)
         const uint32_t roff  = *(uint32_t *)(s + 20);
         memset(g_mem + base + rva, 0, vsize);
         memcpy(g_mem + base + rva, file + roff, rsize < vsize ? rsize : vsize);
+        if (base + rva + vsize > g_image_hi) g_image_hi = base + rva + vsize;
     }
     bind_imports(file, base, pe);
     free(file);
