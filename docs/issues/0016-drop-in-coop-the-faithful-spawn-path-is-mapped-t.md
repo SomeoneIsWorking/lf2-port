@@ -1,7 +1,7 @@
 ---
 id: 16
 title: Drop-in coop: the faithful spawn path is mapped; the clone probe must be replaced by it
-status: open
+status: resolved
 symptom: a device that is not assigned to a player still cannot join a stage that is already running
 tags: coop,drop-in,re,groundwork
 created: 2026-08-05
@@ -343,3 +343,42 @@ of the "no character, do not join" path used `break`. That sits inside the per-d
 so it would have skipped the remaining devices' button bookkeeping for the frame -- a
 keyboard going dead for a frame whenever a pad failed to join. Restructured so no control
 flow escapes the loop.
+
+### Resolution (2026-08-05)
+DONE. Drop-in coop works end to end and every piece of it is located rather than guessed.
+
+  the gate         a byte per object index at 0x00458b04; fn_004064d0 tests it
+  the table        this+404, 400 object pointers on a 0x420 stride, players at 0..7
+  the mapping      player slot i IS object index i -- the game's gather walks the
+                   device-selector table and the pointer table in lockstep over eight entries
+  the spawn        fn_004061d0 resets the record, +872 points at the data block
+  the registry     this+2004, data.txt's <object> list in file order
+  the block        id at +1780, type at +1784 (0 = character)
+  the roster       type-0 entries less the template at id 0 -- 23, which is LF2's own
+
+The feature: LF2_COOP=1 turns it on, LF2_COOP_CHAR pins a character or one is taken from the
+roster. A device pressing for the first time while a match is running claims a slot the
+game's roster considers empty, gets a fighter built there, and drives it.
+
+Two regression tests, split so each half is measured where its signal is clean:
+  coop_dropin       the pad's input reaches the joined fighter's record
+  two_human_match   input in a player record becomes movement (~1350 px against 0)
+
+Left deliberately as they are, both documented in the code:
+  - it stays OPT-IN, because a late joiner gets no character-select screen; the character is
+    chosen for them, and that is a product call rather than a missing mechanism.
+  - joining a computer's slot when no roster-free slot remains does not replace that
+    computer: its fighter is at its own high index and stays. The run says so.
+  - +0x354 is read as the object's own table index on four consistent observations
+    (0->0, 1->1, 11->11, non-fighter->99) rather than derived from code.
+
+WHAT THIS ISSUE COST, worth keeping for the next investigation of the same shape. Four
+things were believed and wrong, and each was caught by measurement rather than by review:
+  1. the mystery object was "off the 0x420 grid" -- arithmetic error, it was entry 11
+  2. +0x364 was "the chosen character" -- it is the character-select cursor
+  3. a spawned fighter's HUD portrait was "wrong" -- it was right; a screenshot was misread
+  4. player N's fighter was "not always index N" -- it is, for humans; computers are the
+     ones unbound by the gather
+Three more were instruments that would have lied: a table dump that read 400 untouched
+defaults as a result, an A/B across runs of a game that randomises, and a movement test on a
+fighter being knocked about.
