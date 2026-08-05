@@ -213,3 +213,13 @@ add_test(NAME coop_dropin
 set_tests_properties(coop_dropin PROPERTIES
                      LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
+# Two humans in a MATCH. controller_2p proves the second pad joins at character selection
+# and stops there; this one reaches the fight and asserts pad two actually drives its
+# fighter, two-sided.
+add_test(NAME two_human_match
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/two_human_match_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(two_human_match PROPERTIES
+                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
