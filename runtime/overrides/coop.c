@@ -568,6 +568,22 @@ void coop_select_tick(uint32_t self, int slot, const unsigned char btn[7],
                 LD8(EXISTS + (uint32_t)slot));
 }
 
+/* The deliberate half of what unplugging a pad does: a player asks to leave from the pause
+ * menu. coop_leave already refuses for a slot this port did not fill, which is what stops a
+ * fighter the game's own character selection put there from being deleted; this only adds
+ * the caller and the answer the menu needs. `self` is the object the slot indices belong to,
+ * and coop_leave does not read it. */
+int coop_drop_out(int slot)
+{
+    if (!coop_owns(slot)) {
+        fprintf(stderr, "coop leave: slot %d was not filled by this port, so there is "
+                        "nothing for the pause menu to drop out\n", slot);
+        return 0;
+    }
+    coop_leave(EXISTS - 4, slot, "the player chose to drop out from the pause menu");
+    return !LD8(EXISTS + (uint32_t)slot);
+}
+
 /* For hud.c: should this slot's panel be drawn this frame from a record that is not in the
  * world? True only while it is choosing and only in the lit half of the flash. */
 int coop_hud_preview(int slot)

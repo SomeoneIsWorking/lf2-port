@@ -58,6 +58,20 @@ void hostwin_request_quit(void);
 int  hostwin_width(void);
 int  hostwin_height(void);
 int  gamepad_start_held(void);
+int  gamepad_start_index(void);   /* which pad, or -1; drop-out is per player */
+
+/* The pause menu's reach into the game. `device_player` is the slot a device is driving,
+ * -1 if none; `input_synth_confirm` makes a device's attack read as pressed for a few
+ * gathers, so the GAME dispatches a menu item rather than the port simulating what it
+ * would have done. `coop_drop_out` is the deliberate half of what unplugging a pad does.
+ * `exit_to_menu_begin` drives the game's own way out of a match. */
+int  device_player(int dev);
+int  any_playing_device(void);    /* a device whose buttons actually reach the game */
+void input_synth_confirm(int dev, int frames);
+int  coop_owns(int slot);         /* is this slot the port's to release? */
+int  coop_drop_out(int slot);
+void exit_to_menu_begin(int dev);
+void exit_to_menu_tick(void);
 
 /* Ask for the NEXT presented frame to be written out, for a probe whose moment is decided
  * by game state rather than by a frame number. */

@@ -61,6 +61,37 @@ static unsigned char dev_prev[MAX_DEV][7];
  * never disagree about who they are. */
 int keyboard_player(void) { return dev_player[0]; }
 
+/* Which player a device is driving, for the pause menu: drop-out is per player, and the
+ * player it drops out is the one belonging to whoever opened the menu. */
+int device_player(int dev)
+{
+    return dev >= 0 && dev < MAX_DEV ? dev_player[dev] : -1;
+}
+
+/* A device that is actually driving a player, for a synthetic press that has to LAND. A
+ * device with no slot has nowhere for its buttons to go inside the game proper, so a confirm
+ * issued through one is silently thrown away -- which is exactly how a menu item can look
+ * driven and do nothing. */
+int any_playing_device(void)
+{
+    for (int d = 0; d < MAX_DEV; d++) if (dev_player[d] >= 0) return d;
+    return -1;
+}
+
+/* Make a device's attack read as pressed for the next few gathers. The point is the same as
+ * mouse_confirm_frames above, generalised past device 0: the port places a menu selection
+ * and then lets the GAME's own button dispatch it, so the sound, the state change and the
+ * screen it goes to are all the game's rather than a reconstruction. */
+static int synth_dev = -1, synth_frames;
+
+void input_synth_confirm(int dev, int frames)
+{
+    synth_dev = dev;
+    synth_frames = frames;
+    fprintf(stderr, "input: device %d's attack will read as pressed for %d gather(s), so "
+                    "the game dispatches the menu item itself\n", dev, frames);
+}
+
 static int device_buttons(int dev, unsigned char out[7])
 {
     if (dev == 0) {
@@ -105,6 +136,7 @@ void fn_00419a60(void)
     int present[MAX_DEV];
     for (int d = 0; d < MAX_DEV; d++) {
         present[d] = device_buttons(d, btn[d]);
+        if (d == synth_dev && synth_frames > 0) { synth_frames--; btn[d][4] = 1; }
         if (!present[d]) {
             memset(dev_prev[d], 0, 7);
             /* DROP-OUT: the device is gone -- unplugged mid-match. Its fighter goes with

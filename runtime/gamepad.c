@@ -170,10 +170,18 @@ int gamepad_player_buttons(int index, unsigned char out[7])
  * buttons, which do not include Start. */
 int gamepad_start_held(void)
 {
+    return gamepad_start_index() >= 0;
+}
+
+/* WHICH pad is holding Start, not merely whether one is. The pause menu needs it because
+ * drop-out is per player: the menu is one screen, but the player it drops out is whoever
+ * opened it, and a menu that guessed would drop the wrong fighter out of the match. */
+int gamepad_start_index(void)
+{
     ensure_init();
     for (int i = 0; i < JOY_SLOTS; i++)
-        if (slot[i] && SDL_GetGamepadButton(slot[i], SDL_GAMEPAD_BUTTON_START)) return 1;
-    return 0;
+        if (slot[i] && SDL_GetGamepadButton(slot[i], SDL_GAMEPAD_BUTTON_START)) return i;
+    return -1;
 }
 
 /* ---- driving the front-end menu from a controller ----

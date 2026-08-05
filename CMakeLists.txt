@@ -239,6 +239,15 @@ set_tests_properties(coop_select PROPERTIES
                      LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
+# A joined player leaves a match deliberately, from the pause menu on its own pad. The
+# drop-out machinery was previously reached only by unplugging a pad, which no test can do.
+add_test(NAME pause_dropout
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/pause_dropout_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(pause_dropout PROPERTIES
+                     LABELS slow TIMEOUT 320 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
 # The composition's width follows the WINDOW's aspect, in both directions and with the
 # native and taller-than-native cases as the negatives (issue #20).
 add_test(NAME widescreen
