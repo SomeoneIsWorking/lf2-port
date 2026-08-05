@@ -110,8 +110,12 @@ void charselect_mouse(void)
     const uint32_t cur = LD32(objp + OBJ_SEL);
     if (cur >= CS_SLOTS) {
         /* No slot cursor yet: this player has not joined. A click inside a portrait is
-         * the attack that joins -- gated on the phase word so it cannot fire during a
-         * match, where the same rectangles are just part of the arena. */
+         * the attack that joins -- gated on the screen being DRAWN so it cannot fire
+         * during a match, where the same rectangles are just part of the arena.
+         *
+         * Not on a .data word, which is what this comment used to say: the candidate for
+         * one (0x0044d070) is the GAME MODE wearing a screen's disguise, and it reads the
+         * same in VS mode whether the overlay is up or not. See menu.c. */
         if (panel_charselect_up() && !panel_overlay_up() && hostwin_mouse_clicked())
             mouse_confirm_frames = 2;
         return;

@@ -145,3 +145,67 @@ character-select screen, Escape does nothing at the overlay) are consistent with
 without being the reason for it. Escape delivery is not the problem: win32.c maps it to VK
 0x1B and port_owns_key withholds it only while a match or the pause menu is up, so the game
 does receive it on those screens and does nothing with it.
+
+### Note (2026-08-06)
+RE, 2026-08-06 (second pass): the mode menu is a once-per-process screen too, so NO game-owned
+transition back to any menu exists. What is left is a design decision, not more RE.
+
+FINDING THE STATE. A controlled .data diff rather than a read of fn_0041bc90's 28 KB: three
+frames parked on the mode menu (LF2_VIRTUAL_PAD="south:900" and nothing after it, so the game
+sits there) as the noise control, against two character-select frames that agree with each
+other. 12745 dwords -> 12740 stable across the three -> 8 that differ from both
+character-select frames. Six of the eight are the stack canary (0x0044eea4/a8) and two copies
+of a time string; the two real ones are:
+
+  0x0044d070   -100 at the mode menu, 1 from character select onward
+  0x00451200      0 at the mode menu, 1 from character select onward
+
+0x0044d070 IS THE GAME MODE, and this project has been burned by it before -- runtime/ddraw.c
+(~line 703) records an earlier session taking it for a screen word because it separates the
+screens perfectly IN STAGE MODE (-100 / 0 / 1), which is where it was both derived and
+checked. It reads 1 in VS mode whether the overlay is up or not. So the right reading of the
+diff above is not "the screen word is 0x0044d070" but "the mode menu is the screen where no
+game mode has been chosen yet".
+
+MEASURED. LF2_WATCH=44d070 over the full route -- launcher, load, mode menu, character select,
+overlay, a running match, LEAVE MATCH (F4 at 2389, overlay Exit dispatched), and the frames
+after it on cleared character select:
+
+  WATCH 0044d070 changed ffffff9c -> 00000001 ... ret 0042b894
+  (nothing further, to the end of the run)
+
+One transition, at the moment VS mode is picked, inside fn_00429730. That transition is the
+positive control that the watch fires. Route report: 21 of 21 presses fired.
+
+Statically it agrees: 0x0044d070 is written in exactly three places, all in fn_00429730, all
+writing a computed register; the constant 0xffffff9c appears seven times in the whole lifted
+binary and only ONCE as a comparison (the test at guest 0x0042b446), never as an assignment.
+-100 is the image's initial value, not something the game restores.
+
+SO, TAKEN WITH THE FIRST PASS: the launcher is left once (mode word 0 -> 1 -> 2, never back)
+and the game mode is chosen once (-100 -> 1, never back). LF2 has no way back to either menu.
+The overlay's Exit walks match -> cleared character select and that is the whole of the way
+back that exists.
+
+THIS ENTRY'S ORIGINAL CONSTRAINT IS NOW UNSATISFIABLE AS WRITTEN. It says "the game has a path
+for finishing a match ... and that path is what should be driven". It does not. The remaining
+choice is a design one and belongs to the person who reported it:
+
+  (a) LEAVE MATCH is the truthful maximum. Close this half, keep the item named for what it
+      verifiably does, and the port never claims a screen transition the game does not own.
+
+  (b) The port drives the game back through its OWN ENTRY SEQUENCE rather than inventing a
+      transition: game mode <- -100, world mode <- 1, and let fn_004246b0's mode==1 branch do
+      what it does at startup (it loads, then sets mode 2, and the game arrives at the mode
+      menu). Note this is not the same as stamping a screen number -- every step is the
+      game's own -- and the world object even has its own reset to hand, fn_00419e40, which
+      is [this]=0 plus a memset of the 400 gate bytes and is what the static initialiser
+      calls. The risks are real and should not be waved through: the data load re-runs (1.2 s
+      today), and what else the game leaves wound from a finished match is NOT established --
+      music, the object registry beyond the gate bytes, and the character-select roster are
+      each unproven.
+
+RECOMMENDATION: (a) unless the reporter wants (b) enough to pay for establishing what a
+second load does to state that the first one set up. (b) is a day's work with a real chance
+of a half-wound second match, which is exactly the failure this entry warned about; it is not
+a thing to try casually and call done because the menu appeared.
