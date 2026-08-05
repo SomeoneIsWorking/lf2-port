@@ -201,7 +201,16 @@ static void menu_sync_from_pointer(const Item *items, int n)
         const int d = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
         if (d < best_d) { best_d = d; best = i; }
     }
-    if (best >= 0 && best_d <= 90) menu_index = best;
+    if (best >= 0 && best_d <= 90) { menu_index = best; return; }
+
+    /* The pointer is nowhere near the menu, so it is not what is driving it -- keep the
+     * port's own index and go on asserting it. Without this the front end drew NOTHING
+     * highlighted until a key was pressed: at boot the pointer sits at the origin, no item
+     * is within reach of it, and the port dropped its selection every frame rather than
+     * showing where the keyboard and the pad actually were. The first arrow press then
+     * moved from an invisible item 0 to item 1, which reads as the highlight starting on
+     * the wrong entry. */
+    menu_owns_pointer = 1;
 }
 
 /* The top-level mode, cached for the input gather's routing: everything before the game
