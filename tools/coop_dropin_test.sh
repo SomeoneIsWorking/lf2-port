@@ -66,7 +66,7 @@ PRESS="$JOIN,right:2380,right:2410,right:2440,right:2470,right:2500,right:2530"
 run() {   # run <logfile> <pad2 script>
     ( cd "$GAME" && \
       SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
-      LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$2" LF2_COOP=1 LF2_COOP_CHAR=52 \
+      LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$2" LF2_COOP_CHAR=52 \
       LF2_QUIT_AFTER=2800 timeout 220 "$BUILD/lf2" lf2.exe ) > "$1" 2>&1
 }
 

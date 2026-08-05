@@ -141,69 +141,64 @@ void fn_00419a60(void)
                  * (selector 0) is preferred, and taking a computer's is announced rather
                  * than done quietly.
                  *
-                 * Opt-in (LF2_COOP=1) because of one thing that is genuinely undecided: a
-                 * late joiner has no character-select screen, so the character comes from
-                 * LF2_COOP_CHAR and defaults to 1. Picking at random would need the game's
-                 * own roster of playable characters, which is NOT located -- the registry
-                 * holds every object, fighters and weapons and effects alike, and nothing
-                 * here separates them. Guessing an id range would be a magic constant. */
-                const char *dropin = getenv("LF2_COOP");
+                 * ON, with nothing to switch on. It was opt-in for as long as a late
+                 * joiner had no way to pick a character; now it opens a choice, which is
+                 * what the join always needed to be, and a feature nobody can find is not
+                 * a feature. The LF2_COOP_* variables that remain are the diagnostics over
+                 * it -- LF2_COOP_SPAWN, _JOIN, _TABLE and the rest -- not switches. */
                 int p = dev_player[d];
-                if (dropin && p >= 0 && !LD8(EXISTS + (uint32_t)p) && coop_match_running(self)) {
-                    if ((int32_t)LD32(DEVSEL + 4u * (uint32_t)p) != 0) {
-                        int free_slot = -1;
-                        for (int q = 0; q < PLAYER_SLOTS; q++) {
-                            if (LD8(EXISTS + (uint32_t)q)) continue;
-                            if ((int32_t)LD32(DEVSEL + 4u * (uint32_t)q) != 0) continue;
-                            int taken = 0;
-                            for (int e = 0; e < MAX_DEV; e++) if (dev_player[e] == q) taken = 1;
-                            if (!taken) { free_slot = q; break; }
-                        }
-                        if (free_slot >= 0) {
-                            fprintf(stderr, "coop: slot %d is on the game's roster already "
-                                            "(selector %d), taking empty slot %d instead\n",
-                                    p, (int32_t)LD32(DEVSEL + 4u * (uint32_t)p), free_slot);
-                            dev_player[d] = free_slot;
-                            p = free_slot;
-                        } else {
-                            fprintf(stderr, "coop: every slot is on the game's roster, so "
-                                            "device %d joins slot %d -- the computer whose "
-                                            "slot this is keeps its own fighter, and the "
-                                            "match gains one rather than swapping\n", d, p);
-                        }
-                    }
-                    /* The joiner CHOOSES: a fighter appears flashing and its device
-                     * cycles the roster with left/right and confirms with attack. See
-                     * coop_select_begin. LF2_COOP_SELECT=0 keeps the older behaviour --
-                     * straight into the match on one character -- which is what a test
-                     * that is measuring something else wants to depend on.
+                if (p >= 0 && !LD8(EXISTS + (uint32_t)p) && coop_match_running(self)) {
+                    /* WHICH SLOT, and it is the lowest one free -- a second human is
+                     * Player 2, not Player 5.
                      *
-                     * LF2_COOP_CHAR pins a character; without it one is taken from the
-                     * game's own roster. That roster is the registry entries whose type
-                     * field says character -- a field located against data.txt rather than
-                     * an id range, so it holds for a mod that adds characters too. */
-                    const char *selv = getenv("LF2_COOP_SELECT");
-                    /* No early exit anywhere here: this sits inside the per-device loop,
-                     * and leaving it would skip the remaining devices' button bookkeeping
-                     * for the frame. */
-                    if (!(selv && atoi(selv) == 0)) {
-                        fprintf(stderr, "coop: device %d claimed player slot %d mid-match, "
-                                        "opening its character selection\n", d, p);
-                        coop_select_begin(self, p, d);
-                    } else {
-                        const char *ch = getenv("LF2_COOP_CHAR");
-                        int id = (ch && atoi(ch) > 0) ? atoi(ch) : 0;
-                        if (!id) id = coop_random_character(self, hostwin_frames() + d);
-                        if (id) {
-                            fprintf(stderr, "coop: device %d claimed player slot %d "
-                                            "mid-match, building it a fighter (object id "
-                                            "%d)\n", d, p, id);
-                            coop_join(self, p, id, NULL, 1);
-                        } else {
-                            fprintf(stderr, "coop: no character to build, so device %d joins "
-                                            "nothing this time\n", d);
-                        }
+                     * This used to prefer a slot whose device SELECTOR was zero, on the
+                     * reasoning that a non-zero selector means character selection put a
+                     * computer there. The reasoning is right and the conclusion was wrong:
+                     * that computer's fighter is at its own high table index, unbound by
+                     * the gather, so the selector says nothing about whether slot 1 can
+                     * hold a human. What it produced was a joiner sitting in slot 4 with
+                     * Player 2's box empty beside it -- observed in play, and visible in
+                     * scratch/logs/select3.log as "slot 1 is on the game's roster already
+                     * (selector 2), taking empty slot 4 instead".
+                     *
+                     * What actually disqualifies a slot is a FIGHTER IN IT -- the gate byte
+                     * -- or another device already holding it. Joining a slot the roster
+                     * listed as a computer does not replace that computer; the match gains
+                     * a fighter, which is what a drop-in is. */
+                    int low = -1;
+                    for (int q = 0; q < PLAYER_SLOTS; q++) {
+                        if (LD8(EXISTS + (uint32_t)q)) continue;
+                        int taken = 0;
+                        for (int e = 0; e < MAX_DEV; e++) if (dev_player[e] == q) taken = 1;
+                        if (!taken) { low = q; break; }
                     }
+                    if (low >= 0 && low != p) {
+                        /* Not necessarily LOWER than the claim loop's pick: that loop only
+                         * skips slots another device holds, so it can land on one that has
+                         * a fighter standing in it. This is the lowest slot that is
+                         * genuinely empty, which is above it in exactly that case. */
+                        fprintf(stderr, "coop: slot %d is the lowest with no fighter in it, "
+                                        "so device %d takes it instead of slot %d\n",
+                                low, d, p);
+                        dev_player[d] = low;
+                        p = low;
+                    }
+                    if ((int32_t)LD32(DEVSEL + 4u * (uint32_t)p) != 0)
+                        fprintf(stderr, "coop: slot %d carries selector %d, so character "
+                                        "selection listed a computer there -- its fighter "
+                                        "is at its own index and stays; the match gains a "
+                                        "fighter rather than swapping one\n",
+                                p, (int32_t)LD32(DEVSEL + 4u * (uint32_t)p));
+                    /* The joiner CHOOSES: a fighter appears flashing and its device
+                     * cycles the game's roster with left/right and confirms with attack.
+                     * See coop_select_begin.
+                     *
+                     * No early exit here: this sits inside the per-device loop, and leaving
+                     * it would skip the remaining devices' button bookkeeping for the
+                     * frame. */
+                    fprintf(stderr, "coop: device %d claimed player slot %d mid-match, "
+                                    "opening its character selection\n", d, p);
+                    coop_select_begin(self, p, d);
                 }
             }
         }

@@ -23,6 +23,10 @@ enum { AXIS_MIN = 0, AXIS_MAX = 65535, AXIS_CENTRE = 32768 };
 
 static SDL_Gamepad *slot[JOY_SLOTS];
 static SDL_JoystickID slot_id[JOY_SLOTS];
+
+/* The scripted pads, declared here because bind_available has to tell them from the
+ * tester's own hardware. Attached in virtual_pad_tick, far below. */
+static SDL_JoystickID virtual_id[JOY_SLOTS];
 static int initialised;
 
 static void ret_stdcall(int nargs, uint32_t value)
@@ -33,6 +37,28 @@ static void ret_stdcall(int nargs, uint32_t value)
 
 /* Fill any free slot from the currently attached devices. Called at startup and again on
  * every add event, so a controller plugged in mid-game lands in the first free slot. */
+/* A scripted run is a TEST, and a test must not share the machine with the tester's own
+ * hardware. A physical pad plugged into this box claims slot 0, and the front-end menu is
+ * driven from slot 0 only -- so a scripted route pressed into slot 1 while the menu waited
+ * on an idle controller nobody was touching, and the run reached no screen at all.
+ *
+ * That is not hypothetical: it is what "controller 0 connected: Xbox One S Controller"
+ * ahead of "virtual pad 0: attached as joystick 4" did to every route test on this machine
+ * (issue #18), and it was very nearly written down as CPU contention instead.
+ *
+ * So when a script is configured, ONLY virtual pads bind. Announced, because a run that
+ * silently ignored the hardware would be its own confusion later. */
+static int scripted_run(void)
+{
+    return getenv("LF2_VIRTUAL_PAD") != NULL || getenv("LF2_VIRTUAL_PAD2") != NULL;
+}
+
+static int is_virtual(SDL_JoystickID id)
+{
+    for (int i = 0; i < JOY_SLOTS; i++) if (virtual_id[i] == id) return 1;
+    return 0;
+}
+
 static void bind_available(void)
 {
     int count = 0;
@@ -40,6 +66,22 @@ static void bind_available(void)
     if (!ids) return;
 
     for (int i = 0; i < count; i++) {
+        if (scripted_run() && !is_virtual(ids[i])) {
+            static SDL_JoystickID said[8];
+            static int nsaid;
+            int seen = 0;
+            for (int k = 0; k < nsaid; k++) if (said[k] == ids[i]) seen = 1;
+            if (!seen && nsaid < 8) {
+                said[nsaid++] = ids[i];
+                SDL_Gamepad *g = SDL_OpenGamepad(ids[i]);
+                fprintf(stderr, "gamepad: IGNORING physical controller \"%s\" -- this run is "
+                                "scripted (LF2_VIRTUAL_PAD), so only virtual pads bind and "
+                                "the script is not competing with hardware for slot 0\n",
+                        g && SDL_GetGamepadName(g) ? SDL_GetGamepadName(g) : "unnamed");
+                if (g) SDL_CloseGamepad(g);
+            }
+            continue;
+        }
         int already = 0;
         for (int sl = 0; sl < JOY_SLOTS; sl++)
             if (slot[sl] && slot_id[sl] == ids[i]) already = 1;
@@ -193,7 +235,6 @@ void gamepad_drive_ui(void)
  * but only one pad had ever been attached.
  */
 static SDL_Joystick *virtual_pad[JOY_SLOTS];
-static SDL_JoystickID virtual_id[JOY_SLOTS];
 
 static int button_by_name(const char *name, size_t n)
 {
@@ -209,24 +250,105 @@ static int button_by_name(const char *name, size_t n)
     return -1;
 }
 
+/* ---- when a scripted press happens ----
+ *
+ * `button:<frame>` is an absolute frame number, and it is NOT reproducible. Frames are
+ * presents, and the data load presents while it works, so a machine that is busy gets
+ * through fewer presents for the same loading and the load finishes EARLIER in frame terms.
+ * The whole route then shifts under a script that did not move. Measured, not theorised:
+ * the same commit passed tools/coop_select_test.sh at 21:07 and failed it at 21:15, the
+ * difference being five other ports building on the same box (issue #18).
+ *
+ * `button@<screen>[+<n>]` is the fix. It fires <n> frames after the named screen FIRST
+ * appears, off the game's own drawing -- the same signal panel_hud_up() gives the widescreen
+ * and drop-in code -- so a press aimed at the match lands in the match however long the load
+ * took. Screens: `charselect`, `overlay`, `match`.
+ *
+ * A press whose screen never appears NEVER FIRES, and virtual_pad_report() says so at exit
+ * with the screens that did appear. Silently not pressing is how a route that missed its
+ * screen reads as a feature that did not work. */
+static long screen_first[3] = { -1, -1, -1 };   /* charselect, overlay, match */
+static const char *const SCREEN_NAME[3] = { "charselect", "overlay", "match" };
+
+static void screens_observe(long frame)
+{
+    const int up[3] = { panel_charselect_up(), panel_overlay_up(), panel_hud_up() };
+    for (int i = 0; i < 3; i++)
+        if (up[i] && screen_first[i] < 0) {
+            screen_first[i] = frame;
+            fprintf(stderr, "virtual pad: screen %s first up at frame %ld\n",
+                    SCREEN_NAME[i], frame);
+        }
+}
+
+/* Resolve one item's trigger frame. Returns -1 when it cannot fire YET (its screen has not
+ * appeared), which is different from never. */
+static long item_frame(const char *spec, int *unresolved)
+{
+    if (*spec != '@') return strtol(spec, NULL, 10);
+    spec++;
+    for (int i = 0; i < 3; i++) {
+        const size_t n = strlen(SCREEN_NAME[i]);
+        if (strncmp(spec, SCREEN_NAME[i], n) != 0) continue;
+        const char *rest = spec + n;
+        const long off = (*rest == '+') ? strtol(rest + 1, NULL, 10) : 0;
+        if (screen_first[i] < 0) { *unresolved = 1; return -1; }
+        return screen_first[i] + off;
+    }
+    *unresolved = 1;
+    return -1;
+}
+
+static int script_unresolved;
+
 static void play_script(SDL_Joystick *pad, const char *script, long frame)
 {
     for (const char *c = script; *c; ) {
         const char *name = c;
-        while (*c && *c != ':') c++;
+        while (*c && *c != ':' && *c != '@') c++;
         const int btn = button_by_name(name, (size_t)(c - name));
-        if (*c == ':') c++;
-        const long at = strtol(c, (char **)&c, 10);
+        const char *spec = c;
+        if (*c == ':') { c++; spec = c; }
+        while (*c && *c != ',' && *c != ' ') c++;
+        char buf[64];
+        size_t n = (size_t)(c - spec);
+        if (n >= sizeof buf) n = sizeof buf - 1;
+        memcpy(buf, spec, n); buf[n] = 0;
         while (*c == ',' || *c == ' ') c++;
         if (btn < 0) continue;
+        int un = 0;
+        const long at = item_frame(buf, &un);
+        if (un) { script_unresolved = 1; continue; }
         if (frame == at)          SDL_SetJoystickVirtualButton(pad, btn, true);
         else if (frame == at + 8) SDL_SetJoystickVirtualButton(pad, btn, false);
     }
 }
 
+/* Called at exit. A route that never reached its screen is the failure most likely to be
+ * misread as "the feature did nothing", so it is reported rather than left to inference. */
+void virtual_pad_report(void)
+{
+    if (!getenv("LF2_VIRTUAL_PAD") && !getenv("LF2_VIRTUAL_PAD2")) return;
+    fprintf(stderr, "virtual pad: screens reached --");
+    int any = 0;
+    for (int i = 0; i < 3; i++) {
+        if (screen_first[i] < 0) continue;
+        fprintf(stderr, " %s@%ld", SCREEN_NAME[i], screen_first[i]);
+        any = 1;
+    }
+    if (!any) fprintf(stderr, " NONE");
+    fprintf(stderr, "\n");
+    if (script_unresolved)
+        fprintf(stderr, "virtual pad: at least one scripted press NEVER FIRED -- its screen "
+                        "never appeared, so any assertion about what it should have done is "
+                        "about a press that did not happen\n");
+}
+
 void virtual_pad_tick(long frame)
 {
     static const char *const VARS[JOY_SLOTS] = { "LF2_VIRTUAL_PAD", "LF2_VIRTUAL_PAD2" };
+
+    screens_observe(frame);
 
     for (int i = 0; i < JOY_SLOTS; i++) {
         const char *script = getenv(VARS[i]);

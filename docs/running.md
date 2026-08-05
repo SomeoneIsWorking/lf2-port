@@ -587,9 +587,7 @@ updated nor reset.
 | `LF2_COOP_SHOT=<n>` | capture the frame `<n>` frames after the spawn |
 | `LF2_COOP_REFS=<frame>` | scan the image, heap and stack for pointers to the player records |
 | `LF2_COOP_JOIN=<slot>[,<id>]` | spawn into player slot 0..7 and set its selector and mask bit |
-| `LF2_COOP=1` | **drop-in coop**: a device pressing mid-match joins as a player, choosing its character on the stage — the fighter flashes, left/right cycle the roster, attack locks in. Unplugging that device takes the fighter out again |
-| `LF2_COOP_CHAR=<object id>` | pin where a late joiner's character cycle STARTS; without it, it starts at a reproducible point on the game's roster |
-| `LF2_COOP_SELECT=0` | skip the choice: a late joiner drops straight into the match on one character, which is the pre-selection behaviour and what a test measuring something else wants |
+| `LF2_COOP_CHAR=<object id>` | pin where a late joiner's character cycle STARTS, so a test gets the same fighter every run. Not a switch — drop-in coop itself is always on |
 | `LF2_COOP_TRACK=<index>` | that entry's position every 30 frames, while a match is on screen |
 | `LF2_COOP_DEBUG=1` | the player slot table, printed on change |
 
@@ -623,13 +621,20 @@ block at `+872`.
 
 ### Drop-in coop
 
-`LF2_COOP=1` turns it on. A device that presses for the first time while a match is already
-running claims a free player slot; character selection is over, so no fighter is waiting for
-it and one is built there. The pad then drives it like any other player.
+Always on; there is nothing to switch on. A device that presses anything for the first time
+while a match is already running claims a free player slot, and since character selection is
+over, it gets one **on the stage**: a fighter appears flashing, **left/right** cycle the
+game's roster and **attack** (A on a pad, Z on the keyboard) locks it in. From the lock-in
+the device drives it like any other player. Unplugging that device takes its fighter back
+out again.
 
 ```sh
-cd game && LF2_COOP=1 LF2_COOP_CHAR=52 ../scratch/build/lf2 lf2.exe
+cd game && ../scratch/build/lf2 lf2.exe
 ```
+
+The remaining `LF2_COOP_*` variables are the **diagnostics** over this — `_SPAWN`, `_JOIN`,
+`_TABLE`, `_REGISTRY`, `_PAIR`, `_REFS`, `_TRACK`, `_DEBUG` — with one exception:
+`LF2_COOP_CHAR` pins where the cycle starts, so a test gets the same fighter every run.
 
 The slot it takes is the first the **game's own roster** considers empty — selector 0 — not
 merely one no other device holds. A slot that character selection filled with a computer
@@ -637,7 +642,7 @@ carries a non-zero selector and that computer's fighter is already on the stage 
 index, so joining it would add a fighter rather than replace one. When nothing else is free
 that is what happens, and the run says so rather than doing it quietly.
 
-Without `LF2_COOP_CHAR` the joiner gets a character from **the game's own roster**: the
+The roster it cycles is **the game's own**: the
 registry entries whose type field (`+1784`) says character, less the template at id 0. That
 comes to 23, which is LF2's selectable roster. The type field was located against `data.txt`
 — whose `<object>` section declares an id *and* a type per entry, and which the registry
