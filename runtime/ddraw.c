@@ -23,6 +23,16 @@ enum { DDSD_CAPS = 1, DDSD_HEIGHT = 2, DDSD_WIDTH = 4, DDSD_PITCH = 8,
 enum { DDSCAPS_PRIMARYSURFACE = 0x200 };
 enum { DDBLT_COLORFILL = 0x400, DDBLT_KEYSRC = 0x8000 };
 
+/* DDBLTFX.dwFillColor sits at offset 80 of a 100-byte DDBLTFX -- it is the last union in
+ * the struct, after ten z-buffer and alpha members. It was read from offset 16
+ * (dwRotationAngle) here, which the callers never write, so every colour fill painted a
+ * leftover stack dword: the ground band of every stage was filled 0x000038 (navy) instead
+ * of its real colour, which is exactly the "navy rectangles on the ground" symptom.
+ *
+ * Confirmed against the game rather than against a header: the fill helper decompiles to a
+ * 0x64-byte frame whose only two stores are dwSize=100 at +0 and the colour at +0x50. */
+enum { DDBLTFX_FILLCOLOR = 80 };
+
 extern long ck_set, ck_blt_keyed, ck_blt_plain;
 void colorkey_report(void);
 enum { DDCKEY_SRCBLT = 0x8 };
@@ -588,6 +598,57 @@ void cursor_find_note(int dl, int dt, const char *via)
     }
 }
 
+/* LF2_BLT_FRAME=<frame>[,...] -- every blit that composes those presented frames, with both
+ * rectangles, the source surface and the caller. This replaces LF2_BLT_ALL, which was capped
+ * at the first 24 blits of the whole run: that is the front end, so a question about what a
+ * match draws got 24 lines about the menu and no denominator. Scoping to a frame is what
+ * makes the list complete AND finite -- a match frame is about 140 blits.
+ *
+ * It is called BEFORE the colour-fill branch on purpose. That branch returns early, so a
+ * hook placed after it cannot see a fill at all -- and "the ground is drawn by 4 layer
+ * blits" was a wrong answer produced exactly that way, with the fill underneath them
+ * invisible to the instrument.
+ *
+ * Blits for presented frame N are issued while the counter still reads N-1, so the number
+ * printed is the frame the pixels land in, which is the number LF2_FRAME_DUMP uses. */
+static void blt_frame_log(int dl, int dt, int dr, int db,
+                          uint32_t srcobj, uint32_t srect, uint32_t flags)
+{
+    const char *spec = getenv("LF2_BLT_FRAME");
+    if (!spec) return;
+
+    const long f = hostwin_frames() + 1;
+    static long logged_for = -1, n;
+    if (!spec_lists(spec, f)) {
+        if (logged_for >= 0) {
+            fprintf(stderr, "bltframe %ld: %ld blits total\n", logged_for, n);
+            logged_for = -1;
+        }
+        return;
+    }
+    if (logged_for != f) {
+        if (logged_for >= 0) fprintf(stderr, "bltframe %ld: %ld blits total\n", logged_for, n);
+        logged_for = f; n = 0;
+        fprintf(stderr, "bltframe %ld: begin\n", f);
+    }
+    n++;
+
+    int sl = -1, st = -1, sr = -1, sb = -1, sw = -1, sh = -1;
+    if (srcobj) {
+        Surface *s = com_host(srcobj);
+        read_rect(srect, &sl, &st, &sr, &sb, s->w, s->h);
+        sw = s->w; sh = s->h;
+    }
+    char fill[48] = "";
+    if (flags & DDBLT_COLORFILL)
+        snprintf(fill, sizeof fill, " COLORFILL=%08x",
+                 ARG(5) ? LD32(ARG(5) + DDBLTFX_FILLCOLOR) : 0);
+    fprintf(stderr, "blt %ld dst=(%d,%d)-(%d,%d) src=%08x[%dx%d] srect=%s(%d,%d)-(%d,%d)"
+                    " flags=%08x from=%08x%s\n",
+            n, dl, dt, dr, db, srcobj, sw, sh, srect ? "" : "NULL",
+            sl, st, sr, sb, flags, LD32(R(ESP)), fill);
+}
+
 static void surf_Blt(uint32_t self)
 {
     Surface *d = com_host(self);
@@ -607,8 +668,10 @@ static void surf_Blt(uint32_t self)
     int dl, dt, dr, db;
     read_rect(drect, &dl, &dt, &dr, &db, d->w, d->h);
 
+    blt_frame_log(dl, dt, dr, db, srcobj, srect, flags);
+
     if (flags & DDBLT_COLORFILL) {
-        const uint32_t fill = ARG(5) ? LD32(ARG(5) + 16) : 0;   /* DDBLTFX.dwFillColor */
+        const uint32_t fill = ARG(5) ? LD32(ARG(5) + DDBLTFX_FILLCOLOR) : 0;
         for (int y = dt; y < db && y < d->h; y++) {
             if (y < 0) continue;
             uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
@@ -619,17 +682,6 @@ static void surf_Blt(uint32_t self)
         return;
     }
 
-    if (getenv("LF2_BLT_ALL")) {
-        static long n;
-        if (++n <= 24)
-            {
-                int _sl = -1, _st = -1, _sr = -1, _sb = -1;
-                if (srcobj) { Surface *_s = com_host(srcobj);
-                              read_rect(srect, &_sl, &_st, &_sr, &_sb, _s->w, _s->h); }
-                fprintf(stderr, "blt#%ld dst=(%d,%d)-(%d,%d) src=%08x srect=%s(%d,%d)-(%d,%d)\n",
-                        n, dl, dt, dr, db, srcobj, srect ? "" : "NULL", _sl, _st, _sr, _sb);
-            }
-    }
     if (getenv("LF2_FIND_BLT")) {
         static int done;
         const char *want = getenv("LF2_FIND_BLT");
