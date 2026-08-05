@@ -582,7 +582,8 @@ updated nor reset.
 | `LF2_COOP_TABLE=<frame>` or `live[+<n>]` | dump the table with each entry's gate byte. `live` fires off the game's own state |
 | `LF2_COOP_REGISTRY=1` | with the above, dump the object-data registry and which block each live object uses |
 | `LF2_COOP_PAIR=<i>,<j>` or `auto` | the dwords where two table entries differ |
-| `LF2_COOP_SPAWN=<index>[,<id>]` | build object `<id>` (default 1, Bandit) at a free index and watch it afterwards |
+| `LF2_COOP_SPAWN=<index>[,<id>[,<+0x364>]][;...]` | build object `<id>` (default 1, Bandit) at a free index and watch it. A **list**, so two spawns can be compared inside one run |
+| `LF2_COOP_SHOT=<n>` | capture the frame `<n>` frames after the spawn |
 | `LF2_COOP_REFS=<frame>` | scan the image, heap and stack for pointers to the player records |
 | `LF2_COOP_DEBUG=1` | the player slot table, printed on change |
 
@@ -595,8 +596,24 @@ result. The dump now says `NOT A MATCH` outright in that case.
 cd game && LF2_COOP_TABLE=live+60 LF2_COOP_SPAWN=13,1 ../scratch/build/lf2 lf2.exe
 ```
 
-puts a Bandit into a running match: it animates, walks and collides. Spawning an id that is
-not in the registry is refused with the number of entries searched.
+puts a Bandit into a running match: it animates, walks, collides and gets its own HUD bar
+with the **right portrait**. Spawning an id that is not in the registry is refused with the
+number of entries searched.
+
+**Compare two spawns inside one run, never across two.** VS mode randomises the characters
+already on the stage, so a screenshot A/B across processes shows differences the changed
+variable had nothing to do with — a first attempt at this had all three portraits differing
+and one arm that never reached a match at all. `LF2_COOP_SPAWN` takes a list for that
+reason, and `LF2_COOP_SHOT` keys the capture to the spawn rather than to a frame number,
+because the data load does not take a fixed number of frames.
+
+```sh
+LF2_COOP_TABLE=live+60 LF2_COOP_SPAWN='13,1;14,52' LF2_COOP_SHOT=45 ./lf2 lf2.exe
+```
+
+draws two different characters in HUD positions 4 and 5; the same id twice draws the same
+portrait in both. That two-sided pair is what shows the portrait follows the object's data
+block at `+872`.
 
 ## The menu map, and how it was recovered
 

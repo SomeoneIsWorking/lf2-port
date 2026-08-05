@@ -101,3 +101,36 @@ STILL OPEN, and newly visible now that a spawn can pick its own character:
   - Which free index to take. The game gave its computer opponent index 11 with 1..10 free.
   - Binding the new fighter to the joining device: the gather still walks `i < 4` over the
     device-selector table at 0x00450b4c against a 400-entry object table.
+
+### Note (2026-08-05)
+CORRECTION: the HUD portrait of a spawned fighter is NOT wrong. The note above claiming it
+was is withdrawn -- it came from eyeballing a screenshot and matching the wrong sprite on
+the stage to the wrong bar in the HUD.
+
+Measured properly, as a two-sided discriminator, each comparison INTERNAL to one run so the
+VS-mode randomiser cannot account for it:
+
+  - spawn id 1 at entry 13 and id 1 at entry 14  -> HUD positions 4 and 5 draw the SAME
+    portrait
+  - spawn id 1 at entry 13 and id 52 at entry 14 -> HUD positions 4 and 5 draw DIFFERENT
+    portraits
+
+So the portrait follows the object's data block at +872, which the spawn already sets. It
+was never a gap.
+
+That also disposes of the +0x364 question: two spawns of the SAME id with +0x364 forced to
+0 and to 5 draw identical portraits, so the character-select cursor is not what the HUD
+reads. (scratch/screenshots/ab_hud.png and ab2_full.png.)
+
+METHOD, because this cost a round trip: the first A/B was run as two SEPARATE processes
+with one variable changed between them. VS mode randomises the characters already on the
+stage, so all three portraits differed and the one variable explained none of it. Comparing
+two spawns inside ONE run is what makes the comparison matched, and LF2_COOP_SPAWN now
+takes a semicolon-separated LIST for exactly that. A screenshot A/B across runs of a game
+that randomises anything is not an experiment.
+
+Also added, for the same reason: LF2_COOP_SHOT=<n> captures the frame n frames after the
+spawn, via gfx_request_frame_dump(). A capture aimed at a fixed frame number and a probe
+that fires off game state disagree whenever the load takes a different number of frames --
+one arm of the first A/B never reached a match at all, and its screenshot would have been
+compared as though it showed the same experiment.

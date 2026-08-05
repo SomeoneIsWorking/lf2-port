@@ -236,7 +236,19 @@ static int spec_lists(const char *spec, long frame)
     return 0;
 }
 
-static int frame_wanted(long frame) { return spec_lists(getenv("LF2_FRAME_DUMP"), frame); }
+/* A capture aimed at a fixed frame number and a probe that fires off game STATE can
+ * disagree, and when they do the picture is of the wrong thing while looking perfectly
+ * valid -- an A/B of two spawns produced one arm whose run never reached the match, and the
+ * two screenshots would have been compared as if they showed the same experiment. So a
+ * probe can ask for the next frame instead, and the capture follows the event. */
+static int frame_requested;
+void gfx_request_frame_dump(void) { frame_requested = 1; }
+
+static int frame_wanted(long frame)
+{
+    if (frame_requested) { frame_requested = 0; return 1; }
+    return spec_lists(getenv("LF2_FRAME_DUMP"), frame);
+}
 
 /* LF2_MEM_DUMP=<frame>[,<frame>...] writes the game's whole .data section to
  * data_<frame>.bin in $LF2_DUMP_DIR. Diffing two of them across a single input finds the
