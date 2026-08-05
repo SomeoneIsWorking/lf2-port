@@ -1020,6 +1020,40 @@ game.
 Verified with `LF2_VIRTUAL_PAD`: three d-pad downs highlight "recording info", two downs
 plus A lands on the control settings page, and the mouse-driven smoke test is unaffected.
 
+## Every menu takes every device
+
+The chain from the launcher to a running match is mouse-drivable end to end, with no key
+and no pad: `tools/mouse_test.sh` is that route, and `ctest -R mouse` runs it.
+
+| screen | selection | how it was located |
+|---|---|---|
+| launcher (0/6/7) | the game's own index | its hit-test constants, read out of the disassembly |
+| mode menu | `0x00451160`, 0..7 | `.data` diff across one down-press against a no-press control |
+| character select | `+0x364` in the object at `0x00458c94[1+player]`, 0..7 | heap diff — it is not in `.data` |
+| pre-fight overlay | `0x0044d06c`, 0..5 | `.data` diff across one d-pad press |
+
+The overlay also needed a **screen discriminator**, which character selection had gone
+without: it sits *on top of* character selection, so both hit tests are live at once and the
+pointer would drag the slot cursor while the player aims at "Fight!". `0x0044d070` is that
+word — `-100` while players join and pick, `0` while the overlay is up, `1` once the match
+runs. Found by diffing two overlay-closed frames against two overlay-open ones, keeping only
+dwords stable within each pair (26 candidates), then checking each against a third state.
+
+Row geometry comes from the game, not from measuring a screenshot: `LF2_OVERLAY_FORCE=<n>`
+pins the selection and `LF2_BLT_FRAME` prints where the game blits its own highlight — item
+0 at y 16, item 2 at y 64, item 5 at y 137, i.e. 24 per row from 16, in the panel's x band
+of 3..307.
+
+### The scripted click tested hover and nothing else
+
+`LF2_CLICK_SCRIPT` pushed the `WM_LBUTTONDOWN` the *game* reads but never armed
+`hostwin_mouse_clicked()`, which is what the *ported* menus read. So no scripted run had
+ever exercised a click activating anything — the key script that followed confirmed whatever
+the hover had selected, and a menu whose click was dead looked identical to one that worked.
+That is why the mouse now has its own test with no keyboard in it at all. Run against both
+classes: with the click edge disabled the route stops at the mode menu (2 screen
+transitions, 1 sound effect); with it live it reaches a match (4 and 10).
+
 ## Finding which code draws something
 
 Three hooks in `runtime/ddraw.c`:

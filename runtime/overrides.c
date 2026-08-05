@@ -83,6 +83,15 @@ enum { GX_CLICK = 0x00457580, GX_SCREEN = 0x0044d064 };
  * 2 -> 1 against the frame where the highlight moved Reset Random -> Reset All. */
 enum { OVERLAY_SEL = 0x0044d06c };
 
+/* The phase word that separates the three screens the game proper runs through. It is the
+ * screen discriminator character selection needed and did not have: -100 while players are
+ * joining and picking, 0 while the pre-fight overlay is up, 1 once the match runs. Found by
+ * diffing .data across two overlay-closed frames against two overlay-open ones, keeping only
+ * dwords stable within each pair (26 candidates), then checking each against a third state,
+ * a running match, which left exactly this one. */
+enum { OVERLAY_PHASE = 0x0044d070 };
+enum { PHASE_PICKING = -100, PHASE_OVERLAY = 0, PHASE_MATCH = 1 };
+
 /* The ad system's update notice in the top-right corner; see fn_0043f010 below. */
 enum { MENU_CLIP7 = 0x00451188 };            /* sheet handle, loaded from "MENU_CLIP7" */
 enum { CURSOR_SHEET = 0x00451170 };          /* sheet handle of the game's own mouse cursor */
@@ -202,6 +211,8 @@ static void menu_sync_from_pointer(const Item *items, int n)
 static uint32_t top_mode = 0xffffffffu;
 void charselect_mouse(void);
 void modemenu_mouse(void);
+void overlay_mouse(void);
+int  overlay_open(void);
 int hostwin_pointer(int *x, int *y);        /* win32.c */
 int hostwin_mouse_clicked(void);            /* win32.c: one-shot, per press */
 
@@ -247,7 +258,10 @@ void fn_004246b0(void)
         ST32(GX_CLICK, 0);
 
     modemenu_mouse();            /* pointer -> selection on the post-load mode menu */
-    charselect_mouse();          /* pointer -> slot cursor on character selection */
+    overlay_mouse();             /* pointer -> selection on the pre-fight overlay */
+    /* Not while the overlay is up: it sits ON character selection, so both would take the
+     * same pointer and the slot cursor would wander while the player aims at "Fight!". */
+    if (!overlay_open()) charselect_mouse();
 
     int n = 0;
     const int front_end = (mode != MODE_ENTER && mode != MODE_IN_GAME);
@@ -743,7 +757,6 @@ void charselect_mouse(void)
     static int last_x = -1, last_y = -1;
     const int moved = (mx != last_x || my != last_y);
     last_x = mx; last_y = my;
-    if (!moved) return;                       /* idle mouse never overrides the keyboard */
 
     const int slot = cs_slot_at(mx, my);
     static int dbg = -1;
@@ -763,8 +776,25 @@ void charselect_mouse(void)
     if (!objp) return;
 
     const uint32_t cur = LD32(objp + OBJ_SEL);
-    if (cur >= CS_SLOTS) return;              /* not holding a slot index: not this screen */
-    if ((uint32_t)slot != cur) ST32(objp + OBJ_SEL, (uint32_t)slot);
+    if (cur >= CS_SLOTS) {
+        /* No slot cursor yet: this player has not joined. A click inside a portrait is
+         * the attack that joins -- gated on the phase word so it cannot fire during a
+         * match, where the same rectangles are just part of the arena. */
+        if ((int32_t)LD32(OVERLAY_PHASE) == PHASE_PICKING && hostwin_mouse_clicked())
+            mouse_confirm_frames = 2;
+        return;
+    }
+
+    /* Hover only when the pointer actually moved, so an idle mouse resting over a slot
+     * never fights the keyboard or a pad. A click is an explicit act, so it is honoured
+     * whether or not the pointer moved -- clicking twice in the same spot is how a player
+     * joins and then confirms, and requiring motion between the two would drop the second. */
+    if (moved && (uint32_t)slot != cur) ST32(objp + OBJ_SEL, (uint32_t)slot);
+
+    if (hostwin_mouse_clicked()) {
+        ST32(objp + OBJ_SEL, (uint32_t)slot);
+        mouse_confirm_frames = 2;
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -823,5 +853,73 @@ void modemenu_mouse(void)
     if (hostwin_mouse_clicked()) {
         ST32(MODEMENU_SEL, (uint32_t)item);
         mouse_confirm_frames = 2;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * The pre-fight overlay -- Fight! / Reset All / Reset Random / Background (Stage in stage
+ * mode) / Difficulty / Exit. The last screen in the chain that was keyboard-only, so this
+ * is what finishes "every menu takes every device".
+ *
+ *   .data 0x0044d06c   the selection, 0..5 (OVERLAY_SEL, located earlier)
+ *   .data 0x0044d070   the phase: -100 on character select, 0 while the overlay is up,
+ *                      1 once the match runs
+ *
+ * The phase word matters more than it looks. Character selection is still underneath the
+ * overlay and charselect_mouse() is still live, so without it the pointer would drag the
+ * slot cursor around while the player is aiming at "Fight!". It was found by diffing .data
+ * across two frames with the overlay closed against two with it open, keeping only dwords
+ * stable within each pair -- 26 candidates -- and then checking each against a third state
+ * (a running match), which left exactly this one.
+ *
+ * The row geometry comes from the game's own highlight blit, not from measuring a
+ * screenshot: LF2_OVERLAY_FORCE pins the selection and LF2_BLT_FRAME prints where the
+ * highlight lands. Item 0 -> y 16, item 2 -> y 64, item 5 -> y 137, i.e. 24 per row from
+ * 16, with the last row a pixel low in the sheet. The panel is blitted at (3,3)-(307,169),
+ * which is the x band.
+ * ------------------------------------------------------------------------ */
+enum { OVERLAY_ITEMS = 6 };
+enum { OV_X0 = 3, OV_X1 = 307, OV_Y0 = 16, OV_STEP = 24 };
+
+int overlay_open(void)
+{
+    return top_mode == MODE_IN_GAME && (int32_t)LD32(OVERLAY_PHASE) == PHASE_OVERLAY
+        && LD32(OVERLAY_SEL) < OVERLAY_ITEMS;
+}
+
+static int overlay_item_at(int x, int y)
+{
+    if (x < OV_X0 || x > OV_X1) return -1;
+    const int rel = y - OV_Y0;
+    if (rel < 0) return -1;
+    const int i = rel / OV_STEP;
+    return i < OVERLAY_ITEMS ? i : -1;
+}
+
+void overlay_mouse(void)
+{
+    if (!overlay_open()) return;
+
+    int mx, my;
+    if (!hostwin_pointer(&mx, &my)) return;
+
+    static int last_x = -1, last_y = -1;
+    const int moved = (mx != last_x || my != last_y);
+    last_x = mx; last_y = my;
+
+    const int item = overlay_item_at(mx, my);
+    if (item < 0) return;
+
+    const uint32_t cur = LD32(OVERLAY_SEL);
+    if (moved && (uint32_t)item != cur) ST32(OVERLAY_SEL, (uint32_t)item);
+
+    /* Same contract as the mode menu: the click only places the selection, and the game's
+     * own attack button does the acting, so the dispatch, the sound and the screen change
+     * stay the game's. */
+    if (hostwin_mouse_clicked()) {
+        ST32(OVERLAY_SEL, (uint32_t)item);
+        mouse_confirm_frames = 2;
+        if (getenv("LF2_MENU_DEBUG"))
+            fprintf(stderr, "overlay click on item %d at (%d,%d)\n", item, mx, my);
     }
 }

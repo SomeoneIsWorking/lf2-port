@@ -174,6 +174,17 @@ set_tests_properties(controller PROPERTIES
                      LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
+# The mouse path, for the same reason the controller has its own test: the smoke test
+# clicks once and then drives everything else from the keyboard, so every screen after the
+# launcher was proved only for keys. Mouse support on those screens could have been dead
+# and stayed green -- and part of it was.
+add_test(NAME mouse
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/mouse_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(mouse PROPERTIES
+                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
 # Two controllers, two players. Separate because it needs two runs -- one as a control --
 # and because "a second pad is player two" has been got wrong in both directions already.
 add_test(NAME controller_2p

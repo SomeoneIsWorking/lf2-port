@@ -252,6 +252,13 @@ static void pump_autoclick(void)
     if (down == was_down) return;
     was_down = down;
     mouse_left_down = down;
+    /* A scripted click has to be indistinguishable from a physical one, and this path was
+     * missing the port's own click edge -- it pushed the window messages the GAME reads but
+     * never armed hostwin_mouse_clicked(), which is what the ported menus read. So every
+     * scripted click tested hover and nothing else: a menu whose click did not activate at
+     * all still looked correct in a scripted run, because the key script that followed
+     * confirmed whatever the hover had selected. */
+    if (down) mouse_click_pending = 1;
     push_message(WM_MOUSEMOVE, down ? 1 : 0, lp);
     push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
 }
