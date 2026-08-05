@@ -124,6 +124,16 @@ int gamepad_player_buttons(int index, unsigned char out[7])
     return 1;
 }
 
+/* Start, on any attached pad. The pause menu needs it separately from the seven game
+ * buttons, which do not include Start. */
+int gamepad_start_held(void)
+{
+    ensure_init();
+    for (int i = 0; i < JOY_SLOTS; i++)
+        if (slot[i] && SDL_GetGamepadButton(slot[i], SDL_GAMEPAD_BUTTON_START)) return 1;
+    return 0;
+}
+
 /* ---- driving the front-end menu from a controller ----
  *
  * Only the front-end menu needs anything here. Everything the game itself drives from the

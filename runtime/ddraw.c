@@ -370,12 +370,22 @@ static void controls_hint_draw(const Surface *s)
                         0xffffffu, s->pixels, s->w, s->h, s->pitch);
 }
 
+/* The pause menu needs the frame to keep being shown while the game's update is not
+ * running -- and the present turned out to live INSIDE that update, so freezing it stopped
+ * the picture entirely (frames simply stopped at the pause). This is the same present, on
+ * demand. */
+static void present_primary(void);
+void present_frozen_frame(void) { present_primary(); }
+
 static void present_primary(void)
 {
     if (!primary_surface) return;
     LOADPROF_SCOPE(LP_PRESENT);
     Surface *s = com_host(primary_surface);
     if (hint_on) controls_hint_draw(s);
+    /* After the frame is assembled and before it is shown: the composition is frozen while
+     * paused, so the menu has to go on the primary rather than be composed with it. */
+    pause_draw(s->pixels, s->w, s->h, s->pitch);
     hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
     LOADPROF_END();
 }

@@ -281,6 +281,20 @@ static void wide_apply(void)
 void fn_004246b0(void)
 {
     wide_apply();
+
+    /* The pause menu is built on this: declining to call the original body is what freezes
+     * the game, because this is the function the main loop calls to advance and draw
+     * everything. The main loop's own present still runs, so the last drawn frame stays on
+     * screen with the menu painted over it. */
+    pause_tick();
+    if (pause_active()) {
+        /* The present lives inside the body that is not being called, so it has to be done
+         * here or the window simply stops updating -- which is what happened the first time,
+         * and it looked like a hang rather than a pause. */
+        present_frozen_frame();
+        R(ESP) += 8;                               /* same stack contract as the body */
+        return;
+    }
     const uint32_t mode = R(ECX) ? LD32(R(ECX)) : 0xffffffffu;
     const uint32_t screen = LD32(GX_SCREEN);
     top_mode = mode;

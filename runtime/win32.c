@@ -21,6 +21,7 @@ static void queue_startup_messages(void);
 static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam);
 static uint32_t scancode_to_vk(SDL_Scancode sc);
 static uint32_t mouse_lparam(float wx, float wy);
+static int port_owns_key(uint32_t vk);
 
 enum { WM_KEYDOWN_FWD = 0x0100, WM_KEYUP_FWD = 0x0101,
        WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202,
@@ -473,6 +474,9 @@ static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam)
 {
     if (msg == WM_KEYDOWN_FWD && wparam < 256) vk_held[wparam] = 1;
     if (msg == WM_KEYUP_FWD   && wparam < 256) vk_held[wparam] = 0;
+    /* The port's own ledger is updated first, then the message is dropped if the port owns
+     * the key -- so the pause menu still sees Escape while the game never does. */
+    if ((msg == WM_KEYDOWN_FWD || msg == WM_KEYUP_FWD) && port_owns_key(wparam)) return;
     const int next = (ring_tail + 1) % MSG_RING;
     if (next == ring_head) return;              /* full: drop rather than overwrite */
     msg_ring[ring_tail].msg = msg;
@@ -792,10 +796,25 @@ static void keydebug_report(void)
                 "  To follow input, probe reads of 0x455378 rather than this import.\n");
 }
 
+/* Escape belongs to the pause menu while a match is on screen.
+ *
+ * The game reads Escape itself and answers with its own "Are you sure to quit?" prompt, so
+ * a pause menu bound to it would open underneath a quit dialog. The port takes the key
+ * instead: it is reported as UP to the game whenever the pause menu is entitled to it, and
+ * the port's own hostwin_key_held() -- which the pause menu reads -- is unaffected.
+ *
+ * Only during a match, so Escape still quits from the menus, which is where the game's
+ * prompt makes sense. */
+static int port_owns_key(uint32_t vk)
+{
+    return vk == 0x1B && (panel_hud_up() || pause_active());
+}
+
 static void h_GetKeyState(void)
 {
     hostwin_pump();
     if (getenv("LF2_KEY_DEBUG")) keydebug_note(ARG(0) & 0xff);
+    if (port_owns_key(ARG(0))) { ret_stdcall(1, 0); return; }
     if (ARG(0) == 0x01) { ret_stdcall(1, mouse_left_down ? 0xFF80u : 0u); return; }
     if (ARG(0) == 0x02) { ret_stdcall(1, mouse_right_down ? 0xFF80u : 0u); return; }
     if (autokey_pressed(ARG(0)) || hostwin_injected_key(ARG(0))) {
@@ -820,6 +839,13 @@ static void h_MessageBoxA(void)
 }
 
 static void h_PostQuitMessage(void) { quit_posted = 1; ret_stdcall(1, 0); }
+
+/* The port asking the game to shut down, through the same path the game's own quit takes --
+ * so teardown, the atexit reports and a clean exit status all still happen. */
+void hostwin_request_quit(void) { quit_posted = 1; }
+
+int hostwin_width(void)  { return hw.width; }
+int hostwin_height(void) { return hw.height; }
 static void h_SetRect(void)
 {
     uint32_t r = ARG(0);
