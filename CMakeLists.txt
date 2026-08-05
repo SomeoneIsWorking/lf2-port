@@ -56,6 +56,7 @@ add_executable(lf2
     runtime/dshow.c
     runtime/gdi.c
     runtime/loadprof.c
+    runtime/pause.c
     runtime/gamepad.c
     runtime/wsock.c
     runtime/overrides.c
@@ -68,7 +69,7 @@ target_include_directories(lf2 PRIVATE runtime)
 set_source_files_properties(
     runtime/guest.c runtime/flags.c runtime/strops.c runtime/rwatch.c runtime/imports.c
     runtime/com.c runtime/win32.c runtime/ddraw.c runtime/dsound.c runtime/dshow.c
-    runtime/gdi.c runtime/loadprof.c runtime/gamepad.c runtime/wsock.c runtime/overrides.c
+    runtime/gdi.c runtime/loadprof.c runtime/pause.c runtime/gamepad.c runtime/wsock.c runtime/overrides.c
     runtime/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)

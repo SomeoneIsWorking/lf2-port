@@ -47,4 +47,14 @@ void input_report(void);
 void glyph_hint_set(int ch);
 void glyph_hint_clear(void);
 int  hostwin_key_held(uint32_t vk);
+void hostwin_request_quit(void);
+int  hostwin_width(void);
+int  hostwin_height(void);
+int  gamepad_start_held(void);
+
+/* Pause menu, runtime/pause.c */
+int  pause_active(void);
+void pause_tick(void);
+void pause_draw(uint32_t pix, int w, int h, int pitch);
+void present_frozen_frame(void);
 void controls_hint_enable(int on);
