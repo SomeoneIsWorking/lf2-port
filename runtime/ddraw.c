@@ -328,6 +328,14 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
     if (frames % 900 == 0) { colorkey_report(); vram_report(); com_release_report(); input_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    /* The read profile is reported on the same periodic boundary and reset each time, so
+     * each block covers one window rather than the whole run: an array swept only during a
+     * match would otherwise be averaged with the menus that came before it. */
+    if (frames % 300 == 0) {
+        char when[32];
+        snprintf(when, sizeof when, "frames %ld-%ld", frames - 299, frames);
+        rwatch_raw_flush(when);
+    }
     if (!hw.renderer) return;
     if (!hw.texture) {
         hw.texture = SDL_CreateTexture(hw.renderer, SDL_PIXELFORMAT_XRGB8888,

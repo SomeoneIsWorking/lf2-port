@@ -37,6 +37,7 @@ typedef struct {
 
 extern Cpu cpu;
 extern uint8_t *g_mem;      /* guest address N lives at g_mem[N] */
+extern uint32_t g_image_lo, g_image_hi;   /* mapped extent of the loaded PE image */
 
 #define R(i)  (cpu.r[(i)])
 
@@ -57,6 +58,7 @@ extern uint32_t g_rwatch_lo, g_rwatch_hi;
 void rwatch_hit(uint32_t a);
 void rwatch_frame(void);
 void rwatch_selftest(void);
+void rwatch_raw_flush(const char *when);   /* LF2_READ_WATCH_RAW: per-dword read profile */
 void rwatch_init(void);
 int  rwatch_triggered(void);
 #define RWATCH(a) \

@@ -497,6 +497,33 @@ four isolated checks. It must report exactly `26 49 57 68`. Without it,
 "(nothing but sequential scans)" would be indistinguishable from a filter that discards
 everything.
 
+### Raw mode: the per-byte profile
+
+The scan filter above exists for one question — *which key does this screen check* — and is
+exactly wrong for another. When the watched span is an array the game **sweeps**, the sweep
+*is* the finding, and the filter throws it away.
+
+`LF2_READ_WATCH_RAW=1` counts every read per byte and prints the profile on the same
+300-frame boundary as the other periodic reports, resetting each time so a block covers one
+window rather than the whole run. Zero counts are named explicitly (`+014..+41f  0`) rather
+than omitted, because the absence is usually the result: a loop bounded by a count leaves
+the tail of an array at zero and a full sweep with a per-entry test does not, and those are
+different mechanisms.
+
+Spans are capped at the 4096-byte window and a longer one is refused with exit 2 — reads
+past the end would otherwise be dropped silently, which is the same profile as a game that
+never made them.
+
+`LF2_READ_WATCH_SELFTEST=1` in raw mode reads one byte four times and must report exactly
+`+00c 4` with everything else zero.
+
+This is what located the object gate in issue #15. Over the 400-entry object table, a match
+frame reads entries 0..19 once each, 20..49 never and 50..62 heavily — so idle fighter slots
+are visited every frame and skipped, and the loop is not bounded by a count. Over a single
+*idle* object it reports exactly one hot byte out of 1056, `+0x338`, which turned out to be
+a countdown the loop decrements for every entry rather than the gate. Both readings needed
+the sweep the filtered mode hides.
+
 ### What it found, and what it did not
 
 On every screen reachable so far — attract, main menu, control settings — the only

@@ -5,6 +5,7 @@
  * caller's arguments are on the guest stack, and a stdcall callee pops them.
  */
 #include "guest_ops.h"
+#include "guest_map.h"
 #include "hostwin.h"
 
 #include <stdio.h>
@@ -430,7 +431,25 @@ enum { DEVSEL = 0x00450b4c, DEVSEL_END = 0x00450b6c };
  * across a character-select join (0 -> 1) and again across a second join (1 -> 3), which is
  * what tells a mask from a count. */
 enum { JOINED_MASK = 0x00451288 };
-enum { PLAYER_PTRS = 404 };            /* this+404: eight player-object pointers */
+
+/* this+404: FOUR HUNDRED object pointers, not eight. The eight player slots are its first
+ * eight entries; the fighter the game gives a computer opponent lands further up the same
+ * array on the same 0x420 stride. Every entry is a live pointer to a pre-allocated record
+ * from the moment the data loads, so an object's existence is not its pointer being there.
+ *
+ * What decides existence is EXISTS: a byte per index at this+4, and `fn_004064d0` walks the
+ * table as
+ *
+ *     ESI = this + 404
+ *     EAX = LD32(ESI)                  // obj = table[k]
+ *     if (obj->0x338 > 0) obj->0x338--;   // a countdown, run for every entry
+ *     if (LD8(this + 4 + k) != 1) goto next
+ *
+ * -- which is why an idle entry is read exactly once a frame (the countdown) and nothing
+ * more, and why filling in a record and setting the joined-players mask was never going to
+ * be enough on its own. */
+enum { PLAYER_PTRS = 404, TABLE_N = 400, OBJ_STRIDE = 0x420 };
+enum { EXISTS = 0x00458b04 };          /* this+4: one byte per object index, 1 = exists */
 enum { BTN_CUR = 205 };                /* obj+205..211: this frame's seven buttons */
 enum { NET_OR_RECORD = 0x00450b80 };   /* non-zero: the packed masks are being consumed */
 enum { RECORDING = 0x0044f1af, MASK_MIRROR = 0x0044d040 };
@@ -439,6 +458,379 @@ enum { RECORDING = 0x0044f1af, MASK_MIRROR = 0x0044d040 };
  * these itself further down its own loop; a pad press has to appear in them too, or a
  * recording made with a controller would replay as a player standing still. */
 static const uint8_t BTN_BIT[7] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02 };
+
+/* ---- LF2_COOP_REFS: who POINTS AT a player record ----
+ *
+ * The question this answers is the one thing left before drop-in coop is mechanical: a
+ * fully initialised player record plus its bit in the joined mask is NOT enough to put a
+ * fighter in the world (measured -- see issue #15), so there is a list of active objects a
+ * fighter also has to be in. A list of objects is a list of POINTERS to them, so the list
+ * is found by scanning memory for the pointer values the game already has.
+ *
+ * It scans every region a guest pointer can live in and reports each aligned dword that
+ * equals one of the eight player-record pointers, with the dwords around it -- an array
+ * shows up as several hits one stride apart, and a single field in a struct does not.
+ *
+ * The negative is designed first, because "no references found" is the result that would
+ * be believed without evidence. The report always states the regions and their byte
+ * counts, the number of dwords compared, a per-target hit count, and the blind spots the
+ * method has (unaligned or tagged pointers; the VRAM and PCM arenas, which are ours and
+ * hold no game structures). A scan of a zero-length heap prints REFUSED rather than "0
+ * hits", because those are not the same answer.
+ *
+ * And it carries a positive control that cannot be skipped: the eight pointers are read
+ * out of `this+404`, so the scan MUST find each non-null one at exactly that address. If
+ * it does not, the scan is not seeing memory it claims to see, and the line says FAILED
+ * instead of a hit count. A scan that finds nothing and passes its control is evidence;
+ * one that finds nothing and never checked is not. */
+uint32_t guest_heap_used(void);          /* imports.c */
+
+struct refs_region { const char *name; uint32_t lo, hi; };
+
+static void coop_refs_scan(uint32_t self)
+{
+    enum { NTARGET = 12 };                /* eight slots, plus up to four extras */
+    uint32_t target[NTARGET];
+    char label[NTARGET][16];
+    long hits[NTARGET];
+    int ntarget = 0, nslot = 0;
+
+    for (int i = 0; i < 8; i++) {
+        const uint32_t p = LD32(self + PLAYER_PTRS + 4u * (uint32_t)i);
+        if (!p) continue;
+        target[ntarget] = p;
+        snprintf(label[ntarget], sizeof label[0], "slot%d", i);
+        hits[ntarget] = 0;
+        ntarget++;
+        nslot++;
+    }
+
+    /* LF2_COOP_REFS_ADDR=<hex>[,...] -- chase an address the scan itself turned up, such
+     * as the 1052-byte object at 0x25f149a0 that the "Fight!" heap diff left unexplained. */
+    const char *extra = getenv("LF2_COOP_REFS_ADDR");
+    for (const char *s = extra; s && *s && ntarget < NTARGET; ) {
+        char *end;
+        const unsigned long v = strtoul(s, &end, 16);
+        if (end == s) break;
+        target[ntarget] = (uint32_t)v;
+        snprintf(label[ntarget], sizeof label[0], "extra%d", ntarget - nslot);
+        hits[ntarget] = 0;
+        ntarget++;
+        s = (*end == ',') ? end + 1 : end;
+    }
+
+    const uint32_t heap_used = guest_heap_used();
+    const struct refs_region regions[] = {
+        { "image", g_image_lo,       g_image_hi },
+        { "heap",  GUEST_HEAP_BASE,  GUEST_HEAP_BASE + heap_used },
+        { "stack", GUEST_STACK_BASE, GUEST_STACK_END },
+    };
+    const int nregion = (int)(sizeof regions / sizeof regions[0]);
+
+    fprintf(stderr, "coop refs: frame %ld, this=%08x, %d targets\n",
+            hostwin_frames(), self, ntarget);
+    for (int t = 0; t < ntarget; t++)
+        fprintf(stderr, "  target %-7s %08x\n", label[t], target[t]);
+
+    if (ntarget == 0) {
+        fprintf(stderr, "coop refs: REFUSED -- every player pointer at this+404 is null, so "
+                        "there is nothing to look for. This is not a negative result; the "
+                        "scan was pointed at a frame that is not a match.\n");
+        return;
+    }
+
+    long dwords = 0;
+    int printed = 0, total_hits = 0;
+    for (int r = 0; r < nregion; r++) {
+        const uint32_t lo = regions[r].lo, hi = regions[r].hi;
+        if (hi <= lo) {
+            fprintf(stderr, "coop refs: region %-5s REFUSED -- empty range [%08x,%08x). "
+                            "Nothing in it was compared.\n", regions[r].name, lo, hi);
+            continue;
+        }
+        fprintf(stderr, "coop refs: region %-5s [%08x,%08x) %.1f MiB\n",
+                regions[r].name, lo, hi, (double)(hi - lo) / (1024.0 * 1024.0));
+        for (uint32_t a = lo & ~3u; a + 4 <= hi; a += 4) {
+            const uint32_t v = LD32(a);
+            dwords++;
+            for (int t = 0; t < ntarget; t++) {
+                if (v != target[t]) continue;
+                hits[t]++;
+                total_hits++;
+                if (printed++ < 80) {
+                    fprintf(stderr, "  hit %08x = %s (%s)  ctx:", a, label[t], regions[r].name);
+                    for (int k = -4; k <= 4; k++) {
+                        const uint32_t ca = a + 4u * (uint32_t)k;
+                        if (ca < lo || ca + 4 > hi) { fprintf(stderr, " --------"); continue; }
+                        fprintf(stderr, "%c%08x", k == 0 ? '[' : ' ', LD32(ca));
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
+    }
+
+    /* The positive control. Every non-null slot pointer is stored at this+404+4i, so the
+     * scan has to have found it there -- unless `this` is outside every region above, which
+     * is itself something the scan must say out loud rather than pass over. */
+    int control_ok = 1, control_checked = 0;
+    for (int i = 0; i < 8; i++) {
+        const uint32_t at = self + PLAYER_PTRS + 4u * (uint32_t)i;
+        if (!LD32(at)) continue;
+        int covered = 0;
+        for (int r = 0; r < nregion; r++)
+            if (regions[r].hi > regions[r].lo && at >= regions[r].lo && at + 4 <= regions[r].hi)
+                covered = 1;
+        if (!covered) { control_ok = 0; continue; }
+        control_checked++;
+    }
+    /* Being covered is necessary; having been counted is the actual check. Each covered
+     * slot pointer contributes at least the one hit at this+404+4i. */
+    for (int t = 0; t < nslot && control_ok; t++)
+        if (hits[t] < 1) control_ok = 0;
+
+    fprintf(stderr, "coop refs: %ld dwords compared across %d regions, %d hits\n",
+            dwords, nregion, total_hits);
+    if (printed > 80)
+        fprintf(stderr, "coop refs: %d hits were not printed\n", printed - 80);
+    for (int t = 0; t < ntarget; t++)
+        fprintf(stderr, "  %-7s %08x  %ld reference%s\n",
+                label[t], target[t], hits[t], hits[t] == 1 ? "" : "s");
+    if (control_ok && control_checked)
+        fprintf(stderr, "coop refs: control PASSED -- all %d slot pointers were found at "
+                        "this+404, so the scan does see the memory it reports on\n",
+                control_checked);
+    else
+        fprintf(stderr, "coop refs: control FAILED (%d slot pointers inside a scanned "
+                        "region) -- the counts above are NOT evidence of anything\n",
+                control_checked);
+    fprintf(stderr, "coop refs: blind spots -- unaligned or tagged pointers, an object held "
+                    "only as base+offset, and the VRAM/PCM arenas (ours, no game structures). "
+                    "A zero count means no ALIGNED dword in the regions above holds that "
+                    "value.\n");
+}
+
+/* ---- LF2_COOP_TABLE: the object table at this+404, past the eight player slots ----
+ *
+ * What LF2_COOP_REFS established: the eight player records are pointed at from exactly ONE
+ * place each -- consecutive dwords at 0x00458c94 in .data -- and from NOWHERE in 101.9 MiB
+ * of heap. So there is no separate heap list of active objects; this table is the list, and
+ * it does not stop at eight. The dwords after slot 7 continue on the same 0x420 stride, and
+ * the object the "Fight!" heap diff could not place, 0x25f149a0, is entry 11 of it.
+ *
+ * This walks the table and prints, per entry, the pointer, its index on the stride grid,
+ * and the fields the playing-vs-idle diff in issue #15 identified: the chosen character at
+ * +0x364, HP at +0x2fc, position at +0x10/+0x18, and +0x354 (99 idle / 0 playing).
+ *
+ * The negative, again first: the walk states how many entries it examined and why it
+ * stopped, and every entry is printed -- including null and off-grid ones -- rather than
+ * only the ones that look like objects. A table dump that silently skipped what it could
+ * not parse would make a short table and a misread one look the same. */
+/* An entry that has never been put into the world reads exactly as the game initialised it:
+ * no character, full HP, the origin, and 99 at +0x354. That signature is not a guess -- it
+ * is what LF2_COOP_DIFF prints for an idle slot beside a playing one, in the same run. Any
+ * departure from it is an object that something has touched. */
+static int coop_entry_live(uint32_t p)
+{
+    return (int32_t)LD32(p + 0x364) != 0     /* chosen character */
+        || (int32_t)LD32(p + 0x2fc) != 500   /* HP */
+        || (int32_t)LD32(p + 0x10)  != 0     /* x */
+        || (int32_t)LD32(p + 0x18)  != 0     /* y */
+        || (int32_t)LD32(p + 0x354) != 99;
+}
+
+/* LF2_COOP_PAIR=<i>,<j> -- the dwords where table entry i differs from entry j. The existing
+ * LF2_COOP_DIFF compares slot 0 against slot 4, which mixes two questions: a player record
+ * differs from an idle one both by being a fighter in the world AND by being a player. This
+ * takes any two indices, so a live NON-player entry (the computer fighter the game itself
+ * put in the table) can be compared against an untouched neighbour of the same kind, which
+ * isolates "is in the world" from "is a player". */
+static void coop_pair_diff(uint32_t self, int i, int j)
+{
+    const uint32_t a = LD32(self + PLAYER_PTRS + 4u * (uint32_t)i);
+    const uint32_t b = LD32(self + PLAYER_PTRS + 4u * (uint32_t)j);
+    fprintf(stderr, "coop pair: frame %ld, [%d]=%08x (%s) vs [%d]=%08x (%s)\n",
+            hostwin_frames(), i, a, a && coop_entry_live(a) ? "LIVE" : "idle",
+            j, b, b && coop_entry_live(b) ? "LIVE" : "idle");
+    if (!a || !b) {
+        fprintf(stderr, "coop pair: REFUSED -- an entry is null, nothing was compared\n");
+        return;
+    }
+    if (!(a && coop_entry_live(a)) && !(b && coop_entry_live(b)))
+        fprintf(stderr, "coop pair: WARNING -- NEITHER entry is live, so any difference "
+                        "below is between two untouched records and says nothing about "
+                        "being in the world\n");
+    int n = 0;
+    for (uint32_t o = 0; o < 0x420u; o += 4) {
+        const uint32_t va = LD32(a + o), vb = LD32(b + o);
+        if (va == vb) continue;
+        n++;
+        fprintf(stderr, "  +%03x  [%d]=%-11d [%d]=%-11d (%08x / %08x)\n",
+                o, i, (int32_t)va, j, (int32_t)vb, va, vb);
+    }
+    fprintf(stderr, "coop pair: %d differing dwords of %d compared\n", n, 0x420 / 4);
+}
+
+/* ---- LF2_COOP_SPAWN=<dst>[,<src>] -- put a fighter in the world by imitating the game ----
+ *
+ * The earlier probe (LF2_COOP_TEST) cloned a playing record onto an idle PLAYER slot, set
+ * the joined-mask bit, and produced no fighter. What the read profile adds is that idle
+ * entries are not being ignored for lack of being visited: the update loop reads entries
+ * 0..19 once every frame and never touches 20..49 or 53..399, so an idle fighter slot IS
+ * visited each frame and skipped on something the clone did not reproduce.
+ *
+ * The one registration the game itself performed in a running match is the computer
+ * opponent at entry 11, and the field that most looks like the difference is +0x354: the
+ * idle default is 99, the player at entry 0 holds 0, and entry 11 holds 11 -- its own index.
+ * So this clone also sets +0x354 to the destination index, which the previous probe could
+ * not have done, since it copied the source's value.
+ *
+ * It then WATCHES the record for the following frames rather than declaring victory on the
+ * write. The interesting failure is not "nothing appeared on screen" -- it is the record
+ * being reset by the game's own sweep a frame later, which looks identical from outside and
+ * means something quite different. */
+static uint32_t spawn_dst_obj;
+static int spawn_dst_idx = -1;
+static long spawn_frame;
+
+static void coop_spawn(uint32_t self, int dst, int src)
+{
+    const uint32_t s = LD32(self + PLAYER_PTRS + 4u * (uint32_t)src);
+    const uint32_t d = LD32(self + PLAYER_PTRS + 4u * (uint32_t)dst);
+    if (!s || !d) {
+        fprintf(stderr, "coop spawn: REFUSED -- entry %d=%08x or %d=%08x is null, "
+                        "nothing was written\n", src, s, dst, d);
+        return;
+    }
+    if (!coop_entry_live(s)) {
+        fprintf(stderr, "coop spawn: REFUSED -- source entry %d is an untouched default, so "
+                        "cloning it would spawn nothing. This is not a failed spawn; the "
+                        "frame is not a match.\n", src);
+        return;
+    }
+    if (coop_entry_live(d)) {
+        fprintf(stderr, "coop spawn: REFUSED -- destination entry %d is ALREADY live, so a "
+                        "fighter appearing there would prove nothing\n", dst);
+        return;
+    }
+
+    for (uint32_t o = 0; o < 0x420u; o += 4) ST32(d + o, LD32(s + o));
+    ST32(d + 0x354, (uint32_t)dst);                      /* its own index, as entry 11 holds */
+    ST32(d + 0x10, LD32(s + 0x10) + 120u);               /* x, as ints */
+    ST32(d + 0x5c, LD32(s + 0x5c) + 0x400u);             /* x, as a float */
+    ST8(EXISTS + (uint32_t)dst, 1);                      /* the gate fn_004064d0 tests */
+    spawn_dst_obj = d; spawn_dst_idx = dst; spawn_frame = hostwin_frames();
+    fprintf(stderr, "coop spawn: cloned entry %d (%08x) onto entry %d (%08x) at frame %ld, "
+                    "+354 set to %d, exists byte at %08x set to 1\n",
+            src, s, dst, d, spawn_frame, dst, EXISTS + (uint32_t)dst);
+}
+
+/* Called every gather once a spawn has been attempted. Reports on a schedule AND on any
+ * change back towards the idle default, because the reset is the finding. */
+static void coop_spawn_watch(void)
+{
+    if (spawn_dst_idx < 0) return;
+    const long age = hostwin_frames() - spawn_frame;
+    static int was_live = 1, said_reset;
+    const int live = coop_entry_live(spawn_dst_obj);
+    if (was_live && !live && !said_reset) {
+        said_reset = 1;
+        fprintf(stderr, "coop spawn: entry %d was RESET to the idle default %ld frames after "
+                        "the clone -- the game's own sweep undid it, which is a different "
+                        "answer from the clone having no effect\n", spawn_dst_idx, age);
+    }
+    was_live = live;
+    if (age == 1 || age == 5 || age == 30 || age == 120 || age == 300)
+        fprintf(stderr, "coop spawn: +%3ld frames  entry %d %s  +000=%d char=%d hp=%d "
+                        "x=%d y=%d +354=%d +418=%d\n",
+                age, spawn_dst_idx, live ? "LIVE" : "idle",
+                (int32_t)LD32(spawn_dst_obj + 0x000), (int32_t)LD32(spawn_dst_obj + 0x364),
+                (int32_t)LD32(spawn_dst_obj + 0x2fc), (int32_t)LD32(spawn_dst_obj + 0x10),
+                (int32_t)LD32(spawn_dst_obj + 0x18),  (int32_t)LD32(spawn_dst_obj + 0x354),
+                (int32_t)LD32(spawn_dst_obj + 0x418));
+}
+
+static void coop_table_dump(uint32_t self)
+{
+    enum { MAXENT = 512 };
+    const uint32_t base = LD32(self + PLAYER_PTRS);
+
+    fprintf(stderr, "coop table: frame %ld, this=%08x, table at %08x, grid base %08x "
+                    "stride 0x420\n",
+            hostwin_frames(), self, self + PLAYER_PTRS, base);
+    if (!base) {
+        fprintf(stderr, "coop table: REFUSED -- entry 0 is null, so there is no grid base to "
+                        "measure against. Not a short table; a wrong frame.\n");
+        return;
+    }
+
+    int nonnull = 0, ongrid = 0, offgrid = 0, i = 0, nullrun = 0, live = 0;
+    for (; i < MAXENT; i++) {
+        const uint32_t p = LD32(self + PLAYER_PTRS + 4u * (uint32_t)i);
+        if (!p) {
+            nullrun++;
+            if (nullrun >= 8) { i++; break; }
+            continue;
+        }
+        nullrun = 0;
+        nonnull++;
+        const int32_t delta = (int32_t)(p - base);
+        const int grid = (delta % 0x420) == 0;
+        if (grid) ongrid++; else offgrid++;
+
+        const int inheap = p >= GUEST_HEAP_BASE && p + 0x420 <= GUEST_HEAP_END;
+        const int is_live = inheap && coop_entry_live(p);
+        if (is_live) live++;
+
+        /* The first eight are printed unconditionally because they are the player slots and
+         * their being idle is itself the thing being measured; past that only entries that
+         * are not untouched defaults are printed, or the dump is 400 identical lines. */
+        if (i >= 8 && !is_live && grid && inheap && !LD8(EXISTS + (uint32_t)i)) continue;
+
+        fprintf(stderr, "  [%3d] %08x gate=%-3d %s%s", i, p, LD8(EXISTS + (uint32_t)i),
+                grid ? "" : "OFF-GRID ", is_live ? "LIVE " : "     ");
+        if (grid) fprintf(stderr, "idx %-4d ", delta / 0x420);
+        if (inheap)
+            /* +0x338 is printed because the read profile says it is the ONLY dword the
+             * per-frame sweep reads on an idle object -- 300 reads in 300 frames and
+             * nothing else in the record. Whatever gates an object into the world is
+             * decided from it. */
+            fprintf(stderr, "+338=%-10d +000=%-4d char=%-4d hp=%-5d x=%-6d y=%-6d "
+                            "+354=%-4d +418=%-4d +368=%08x",
+                    (int32_t)LD32(p + 0x338),
+                    (int32_t)LD32(p + 0x000),
+                    (int32_t)LD32(p + 0x364), (int32_t)LD32(p + 0x2fc),
+                    (int32_t)LD32(p + 0x10), (int32_t)LD32(p + 0x18),
+                    (int32_t)LD32(p + 0x354), (int32_t)LD32(p + 0x418),
+                    LD32(p + 0x368));
+        else
+            fprintf(stderr, "NOT IN THE HEAP -- not an object of this kind");
+        fprintf(stderr, "\n");
+    }
+    fprintf(stderr, "coop table: %d entries examined, %d non-null (%d on the 0x420 grid, %d "
+                    "off it), %d LIVE; stopped %s\n",
+            i, nonnull, ongrid, offgrid, live,
+            i >= MAXENT ? "at the MAXENT cap, so the table may be longer than this"
+                        : "after 8 consecutive nulls");
+    /* What follows the 400 pointers. The per-byte read profile of `this` puts a hot dword
+     * at +0x7d4 -- immediately past the table -- read about 94 times a frame during a
+     * match, which is the profile of a count or a list head rather than a stored setting.
+     * Printed raw, with no interpretation, because naming it before seeing it is how a
+     * reading gets fixed in place. */
+    fprintf(stderr, "coop table: the 64 dwords after the table (this+0x7d4 onwards):\n");
+    for (int k = 0; k < 64; k += 8) {
+        fprintf(stderr, "  +%03x:", 0x7d4 + k * 4);
+        for (int j = 0; j < 8; j++)
+            fprintf(stderr, " %11d", (int32_t)LD32(self + 0x7d4u + 4u * (uint32_t)(k + j)));
+        fprintf(stderr, "\n");
+    }
+
+    if (live == 0)
+        fprintf(stderr, "coop table: NOT A MATCH -- every entry is still at its initialised "
+                        "default (no character, 500 HP, the origin, 99 at +0x354), so no "
+                        "fighter exists on this frame. This dump says NOTHING about how "
+                        "fighters are registered; the run did not reach a match.\n");
+}
 
 /* Counters, not a hit log: the interesting failure is that this never merges anything, and
  * a diagnostic that only printed when it did would be silent in exactly that case. The
@@ -529,6 +921,85 @@ void fn_00419a60(void)
         }
         memcpy(dev_prev[d], btn[d], 7);
     }
+
+    /* LF2_COOP_REFS=<frame> -- scan memory for pointers to the player records. Outside the
+     * LF2_COOP_DEBUG block on purpose: it is a one-shot scan and does not want the slot
+     * table wall alongside it. */
+    {
+        const char *rf = getenv("LF2_COOP_REFS");
+        if (rf && hostwin_frames() == atol(rf)) coop_refs_scan(self);
+        /* LF2_COOP_TABLE=<frame> | live[+<n>]. The frame form is exact but brittle: the
+         * data load does not take the same number of frames every run, so a scripted route
+         * can be at character selection on the frame it reached the match on last time --
+         * which is how the first table dump came back 400 lines of untouched defaults. The
+         * `live` form fires <n> frames after the first frame on which any entry is not an
+         * untouched default, so it lands in a match or does not fire at all. */
+        {
+            const char *tf2 = getenv("LF2_COOP_TABLE");
+            static long live_at = -1, fired = -1;
+            if (tf2 && *tf2) {
+                if (strncmp(tf2, "live", 4) == 0) {
+                    const long after = tf2[4] == '+' ? atol(tf2 + 5) : 0;
+                    if (live_at < 0) {
+                        const uint32_t p0 = LD32(self + PLAYER_PTRS);
+                        if (p0 && coop_entry_live(p0)) live_at = hostwin_frames();
+                    }
+                    if (live_at >= 0 && fired < 0 && hostwin_frames() >= live_at + after) {
+                        fired = hostwin_frames();
+                        fprintf(stderr, "coop table: slot 0 first became live at frame %ld\n",
+                                live_at);
+                        coop_table_dump(self);
+                        /* `auto` picks the first LIVE entry past the eight player slots --
+                         * the fighter the game put in the table itself -- against its next
+                         * neighbour. Which index that is varies between runs, so naming it
+                         * by number would silently compare two idle records on a run where
+                         * it landed elsewhere. */
+                        const char *pr = getenv("LF2_COOP_PAIR");
+                        int pi = -1, pj = -1;
+                        if (pr && strcmp(pr, "auto") == 0) {
+                            for (int k = 8; k < 400; k++) {
+                                const uint32_t p = LD32(self + PLAYER_PTRS + 4u * (uint32_t)k);
+                                if (p && coop_entry_live(p)) { pi = k; pj = k + 1; break; }
+                            }
+                            if (pi < 0)
+                                fprintf(stderr, "coop pair: auto found no live entry past the "
+                                                "player slots, so nothing was compared\n");
+                        } else if (pr) {
+                            if (sscanf(pr, "%d,%d", &pi, &pj) != 2) pi = -1;
+                        }
+                        if (pi >= 0) coop_pair_diff(self, pi, pj);
+
+                        /* LF2_COOP_SPAWN=<dst>[,<src>] -- src defaults to the first live
+                         * entry, so the probe clones whatever fighter the run actually has
+                         * rather than assuming slot 0 is one. */
+                        const char *sp = getenv("LF2_COOP_SPAWN");
+                        if (sp) {
+                            int sd = -1, ss = -1;
+                            const int got = sscanf(sp, "%d,%d", &sd, &ss);
+                            if (got >= 1) {
+                                if (ss < 0)
+                                    for (int k = 0; k < 400; k++) {
+                                        const uint32_t p =
+                                            LD32(self + PLAYER_PTRS + 4u * (uint32_t)k);
+                                        if (p && coop_entry_live(p) &&
+                                            (int32_t)LD32(p + 0x364) != 0) { ss = k; break; }
+                                    }
+                                if (ss < 0)
+                                    fprintf(stderr, "coop spawn: REFUSED -- no live entry "
+                                                    "with a character to clone from\n");
+                                else
+                                    coop_spawn(self, sd, ss);
+                            }
+                        }
+                    }
+                } else if (hostwin_frames() == atol(tf2)) {
+                    coop_table_dump(self);
+                }
+            }
+        }
+    }
+
+    coop_spawn_watch();
 
     /* LF2_COOP_DEBUG=1 -- the player slot table as the game maintains it, printed whenever
      * it changes: the device selector per slot and the object pointer per slot. This is the

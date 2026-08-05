@@ -1,7 +1,7 @@
 ---
 id: 15
 title: Drop-in coop: the joined-players mask and the player record are found; the active-object list is not
-status: open
+status: resolved
 symptom: a device that is not assigned to a player cannot join a stage that is already running
 tags: coop,drop-in,players,re,groundwork
 created: 2026-08-05
@@ -108,3 +108,79 @@ Not confirmed: it is not on the 0x420 grid of the player array
 to a different array with its own base. Find that base and its count, and the question
 becomes whether adding an entry there (plus the mask bit and the record init already known)
 is what puts a fighter in the world.
+
+### Resolution (2026-08-05)
+RESOLVED as an RE question. The gate is found, and adding a fighter to a RUNNING match is
+demonstrated on screen.
+
+THE MECHANISM. `this` is 0x00458b00. At this+404 is an array of FOUR HUNDRED object
+pointers on a 0x420 stride, not eight -- the eight player slots are simply its first eight
+entries. Every entry holds a live pointer to a pre-allocated record from the moment the
+data loads, so being in the array is not what puts an object in the world.
+
+What does is a BYTE PER INDEX at this+4 (0x00458b04). fn_004064d0 walks the table as
+
+    ESI = this + 404
+    EAX = LD32(ESI)                       // obj = table[k]
+    if (obj->0x338 > 0) obj->0x338--;     // a countdown, run for EVERY entry
+    if (LD8(this + 4 + k) != 1) goto next // <-- the gate
+
+VERIFIED, on screen. LF2_COOP_SPAWN=<dst> clones a live fighter's record onto entry dst,
+sets +0x354 to dst and writes 1 to the gate byte. The record then animates (+0x000 cycles),
+walks (x/y change), COLLIDES and takes damage (HP 500 -> 432), draws with its own name tag,
+and gets a HUD bar. Two runs identical up to the spawn frame -- both with exactly two
+fighters at frame 2201 -- diverge to two fighters and three at frame 2260
+(scratch/screenshots/{control,spawned}.png).
+
+Without the gate byte the same clone is INERT: the record survives 300 frames completely
+unchanged, neither updated nor reset. That is the negative control, and it is what the
+earlier probe was doing.
+
+CORRECTION to the previous note. 0x25f149a0 is NOT off the 0x420 grid of the player array:
+(0x25f149a0 - 0x25f11c40) / 0x420 is exactly 11. It is entry 11 of the same table -- the
+computer opponent. The arithmetic in the last session was wrong, and the "separate
+world-object array with its own base" it implied does not exist.
+
+HOW IT WAS FOUND, in order, because each step ruled out the next-most-likely story:
+
+1. LF2_COOP_REFS scans the image, the heap in use and the stack for the eight player
+   pointers. Each is referenced from EXACTLY ONE place -- consecutive dwords at 0x00458c94
+   -- and from NOWHERE in 101.9 MiB of heap. So there is no separate heap list of active
+   objects; that was the thing the previous session set out to find.
+2. LF2_READ_WATCH_RAW (new) over the table gives the per-entry read profile in a match:
+   entries 0..19 read once per frame, 20..49 never, 50..~62 heavily, the rest never. So
+   idle fighter slots ARE visited every frame and skipped -- the loop is not bounded by a
+   count.
+3. The same profile over one idle OBJECT: exactly one byte address is read, +0x338, once
+   per frame, and nothing else in 1056 bytes. That is the countdown above, not the gate,
+   and its value is 0 on live and idle alike -- which is why the gate is not in the object.
+4. The profile over `this` puts the hot region at this+0x04..0x193, ~28 reads per byte per
+   frame. Grepping the lifted C for the +824 (0x338) countdown lands in fn_004064d0 and
+   shows the byte test one instruction later.
+
+WHAT REMAINS for drop-in coop proper, none of it blocked: pick a free index (the game gave
+its computer opponent 11, so the choice is not "the next player slot"), build the record
+from the chosen character's data instead of cloning a neighbour, and bind the new fighter
+to the joining device -- the ported gather already writes buttons to `this+404+4i` for
+i < 4, and that cap is now known to be a port limitation against a 400-entry table.
+
+INSTRUMENTS ADDED, all env-gated and all in the ported gather:
+  LF2_COOP_REFS=<frame>          who points at the player records; carries a positive
+                                 control that FAILS loudly if the scan cannot see this+404
+  LF2_COOP_REFS_ADDR=<hex>[,..]  extra scan targets
+  LF2_COOP_TABLE=<frame>|live[+n] the whole table with the gate byte per entry. `live`
+                                 fires off the game's state, not a frame number, and the
+                                 dump says NOT A MATCH outright when every entry is still
+                                 an untouched default
+  LF2_COOP_PAIR=<i>,<j>|auto     dwords differing between two entries
+  LF2_COOP_SPAWN=<dst>[,<src>]   the probe above, with a follow-up watch that reports a
+                                 reset separately from no effect
+  LF2_READ_WATCH_RAW=1           per-byte read profile for the existing read-watch, with
+                                 its own selftest; the filtered mode hides exactly the
+                                 array sweeps this needed
+
+METHOD NOTE, paid for twice now. The first table dump came back 400 lines of untouched
+defaults and looked like a clean result: the scripted route had not reached the match on
+the frame it reached it on last run, because the data load does not take a fixed number of
+frames. Frame-numbered probes into a match are unreliable; LF2_COOP_TABLE=live+<n> keys off
+the game's own state instead, and the dump names the negative rather than printing it.
