@@ -73,6 +73,7 @@ static void h_GetSystemTimeAsFileTime(void)
 }
 
 int  lf2_loading_now(void);          /* defined with the file handlers below */
+long hostwin_frames(void);           /* runtime/ddraw.c */
 
 /* See "the guest clock" below: the offset the port owes the guest for waits it
  * decided not to take. Declared here because h_Sleep is what pays into it. */
@@ -112,6 +113,10 @@ enum { CLOCK_SITES = 24 };
 static uint32_t clk_site[CLOCK_SITES];
 static long     clk_site_n[CLOCK_SITES];      /* total reads from this site */
 static long     clk_site_max_run[CLOCK_SITES];/* longest burst with no Sleep in it */
+static long     clk_site_max_at[CLOCK_SITES]; /* and the presented frame it happened on --
+                                               * "during the load" and "during play" are
+                                               * different diagnoses and this is what tells
+                                               * them apart */
 static const char *clk_site_api[CLOCK_SITES]; /* which of the three it came through */
 static int      clk_nsites;
 static long     clk_reads_total, clk_run, clk_dropped;
@@ -134,7 +139,10 @@ static void clock_read_note(const char *api)
         clk_nsites++;
     }
     clk_site_n[k]++;
-    if (clk_run > clk_site_max_run[k]) clk_site_max_run[k] = clk_run;
+    if (clk_run > clk_site_max_run[k]) {
+        clk_site_max_run[k] = clk_run;
+        clk_site_max_at[k] = hostwin_frames();
+    }
 }
 
 void clock_sites_report(void)
@@ -151,8 +159,9 @@ void clock_sites_report(void)
             clk_reads_total, clk_nsites,
             clk_dropped ? " (and more sites than this build can hold; some were DROPPED)" : "");
     for (int k = 0; k < clk_nsites; k++)
-        fprintf(stderr, "  from=%08x  %-24s reads=%-9ld longest run=%ld\n",
-                clk_site[k], clk_site_api[k], clk_site_n[k], clk_site_max_run[k]);
+        fprintf(stderr, "  from=%08x  %-24s reads=%-9ld longest run=%-7ld at frame %ld\n",
+                clk_site[k], clk_site_api[k], clk_site_n[k], clk_site_max_run[k],
+                clk_site_max_at[k]);
     if (clk_dropped)
         fprintf(stderr, "  ... and %ld reads from call sites past the %d this build records, "
                         "which are NOT in the list above\n", clk_dropped, CLOCK_SITES);

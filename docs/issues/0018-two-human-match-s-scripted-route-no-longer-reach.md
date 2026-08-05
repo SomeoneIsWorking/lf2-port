@@ -258,3 +258,33 @@ instrumentation -- is very likely answered by this too: with reads inflating vir
 a run doing heavy per-frame host work reads the clock more, so it paid more virtual time per
 frame and the pacer then waited for the wall to catch up. Worth confirming once the credit
 moves to frames.
+
+### Note (2026-08-06)
+WHERE THE SPIN HAPPENS, and it sharpens the fix. The instrument now records the presented
+frame the longest run occurred on, because 'during the load' and 'during play' are different
+diagnoses:
+
+  from=0043d162  reads=218937  longest run=379  at frame 8
+  from=0043d195  reads=218937  longest run=381  at frame 9
+  from=0043d174  reads=4       longest run=185  at frame 2141
+
+Frames 8-9 are the data load; frame 2141 is the moment the match starts. Both are exactly
+where the game's work per iteration is heaviest, which is when the pacer's  stays
+negative and the loop goes round without sleeping. The 218,937 reads are 91 per presented
+frame sustained across the whole run, so this is not a startup quirk -- the loop is reading
+its clock about ninety times for every frame it produces.
+
+THE SIZING QUESTION IS ANSWERED BY TAKING THE MAXIMUM, NOT THE SUM. The clock should be
+
+    virtual = max(frames * 33.33 ms, accumulated Sleep credit)
+
+rather than the two added. Both counters are monotonic so the maximum is too, and the two
+track each other during normal play (the game sleeps out roughly a frame period per frame it
+produces), so neither double-counts. During the load and at the match transition the game
+does not sleep at all and the frame term carries the clock forward, which is precisely what
+the catch-up loop needs to converge. Adding them instead would give 66 ms per frame of
+virtual time during play -- the game would believe it was running at 15 fps and the wall
+pacer would halve the speed.
+
+With that, the per-read credit can go entirely, and with it the distortion that is the
+likeliest cause of the smoke slowdown.
