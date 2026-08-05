@@ -109,6 +109,7 @@ void coop_select_tick(uint32_t self, int slot, const unsigned char btn[7],
                       const unsigned char prev[7]);
 
 int  coop_selecting(int slot);         /* withhold this slot's buttons from its fighter */
+int  coop_hud_preview(int slot);       /* hud.c: raise this slot for the HUD pass alone */
 int  coop_owns(int slot);              /* this port put the fighter there, so it may remove it */
 void coop_reset(void);                 /* the game proper was left */
 

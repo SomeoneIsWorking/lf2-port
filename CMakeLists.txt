@@ -64,6 +64,7 @@ add_executable(lf2
     runtime/overrides/input.c
     runtime/overrides/coop.c
     runtime/overrides/coop_debug.c
+    runtime/overrides/hud.c
     runtime/overrides/text.c
     runtime/overrides/assets.c
     runtime/main.c)
@@ -81,6 +82,7 @@ set_source_files_properties(
     runtime/overrides/input.c
     runtime/overrides/coop.c
     runtime/overrides/coop_debug.c
+    runtime/overrides/hud.c
     runtime/overrides/text.c
     runtime/overrides/assets.c
     runtime/main.c

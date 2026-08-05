@@ -15,6 +15,9 @@
  *   coop.c        the object world: building a fighter, joining, leaving, choosing one
  *   coop_debug.c  the instruments over that world -- every LF2_COOP_* probe, and the
  *                 follow-up watch the spawn diagnostics report through
+ *   hud.c         the in-match HUD strip: the one pass that may see a player slot the
+ *                 stage may not, which is how a drop-in chooses a character without
+ *                 standing in the fight
  *   text.c        the clip and glyph draw hooks
  *   assets.c      the data-file decrypt
  *
@@ -30,6 +33,7 @@
  *   fn_004246b0  menu.c     the front-end menu -- selection index, so a pad can drive it
  *   fn_00423b00  menu.c     element draw -- declines the advertising panel by descriptor
  *   fn_00419a60  input.c    per-frame player input -- devices into the game's buttons
+ *   fn_0041ae60  hud.c      the in-match HUD strip -- one panel per player slot
  *   fn_0043f010  text.c     clip draw -- glyph hinting, the ad notice, the game's cursor
  *   fn_00423940  text.c     font sheet selection
  *   fn_0043c4a0  text.c     text draw
