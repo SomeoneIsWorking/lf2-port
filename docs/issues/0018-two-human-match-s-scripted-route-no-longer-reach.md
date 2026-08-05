@@ -152,3 +152,55 @@ now NEVER FIRES and the run says so, instead of pressing into whatever happened 
 screen. The loaded run above failed with 'screens reached -- NONE' and a NEVER FIRED line --
 which is a diagnosis. Before the conversion the same run failed with assertions about a join
 that never happened, which is a mystery.
+
+### Note (2026-08-06)
+THE VIRTUAL CLOCK: BUILT, MEASURED, AND NOT COMMITTED, 2026-08-06. It fixes the determinism
+outright and costs wall time somewhere I did not root-cause, so it is written up here rather
+than shipped half-verified. The next session should start from this, not from scratch.
+
+THE DESIGN, which worked:
+
+  runtime/imports.c -- guest_ns() stops reading CLOCK_MONOTONIC entirely and returns a
+  VIRTUAL timeline advanced only by the guest's own behaviour:
+    * Sleep(ms) credits ms in full, whether or not the port actually sleeps (a skipped Sleep
+      is a promise the time passed; without the credit the game's wait becomes a spin).
+    * every READ of the clock credits 1 microsecond -- the hang guard, see below.
+  h_Sleep then PACES THE WALL AGAINST IT rather than sleeping the requested amount: sleep
+  until wall reaches virtual, re-anchoring when the debt passes 250 ms. wall_ns() is a new
+  helper used ONLY for that and never to tell the guest what time it is.
+
+THE RESULT, which is the whole point of this entry:
+
+  route -> screens reached, idle box:        charselect@908 overlay@1747 match@1968
+  the same route under 14 busy loops:        charselect@908 overlay@1747 match@1968
+
+  BYTE IDENTICAL. Before the change the same loaded run reported 'screens reached -- NONE'.
+  The guest timeline stops depending on the machine, which is what was asked for.
+
+WHY PACING THE WALL IS NOT OPTIONAL: sleeping the requested ms and calling it done measured
+20 fps where the game asks for 30. nanosleep OVERSHOOTS, LF2 paces a frame by sleeping ~1 ms
+at a time and re-reading until a ~33 ms deadline passes, and a virtual clock that credits
+exactly what was asked for no longer absorbs the overshoot. Sleeping until the wall REACHES
+the virtual clock restored 28.7 fps.
+
+WHY THE PER-READ CREDIT IS NOT OPTIONAL, measured rather than assumed: with CLOCK_READ_NS set
+to 0 the same run went from 20 s of user CPU to 111 s and hit its timeout. Something in the
+game watches the clock WITHOUT sleeping, and with a clock that only sleeps advance it, that
+loop waits for a time that can never arrive. 1 us per read terminates it.
+
+WHAT IS UNRESOLVED, and why this is not committed: with the change in, Test project /home/bhamil/repo/pc/lf2 went from
+79 s to over 150 s and timed out, while all nine other tests passed -- controller,
+controller_2p, coop_dropin, coop_select, pause_dropout, widescreen, two_human_match, mouse.
+Smoke is the run with LF2_CK_DEBUG, LF2_AUDIO_DEBUG and LF2_SCREEN_HASH all on, so the
+suspicion is an interaction between heavy per-frame host work and the pacer, but I did NOT
+establish that, and the theory that it was smoke's absolute-frame route is DISPROVED: keying
+its key script to screens (which needs script_trigger_frame exported from gamepad.c to
+win32.c -- LF2_KEY_SCRIPT does not understand @screen today) left it still short of the match
+at plays=1.
+
+NEXT STEPS, in order: (1) find the read-spin site -- imports.c already has the 'which guest
+loop is sleeping' instrument, and the same trick on the GetTickCount/QPC/timeGetTime callers
+would name it, after which the per-read credit may be replaceable by fixing that loop; (2)
+measure smoke with and without its three debug variables to settle whether the slowdown is the
+pacer or the instrumentation; (3) teach LF2_KEY_SCRIPT the @screen form so the last route
+stops being a stopwatch.
