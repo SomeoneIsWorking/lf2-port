@@ -601,6 +601,37 @@ void cursor_find_note(int dl, int dt, const char *via)
     }
 }
 
+/* ---- which post-load screen is up ----
+ *
+ * The ported menus on character selection and the pre-fight overlay both hit-test the
+ * pointer, and the overlay is drawn ON TOP of character selection, so something has to say
+ * which one owns the pointer this frame. The obvious place to look was a .data flag, and
+ * that is exactly how this went wrong the first time: a word was found that separated the
+ * two screens perfectly in stage mode (-100 / 0 / 1) and turned out to be the GAME MODE,
+ * reading 1 in VS mode whether the overlay was up or not. It was derived from stage-mode
+ * dumps and validated against stage-mode dumps, so it could not have failed.
+ *
+ * This asks the game instead. Both panels are drawn every frame they are up, at fixed
+ * destinations taken from the blit log and confirmed identical in both modes:
+ *
+ *   character-select panel  (40,33)-(745,520)
+ *   pre-fight overlay panel (3,3)-(307,159)
+ *
+ * A screen is "up" if its panel was drawn in the last couple of frames -- a small window,
+ * because the menu override and the blits do not run in a fixed order within a frame, and
+ * because a screen that stopped being drawn two frames ago is gone. */
+enum { PANEL_FRESH = 2 };
+static long panel_charselect_frame = -1000, panel_overlay_frame = -1000;
+
+static void panel_note(int l, int t, int r, int b)
+{
+    if (l == 40 && t == 33 && r == 745 && b == 520) panel_charselect_frame = frames;
+    else if (l == 3 && t == 3 && r == 307 && b == 159) panel_overlay_frame = frames;
+}
+
+int panel_charselect_up(void) { return frames - panel_charselect_frame <= PANEL_FRESH; }
+int panel_overlay_up(void)    { return frames - panel_overlay_frame    <= PANEL_FRESH; }
+
 /* LF2_BLT_FRAME=<frame>[,...] -- every blit that composes those presented frames, with both
  * rectangles, the source surface and the caller. This replaces LF2_BLT_ALL, which was capped
  * at the first 24 blits of the whole run: that is the front end, so a question about what a
@@ -727,6 +758,7 @@ static void surf_Blt(uint32_t self)
             }
         }
     }
+    panel_note(dl, dt, dr, db);
     cursor_find_note(dl, dt, "Blt");
     /* LF2_SMALL_BLT=1 -- a cursor is a SMALL sprite, so list the small destinations
      * distinctly. The correlation hook asks "does this track the pointer" and answers no
