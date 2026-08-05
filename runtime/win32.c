@@ -37,12 +37,31 @@ static int mouse_left_down, mouse_right_down;
 static int host_ptr_x = -1, host_ptr_y = -1;
 
 /* One-shot edge: true once per physical press, so a held button does not auto-repeat
- * through a menu. Consumed by the reader. */
-static int mouse_click_pending;
+ * through a menu. Consumed by the reader.
+ *
+ * It also EXPIRES, which it did not used to, and that was a real bug: the front-end
+ * launcher does its own hit-testing through the game's click flag and never calls this, so
+ * a click on "game start" left the edge armed. It then sat there through the whole data
+ * load and was collected by the first ported menu to look -- the mode menu, with the
+ * pointer still resting where "game start" had been, which is inside "VS mode". One click
+ * on the launcher started a VS match.
+ *
+ * A click is a per-frame event. If no ported menu claimed it in the frame it happened, it
+ * was not for one, and holding it is how a stale input reaches a screen that did not exist
+ * when the button went down. One frame of slack because the menu override and the present
+ * do not run in a fixed order within a frame. */
+static int  mouse_click_pending;
+static long mouse_click_frame = -1;
+
+static void mouse_click_arm(void)
+{
+    mouse_click_pending = 1;
+    mouse_click_frame = hostwin_frames();
+}
 
 int hostwin_mouse_clicked(void)
 {
-    const int c = mouse_click_pending;
+    const int c = mouse_click_pending && (hostwin_frames() - mouse_click_frame) <= 1;
     mouse_click_pending = 0;
     return c;
 }
@@ -258,7 +277,7 @@ static void pump_autoclick(void)
      * scripted click tested hover and nothing else: a menu whose click did not activate at
      * all still looked correct in a scripted run, because the key script that followed
      * confirmed whatever the hover had selected. */
-    if (down) mouse_click_pending = 1;
+    if (down) mouse_click_arm();
     push_message(WM_MOUSEMOVE, down ? 1 : 0, lp);
     push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
 }
@@ -307,7 +326,7 @@ void hostwin_inject_pointer(int x, int y, int down)
     if (down < 0) return;
     if ((down != 0) == mouse_left_down) return;
     mouse_left_down = down != 0;
-    if (mouse_left_down) mouse_click_pending = 1;
+    if (mouse_left_down) mouse_click_arm();
     push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
 }
 
@@ -355,7 +374,7 @@ void hostwin_pump(void)
             const int down = (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
             const uint32_t lp = mouse_lparam(e.button.x, e.button.y);
             if (e.button.button == SDL_BUTTON_LEFT) {
-                if (down && !mouse_left_down) mouse_click_pending = 1;
+                if (down && !mouse_left_down) mouse_click_arm();
                 mouse_left_down = down;
                 push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
             } else if (e.button.button == SDL_BUTTON_RIGHT) {
