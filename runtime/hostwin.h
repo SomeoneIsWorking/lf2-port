@@ -52,6 +52,10 @@ int  hostwin_width(void);
 int  hostwin_height(void);
 int  gamepad_start_held(void);
 
+/* Ask for the NEXT presented frame to be written out, for a probe whose moment is decided
+ * by game state rather than by a frame number. */
+void gfx_request_frame_dump(void);
+
 /* Pause menu, runtime/pause.c */
 int  pause_active(void);
 void pause_tick(void);

@@ -746,7 +746,7 @@ static uint32_t coop_data_for_id(uint32_t self, int id)
     return 0;
 }
 
-static void coop_spawn(uint32_t self, int dst, int id, int posref)
+static void coop_spawn(uint32_t self, int dst, int id, int posref, int sel)
 {
     const uint32_t d = LD32(self + PLAYER_PTRS + 4u * (uint32_t)dst);
     const uint32_t ref = posref >= 0 ? LD32(self + PLAYER_PTRS + 4u * (uint32_t)posref) : 0;
@@ -776,24 +776,43 @@ static void coop_spawn(uint32_t self, int dst, int id, int posref)
 
     ST32(d + 872, data);                              /* the object-data pointer */
     ST32(d + 796, LD32(data + 144));
-    ST32(d + 16, LD32(ref + 16) + 120u);              /* position, from a live fighter */
+    /* Each spawn is pushed further along x than the last, so two of them in one run do not
+     * land on top of each other and read as one fighter. */
+    static int spawn_n;
+    const double dx = 120.0 * (double)(++spawn_n);
+    ST32(d + 16, (uint32_t)((int32_t)LD32(ref + 16) + (int32_t)dx));  /* from a live fighter */
     ST32(d + 20, LD32(ref + 20));
     ST32(d + 24, LD32(ref + 24));
-    STF64(d + 88,  LDF64(ref + 88) + 120.0);
+    STF64(d + 88,  LDF64(ref + 88) + dx);
     STF64(d + 96,  LDF64(ref + 96));
     STF64(d + 104, LDF64(ref + 104));
     ST32(d + 852, (uint32_t)dst);                     /* see the note above: imitation */
+    /* The third field of LF2_COOP_SPAWN, for the portrait A/B. fn_004061d0 zeroes +0x364,
+     * and a spawned fighter's HUD portrait is wrong, so this exists to test whether that
+     * field is what the HUD reads -- two otherwise identical spawns with different values
+     * either draw different portraits or they do not, and one run of each settles it. */
+    if (sel >= 0) ST32(d + 0x364, (uint32_t)sel);
     ST8(EXISTS + (uint32_t)dst, 1);                   /* the gate fn_004064d0 tests */
 
-    spawn_dst_obj = d; spawn_dst_idx = dst; spawn_frame = hostwin_frames();
+    /* The watch follows the FIRST spawn of a run. With a list, a watch that silently
+     * re-pointed at the last one would report on a different fighter than the reader
+     * expects, so the switch is announced instead of made. */
+    if (spawn_dst_idx < 0) {
+        spawn_dst_obj = d; spawn_dst_idx = dst; spawn_frame = hostwin_frames();
+    } else {
+        fprintf(stderr, "coop spawn: the follow-up watch stays on entry %d, the first spawn "
+                        "of this run -- entry %d is not being watched\n", spawn_dst_idx, dst);
+    }
     fprintf(stderr, "coop spawn: built object id %d at table entry %d (%08x) from registry "
                     "data %08x at frame %ld; position from entry %d; gate byte %08x set\n",
             id, dst, d, data, spawn_frame, posref, EXISTS + (uint32_t)dst);
+    if (sel >= 0)
+        fprintf(stderr, "coop spawn: +0x364 forced to %d\n", sel);
 }
 
 /* Called every gather once a spawn has been attempted. Reports on a schedule AND on any
  * change back towards the idle default, because the reset is the finding. */
-static void coop_spawn_watch(void)
+static void coop_spawn_watch(uint32_t self)
 {
     if (spawn_dst_idx < 0) return;
     const long age = hostwin_frames() - spawn_frame;
@@ -803,7 +822,7 @@ static void coop_spawn_watch(void)
         said_reset = 1;
         fprintf(stderr, "coop spawn: entry %d was RESET to the idle default %ld frames after "
                         "the clone -- the game's own sweep undid it, which is a different "
-                        "answer from the clone having no effect\n", spawn_dst_idx, age);
+                        "answer from the spawn having no effect\n", spawn_dst_idx, age);
     }
     was_live = live;
     if (age == 1 || age == 5 || age == 30 || age == 120 || age == 300)
@@ -814,6 +833,39 @@ static void coop_spawn_watch(void)
                 (int32_t)LD32(spawn_dst_obj + 0x2fc), (int32_t)LD32(spawn_dst_obj + 0x10),
                 (int32_t)LD32(spawn_dst_obj + 0x18),  (int32_t)LD32(spawn_dst_obj + 0x354),
                 (int32_t)LD32(spawn_dst_obj + 0x418));
+
+    /* The spawned fighter draws and fights, but its HUD PORTRAIT is not its character. So
+     * something reads identity from a field the spawn does not set. The shortest way to
+     * that field is to diff this record against one the GAME built -- the computer opponent
+     * -- once both have been running a while: what differs is what was not set, minus
+     * whatever has diverged through being in different places doing different things.
+     *
+     * Deliberately at +90 rather than +1: at +1 the spawn's own writes dominate and every
+     * position and state field differs, which buries the handful that matter. */
+    /* LF2_COOP_SHOT=<n>: capture the frame n frames after the spawn, so the picture is of
+     * the spawn rather than of whatever the run happened to be showing at a chosen frame. */
+    {
+        const char *shot = getenv("LF2_COOP_SHOT");
+        if (shot && age == atol(shot)) {
+            fprintf(stderr, "coop spawn: requesting a frame capture at +%ld frames\n", age);
+            gfx_request_frame_dump();
+        }
+    }
+
+    if (age == 90) {
+        int other = -1;
+        for (int k = 0; k < TABLE_N; k++)
+            if (k != spawn_dst_idx && LD8(EXISTS + (uint32_t)k)) { other = k; break; }
+        if (other < 0)
+            fprintf(stderr, "coop spawn: no other live entry to diff against, so the "
+                            "portrait question is unanswered by this run\n");
+        else {
+            fprintf(stderr, "coop spawn: spawned entry %d against game-built entry %d --\n"
+                            "  the fields the spawn does not set are in here somewhere\n",
+                    spawn_dst_idx, other);
+            coop_pair_diff(self, spawn_dst_idx, other);
+        }
+    }
 }
 
 /* ---- LF2_COOP_REGISTRY: the object-data registry the game spawns from ----
@@ -1112,22 +1164,32 @@ void fn_00419a60(void)
                         }
                         if (pi >= 0) coop_pair_diff(self, pi, pj);
 
-                        /* LF2_COOP_SPAWN=<dst>[,<object id>] -- the id defaults to 1
-                         * (Bandit), which is a character every copy of the game has. The
-                         * spawn position is taken from whichever entry is live, found here
-                         * rather than assumed to be slot 0. */
+                        /* LF2_COOP_SPAWN=<dst>[,<id>[,<+0x364>]][;...] -- a LIST, because
+                         * the only way to compare two spawns fairly is to make them in the
+                         * SAME run. VS mode randomises the characters, so two runs differ
+                         * in the fighters already on the stage; an A/B across runs showed
+                         * three portraits changing when one variable had been altered, and
+                         * a difference read off that would have been the randomiser.
+                         *
+                         * The id defaults to 1 (Bandit), which every copy of the game has,
+                         * and the spawn position comes from whichever entry is live, found
+                         * here rather than assumed to be slot 0. */
                         const char *sp = getenv("LF2_COOP_SPAWN");
-                        if (sp) {
-                            int sd = -1, sid = 1;
-                            if (sscanf(sp, "%d,%d", &sd, &sid) >= 1 && sd >= 0) {
+                        for (const char *c = sp; c && *c; ) {
+                            int sd = -1, sid = 1, ssel = -1;
+                            const int got = sscanf(c, "%d,%d,%d", &sd, &sid, &ssel);
+                            if (got >= 1 && sd >= 0) {
                                 int posref = -1;
                                 for (int k = 0; k < TABLE_N; k++)
                                     if (LD8(EXISTS + (uint32_t)k)) { posref = k; break; }
-                                coop_spawn(self, sd, sid, posref);
+                                coop_spawn(self, sd, sid, posref, ssel);
                             } else {
-                                fprintf(stderr, "coop spawn: REFUSED -- LF2_COOP_SPAWN must be "
-                                                "<index>[,<object id>], got \"%s\"\n", sp);
+                                fprintf(stderr, "coop spawn: REFUSED -- each item must be "
+                                                "<index>[,<object id>[,<+0x364>]], got "
+                                                "\"%s\"\n", c);
                             }
+                            const char *semi = strchr(c, ';');
+                            c = semi ? semi + 1 : NULL;
                         }
                     }
                 } else if (hostwin_frames() == atol(tf2)) {
@@ -1137,7 +1199,7 @@ void fn_00419a60(void)
         }
     }
 
-    coop_spawn_watch();
+    coop_spawn_watch(self);
 
     /* LF2_COOP_DEBUG=1 -- the player slot table as the game maintains it, printed whenever
      * it changes: the device selector per slot and the object pointer per slot. This is the
