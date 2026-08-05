@@ -525,6 +525,48 @@ void fn_00419a60(void)
         memcpy(dev_prev[d], btn[d], 7);
     }
 
+    /* LF2_COOP_DEBUG=1 -- the player slot table as the game maintains it, printed whenever
+     * it changes: the device selector per slot and the object pointer per slot. This is the
+     * ground truth for "can a player join after the stage started" -- a slot going live
+     * mid-match would show up here as a selector and a pointer appearing together. Printing
+     * on CHANGE only, with the frame, so the log is the transitions rather than a wall. */
+    if (getenv("LF2_COOP_DEBUG")) {
+        static uint32_t last_sel[8], last_obj[8];
+        static int first = 1;
+        for (int i = 0; i < 8; i++) {
+            const uint32_t sv = LD32(DEVSEL + 4u * (uint32_t)i);
+            const uint32_t ov = LD32(self + PLAYER_PTRS + 4u * (uint32_t)i);
+            if (!first && sv == last_sel[i] && ov == last_obj[i]) continue;
+            last_sel[i] = sv; last_obj[i] = ov;
+            fprintf(stderr, "coop f%ld slot %d: devsel=%d obj=%08x\n",
+                    hostwin_frames(), i, (int32_t)sv, ov);
+        }
+        first = 0;
+
+        /* LF2_COOP_DIFF=<frame> -- what actually distinguishes a slot that is PLAYING from
+         * one that is not. Every one of the eight player objects already exists from the
+         * moment character selection runs, so joining cannot be an object being created; it
+         * has to be a field. This prints the dwords where a playing slot and an idle one
+         * differ, which is the shortest path to that field. */
+        const char *at = getenv("LF2_COOP_DIFF");
+        if (at && hostwin_frames() == atol(at)) {
+            const uint32_t a = LD32(self + PLAYER_PTRS + 0);
+            const uint32_t b = LD32(self + PLAYER_PTRS + 4u * 4u);
+            fprintf(stderr, "coop diff: playing=%08x idle=%08x\n", a, b);
+            if (a && b) {
+                int n = 0;
+                for (uint32_t o = 0; o < 0x420u; o += 4) {
+                    const uint32_t va = LD32(a + o), vb = LD32(b + o);
+                    if (va == vb) continue;
+                    if (++n <= 60)
+                        fprintf(stderr, "  +%03x  playing=%-11d idle=%-11d (%08x / %08x)\n",
+                                o, (int32_t)va, (int32_t)vb, va, vb);
+                }
+                fprintf(stderr, "coop diff: %d differing dwords of %d\n", n, 0x420 / 4);
+            }
+        }
+    }
+
     for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END && i < 4; sel += 4, i++) {
         if ((int32_t)LD32(sel) <= 0) continue;         /* recording or demo: not ours */
         in_live++;
