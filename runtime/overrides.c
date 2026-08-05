@@ -425,6 +425,11 @@ void fn_00423b00(void)
  * ------------------------------------------------------------------------ */
 
 enum { DEVSEL = 0x00450b4c, DEVSEL_END = 0x00450b6c };
+
+/* Which players have joined, as a bitmask -- bit i is player i. Found by diffing .data
+ * across a character-select join (0 -> 1) and again across a second join (1 -> 3), which is
+ * what tells a mask from a count. */
+enum { JOINED_MASK = 0x00451288 };
 enum { PLAYER_PTRS = 404 };            /* this+404: eight player-object pointers */
 enum { BTN_CUR = 205 };                /* obj+205..211: this frame's seven buttons */
 enum { NET_OR_RECORD = 0x00450b80 };   /* non-zero: the packed masks are being consumed */
@@ -548,6 +553,89 @@ void fn_00419a60(void)
          * moment character selection runs, so joining cannot be an object being created; it
          * has to be a field. This prints the dwords where a playing slot and an idle one
          * differ, which is the shortest path to that field. */
+        /* LF2_COOP_SNAP=<a>,<b> -- slot 0's object at frame a against the same object at
+         * frame b. Diffing one slot against ANOTHER slot cannot show a join, because both
+         * records exist the whole time; diffing one slot across the moment it joins can.
+         * The window is 0x800, twice the 0x420 stride, so a field past the stride is not
+         * silently outside the picture. */
+        {
+            enum { SNAP_N = 0x800 / 4 };
+            static uint32_t snap[SNAP_N];
+            static int have;
+            const char *spec = getenv("LF2_COOP_SNAP");
+            long fa = 0, fb = 0;
+            if (spec && sscanf(spec, "%ld,%ld", &fa, &fb) == 2) {
+                const uint32_t o = LD32(self + PLAYER_PTRS);
+                const long f = hostwin_frames();
+                if (o && f == fa && !have) {
+                    for (int k = 0; k < SNAP_N; k++) snap[k] = LD32(o + 4u * (uint32_t)k);
+                    have = 1;
+                    fprintf(stderr, "coop snap: slot 0 object %08x captured at frame %ld\n", o, f);
+                } else if (o && f == fb) {
+                    if (!have) {
+                        fprintf(stderr, "coop snap: NOTHING was captured at frame %ld, so this "
+                                        "diff compares against zeros -- ignore it\n", fa);
+                    } else {
+                        int n = 0;
+                        for (int k = 0; k < SNAP_N; k++) {
+                            const uint32_t v = LD32(o + 4u * (uint32_t)k);
+                            if (v == snap[k]) continue;
+                            if (++n <= 80)
+                                fprintf(stderr, "  +%03x  before=%-11d after=%-11d "
+                                                "(%08x / %08x)\n",
+                                        k * 4, (int32_t)snap[k], (int32_t)v, snap[k], v);
+                        }
+                        fprintf(stderr, "coop snap: %d differing dwords of %d\n", n, SNAP_N);
+                    }
+                }
+            }
+        }
+
+        /* LF2_COOP_TEST=<frame> -- set the next unset bit of the joined-players mask at that
+         * frame, mid-match, and see whether a player appears. 0x00451288 was found by
+         * diffing .data across a character-select join and again across a SECOND join: it
+         * reads 1 with one player and 3 with two, which is a per-player bitmask and not a
+         * count. Whether flipping it mid-match is enough -- whether a fighter follows -- is
+         * exactly what this answers, and it is the whole question for drop-in. */
+        {
+            const char *tf = getenv("LF2_COOP_TEST");
+            if (tf && hostwin_frames() == atol(tf)) {
+                const uint32_t m = LD32(JOINED_MASK);
+                int bit = 0;
+                while (bit < 8 && (m & (1u << bit))) bit++;
+                if (bit < 8) {
+                    /* The mask alone does nothing mid-match -- measured -- because it is
+                     * read when the match STARTS. So this also gives the idle slot the state
+                     * a playing one has, by copying the playing record over it. Two fields
+                     * are kept: +368, which differs per slot and looks like the slot's own
+                     * buffer, and the x position, so the new player does not land exactly on
+                     * top of the one it was copied from.
+                     *
+                     * RESULT: not sufficient. The mask is set and the record is complete and
+                     * still no third fighter appears or draws. So being a filled-in player
+                     * record is not what puts a fighter in the world -- there is a list of
+                     * active objects it also has to be in, and finding that is the next
+                     * step. Kept as the probe that established it. */
+                    const uint32_t src = LD32(self + PLAYER_PTRS);
+                    const uint32_t dst = LD32(self + PLAYER_PTRS + 4u * (uint32_t)bit);
+                    if (src && dst) {
+                        const uint32_t keep368 = LD32(dst + 0x368);
+                        for (uint32_t o = 0; o < 0x420u; o += 4)
+                            ST32(dst + o, LD32(src + o));
+                        ST32(dst + 0x368, keep368);
+                        ST32(dst + 0x10, LD32(src + 0x10) + 120u);   /* x, in ints   */
+                        ST32(dst + 0x5c, LD32(src + 0x5c) + 0x400u); /* x, the float */
+                    }
+                    ST32(JOINED_MASK, m | (1u << bit));
+                    fprintf(stderr, "coop test: joined mask %08x -> %08x (set bit %d), "
+                                    "record %08x cloned from %08x\n",
+                            m, m | (1u << bit), bit, dst, src);
+                } else {
+                    fprintf(stderr, "coop test: mask %08x is already full, nothing set\n", m);
+                }
+            }
+        }
+
         const char *at = getenv("LF2_COOP_DIFF");
         if (at && hostwin_frames() == atol(at)) {
             const uint32_t a = LD32(self + PLAYER_PTRS + 0);
