@@ -89,6 +89,30 @@ static void h_RegisterClassA(void)
 /* Window mode. The game only ever asks for a fixed-size bordered window, so the choice
  * lives here rather than being something it can express. Letterboxed logical presentation
  * means the game still renders at its native 794x550 whatever the window becomes. */
+/* LF2_WIDESCREEN=<w>[x<h>] -- give the game a viewport other than the 794x550 it asks for.
+ *
+ * The host half of LF2_WIDESCREEN: everything downstream of hw.width/hw.height follows
+ * automatically -- the primary surface, the clipper region, GetClientRect. The guest half,
+ * which is what makes the world actually wider rather than scaled, is lf2_wide_width() in
+ * runtime/overrides.c. Both read the same variable so there is one knob, not two that can
+ * disagree. */
+void hostwin_apply_screen_override(void)
+{
+    const char *spec = getenv("LF2_WIDESCREEN");
+    if (!spec) return;
+    int w = 0, h = 0;
+    const int n = sscanf(spec, "%dx%d", &w, &h);
+    if (n < 1 || w < 794 || w > 4096 || (n == 2 && (h < 200 || h > 4096))) {
+        fprintf(stderr, "LF2_WIDESCREEN=\"%s\" is not <w> or <w>x<h> with w in 794..4096; "
+                        "ignored\n", spec);
+        return;
+    }
+    if (n < 2) h = hw.height;              /* width only: keep the game's own height */
+    fprintf(stderr, "widescreen: %dx%d viewport (the game asked for %dx%d)\n",
+            w, h, hw.width, hw.height);
+    hw.width = w; hw.height = h;
+}
+
 static void apply_window_mode(void)
 {
     const char *mode = getenv("LF2_WINDOW");
@@ -119,6 +143,7 @@ static void h_CreateWindowExA(void)
     hw.height = (int)ARG(7);
     if (hw.width <= 0 || hw.width > 4096) hw.width = 794;
     if (hw.height <= 0 || hw.height > 4096) hw.height = 550;
+    hostwin_apply_screen_override();
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -706,7 +731,10 @@ static uint32_t mouse_lparam(float wx, float wy)
 {
     float lx = wx, ly = wy;
     if (hw.renderer) SDL_RenderCoordinatesFromWindow(hw.renderer, wx, wy, &lx, &ly);
-    const int x = (int)lx, y = (int)ly;
+    /* Into the game's own coordinate space: when a fixed-width screen is being centred on a
+     * wider viewport its content moved right, so the pointer has to move left by the same
+     * amount or every hit test is off by the margin. */
+    const int x = (int)lx - screen_offset_x(), y = (int)ly;
     host_ptr_x = x; host_ptr_y = y;
     return ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
 }
