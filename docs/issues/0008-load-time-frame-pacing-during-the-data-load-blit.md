@@ -19,6 +19,17 @@ DEAD END -- do not retry throttling repaints:
   2. Skipping blits in surf_Blt/surf_BltFast: ABORTS the game (TerminateProcess). Two separate reasons, both real: (a) lf2_loading_now() is true at boot from the menu's .txt files, so init blits were skipped and the game's DirectDraw verification failed; (b) even gated on the game proper it still aborts, because surf_Blt is how the game COMPOSES surfaces, not just how it displays them -- skipping blits corrupts content the game later depends on. Throttling at the blit level is the wrong idea, not a wrong implementation.
   3. Deciding per blit rather than per frame latches: with every blit skipped there is no present, so a decision taken in present_primary() never updates again and drawing stops for ever.
 
+FOURTH DEAD END -- driving the load to completion in one tick. The load is a state
+machine advancing one step per call to fn_004246b0, so the port (which already overrides
+that function) can call the original body in a loop until the game stops opening files,
+loading everything inside a single frame. That removes the repaint problem entirely --
+there is no frame between steps. It CRASHES: the recompiled body ends in RET, so each
+extra call needs the guest return address pushed back and ECX restored, and even with
+that the guest ESP drifts across iterations and the game aborts. Either the body does not
+unwind identically on every path, or something in it assumes one call per frame. The idea
+is sound and is the right shape for a real port of the loading screen; making it work
+needs the exact stack contract of the recompiled body established first, not assumed.
+
 REMAINING: ~4-6 s, and sampling says it is drawing, not parsing (parsing is 0.34 s). A safe throttle would have to target only the loading screen's own full-screen repaint, identified specifically, leaving composition blits alone. Not attempted.
 
 Also: a faster load shifts the frame-scheduled input in tools/*_test.sh, so controller_2p may flake more often.
