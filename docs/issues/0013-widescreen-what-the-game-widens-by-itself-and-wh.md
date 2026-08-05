@@ -20,8 +20,20 @@ updated: 2026-08-05
    (Which of the three is load-bearing is not yet narrowed; all are written.)
 3. What does NOT follow, and why each is handled the way it is:
    - the HUD strip is eight player slots as two rows of four 198x54 panels, 792 px, not a
-     width-driven tiling. The panels are tiled out to the edge; an unused slot already looks
-     like an empty panel, so the extra ones read as more empty slots.
+     width-driven tiling. It is CENTRED, offset during composition (the band is the top
+     118 px, which during a match is HUD only -- the world viewport starts at y 128). It was
+     briefly tiled out to the edge instead, which filled the space but invented four empty
+     slots the game does not have.
+     GDI text needs the same offset applied separately: h_TextOutA writes straight into the
+     surface and never goes through Blt, so the game's own readout stayed at the left edge
+     when the panels moved -- newly VISIBLE, because at 794 the panel covered it.
+   - a tiling layer series stops one copy short, because the count comes from an immediate
+     794 inside FUN_0041a250 and immediates are baked into the recompiled code, unlike the
+     viewport words. HK Coliseum's arch band ended at 803 with 255 px of black past it. A
+     copy is recognised as part of a series by being CONTIGUOUS with the blit before it --
+     same rows, left edge exactly where the last ended -- and then continued at the same
+     period. TRAP: the game draws TEXT glyph by glyph, edge to edge, which passes that test
+     exactly; without a size floor the bottom-right caption tiled itself across the screen.
    - full-width COLORFILL bands (sky, ground, road) use an immediate width. A fill spanning
      exactly 0..794 is extended to the viewport -- it is a full-width band by intent.
    - a backdrop drawn from x 0 across the whole native width in ONE blit (the sky panorama)

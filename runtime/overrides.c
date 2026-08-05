@@ -266,8 +266,16 @@ static void wide_apply(void)
     const int w = lf2_wide_width();
     if (!w) return;
     static const uint32_t WIDTHS[] = { 0x0044d014, 0x0044d78c, 0x00453cd4 };
-    for (unsigned i = 0; i < sizeof WIDTHS / sizeof WIDTHS[0]; i++)
+    /* LF2_WIDE_ONLY=<i> writes just one of them, which is how the set gets narrowed:
+     * writing all three works but says nothing about which one the drawing reads, and a
+     * write to something that is NOT a viewport width is exactly how a side effect gets
+     * shipped by accident. */
+    static int only = -2;
+    if (only == -2) { const char *e = getenv("LF2_WIDE_ONLY"); only = e ? atoi(e) : -1; }
+    for (unsigned i = 0; i < sizeof WIDTHS / sizeof WIDTHS[0]; i++) {
+        if (only >= 0 && (int)i != only) continue;
         if (LD32(WIDTHS[i]) == 794u) ST32(WIDTHS[i], (uint32_t)w);
+    }
 }
 
 void fn_004246b0(void)

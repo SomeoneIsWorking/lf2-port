@@ -671,7 +671,8 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink,
 static void h_TextOutA(void)
 {
     const uint32_t hdc = ARG(0), str = ARG(3);
-    const int x = (int)ARG(1), y = (int)ARG(2);
+    int x = (int)ARG(1);
+    const int y = (int)ARG(2);
     int len = (int)ARG(4);
 
     uint32_t dpix; int dwid, dhei, dpitch;
@@ -679,6 +680,11 @@ static void h_TextOutA(void)
         ret_stdcall(5, 1);
         return;
     }
+    /* Widescreen: text inside the in-match HUD band moves with the panels it sits on. GDI
+     * writes straight into the surface, so it misses the offset the blit path applies --
+     * which left the game's own readout stranded at the left edge once the HUD was centred,
+     * where it had previously been hidden behind the panel entirely. */
+    x += hud_offset_x(dwid, y + 16);
     if (len > 512) len = 512;
 
     char text[513];

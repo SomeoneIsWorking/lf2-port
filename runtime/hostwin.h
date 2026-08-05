@@ -35,6 +35,7 @@ int  panel_charselect_up(void);
 int  panel_overlay_up(void);
 int  panel_hud_up(void);
 int  screen_offset_x(void);   /* centring offset for fixed-width screens */
+int  hud_offset_x(int dst_w, int bottom);   /* the in-match HUD's own centring */
 void hostwin_shutdown(void);
 void hostwin_inject_key(uint32_t vk, int down);
 void hostwin_inject_pointer(int x, int y, int down);

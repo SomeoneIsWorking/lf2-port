@@ -656,6 +656,18 @@ int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_
  * hit tests and the ported menus still line up with what the player sees. The band either
  * side is the game's own full-screen clear, which already covers the whole viewport. */
 enum { NATIVE_W = 794 };
+enum { HUD_W = 792, HUD_BAND_H = 118 };   /* the in-match HUD strip and the band it owns */
+
+/* The in-match HUD's own centring offset, exposed because the GDI text path draws straight
+ * into the surface and never goes through Blt -- so without this the game's text in the HUD
+ * band stays at the left edge while the panels under it move. `bottom` is the destination's
+ * lowest row, which is what decides whether a draw belongs to the HUD band. */
+int hud_offset_x(int dst_w, int bottom)
+{
+    if (!lf2_wide_width() || !panel_hud_up()) return 0;
+    if (dst_w <= NATIVE_W || bottom > HUD_BAND_H) return 0;
+    return (dst_w - HUD_W) / 2;
+}
 
 int screen_offset_x(void)
 {
@@ -805,6 +817,19 @@ static void surf_Blt(uint32_t self)
             }
         }
     }
+    /* Widescreen: the in-match HUD is a fixed 792-wide strip -- eight player slots as two
+     * rows of four 198x54 panels -- and nothing about it is width-driven, so on a wider
+     * viewport it sat against the left edge. It is centred, like every other fixed-width
+     * piece of the game. (It was briefly tiled out to the edge instead, which filled the
+     * space but invented four more empty slots that the game does not have.)
+     *
+     * The band is the top 118 px, which during a match is HUD only: the world viewport
+     * starts at y 128, measured from the layer blits in a widescreen match frame. */
+    if (lf2_wide_width() && panel_hud_up() && d->w > NATIVE_W && db <= HUD_BAND_H) {
+        const int off = (d->w - HUD_W) / 2;
+        dl += off; dr += off;
+    }
+
     /* Widescreen: a background layer drawn from x 0 across the whole native width is a
      * full-width backdrop -- the sky, a distant panorama -- and the game draws it as ONE
      * blit clipped to 794 rather than by looping it. Those are the only pieces that cannot
@@ -906,24 +931,42 @@ static void surf_Blt(uint32_t self)
                  keyed, s->key_lo, s->key_hi);
         }
     }
-    /* Widescreen: carry the HUD strip out to the new right edge.
+    /* Widescreen: finish a tiling series the game stopped at 794.
      *
-     * The strip is not width-driven -- it is eight player slots drawn as two rows of four
-     * 198x54 panels, 792 px total, so on a wider screen everything past 792 stayed black.
-     * The panel is the game's own artwork and an unused slot already looks exactly like an
-     * empty panel, so continuing the row with more copies of the SAME source is the design
-     * carried on rather than invented: it reads as further empty slots.
+     * Background layers that repeat are drawn as a run of edge-to-edge copies, and the
+     * count comes from an immediate 794 inside FUN_0041a250 -- baked into the recompiled
+     * code, so unlike the viewport words it cannot be written at runtime. The series
+     * therefore stops one copy short: HK Coliseum's arch band ends at 803 with 255 px of
+     * black beyond it.
      *
-     * Keyed on the last panel of a row (x 594 = 3 x 198) so it fires once per row, and only
-     * when the port has actually been asked to widen the view. */
-    if (lf2_wide_width() && srcobj && dr == 792 && (dt == 0 || dt == 54)
-        && dr - dl == 198 && db - dt == 54) {
-        Surface *hud = com_host(srcobj);
-        int sl, st, sr, sb;
-        read_rect(srect, &sl, &st, &sr, &sb, hud->w, hud->h);
-        for (int x = 792; x < d->w; x += 198)
-            blit(d, x, dt, 198, 54, hud, sl, st, sr - sl, sb - st,
-                 (flags & DDBLT_KEYSRC) && hud->has_key, hud->key_lo, hud->key_hi);
+     * A copy is recognised as part of a series by being CONTIGUOUS with the blit before it
+     * -- same rows, left edge exactly where the last one ended -- which is what the game's
+     * own tiling looks like and what a lone prop (a lamp, a crate) never looks like. Given
+     * that, continuing at the same period is the game's layout carried on, not invented.
+     *
+     * A period of zero or a run that already reaches the edge does nothing, and the copies
+     * are bounded by the surface, so a pathological period cannot loop for ever. */
+    if (lf2_wide_width() && srcobj && d->w > NATIVE_W && dt >= HUD_BAND_H) {
+        /* Tracked for EVERY blit in the world band, not only the short ones: the previous
+         * rectangle is the evidence that this one continues a series, so letting it go
+         * stale would let an unrelated blit inherit a match. */
+        static int prev_l, prev_t, prev_r, prev_b;
+        const int period = dr - dl;
+        /* Size floor: the game draws its TEXT glyph by glyph, edge to edge, which is
+         * contiguous by exactly the same test -- without this the bottom-right "VS mode
+         * (Difficult)" caption tiled itself across the whole width. A background layer is
+         * never 8x16. */
+        enum { TILE_MIN_PERIOD = 48, TILE_MIN_HEIGHT = 30 };
+        if (dr < d->w && period >= TILE_MIN_PERIOD && db - dt >= TILE_MIN_HEIGHT
+            && prev_r > prev_l && dl == prev_r && dt == prev_t && db == prev_b) {
+            Surface *src = com_host(srcobj);
+            int sl, st, sr, sb;
+            read_rect(srect, &sl, &st, &sr, &sb, src->w, src->h);
+            for (int x = dr; x < d->w; x += period)
+                blit(d, x, dt, period, db - dt, src, sl, st, sr - sl, sb - st,
+                     (flags & DDBLT_KEYSRC) && src->has_key, src->key_lo, src->key_hi);
+        }
+        prev_l = dl; prev_t = dt; prev_r = dr; prev_b = db;
     }
 
     if (d->primary) {
