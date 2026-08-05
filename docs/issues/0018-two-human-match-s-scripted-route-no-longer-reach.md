@@ -114,3 +114,41 @@ is still ABSOLUTE-frame ('south:2300'), not state-keyed ('south@match+30'). cont
 and the pad-script machinery already support the @<screen>+N form and virtual_pad_report says
 which screens a run reached. Converting the coop_* routes is the fix; until then a red
 coop_dropin in a loaded suite means nothing until it is re-run alone.
+
+### Note (2026-08-06)
+MEASURED, 2026-08-06: screen-keying the routes is NOT the fix, and the note above that called
+it 'the fix' was wrong. Correcting it here rather than deleting it, because the reasoning is
+the trap.
+
+WHAT WAS DONE: every route in tools/ was converted from absolute frame numbers to the
+screen-keyed form from charselect onward (south@charselect+58 ... south@overlay+219,
+right@match+108). All five affected tests pass on a quiet machine.
+
+WHAT IT DOES NOT DO: with fourteen busy loops on the box, coop_dropin fails BOTH arms, and
+the run reports 'virtual pad: screens reached -- NONE'. Not a late screen, not a shifted
+press -- character selection never appears at all within 2800 presented frames. The front-end
+presses at frames 900-1080 (which cannot be screen-keyed, since no screen exists before them)
+no longer reach a menu that is where they expect it.
+
+WHY, and this is the ROOT CAUSE this entry already named without following through: the guest
+clock is WALL-CLOCK derived. guest_ns() in runtime/imports.c reads CLOCK_MONOTONIC and feeds
+GetTickCount, QueryPerformanceCounter and timeGetTime. So the relationship between a PRESENTED
+FRAME and the game's own sense of time is set by how fast the machine happens to be: under
+load the port presents fewer frames per second, so by frame 900 the game has lived through far
+more of its own timeline than it does on an idle box. No frame-based script can be robust
+across that, and no amount of screen-keying reaches the front end, which is where the route
+starts.
+
+THE FIX, not yet done: give the guest a VIRTUAL clock that advances a fixed tick per presented
+frame, and let the HOST enforce real-time pacing on top of it. The game then sees a perfectly
+regular timeline whatever the machine is doing -- which is what 'you can't have things based
+on CPU load' asks for -- and a frame-numbered script means the same thing on every box. Note
+the hazard before starting: LF2 paces itself off GetTickCount, so a frame-derived clock with
+no host pacing would make the game run as fast as the CPU allows. The pacing has to move to
+the host in the same change.
+
+WHAT THE CONVERSION IS STILL WORTH, so it is not reverted: a press whose screen never appeared
+now NEVER FIRES and the run says so, instead of pressing into whatever happened to be on
+screen. The loaded run above failed with 'screens reached -- NONE' and a NEVER FIRED line --
+which is a diagnosis. Before the conversion the same run failed with assertions about a join
+that never happened, which is a mystery.

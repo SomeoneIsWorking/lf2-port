@@ -246,15 +246,25 @@ player one is still in the match afterwards.
 
 For checking the port without a human at the keyboard:
 
-**Prefer the frame-scheduled form.** Presented-frame numbers are exact and reproducible;
-a wall clock drifts with however long the ~13 s data load takes, so a press aimed at one
-screen lands on another.
+**Prefer the screen-keyed form.** `button@<screen>[+<n>]` fires *n* frames after the game
+first DRAWS that screen — `charselect`, `overlay` or `match` — so a press aimed at the match
+lands in the match however long the ~13 s data load took. Frame numbers are exact and
+reproducible within a run, but the frame a screen *arrives* on is not: it moves with the load
+and with how busy the machine is, and every regression test's route was once a stopwatch aimed
+at a moving target (issue #18, which went red three times for that reason and never for a real
+one). Every route in `tools/` is now screen-keyed from `charselect` onward; only the front-end
+presses before any screen exists are still bare frame numbers.
+
+A press whose screen never appears **never fires**, and the run says so at exit along with the
+screens that did appear — silently not pressing is how a route that missed its screen reads as
+a feature that did not work.
 
 | Variable | Effect |
 |---|---|
 | `LF2_KEY_SCRIPT="<vk>:<frame>[,...]"` | press that key on that presented frame, held 8 frames |
 | `LF2_CLICK_SCRIPT="<x>,<y>:<frame>[;...]"` | place the pointer and click, same schedule |
-| `LF2_VIRTUAL_PAD="<button>:<frame>[,...]"` | the controller equivalent |
+| `LF2_VIRTUAL_PAD="<button>@<screen>[+<n>][,...]"` | the controller equivalent, keyed to a screen |
+| `LF2_VIRTUAL_PAD="<button>:<frame>[,...]"` | the same, keyed to a presented frame |
 | `LF2_WINDOW_RESIZE="<frame>:<w>x<h>[,...]"` | resize the window on that frame — a stand-in for a window manager |
 
 `LF2_WINDOW_RESIZE` exists because the headline of the widescreen work is that the field of
