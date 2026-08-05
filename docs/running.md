@@ -259,6 +259,24 @@ A press whose screen never appears **never fires**, and the run says so at exit 
 screens that did appear — silently not pressing is how a route that missed its screen reads as
 a feature that did not work.
 
+Every run prints its denominator, whether or not anything went wrong:
+
+```
+virtual pad: screens reached -- charselect@906 overlay@1746 match@1968
+virtual pad 0: 15 of 15 presses fired
+virtual pad 0: press 12 `south@match+420' NEVER FIRED -- its screen never appeared, …
+```
+
+The `N of M` line is the point: a clean run has to be distinguishable from a report that was
+never reached. It is printed per script, so `LF2_VIRTUAL_PAD2` gets its own. Presses that did
+not fire are named with their own text out of the script, including a button name this build
+does not know — a typo used to be skipped in silence.
+
+This report was wrong until issue #24 and should not be trusted in output from before it: a
+single sticky flag conflated "cannot fire *yet*, its screen has not appeared" — true of every
+screen-keyed press on frame 0 — with "never fired", so **every** screen-keyed route ended with
+the warning, clean ones included.
+
 | Variable | Effect |
 |---|---|
 | `LF2_KEY_SCRIPT="<vk>:<frame>[,...]"` | press that key on that presented frame, held 8 frames |
