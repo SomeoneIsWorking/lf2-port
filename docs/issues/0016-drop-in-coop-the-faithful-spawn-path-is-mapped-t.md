@@ -179,3 +179,47 @@ DESIGN QUESTION, deliberately not answered: which character a late joiner gets. 
 character select to show them mid-match, so LF2_COOP takes the object id and defaults to 1
 (Bandit). That is why the feature is opt-in rather than on -- the mechanism is settled, the
 interface is not.
+
+### Note (2026-08-05)
+RESOLVED: player slot i IS object index i, and the previous note's "counter-example" was a
+misreading of what the joined mask means.
+
+The game's own gather settles it statically -- fn_00419a60__orig walks the device-selector
+table and the object table IN LOCKSTEP:
+
+    EBP = 0x450b4c              // &devsel[0]
+    EAX = this + 404            // &table[0]
+  loop:
+    if ((int32_t)LD32(EBP) <= 0) goto next
+    ESI = LD32(EAX)             // the object this slot's control config drives
+    ...
+  next:
+    EBP += 4;  EAX += 4;  ECX += 1
+    if (EBP < 0x450b6c) goto loop
+
+So a HUMAN player's fighter must be at its own index -- there is no other route by which the
+game could deliver its buttons -- and EIGHT is the game's own bound, read off the loop
+rather than assumed. The port's mapping is the game's mapping.
+
+WHAT THE ODD READING ACTUALLY WAS: a computer's fighter is not bound by that loop, because
+its AI writes buttons straight into the object it drives and never goes through the gather.
+So it can live at any index, and one does: index 11. The joined mask reading 2 while object
+index 1 is empty is therefore consistent -- the mask tracks the CHARACTER-SELECT ROSTER, in
+which a slot marked "Computer" counts as taken, not what occupies the player object slots.
+No mechanism is missing.
+
+CONSEQUENCE, worth knowing before it surprises someone: joining into a slot the game filled
+with a computer does NOT replace that computer. Its fighter is at its own high index and
+stays on the stage, so the match GAINS a fighter rather than swapping one. In the verified
+drop-in run the stage ends up with three fighters: the human at index 0, the computer at
+index 11, and the joiner at index 1. Whether that is the wanted behaviour is a design
+question, not a defect.
+
+A GAP IN THE EXISTING TESTS, found on the way: tools/controller_2p_test.sh proves a second
+pad JOINS at character selection -- it asserts the word "Computer" is not drawn -- but it
+quits at frame 1900 and never reaches a match. So "a second human's fighter is driven in a
+match" had never been tested. tools/coop_dropin_test.sh now covers that shape for a
+drop-in joiner (two-sided, press vs quiet); the character-select route for two humans is
+still uncovered, and a route that reaches a match with two joined humans is the thing to
+build for it -- the scripted attempts here stalled on character selection, where both
+joined players have to confirm before player one can proceed.

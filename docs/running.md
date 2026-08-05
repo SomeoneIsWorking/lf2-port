@@ -640,11 +640,20 @@ wrong reason.
 The eight-player cap comes from the device-selector table's own size now, not a literal.
 A fighter placed in slot 4 is drawn by the game's own name plate as "5".
 
-**Not established:** that player N's fighter is always object index N. In an ordinary match
-the joined mask reads two players while the computer opponent's fighter is at index 11 and
-object index 1 is empty. The gather reaches a player's fighter as `this+404+4i`, which works
-whenever a fighter is at index `i` — but the game can evidently place one elsewhere, and
-what reconciles that is unknown.
+**Player slot `i` is object index `i`** — the game's own code, not this port's assumption.
+`fn_00419a60__orig` walks `&devsel[0]` and `this+404` in lockstep, `EBP += 4; EAX += 4`,
+looping while `EBP < 0x450b6c`. A human player's fighter must therefore be at its own index;
+there is no other route by which the game could deliver its buttons.
+
+A **computer's** fighter is not bound by that — its AI writes buttons straight into the
+object it drives — so it can live anywhere, and one is observed at index 11. That is why the
+joined mask can read two players while object index 1 is empty: the mask tracks the
+character-select roster, in which a slot marked "Computer" counts as taken, not what
+occupies the player object slots.
+
+So **joining into a slot the game filled with a computer does not replace that computer.**
+Its fighter stays on the stage at its own high index, and the match gains a fighter rather
+than swapping one.
 
 ## The menu map, and how it was recovered
 

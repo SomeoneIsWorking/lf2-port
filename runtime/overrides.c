@@ -826,14 +826,32 @@ static void coop_spawn(uint32_t self, int dst, int id, int posref, int sel)
  * On top of the spawn this sets the device-selector entry (the control-config index) and
  * the bit in the joined-players mask at 0x00451288.
  *
- * NOT ESTABLISHED: that player N's fighter is always object index N. It is what makes the
- * gather work, and a fighter put in slot 4 is drawn by the game's own name plate as "5" --
- * but the counter-example is right there in a normal match. The joined mask reads 3 (two
- * players) while the computer opponent's fighter sits at index 11 and object index 1 is
- * empty. So the game can place a player's fighter off its own index, and what reconciles
- * that is unknown. It matters for anything that attributes score or a HUD row, and it is
- * why the two writes below are worth watching: in the observed drop-in, slot 1 ALREADY had
- * its selector and its mask bit, so both were no-ops and the spawn alone did the work. */
+ * PLAYER SLOT i IS OBJECT INDEX i, and that is the game's own code rather than this port's
+ * assumption. fn_00419a60__orig walks the two arrays in lockstep:
+ *
+ *     EBP = 0x450b4c            // &devsel[0]
+ *     EAX = this + 404          // &table[0]
+ *   loop:
+ *     if ((int32_t)LD32(EBP) <= 0) goto next
+ *     ESI = LD32(EAX)           // the object whose buttons this slot's config drives
+ *     ...
+ *   next:
+ *     EBP += 4; EAX += 4; ECX += 1
+ *     if (EBP < 0x450b6c) goto loop
+ *
+ * So a HUMAN player's fighter has to be at its own index -- there is no other route by
+ * which the game could deliver its buttons -- and eight is the game's bound, not a guess.
+ *
+ * A COMPUTER's fighter is not bound by that, because its AI writes buttons straight into
+ * whatever object it drives and never goes through the gather. That is what reconciles the
+ * odd reading in a normal match: the joined mask says two players while object index 1 is
+ * empty and the computer opponent is at index 11. The mask tracks the character-select
+ * roster, in which a slot marked "Computer" counts as taken; it does not say what occupies
+ * the player object slots.
+ *
+ * A consequence worth knowing before it surprises someone: joining into a slot the game
+ * filled with a computer does NOT replace that computer. Its fighter is at its own high
+ * index and stays on the stage, so the match gains a fighter rather than swapping one. */
 /* A match is running when SOMETHING is in the world. Character selection is the same
  * top-level mode as the match, and the port has never found a screen id that separates
  * them, so this stands in for one: during character selection no object has its gate byte
