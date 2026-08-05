@@ -183,58 +183,46 @@ static void menu_sync_from_pointer(const Item *items, int n)
 static uint32_t top_mode = 0xffffffffu;
 uint32_t game_top_mode(void) { return top_mode; }
 
-/* LF2_WIDESCREEN=<w>[x<h>] -- a real wider field of view, not a stretched picture.
+/* The GUEST half of widescreen: a real wider field of view, not a stretched picture.
  *
  * The distinction is the whole feature. Enlarging only the window makes the game scale its
  * 794-wide composition up, which is the same picture with bigger pixels. What is wanted is
  * MORE WORLD, and that needs the surface the game composes into to be wider AND the game's
- * own idea of its viewport to match.
+ * own idea of its viewport to match. The surface is the host half, in runtime/ddraw.c; this
+ * is the game's own idea, and both read lf2_wide_width() so they cannot disagree.
  *
  * The game keeps its viewport size in .data rather than only as immediates, which is what
- * makes this worth trying at all. Three width/height pairs hold 794/550 at runtime, found
- * by scanning a mid-match .data dump for the literal values:
+ * makes this possible at all. Three width/height pairs hold 794/550 at runtime, found by
+ * scanning a mid-match .data dump for the literal values:
  *
  *   0x0044d014 / 0x0044d018
  *   0x0044d78c / 0x0044d790
  *   0x00453cd4 / 0x00453cd8
  *
- * All three are written every frame here, because which one the world draw reads is the
- * question this probe exists to answer -- narrowing comes after the effect is seen. */
-int lf2_wide_width(void)
-{
-    static int w = -1;
-    if (w < 0) {
-        const char *e = getenv("LF2_WIDESCREEN");
-        int hh = 0;
-        w = 0;
-        if (e && sscanf(e, "%dx%d", &w, &hh) >= 1) {
-            if (w < 794 || w > 4096) {
-                fprintf(stderr, "LF2_WIDESCREEN width %d is outside 794..4096; ignored\n", w);
-                w = 0;
-            }
-        } else if (e) {
-            fprintf(stderr, "LF2_WIDESCREEN=\"%s\" is not <w> or <w>x<h>; ignored\n", e);
-            w = 0;
-        }
-    }
-    return w;
-}
-
+ * All three are written every frame, because which one the world draw reads is the question
+ * this has never needed to answer -- narrowing comes after there is a reason to.
+ *
+ * WRITTEN ON CHANGE, IN BOTH DIRECTIONS, because the window can now be dragged narrower as
+ * well as wider (issue #20). A word is only overwritten when it holds the game's own 794 or
+ * the width this code last put there: anything else is not a viewport width this port
+ * understands, and stomping it would be exactly how a side effect gets shipped by accident.
+ * Going back to 794 is a restore, not a no-op -- an early return when the window is no
+ * longer wide would leave the game believing in the widest it ever was. */
 static void wide_apply(void)
 {
-    const int w = lf2_wide_width();
-    if (!w) return;
+    const int want = lf2_wide_width() ? lf2_wide_width() : 794;
+    static int applied = 794;
     static const uint32_t WIDTHS[] = { 0x0044d014, 0x0044d78c, 0x00453cd4 };
     /* LF2_WIDE_ONLY=<i> writes just one of them, which is how the set gets narrowed:
-     * writing all three works but says nothing about which one the drawing reads, and a
-     * write to something that is NOT a viewport width is exactly how a side effect gets
-     * shipped by accident. */
+     * writing all three works but says nothing about which one the drawing reads. */
     static int only = -2;
     if (only == -2) { const char *e = getenv("LF2_WIDE_ONLY"); only = e ? atoi(e) : -1; }
     for (unsigned i = 0; i < sizeof WIDTHS / sizeof WIDTHS[0]; i++) {
         if (only >= 0 && (int)i != only) continue;
-        if (LD32(WIDTHS[i]) == 794u) ST32(WIDTHS[i], (uint32_t)w);
+        const uint32_t cur = LD32(WIDTHS[i]);
+        if (cur == 794u || cur == (uint32_t)applied) ST32(WIDTHS[i], (uint32_t)want);
     }
+    applied = want;
 }
 
 void fn_004246b0(void)

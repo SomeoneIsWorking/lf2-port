@@ -173,8 +173,43 @@ can express.
 | `borderless` | same size, no frame |
 | `fullscreen` | borderless fullscreen |
 
-**Alt+Enter** toggles fullscreen at any time. Rendering always happens at 794x550 and is
-letterboxed to whatever the window becomes, so the game never sees a different resolution.
+**Alt+Enter** toggles fullscreen at any time.
+
+### The window decides how wide the game is
+
+Making the window wider gives a genuinely **wider field of view** — more world, not the same
+picture with bigger pixels — and it happens while the game is running, on the frame after the
+resize. This used to be `LF2_WIDESCREEN=<w>`, read once at startup, which is a developer's
+escape hatch rather than a feature (issue #20).
+
+The composition follows the window's **aspect**, not its pixel width: a 1920x1080 window
+gets `550 * 1920/1080 = 978` pixels of world scaled up to fill it. Using the width itself
+would put a 1920-wide picture in a 1080-tall window — letterboxed to a strip, with the
+pixels shrunk to a quarter. A window narrower in aspect than the game's own 794x550 gets
+794 and is letterboxed at the sides, because the HUD strip is 792 wide and there is nothing
+sensible below that.
+
+| Window | Composition |
+|---|---|
+| 794x550 | 794x550 — widescreen off, the game's own picture |
+| 1600x550 | 1600x550 |
+| 1920x1080 | 978x550 |
+| 800x900 | 794x550 — taller in aspect than the game, so it clamps |
+
+`ctest widescreen` asserts exactly that table, the last row included: without a case that
+must NOT widen, a build that always widened would pass.
+
+**`LF2_WINDOW_SIZE=<w>x<h>`** sets the window's initial size. It is not the old knob renamed
+— it names a window, and the composition is derived from it by the same code a window manager
+drives when someone drags an edge. It exists because a headless run
+(`SDL_VIDEODRIVER=offscreen`) has nobody to drag one.
+
+Two things make this affordable at runtime. The surfaces that follow the window are allocated
+**once** at the maximum width with their **pitch fixed** there, and a resize only moves
+`s->w`: `vram_alloc` is a bump allocator with no free, so reallocating per resize event would
+exhaust the arena during a single drag. And `Lock` reports width, height and pitch fresh on
+every call, so the game picks up a changed width on its next frame while anything it cached
+stays valid.
 
 ## Scripted input
 
@@ -189,6 +224,14 @@ screen lands on another.
 | `LF2_KEY_SCRIPT="<vk>:<frame>[,...]"` | press that key on that presented frame, held 8 frames |
 | `LF2_CLICK_SCRIPT="<x>,<y>:<frame>[;...]"` | place the pointer and click, same schedule |
 | `LF2_VIRTUAL_PAD="<button>:<frame>[,...]"` | the controller equivalent |
+| `LF2_WINDOW_RESIZE="<frame>:<w>x<h>[,...]"` | resize the window on that frame — a stand-in for a window manager |
+
+`LF2_WINDOW_RESIZE` exists because the headline of the widescreen work is that the field of
+view changes *while the game is running*, and no scripted run can produce that on its own: a
+headless run has no window manager, so SDL never delivers a resize. It drives the same entry
+point the real event does — the only thing it stands in for is the drag. A step whose frame
+the run never reaches says `NEVER FIRED` at exit rather than leaving the run looking as
+though it resized.
 
 The older wall-clock form is still there for probing (`LF2_AUTOKEY`, `LF2_AUTOKEY_START`,
 `LF2_AUTOKEY_EVERY`, `LF2_AUTOCLICK` and their `_ONCE` variants), but nothing that needs to

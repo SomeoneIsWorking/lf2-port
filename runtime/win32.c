@@ -88,30 +88,34 @@ static void h_RegisterClassA(void)
 }
 
 /* Window mode. The game only ever asks for a fixed-size bordered window, so the choice
- * lives here rather than being something it can express. Letterboxed logical presentation
- * means the game still renders at its native 794x550 whatever the window becomes. */
-/* LF2_WIDESCREEN=<w>[x<h>] -- give the game a viewport other than the 794x550 it asks for.
+ * lives here rather than being something it can express.
  *
- * The host half of LF2_WIDESCREEN: everything downstream of hw.width/hw.height follows
- * automatically -- the primary surface, the clipper region, GetClientRect. The guest half,
- * which is what makes the world actually wider rather than scaled, is lf2_wide_width() in
- * runtime/overrides.c. Both read the same variable so there is one knob, not two that can
- * disagree. */
-void hostwin_apply_screen_override(void)
+ * THE WINDOW IS THE SOURCE OF TRUTH for how wide the game is. It used to be
+ * LF2_WIDESCREEN=<w>, read once at startup, which is a developer's escape hatch rather than
+ * a feature -- issue #20, and the same objection as gating drop-in coop behind LF2_COOP. The
+ * width now follows the window's ASPECT (see hostwin_window_geometry in runtime/ddraw.c),
+ * so dragging an edge widens the field of view while the game is running.
+ *
+ * LF2_WINDOW_SIZE=<w>x<h> sets the window's INITIAL size and nothing else. It is not the
+ * old knob renamed: it does not name a viewport, it names a window, and the width is
+ * derived from it exactly as it is from a window the user resized by hand. It exists
+ * because a headless run has nobody to drag an edge -- SDL_VIDEODRIVER=offscreen never
+ * delivers a resize -- so it is test scaffolding, which is what the LF2_* namespace is
+ * for. */
+static void apply_initial_window_size(void)
 {
-    const char *spec = getenv("LF2_WIDESCREEN");
+    const char *spec = getenv("LF2_WINDOW_SIZE");
     if (!spec) return;
     int w = 0, h = 0;
-    const int n = sscanf(spec, "%dx%d", &w, &h);
-    if (n < 1 || w < 794 || w > 4096 || (n == 2 && (h < 200 || h > 4096))) {
-        fprintf(stderr, "LF2_WIDESCREEN=\"%s\" is not <w> or <w>x<h> with w in 794..4096; "
-                        "ignored\n", spec);
+    if (sscanf(spec, "%dx%d", &w, &h) != 2 || w < 320 || w > 8192 || h < 200 || h > 8192) {
+        fprintf(stderr, "LF2_WINDOW_SIZE=\"%s\" is not <w>x<h> with w in 320..8192 and h in "
+                        "200..8192; the window keeps the %dx%d the game asked for\n",
+                spec, hw.win_w, hw.win_h);
         return;
     }
-    if (n < 2) h = hw.height;              /* width only: keep the game's own height */
-    fprintf(stderr, "widescreen: %dx%d viewport (the game asked for %dx%d)\n",
-            w, h, hw.width, hw.height);
-    hw.width = w; hw.height = h;
+    fprintf(stderr, "window: starting at %dx%d (the game asked for %dx%d)\n",
+            w, h, hw.win_w, hw.win_h);
+    hw.win_w = w; hw.win_h = h;
 }
 
 static void apply_window_mode(void)
@@ -140,22 +144,23 @@ static void toggle_fullscreen(void)
 
 static void h_CreateWindowExA(void)
 {
-    hw.width  = (int)ARG(6);
-    hw.height = (int)ARG(7);
-    if (hw.width <= 0 || hw.width > 4096) hw.width = 794;
-    if (hw.height <= 0 || hw.height > 4096) hw.height = 550;
-    hostwin_apply_screen_override();
+    hw.win_w = (int)ARG(6);
+    hw.win_h = (int)ARG(7);
+    if (hw.win_w <= 0 || hw.win_w > 8192) hw.win_w = 794;
+    if (hw.win_h <= 0 || hw.win_h > 8192) hw.win_h = 550;
+    apply_initial_window_size();
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         abort();
     }
-    hw.window = SDL_CreateWindow("Little Fighter 2", hw.width, hw.height,
+    hw.window = SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h,
                                  SDL_WINDOW_RESIZABLE);
     if (!hw.window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); abort(); }
     hw.renderer = SDL_CreateRenderer(hw.window, NULL);
-    SDL_SetRenderLogicalPresentation(hw.renderer, hw.width, hw.height,
-                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    /* Before apply_window_mode: going fullscreen changes the size, and the geometry has to
+     * exist before anything can follow a change to it. */
+    hostwin_window_geometry(hw.win_w, hw.win_h);
     apply_window_mode();
     hw.hwnd = 0x00010000;
     queue_startup_messages();
@@ -272,6 +277,72 @@ static int autoclick_state(int *x, int *y)
     return (elapsed % every) < 150;                /* button held briefly */
 }
 
+/* LF2_WINDOW_RESIZE=<frame>:<w>x<h>[,...] -- resize the window part-way through a run.
+ *
+ * A DIAGNOSTIC, and it exists because the headline of issue #20 is that the field of view
+ * changes WHILE THE GAME IS RUNNING, and no scripted run can produce that on its own: a
+ * headless run (SDL_VIDEODRIVER=offscreen) has no window manager, so dragging an edge is
+ * something no test could ever do and SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED never arrives. A
+ * feature whose whole point is a mid-run change, tested only at startup, is a feature whose
+ * point is untested.
+ *
+ * It drives the same entry point the resize event does, not a private path -- the only thing
+ * it stands in for is the window manager.
+ *
+ * Each step fires ONCE, on the first pump at or after its frame, and says so; a step whose
+ * frame the run never reaches says that at exit rather than leaving the run looking as though
+ * it resized. */
+enum { RESIZE_MAX = 8 };
+static struct { long frame; int w, h, fired; } resizes[RESIZE_MAX];
+static int resize_n = -1;
+
+static void pump_scripted_resize(void)
+{
+    if (resize_n < 0) {
+        resize_n = 0;
+        const char *spec = getenv("LF2_WINDOW_RESIZE");
+        for (const char *c = spec; c && *c; ) {
+            long f = 0; int w = 0, h = 0, used = 0;
+            if (sscanf(c, "%ld:%dx%d%n", &f, &w, &h, &used) < 3 || w <= 0 || h <= 0) {
+                fprintf(stderr, "LF2_WINDOW_RESIZE: \"%s\" is not <frame>:<w>x<h>; the rest "
+                                "of the script is IGNORED and no resize will happen there\n", c);
+                break;
+            }
+            if (resize_n >= RESIZE_MAX) {
+                fprintf(stderr, "LF2_WINDOW_RESIZE: more than %d steps; \"%s\" and anything "
+                                "after it are IGNORED\n", RESIZE_MAX, c);
+                break;
+            }
+            resizes[resize_n].frame = f;
+            resizes[resize_n].w = w;
+            resizes[resize_n].h = h;
+            resize_n++;
+            c += used;
+            while (*c == ',' || *c == ' ') c++;
+        }
+        if (resize_n)
+            fprintf(stderr, "window resize script: %d step(s)\n", resize_n);
+    }
+    const long f = hostwin_frames();
+    for (int i = 0; i < resize_n; i++) {
+        if (resizes[i].fired || f < resizes[i].frame) continue;
+        resizes[i].fired = 1;
+        fprintf(stderr, "window resize script: frame %ld (asked for %ld) -- %dx%d\n",
+                f, resizes[i].frame, resizes[i].w, resizes[i].h);
+        if (hw.window) SDL_SetWindowSize(hw.window, resizes[i].w, resizes[i].h);
+        hostwin_window_geometry(resizes[i].w, resizes[i].h);
+    }
+}
+
+void window_resize_report(void)
+{
+    for (int i = 0; i < resize_n; i++)
+        if (!resizes[i].fired)
+            fprintf(stderr, "window resize script: step %d (frame %ld -> %dx%d) NEVER FIRED "
+                            "-- the run ended at frame %ld\n",
+                    i, resizes[i].frame, resizes[i].w, resizes[i].h, hostwin_frames());
+}
+
 static void pump_autoclick(void)
 {
     int x = 0, y = 0;
@@ -383,6 +454,7 @@ void hostwin_pump(void)
 
     pump_autokey_messages();
     pump_autoclick();
+    pump_scripted_resize();
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         gamepad_handle_event(&e);          /* controllers may come and go at any time */
@@ -392,6 +464,12 @@ void hostwin_pump(void)
         /* Alt+Enter is what players expect, and the game cannot ask for it itself. */
         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_RETURN &&
             (e.key.mod & SDL_KMOD_ALT)) { toggle_fullscreen(); continue; }
+
+        /* THE WINDOW DRIVES THE FIELD OF VIEW (issue #20). PIXEL_SIZE_CHANGED rather than
+         * RESIZED: on a scaled display the two differ, and everything downstream -- the
+         * surfaces, the presentation, the texture -- is in pixels. */
+        if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+            hostwin_window_geometry(e.window.data1, e.window.data2);
 
         if (e.type == SDL_EVENT_MOUSE_MOTION)
             push_message(WM_MOUSEMOVE, (uint32_t)(mouse_left_down ? 1 : 0),

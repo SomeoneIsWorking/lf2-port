@@ -9,7 +9,8 @@ typedef struct {
     SDL_Window   *window;
     SDL_Renderer *renderer;
     SDL_Texture  *texture;
-    int           width, height;
+    int           width, height;    /* the COMPOSE size the game draws into */
+    int           win_w, win_h;     /* the actual window, which the above follows */
     uint32_t      hwnd;
     uint32_t      wndproc;
 } HostWin;
@@ -28,12 +29,16 @@ void music_start(void);
 void music_stop(void);
 void music_set_volume(int32_t centibels);
 long hostwin_frames(void);
-void hostwin_apply_screen_override(void);   /* LF2_SCREEN=<w>x<h>, see runtime/win32.c */
+/* The window changed size (or was just created): recompute the compose width from its
+ * aspect and re-point everything that depends on it. In runtime/ddraw.c, because that is
+ * where the surfaces and the presentation live. */
+void hostwin_window_geometry(int win_w, int win_h);
 
 /* Which post-load screen the game is drawing this frame; see runtime/ddraw.c. */
 int  panel_charselect_up(void);
 int  panel_overlay_up(void);
 int  panel_hud_up(void);
+int  lf2_wide_width(void);    /* the composition's width when it is wider than 794, else 0 */
 int  screen_offset_x(void);   /* centring offset for fixed-width screens */
 int  hud_offset_x(int dst_w, int bottom);   /* the in-match HUD's own centring */
 void hostwin_shutdown(void);
@@ -45,6 +50,7 @@ void menu_confirm(void);
 int  gamepad_player_buttons(int index, unsigned char out[7]);
 void input_report(void);
 void virtual_pad_report(void);   /* which screens a scripted route actually reached */
+void window_resize_report(void); /* any LF2_WINDOW_RESIZE step the run never reached */
 void glyph_hint_set(int ch);
 void glyph_hint_clear(void);
 int  hostwin_key_held(uint32_t vk);

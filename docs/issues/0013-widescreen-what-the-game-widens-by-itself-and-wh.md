@@ -8,7 +8,7 @@ created: 2026-08-05
 updated: 2026-08-05
 ---
 
-`LF2_WIDESCREEN=<w>[x<h>]`. Measured, in the order it was found:
+a wider viewport. (The width came from `LF2_WIDESCREEN=<w>[x<h>]` at the time; it now follows the window, issue #20 -- the measurements below are unaffected, only how the width is chosen changed.) Measured, in the order it was found:
 
 1. Enlarging only the primary surface STRETCHES. The game composes into an off-screen
    surface it asks for at exactly 794x550 and copies that to the primary in one blit, so a
@@ -52,4 +52,4 @@ frames, which is the same panel-observation mechanism as the overlay gate and ha
 dependence.
 
 Verified: all 10 ctest targets pass at the default width, and the mouse-only route reaches a
-match with LF2_WIDESCREEN=1058, which is what proves the pointer offset.
+match with a 1058-wide viewport, which is what proves the pointer offset.
