@@ -5,7 +5,7 @@ status: open
 symptom: the pause menu offers only RESUME and QUIT GAME: there is no way back to the front end without killing the process, and a joined player has no way to leave a match deliberately
 tags: reported,pause,menu,coop,drop-in,ux
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-06
 ---
 
 REPORTED. runtime/pause.c currently has exactly two items:
@@ -91,3 +91,57 @@ silently thrown away. A scripted run pressing the keyboard's own arrows and atta
 overlay moved the selection not at all (scratch/exit22d/frame_002520.png, still 'Fight!'),
 because the keyboard had claimed no slot. exit_to_menu_begin now falls back to
 any_playing_device() and says which device it used and why.
+
+### Note (2026-08-06)
+RE, 2026-08-06: the top-level mode NEVER goes back -- and the front end was the wrong target anyway.
+
+WHAT THE MODE WORD IS. fn_004246b0 is called with ECX = 0x00458b00 (lf2_recomp.c, the call
+at guest 0x0043ecb2), and the mode it switches on is [ECX] -- so the top-level mode is the
+FIRST DWORD OF THE WORLD OBJECT, the same object coop.c calls `this`. Values: 0 = the
+launcher, 1 = loading, 2 = the game proper.
+
+WHO WRITES IT, exhaustively over the lifted binary:
+  0  fn_00419e40, which is the world object's constructor -- [this]=0 plus a memset of 400
+     bytes at this+4, i.e. the gate bytes. Reached only from fn_00446300, which has no
+     caller in the lifted set: a static initialiser that runs once at startup.
+  1  at guest ret 0x00422ad2 (the launcher's start-game path).
+  2  fn_004246b0's own mode==1 branch, ST32(R(ESI), 0x2u) -- the ONLY write of 2, and the
+     only write to the word anywhere in fn_004246b0.
+There is no site that writes it back.
+
+MEASURED, not just read. LF2_WATCH=458b00 over a full route -- launcher, load, character
+select, overlay, a running match, then LEAVE MATCH (F4 at frame 2389, overlay Exit
+dispatched) and ~1000 further frames on the cleared character-select screen:
+
+  watching 00458b00 = 00000000
+  WATCH 00458b00 changed 00000000 -> 00000001 ... ret 00422ad2
+  WATCH 00458b00 changed 00000001 -> 00000002 ... ret 0043e975
+  (nothing further, to the end of the run)
+
+The two boot transitions are the POSITIVE CONTROL: the watch demonstrably fires, so the
+silence afterwards is the game not writing rather than the instrument not looking. Route
+report: 21 of 21 presses fired (and see #24 -- the report that said otherwise was broken;
+this run was re-done against the fixed one before any of this was believed).
+
+So: THE GAME HAS NO PATH FROM A MATCH BACK TO THE LAUNCHER. That half of this entry cannot
+be done by driving the game's own transition, because there is no such transition.
+
+BUT THE LAUNCHER IS NOT WHAT "MENU" MEANS. The screen a player calls the main menu is the
+POST-LOAD MODE MENU -- VS mode / Stage mode / the two championships / Battle mode / Demo /
+Playback Recording / Quit -- and it lives INSIDE mode 2, with its selection at 0x00451160
+(screens.c, MODEMENU_SEL). The launcher (screens 0/6/7, mouse-only) is the little setup
+screen before the game, which nobody asks to be returned to mid-session.
+
+So the work this entry has left is NOT "get the mode word back to 0". It is: find the state
+inside fn_0041bc90 that selects mode menu vs character select vs match, and whether the game
+moves it backwards. That is a transition WITHIN mode 2, which is a much more plausible thing
+for the game to own -- the mode menu is reached from the load exactly once today, and the
+Exit item on the pre-fight overlay already walks one step back (match -> cleared character
+select) without touching the mode word at all.
+
+DEAD END, so it is not retried: hunting for a write that returns the mode word to 0. It does
+not exist, and the two prior measurements in this entry (Escape does nothing at the cleared
+character-select screen, Escape does nothing at the overlay) are consistent with that
+without being the reason for it. Escape delivery is not the problem: win32.c maps it to VK
+0x1B and port_owns_key withholds it only while a match or the pause menu is up, so the game
+does receive it on those screens and does nothing with it.
