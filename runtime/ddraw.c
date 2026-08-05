@@ -7,6 +7,7 @@
 #include "guest_map.h"
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "loadprof.h"
 
 #include <SDL3/SDL.h>
 #include <stdarg.h>
@@ -367,9 +368,11 @@ static void controls_hint_draw(const Surface *s)
 static void present_primary(void)
 {
     if (!primary_surface) return;
+    LOADPROF_SCOPE(LP_PRESENT);
     Surface *s = com_host(primary_surface);
     if (hint_on) controls_hint_draw(s);
     hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
+    LOADPROF_END();
 }
 
 /* ---- IDirectDrawPalette ---- */
@@ -651,6 +654,7 @@ static void blt_frame_log(int dl, int dt, int dr, int db,
 
 static void surf_Blt(uint32_t self)
 {
+    LOADPROF_SCOPE(LP_BLT);
     Surface *d = com_host(self);
     if (getenv("LF2_DUMP_SRC")) {
         static int done;
@@ -678,6 +682,8 @@ static void surf_Blt(uint32_t self)
             for (int x = dl < 0 ? 0 : dl; x < dr && x < d->w; x++) row[x] = fill & 0x00ffffffu;
         }
         if (d->primary) present_primary();
+        _lp_slot = LP_FILL;
+        LOADPROF_END();
         com_ret(6, DD_OK);
         return;
     }
@@ -816,6 +822,7 @@ static void surf_Blt(uint32_t self)
         }
         present_primary();
     }
+    LOADPROF_END();
     com_ret(6, DD_OK);
 }
 
