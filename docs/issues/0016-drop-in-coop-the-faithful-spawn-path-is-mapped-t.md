@@ -134,3 +134,48 @@ spawn, via gfx_request_frame_dump(). A capture aimed at a fixed frame number and
 that fires off game state disagree whenever the load takes a different number of frames --
 one arm of the first A/B never reached a match at all, and its screenshot would have been
 compared as though it showed the same experiment.
+
+### Note (2026-08-05)
+DROP-IN COOP WORKS END TO END, opt-in behind LF2_COOP=<object id>.
+
+A device that presses for the first time while a match is ALREADY running claims a free
+player slot, and because character selection is over there is no fighter waiting for it, so
+one is built there: the faithful spawn (registry lookup, fn_004061d0 reset, +872, position,
+gate byte) plus the slot's device-selector entry and its bit in the joined mask.
+
+VERIFIED TWO-SIDED, and it is now a test (tools/coop_dropin_test.sh, ctest `coop_dropin`):
+the same join run twice, differing only in whether the pad presses a direction afterwards.
+
+  press  the joined fighter travels ~180 px and its animation counter cycles
+  quiet  it drifts <10 px while it lands and then stays put
+
+"A fighter appeared" was never the claim -- one wandering under its own AI would satisfy a
+one-sided check just as well. Both arms also assert the join HAPPENED first, because a run
+whose route never reached the match would otherwise sail through the `quiet` assertion: a
+fighter that does not exist does not move either. That assertion was checked against a
+negative log and does not fire on it.
+
+THE FOUR-PLAYER CAP IS GONE, on evidence rather than optimism. The gather looped `i < 4`
+against a device-selector table of eight entries. It is PLAYER_SLOTS = (DEVSEL_END -
+DEVSEL) / 4 now, so the count comes from the table rather than from a literal, and a fighter
+placed in slot 4 is drawn by the game's own name plate as "5". tools/controller_2p_test.sh
+still passes, which is what the cap was left alone for.
+
+NEW OPEN QUESTION, and it is a real one: PLAYER N'S FIGHTER IS NOT ALWAYS OBJECT INDEX N.
+In an ordinary match the joined mask reads 3 -- two players -- while the computer opponent's
+fighter is at index 11 and object index 1 is EMPTY. The port's gather reaches a player's
+fighter as this+404+4i, which works whenever a fighter is at index i, and that is what makes
+the drop-in work at all. But it means the game can place a player's fighter off its own
+index, and nothing here explains when or why. It matters for anything attributing score or
+a HUD row. Related: in the observed drop-in the claimed slot ALREADY had its selector and
+its mask bit set, so both of those writes were no-ops and the spawn alone did the work --
+which is a hint that the mask and selector describe the character-select roster rather than
+what is on the stage.
+
+STILL OPEN: what +0x354 means, and which free index the game itself picks (it gave its
+computer opponent 11 with 1..10 free).
+
+DESIGN QUESTION, deliberately not answered: which character a late joiner gets. There is no
+character select to show them mid-match, so LF2_COOP takes the object id and defaults to 1
+(Bandit). That is why the feature is opt-in rather than on -- the mechanism is settled, the
+interface is not.

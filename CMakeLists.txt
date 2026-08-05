@@ -203,3 +203,13 @@ add_test(NAME controller_2p
 set_tests_properties(controller_2p PROPERTIES
                      LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
+# Drop-in coop: a second pad joins a match that is already running and drives its fighter.
+# Two-sided -- the same join with and without a direction pressed -- because "a fighter
+# appeared" would also be satisfied by one wandering under its own AI.
+add_test(NAME coop_dropin
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/coop_dropin_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(coop_dropin PROPERTIES
+                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")

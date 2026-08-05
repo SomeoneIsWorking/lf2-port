@@ -427,6 +427,12 @@ void fn_00423b00(void)
 
 enum { DEVSEL = 0x00450b4c, DEVSEL_END = 0x00450b6c };
 
+/* The game's player count, and it is the table's own: DEVSEL_END - DEVSEL is 32 bytes, one
+ * dword of control-config index per slot. Those slots are table indices 0..7, which is why
+ * a drop-in join has to take a free one of the FIRST EIGHT object entries rather than any
+ * free index -- the high indices the game gives its computer opponents have no selector. */
+enum { PLAYER_SLOTS = (DEVSEL_END - DEVSEL) / 4 };
+
 /* Which players have joined, as a bitmask -- bit i is player i. Found by diffing .data
  * across a character-select join (0 -> 1) and again across a second join (1 -> 3), which is
  * what tells a mask from a count. */
@@ -810,6 +816,68 @@ static void coop_spawn(uint32_t self, int dst, int id, int posref, int sel)
         fprintf(stderr, "coop spawn: +0x364 forced to %d\n", sel);
 }
 
+/* ---- LF2_COOP_JOIN=<slot>[,<object id>] -- spawn into a PLAYER slot ----
+ *
+ * The spawn above can put a fighter at any of the 400 table indices. A joining player takes
+ * one of the FIRST EIGHT, because the gather -- the game's and this port's alike -- reaches
+ * a player's fighter as `this+404+4i` for the eight entries of the device-selector table,
+ * so a fighter anywhere else has nothing writing buttons into it.
+ *
+ * On top of the spawn this sets the device-selector entry (the control-config index) and
+ * the bit in the joined-players mask at 0x00451288.
+ *
+ * NOT ESTABLISHED: that player N's fighter is always object index N. It is what makes the
+ * gather work, and a fighter put in slot 4 is drawn by the game's own name plate as "5" --
+ * but the counter-example is right there in a normal match. The joined mask reads 3 (two
+ * players) while the computer opponent's fighter sits at index 11 and object index 1 is
+ * empty. So the game can place a player's fighter off its own index, and what reconciles
+ * that is unknown. It matters for anything that attributes score or a HUD row, and it is
+ * why the two writes below are worth watching: in the observed drop-in, slot 1 ALREADY had
+ * its selector and its mask bit, so both were no-ops and the spawn alone did the work. */
+/* A match is running when SOMETHING is in the world. Character selection is the same
+ * top-level mode as the match, and the port has never found a screen id that separates
+ * them, so this stands in for one: during character selection no object has its gate byte
+ * set, and during a match the fighters do. A drop-in join must not fire on the join screen,
+ * where the game's own joining already works. */
+static int coop_world_running(uint32_t self)
+{
+    for (int k = 0; k < TABLE_N; k++)
+        if (LD8(EXISTS + (uint32_t)k) && LD32(self + PLAYER_PTRS + 4u * (uint32_t)k))
+            return 1;
+    return 0;
+}
+
+static void coop_join(uint32_t self, int slot, int id)
+{
+    if (slot < 0 || slot >= 8) {
+        fprintf(stderr, "coop join: REFUSED -- slot %d is outside the eight player slots "
+                        "(the device selector table has exactly eight entries), so it could "
+                        "never be a player. Nothing was written.\n", slot);
+        return;
+    }
+    if (LD8(EXISTS + (uint32_t)slot)) {
+        fprintf(stderr, "coop join: REFUSED -- player slot %d is already in the world\n", slot);
+        return;
+    }
+    int posref = -1;
+    for (int k = 0; k < TABLE_N; k++)
+        if (LD8(EXISTS + (uint32_t)k)) { posref = k; break; }
+
+    const uint32_t sel_before = LD32(DEVSEL + 4u * (uint32_t)slot);
+    const uint32_t mask_before = LD32(JOINED_MASK);
+
+    coop_spawn(self, slot, id, posref, -1);
+    if (!LD8(EXISTS + (uint32_t)slot)) {
+        fprintf(stderr, "coop join: the spawn refused, so nothing else was set\n");
+        return;
+    }
+
+    ST32(DEVSEL + 4u * (uint32_t)slot, (uint32_t)(slot + 1));   /* control config, 1-based */
+    ST32(JOINED_MASK, mask_before | (1u << slot));
+    fprintf(stderr, "coop join: slot %d -- devsel %d -> %d, joined mask %08x -> %08x\n",
+            slot, (int32_t)sel_before, slot + 1, mask_before, LD32(JOINED_MASK));
+}
+
 /* Called every gather once a spawn has been attempted. Reports on a schedule AND on any
  * change back towards the idle default, because the reset is the finding. */
 static void coop_spawn_watch(uint32_t self)
@@ -1106,11 +1174,30 @@ void fn_00419a60(void)
             int fresh = 0;
             for (int b = 0; b < 7; b++) fresh |= btn[d][b] && !dev_prev[d][b];
             if (fresh) {
-                int used[4] = { 0, 0, 0, 0 };
+                int used[PLAYER_SLOTS] = { 0 };
                 for (int e = 0; e < MAX_DEV; e++)
-                    if (dev_player[e] >= 0 && dev_player[e] < 4) used[dev_player[e]] = 1;
-                for (int p = 0; p < 4; p++)
+                    if (dev_player[e] >= 0 && dev_player[e] < PLAYER_SLOTS)
+                        used[dev_player[e]] = 1;
+                for (int p = 0; p < PLAYER_SLOTS; p++)
                     if (!used[p]) { dev_player[d] = p; break; }
+
+                /* DROP-IN: a device that claims a slot while a match is ALREADY running has
+                 * no fighter waiting for it -- character selection is over. So the fighter
+                 * is built here, in the slot the device just claimed.
+                 *
+                 * Opt-in for now (LF2_COOP=<object id>, default off) because the character a
+                 * late joiner gets is a design question with no answer in the game: there is
+                 * no character select to show them. Off, the claim behaves exactly as it did
+                 * before -- the device is bound to a slot and writes buttons into whatever
+                 * is there, which for slots the game filled is a computer's fighter. */
+                const char *dropin = getenv("LF2_COOP");
+                const int p = dev_player[d];
+                if (dropin && p >= 0 && !LD8(EXISTS + (uint32_t)p) && coop_world_running(self)) {
+                    const int id = atoi(dropin) > 0 ? atoi(dropin) : 1;
+                    fprintf(stderr, "coop: device %d claimed player slot %d mid-match, "
+                                    "building it a fighter (object id %d)\n", d, p, id);
+                    coop_join(self, p, id);
+                }
             }
         }
         memcpy(dev_prev[d], btn[d], 7);
@@ -1190,6 +1277,14 @@ void fn_00419a60(void)
                             }
                             const char *semi = strchr(c, ';');
                             c = semi ? semi + 1 : NULL;
+                        }
+
+                        const char *jn = getenv("LF2_COOP_JOIN");
+                        if (jn) {
+                            int js = -1, jid = 1;
+                            if (sscanf(jn, "%d,%d", &js, &jid) >= 1) coop_join(self, js, jid);
+                            else fprintf(stderr, "coop join: REFUSED -- LF2_COOP_JOIN must be "
+                                                 "<slot>[,<object id>], got \"%s\"\n", jn);
                         }
                     }
                 } else if (hostwin_frames() == atol(tf2)) {
@@ -1326,7 +1421,14 @@ void fn_00419a60(void)
         }
     }
 
-    for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END && i < 4; sel += 4, i++) {
+    /* All EIGHT player slots, not four. The four was a port limitation, and it is removed
+     * on evidence rather than optimism: the device-selector table is exactly eight entries
+     * (DEVSEL..DEVSEL_END is 32 bytes), and a fighter put into slot 4 with its selector and
+     * joined-mask bit set is drawn by the game's OWN name plate as "5". A slot with no
+     * device bound to it contributes nothing here, because `fed` stays 0 and the loop
+     * writes an all-zero button set exactly as it did before -- which is what the slots
+     * beyond the first two in tools/controller_2p_test.sh have always been. */
+    for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END && i < PLAYER_SLOTS; sel += 4, i++) {
         if ((int32_t)LD32(sel) <= 0) continue;         /* recording or demo: not ours */
         in_live++;
 

@@ -585,6 +585,8 @@ updated nor reset.
 | `LF2_COOP_SPAWN=<index>[,<id>[,<+0x364>]][;...]` | build object `<id>` (default 1, Bandit) at a free index and watch it. A **list**, so two spawns can be compared inside one run |
 | `LF2_COOP_SHOT=<n>` | capture the frame `<n>` frames after the spawn |
 | `LF2_COOP_REFS=<frame>` | scan the image, heap and stack for pointers to the player records |
+| `LF2_COOP_JOIN=<slot>[,<id>]` | spawn into player slot 0..7 and set its selector and mask bit |
+| `LF2_COOP=<object id>` | **drop-in coop**: a device pressing mid-match joins as a player |
 | `LF2_COOP_DEBUG=1` | the player slot table, printed on change |
 
 **Prefer `live+<n>` to a frame number.** The data load does not take a fixed number of
@@ -614,6 +616,35 @@ LF2_COOP_TABLE=live+60 LF2_COOP_SPAWN='13,1;14,52' LF2_COOP_SHOT=45 ./lf2 lf2.ex
 draws two different characters in HUD positions 4 and 5; the same id twice draws the same
 portrait in both. That two-sided pair is what shows the portrait follows the object's data
 block at `+872`.
+
+### Drop-in coop
+
+`LF2_COOP=<object id>` turns it on. A device that presses for the first time while a match
+is already running claims a free player slot; character selection is over, so no fighter is
+waiting for it and one is built there. The pad then drives it like any other player.
+
+```sh
+cd game && LF2_COOP=52 ../scratch/build/lf2 lf2.exe
+```
+
+It is **opt-in rather than on** because of an interface question the game does not answer:
+there is no character select to show a late joiner, so the character comes from the variable
+and defaults to 1 (Bandit). The mechanism is settled; the interface is not.
+
+`tools/coop_dropin_test.sh` (ctest `coop_dropin`) guards it two-sided — the same join with
+and without a direction pressed afterwards, which is the only way to tell a pad-driven
+fighter from one wandering under its own AI. Both arms assert the join happened first,
+because a run that never reached the match would otherwise pass the quiet assertion for the
+wrong reason.
+
+The eight-player cap comes from the device-selector table's own size now, not a literal.
+A fighter placed in slot 4 is drawn by the game's own name plate as "5".
+
+**Not established:** that player N's fighter is always object index N. In an ordinary match
+the joined mask reads two players while the computer opponent's fighter is at index 11 and
+object index 1 is empty. The gather reaches a player's fighter as `this+404+4i`, which works
+whenever a fighter is at index `i` — but the game can evidently place one elsewhere, and
+what reconciles that is unknown.
 
 ## The menu map, and how it was recovered
 
