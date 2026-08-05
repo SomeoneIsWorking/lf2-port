@@ -90,6 +90,74 @@ static long     sleep_site_n[SLEEP_SITES];
 static long     sleep_site_at_first[SLEEP_SITES], sleep_site_at_last[SLEEP_SITES];
 static int      sleep_nsites;
 
+/* ---- LF2_CLOCK_SITES -- who looks at the clock, and who looks at it WITHOUT SLEEPING ----
+ *
+ * The question this exists to answer is issue #18's: a virtual guest clock, advanced only by
+ * the game's own sleeps, hung until a microsecond was credited per READ as well -- so some
+ * loop watches the clock and never sleeps, and with a clock that only sleeps advance, it
+ * waits for a time that can never arrive. A microsecond a read makes it terminate, but it
+ * also distorts the timeline, so the loop wants finding rather than papering over.
+ *
+ * CALL COUNT ALONE WOULD NOT FIND IT, which is why this measures something else as well. The
+ * frame pacer reads the clock constantly and is perfectly well behaved, because it sleeps
+ * between reads. What distinguishes a spin is the RUN: how many reads a site made since the
+ * last Sleep of any kind. A well-behaved deadline loop's run is a handful; a spin's is
+ * enormous. Both are reported, so a site cannot look innocent on one and be caught on the
+ * other.
+ *
+ * The negative is reported too: a run with the variable set that names NO site says so, with
+ * the number of reads it did see, rather than printing an empty list that reads like "there
+ * is no spin". */
+enum { CLOCK_SITES = 24 };
+static uint32_t clk_site[CLOCK_SITES];
+static long     clk_site_n[CLOCK_SITES];      /* total reads from this site */
+static long     clk_site_max_run[CLOCK_SITES];/* longest burst with no Sleep in it */
+static const char *clk_site_api[CLOCK_SITES]; /* which of the three it came through */
+static int      clk_nsites;
+static long     clk_reads_total, clk_run, clk_dropped;
+
+static void clock_read_note(const char *api)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("LF2_CLOCK_SITES") != NULL;
+    if (!on) return;
+
+    clk_reads_total++;
+    clk_run++;
+    const uint32_t ra = LD32(R(ESP));
+    int k = 0;
+    for (; k < clk_nsites; k++) if (clk_site[k] == ra) break;
+    if (k == clk_nsites) {
+        if (clk_nsites >= CLOCK_SITES) { clk_dropped++; return; }
+        clk_site[clk_nsites] = ra;
+        clk_site_api[clk_nsites] = api;
+        clk_nsites++;
+    }
+    clk_site_n[k]++;
+    if (clk_run > clk_site_max_run[k]) clk_site_max_run[k] = clk_run;
+}
+
+void clock_sites_report(void)
+{
+    if (!getenv("LF2_CLOCK_SITES")) return;
+    if (clk_reads_total == 0) {
+        fprintf(stderr, "clock sites: the guest NEVER read its clock -- no site to name, and "
+                        "nothing here is evidence about spinning\n");
+        return;
+    }
+    fprintf(stderr, "clock sites: %ld reads from %d call site(s)%s. `run` is reads since the "
+                    "last Sleep -- a large one is a loop watching the clock without "
+                    "sleeping\n",
+            clk_reads_total, clk_nsites,
+            clk_dropped ? " (and more sites than this build can hold; some were DROPPED)" : "");
+    for (int k = 0; k < clk_nsites; k++)
+        fprintf(stderr, "  from=%08x  %-24s reads=%-9ld longest run=%ld\n",
+                clk_site[k], clk_site_api[k], clk_site_n[k], clk_site_max_run[k]);
+    if (clk_dropped)
+        fprintf(stderr, "  ... and %ld reads from call sites past the %d this build records, "
+                        "which are NOT in the list above\n", clk_dropped, CLOCK_SITES);
+}
+
 /* Sleep was a no-op returning immediately, so the game's frame pacing -- which is a
  * Sleep in a loop -- became a spin, pegging a core at ~96% for a 30 fps 2D fighter.
  * Honouring it is also the faithful behaviour: on Windows this blocks the thread, and the
@@ -97,6 +165,7 @@ static int      sleep_nsites;
 static void h_Sleep(void)
 {
     const uint32_t ms = ARG(0);
+    clk_run = 0;                          /* a Sleep ends any run of clock reads */
     /* LF2_NO_SLEEP restores the old no-op, purely so the cost of honouring Sleep can be
      * A/B measured. Not a tuning knob: skipping it burns a whole core. */
     if (getenv("LF2_NO_SLEEP")) { ret_stdcall(1, 0); return; }
@@ -175,11 +244,13 @@ static uint64_t guest_ns(void)
 
 static void h_GetTickCount(void)
 {
+    clock_read_note("GetTickCount");
     ret_stdcall(0, (uint32_t)(guest_ns() / 1000000ull));
 }
 
 static void h_QueryPerformanceCounter(void)
 {
+    clock_read_note("QueryPerformanceCounter");
     const uint64_t v = guest_ns();
     ST32(ARG(0), (uint32_t)v);
     ST32(ARG(0) + 4, (uint32_t)(v >> 32));
@@ -1064,6 +1135,7 @@ static void h_CreateThread(void)
 
 static void h_timeGetTime(void)
 {
+    clock_read_note("timeGetTime");
     ret_stdcall(0, (uint32_t)(guest_ns() / 1000000ull));
 }
 

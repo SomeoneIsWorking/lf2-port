@@ -204,3 +204,57 @@ would name it, after which the per-read credit may be replaceable by fixing that
 measure smoke with and without its three debug variables to settle whether the slowdown is the
 pacer or the instrumentation; (3) teach LF2_KEY_SCRIPT the @screen form so the last route
 stops being a stopwatch.
+
+### Note (2026-08-06)
+THE SPIN IS NAMED, 2026-08-06, and it changes what the virtual clock's fix should be.
+
+HOW: a new instrument, LF2_CLOCK_SITES (runtime/imports.c, registered as I005), records every
+guest call site that reads the clock with two numbers -- total reads, and the longest RUN of
+reads with no Sleep between them. The second is the one that discriminates: a well-behaved
+deadline loop reads constantly and sleeps between reads, so call count alone cannot tell it
+from a spin. Over a 2400-frame route:
+
+  from=0043d162  timeGetTime  reads=241581  longest run=399
+  from=0043d195  timeGetTime  reads=241581  longest run=401
+  every other site               reads<=2254  longest run<=126
+
+WHAT IT IS: fn_0043cf40 (0x0043cf40..0x0043d222) is the game's MAIN LOOP, and both hot sites
+are inside its pacer. Read off the disassembly:
+
+  0043d110  loop head: PeekMessage; if a message -> Translate/Dispatch, JMP 0043d1ef, which
+            skips the pacing AND the Sleep entirely
+  0043d160  now = timeGetTime(); elapsed = now - last
+  0043d164  if (elapsed <= 0x21)   -> 0043d193: remaining = last + 0x21 - now, then sleep
+  0043d169  else (the frame is OVERDUE):
+              if (elapsed > 0x64) last = now - 0x64        <-- resync to 100 ms behind
+              run the frame (CALL 0x0043e9a0)
+              last += 0x21
+  0043d1df  if (remaining <= 0) NO SLEEP -- straight round the loop again
+            else Sleep(min(remaining, 5))
+
+So when the game falls behind by more than 100 ms it resyncs to exactly 100 ms behind, which
+is still more than the 33 ms frame period, and then runs frames BACK TO BACK with no Sleep at
+all until it catches up. With a real clock it catches up because real time passes. With a
+clock advanced only by Sleep, it never catches up -- it runs frames forever. That is the 111 s
+of user CPU measured with CLOCK_READ_NS=0.
+
+WHY THIS CHANGES THE FIX: crediting a microsecond per READ was a guard against the symptom,
+and it is a poor one -- it ties the guest's timeline to how many times it happens to look at
+the clock, and it is what distorted the pacing. The loop's own catch-up condition points at
+the right credit instead: the virtual clock should advance with the game's PRODUCED FRAMES.
+A per-presented-frame credit makes the catch-up loop terminate (each iteration produces a
+frame, so time moves), it is bounded and deterministic, and it is tied to the thing the game
+is actually doing rather than to an incidental read count.
+
+SIZING IT is the open question. A full 33 ms per frame would double-count against the Sleep
+credit during normal play (the game sleeps to fill the frame it just produced), so the credit
+has to be the WORK portion -- something like 1 ms -- or the two have to be combined rather
+than added, e.g. the clock takes the greater of its sleep credit and frames * 33 ms. Measure
+before choosing: the catch-up path needs about 67 iterations to close a 100 ms deficit at
+1 ms a frame, which is bounded but visible.
+
+Step 2 of the earlier list -- whether smoke's slowdown was the pacer or its own
+instrumentation -- is very likely answered by this too: with reads inflating virtual time,
+a run doing heavy per-frame host work reads the clock more, so it paid more virtual time per
+frame and the pacer then waited for the wall to catch up. Worth confirming once the credit
+moves to frames.
