@@ -1,4 +1,4 @@
-# Functions replaced by hand-written native implementations in runtime/overrides.c.
+# Functions replaced by hand-written native implementations in runtime/overrides/.
 # One hex address per line. Anything listed here is not lifted; the generated code still
 # calls fn_<addr>() and the linker resolves it to the native version.
 #

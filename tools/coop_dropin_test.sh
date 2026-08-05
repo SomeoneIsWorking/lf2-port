@@ -47,8 +47,13 @@ PAD1="$PAD1,right:2250,south:2300"
 # not take a fixed number of frames, so a single press at a chosen frame sometimes arrives
 # before the fight starts -- which it did, giving one arm a join and the other none, and a
 # comparison between them would have been meaningless. Two join presses spread across the
-# window make that miss unlikely; a second press once already joined is just a button press
-# in a fight, which is harmless.
+# window make that miss unlikely.
+#
+# The second press is now also what LOCKS IN the character: a joiner gets a choice first
+# (tools/coop_select_test.sh measures that part), and its pad's buttons are withheld from
+# its fighter for as long as the choice is open. So both presses are load-bearing here, and
+# the assertions below check the lock-in happened -- without it the "press" arm would find
+# no direction in the record and read as a broken join rather than an unfinished choice.
 #
 # The measurement window is SHORT on purpose -- the watch's +5 and +120 samples -- and the
 # directions cover it. Measuring over a long window instead made both arms meaningless: in a
@@ -84,6 +89,17 @@ for arm in press quiet; do
     else
         echo "  FAIL  $arm: no mid-match join happened, so this run proves nothing"
         echo "        (most likely the scripted route never reached the match)"
+        fail=1
+    fi
+done
+
+for arm in press quiet; do
+    log=$LOGP; [ "$arm" = quiet ] && log=$LOGQ
+    if grep -q "coop select: slot .* LOCKED IN" "$log"; then
+        echo "  ok    $arm: the joiner locked in a character, so its pad now drives it"
+    else
+        echo "  FAIL  $arm: the joiner never locked in, so its buttons are still withheld"
+        echo "        and this arm measures an unfinished choice, not a join"
         fail=1
     fi
 done

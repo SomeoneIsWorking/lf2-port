@@ -587,8 +587,9 @@ updated nor reset.
 | `LF2_COOP_SHOT=<n>` | capture the frame `<n>` frames after the spawn |
 | `LF2_COOP_REFS=<frame>` | scan the image, heap and stack for pointers to the player records |
 | `LF2_COOP_JOIN=<slot>[,<id>]` | spawn into player slot 0..7 and set its selector and mask bit |
-| `LF2_COOP=1` | **drop-in coop**: a device pressing mid-match joins as a player |
-| `LF2_COOP_CHAR=<object id>` | pin the character a late joiner gets; without it, one is taken from the game's roster |
+| `LF2_COOP=1` | **drop-in coop**: a device pressing mid-match joins as a player, choosing its character on the stage — the fighter flashes, left/right cycle the roster, attack locks in. Unplugging that device takes the fighter out again |
+| `LF2_COOP_CHAR=<object id>` | pin where a late joiner's character cycle STARTS; without it, it starts at a reproducible point on the game's roster |
+| `LF2_COOP_SELECT=0` | skip the choice: a late joiner drops straight into the match on one character, which is the pre-selection behaviour and what a test measuring something else wants |
 | `LF2_COOP_TRACK=<index>` | that entry's position every 30 frames, while a match is on screen |
 | `LF2_COOP_DEBUG=1` | the player slot table, printed on change |
 
@@ -1067,7 +1068,7 @@ There is exactly one keyboard layout, and it is drawn along the bottom of the fr
 
 The four per-player layouts from `data/control.txt` no longer reach the game; the control
 settings screen still edits them, but the input gather override replaces every live
-player's buttons with the port's own device routing (`runtime/overrides.c`).
+player's buttons with the port's own device routing (`runtime/overrides/input.c`).
 
 Devices — the keyboard and every connected pad — are handed to players **first come,
 first served**: outside the game proper every device drives player one, so anyone can
@@ -1125,7 +1126,7 @@ happened is one level up: **a controller reaches a player only if that player's 
 config names a joystick**, and nothing sets that without a trip to the settings screen.
 
 That decision lives in `fn_00419a60`, the per-frame input gather, so that is what is
-ported (`runtime/overrides.c`). Read out of the original:
+ported (`runtime/overrides/`). Read out of the original:
 
 | address | meaning |
 |---|---|
@@ -1188,7 +1189,7 @@ driver quirk. But the code path is no longer unexercised.
 
 ## The ported menu
 
-`fn_004246b0` (the menu) is being ported incrementally in `runtime/overrides.c`. What is
+`fn_004246b0` (the menu) is being ported incrementally in `runtime/overrides/menu.c`. What is
 native so far is the **selection**: a real index the port owns, rather than something
 derived from where a pointer happens to be. Everything else still delegates to the original
 body through `fn_004246b0__orig`.
