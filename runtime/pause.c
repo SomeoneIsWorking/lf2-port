@@ -26,25 +26,61 @@ int  game_glyph_draw(int ch, int x, int y, uint32_t ink,
 int  hostwin_pointer(int *x, int *y);
 int  hostwin_mouse_clicked(void);
 
-/* Only two entries, and both of them do exactly what they say. "Restart" and "back to
- * character select" are deliberately absent: driving the game back to those screens is real
- * reverse engineering that has not been done, and a menu item that half-works is worse than
- * one that is not there. */
-enum { IT_RESUME, IT_QUIT, IT_N };
-static const char *const ITEMS[IT_N] = { "RESUME", "QUIT GAME" };
+/* Four entries at most, and every one of them does exactly what it says. "Restart" and
+ * "back to character select" are still deliberately absent: driving the game back to those
+ * screens is reverse engineering that has not been done, and a menu item that half-works is
+ * worse than one that is not there.
+ *
+ * DROP OUT is CONDITIONAL. It only appears when the device that opened this menu is driving
+ * a player slot THIS PORT put there -- coop_drop_out refuses any other, because a fighter
+ * the game's own character selection placed is not the port's to delete. That is also why
+ * the menu records which device opened it: the menu is one screen, but drop-out is per
+ * player, and one that guessed would drop the wrong fighter out of the fight.
+ *
+ * LEAVE MATCH is named for what it VERIFIABLY does, which is not quite what was asked for.
+ * It drives the game's own way out of a fight -- F4, then the pre-fight overlay's own Exit
+ * item -- and the game lands on its own character-select screen with the roster cleared,
+ * ready for another match. Reaching the FRONT-END menu from there is one more step that has
+ * not been established (Escape at that screen does nothing, measured), so the item does not
+ * claim it. See issue #22.
+ *
+ * The rows are built per pause rather than being a fixed table, so the geometry, the hit
+ * test and the drawing all agree without any of them knowing which items exist. */
+enum { IT_RESUME, IT_DROP, IT_EXIT, IT_QUIT, IT_KINDS };
+static const char *const ITEM_TEXT[IT_KINDS] = {
+    "RESUME", "DROP OUT", "LEAVE MATCH", "QUIT GAME"
+};
 
 static int paused, sel;
+static int rows[IT_KINDS], row_n;   /* the item kinds on screen this pause, in order */
+static int pause_dev = -1;          /* the device that opened it; drop-out belongs to it */
+static int drop_slot = -1;          /* the player slot that device is driving, or -1 */
+
+/* Which items this pause offers. Called once when the menu opens, so the list cannot change
+ * under the player's fingers between the frame they aimed and the frame they pressed. */
+static void build_rows(void)
+{
+    row_n = 0;
+    rows[row_n++] = IT_RESUME;
+    drop_slot = pause_dev >= 0 ? device_player(pause_dev) : -1;
+    if (drop_slot >= 0 && coop_owns(drop_slot)) rows[row_n++] = IT_DROP;
+    rows[row_n++] = IT_EXIT;
+    rows[row_n++] = IT_QUIT;
+}
 
 /* Panel geometry, in the primary surface's own pixels. Centred on whatever the viewport is,
  * so it lands correctly in widescreen without knowing anything about it. */
-enum { PANEL_W = 260, PANEL_H = 110, ROW_H = 26, GLYPH_W = 8, GLYPH_H = 16 };
+enum { PANEL_W = 260, ROW_H = 26, GLYPH_W = 8, GLYPH_H = 16 };
+enum { PANEL_TOP = 36, PANEL_PAD = 10 };   /* title band above the rows, margin below */
+
+static int panel_h(void) { return PANEL_TOP + row_n * ROW_H + PANEL_PAD; }
 
 int pause_active(void) { return paused; }
 
 static void panel_origin(int w, int h, int *px, int *py)
 {
     *px = (w - PANEL_W) / 2;
-    *py = (h - PANEL_H) / 2;
+    *py = (h - panel_h()) / 2;
 }
 
 /* Row rectangles have to agree between the hit test and the draw, so both come from here. */
@@ -54,13 +90,13 @@ static void row_rect(int w, int h, int i, int *x0, int *y0, int *x1, int *y1)
     panel_origin(w, h, &px, &py);
     *x0 = px + 16;
     *x1 = px + PANEL_W - 16;
-    *y0 = py + 36 + i * ROW_H;
+    *y0 = py + PANEL_TOP + i * ROW_H;
     *y1 = *y0 + ROW_H - 4;
 }
 
 static int row_at(int w, int h, int x, int y)
 {
-    for (int i = 0; i < IT_N; i++) {
+    for (int i = 0; i < row_n; i++) {
         int x0, y0, x1, y1;
         row_rect(w, h, i, &x0, &y0, &x1, &y1);
         if (x >= x0 && x < x1 && y >= y0 && y < y1) return i;
@@ -92,12 +128,42 @@ static void pad_state(int *up, int *down, int *confirm, int *start)
     *start = gamepad_start_held();
 }
 
+/* Devices are numbered as the input gather numbers them: 0 is the keyboard, 1..4 the pads.
+ * A pause opened with Escape belongs to the keyboard; one opened with Start belongs to the
+ * pad that is holding it. */
+static int pausing_device(void)
+{
+    const int pad = gamepad_start_index();
+    if (pad >= 0) return pad + 1;
+    return 0;
+}
+
 static void activate(void)
 {
-    switch (sel) {
-    case IT_RESUME: paused = 0; break;
-    case IT_QUIT:   hostwin_request_quit(); break;
-    default: break;
+    const int kind = sel >= 0 && sel < row_n ? rows[sel] : -1;
+    switch (kind) {
+    case IT_RESUME:
+        paused = 0;
+        break;
+    case IT_DROP:
+        /* Unpause FIRST. The drop-out itself is a write to the game's own state, but the
+         * player is left looking at a match they are no longer in, and a pause menu still
+         * up over it would offer to drop them out a second time. */
+        paused = 0;
+        if (drop_slot >= 0) coop_drop_out(drop_slot);
+        break;
+    case IT_EXIT:
+        /* Unpause FIRST, and this one is not a nicety: pausing works by declining to call
+         * the game's update, and the transition out of a match is something the GAME does.
+         * Frozen, F4 would be delivered to a game that never runs another frame. */
+        paused = 0;
+        exit_to_menu_begin(pause_dev >= 0 ? pause_dev : 0);
+        break;
+    case IT_QUIT:
+        hostwin_request_quit();
+        break;
+    default:
+        break;
     }
 }
 
@@ -115,12 +181,17 @@ void pause_tick(void)
      * Unpausing is always allowed, or a pause that outlived its match would be a lock-up. */
     if (toggle) {
         if (paused) paused = 0;
-        else if (panel_hud_up()) { paused = 1; sel = IT_RESUME; }
+        else if (panel_hud_up()) {
+            paused = 1;
+            sel = 0;                       /* RESUME is always the first row */
+            pause_dev = pausing_device();
+            build_rows();
+        }
     }
     if (!paused) return;
 
-    if (edge(&was_up,   hostwin_key_held(0x26) || p_up))   sel = (sel + IT_N - 1) % IT_N;
-    if (edge(&was_down, hostwin_key_held(0x28) || p_down)) sel = (sel + 1) % IT_N;
+    if (edge(&was_up,   hostwin_key_held(0x26) || p_up))   sel = (sel + row_n - 1) % row_n;
+    if (edge(&was_down, hostwin_key_held(0x28) || p_down)) sel = (sel + 1) % row_n;
 
     int mx, my;
     if (hostwin_pointer(&mx, &my)) {
@@ -205,20 +276,22 @@ void pause_draw(uint32_t pix, int w, int h, int pitch)
 
     int px, py;
     panel_origin(w, h, &px, &py);
-    fill(pix, pitch, w, h, px, py, px + PANEL_W, py + PANEL_H, 0x00203050u);
+    const int ph = panel_h();
+    fill(pix, pitch, w, h, px, py, px + PANEL_W, py + ph, 0x00203050u);
     fill(pix, pitch, w, h, px, py, px + PANEL_W, py + 2, 0x006080b0u);
-    fill(pix, pitch, w, h, px, py + PANEL_H - 2, px + PANEL_W, py + PANEL_H, 0x006080b0u);
+    fill(pix, pitch, w, h, px, py + ph - 2, px + PANEL_W, py + ph, 0x006080b0u);
 
     static const char TITLE[] = "PAUSED";
     text(TITLE, px + (PANEL_W - (int)(sizeof TITLE - 1) * GLYPH_W) / 2, py + 10,
          0x00ffffffu, pix, w, h, pitch);
 
-    for (int i = 0; i < IT_N; i++) {
+    for (int i = 0; i < row_n; i++) {
         int x0, y0, x1, y1;
         row_rect(w, h, i, &x0, &y0, &x1, &y1);
         if (i == sel) fill(pix, pitch, w, h, x0, y0, x1, y1, 0x004870a0u);
-        const int len = (int)strlen(ITEMS[i]);
-        text(ITEMS[i], x0 + ((x1 - x0) - len * GLYPH_W) / 2, y0 + (ROW_H - 4 - GLYPH_H) / 2,
+        const char *label = ITEM_TEXT[rows[i]];
+        const int len = (int)strlen(label);
+        text(label, x0 + ((x1 - x0) - len * GLYPH_W) / 2, y0 + (ROW_H - 4 - GLYPH_H) / 2,
              i == sel ? 0x00ffffffu : 0x00b0c0d0u, pix, w, h, pitch);
     }
 }

@@ -211,6 +211,37 @@ exhaust the arena during a single drag. And `Lock` reports width, height and pit
 every call, so the game picks up a changed width on its next frame while anything it cached
 stays valid.
 
+## The pause menu
+
+The game has no pause; this is the port's, built on declining to call the game's own
+per-frame update. **Escape** or **Start** during a match opens it, and it takes mouse,
+keyboard and pad like every other menu here.
+
+| Item | |
+|---|---|
+| RESUME | |
+| DROP OUT | only when the device that OPENED the menu is driving a player this port put into the match — a drop-in. It runs the same `coop_leave` an unplugged pad does, which refuses any slot the game's own character selection filled |
+| LEAVE MATCH | drives the game's own way out of a fight — F4, then the pre-fight overlay's own Exit item — and lands on the character-select screen with the roster cleared |
+| QUIT GAME | ends the process |
+
+Two things about it are worth knowing before changing it.
+
+**Drop-out is per player, so the menu records which device opened it.** Escape means the
+keyboard, Start means the pad holding it. A menu that guessed would take the wrong fighter
+out of the fight.
+
+**Both DROP OUT and LEAVE MATCH unpause first.** Pausing works by not calling the game's
+update, so anything the *game* has to do — and leaving a match is one of those — would
+otherwise be delivered to a game that never runs another frame.
+
+`LEAVE MATCH` is named for what it verifiably does. Reaching the front-end menu from the
+character-select screen is one further step that is **not** established: Escape there does
+nothing, measured, and issue #22 stays open for it. The port does not fake the transition by
+resetting its own state.
+
+`ctest pause_dropout` covers the drop-out half end to end, including the negative that
+player one is still in the match afterwards.
+
 ## Scripted input
 
 For checking the port without a human at the keyboard:

@@ -5,7 +5,7 @@ status: open
 symptom: ctest two_human_match fails both arms with 'no live fighter at object index 1'; coop_dropin and coop_select on the same build pass
 tags: test,flaky,timing,coop,two-player
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-06
 ---
 
 NOT caused by the character-selection work or the runtime/overrides split. Established by
@@ -102,3 +102,15 @@ frame numbers in a route are fragile, and pad scripts now accept `button@match+3
 `@charselect` / `@overlay`, firing off the game's own drawing. A press whose screen never
 appears now reports that it never fired instead of going quiet -- which is what surfaced
 this bug in one run.
+
+### Note (2026-08-06)
+SEEN AGAIN, 2026-08-06, and this is the third time: coop_dropin's quiet arm failed with 'no
+mid-match join happened' inside a full ctest run, and PASSED on its own immediately after on
+the same tree (184s, 1/1). The suite was competing with frame-dump runs of my own on a
+16-core box under load ~20.
+
+The diagnosis holds and the remedy is still not applied where it matters: coop_dropin's route
+is still ABSOLUTE-frame ('south:2300'), not state-keyed ('south@match+30'). controller_test
+and the pad-script machinery already support the @<screen>+N form and virtual_pad_report says
+which screens a run reached. Converting the coop_* routes is the fix; until then a red
+coop_dropin in a loaded suite means nothing until it is re-run alone.
