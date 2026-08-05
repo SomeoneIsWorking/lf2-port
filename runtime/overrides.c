@@ -83,14 +83,13 @@ enum { GX_CLICK = 0x00457580, GX_SCREEN = 0x0044d064 };
  * 2 -> 1 against the frame where the highlight moved Reset Random -> Reset All. */
 enum { OVERLAY_SEL = 0x0044d06c };
 
-/* The phase word that separates the three screens the game proper runs through. It is the
- * screen discriminator character selection needed and did not have: -100 while players are
- * joining and picking, 0 while the pre-fight overlay is up, 1 once the match runs. Found by
- * diffing .data across two overlay-closed frames against two overlay-open ones, keeping only
- * dwords stable within each pair (26 candidates), then checking each against a third state,
- * a running match, which left exactly this one. */
-enum { OVERLAY_PHASE = 0x0044d070 };
-enum { PHASE_PICKING = -100, PHASE_OVERLAY = 0, PHASE_MATCH = 1 };
+/* 0x0044d070 was used here as an "which screen is up" word, derived from stage-mode .data
+ * dumps where it reads -100 while players pick, 0 while the overlay is up and 1 in the
+ * match. It is the GAME MODE, not the screen: in VS mode it reads 1 with the overlay open,
+ * so the overlay took no mouse input at all there and only stage mode ever worked. It was
+ * derived from stage-mode dumps and checked against stage-mode dumps, which is why it
+ * looked perfect. The screen is now taken from what the game DRAWS -- see panel_overlay_up()
+ * in runtime/ddraw.c -- and this word is deliberately not used. */
 
 /* The ad system's update notice in the top-right corner; see fn_0043f010 below. */
 enum { MENU_CLIP7 = 0x00451188 };            /* sheet handle, loaded from "MENU_CLIP7" */
@@ -789,7 +788,7 @@ void charselect_mouse(void)
         /* No slot cursor yet: this player has not joined. A click inside a portrait is
          * the attack that joins -- gated on the phase word so it cannot fire during a
          * match, where the same rectangles are just part of the arena. */
-        if ((int32_t)LD32(OVERLAY_PHASE) == PHASE_PICKING && hostwin_mouse_clicked())
+        if (panel_charselect_up() && !panel_overlay_up() && hostwin_mouse_clicked())
             mouse_confirm_frames = 2;
         return;
     }
@@ -871,15 +870,12 @@ void modemenu_mouse(void)
  * is what finishes "every menu takes every device".
  *
  *   .data 0x0044d06c   the selection, 0..5 (OVERLAY_SEL, located earlier)
- *   .data 0x0044d070   the phase: -100 on character select, 0 while the overlay is up,
- *                      1 once the match runs
  *
- * The phase word matters more than it looks. Character selection is still underneath the
- * overlay and charselect_mouse() is still live, so without it the pointer would drag the
- * slot cursor around while the player is aiming at "Fight!". It was found by diffing .data
- * across two frames with the overlay closed against two with it open, keeping only dwords
- * stable within each pair -- 26 candidates -- and then checking each against a third state
- * (a running match), which left exactly this one.
+ * Knowing WHEN it is up matters more than it looks. Character selection is still underneath
+ * it and charselect_mouse() is still live, so without that the pointer would drag the slot
+ * cursor around while the player is aiming at "Fight!". The answer comes from what the game
+ * draws (panel_overlay_up()), not from a .data flag -- the first attempt used one, and it
+ * was the game mode wearing a convincing disguise.
  *
  * The row geometry comes from the game's own highlight blit, not from measuring a
  * screenshot: LF2_OVERLAY_FORCE pins the selection and LF2_BLT_FRAME prints where the
@@ -892,7 +888,7 @@ enum { OV_X0 = 3, OV_X1 = 307, OV_Y0 = 16, OV_STEP = 24 };
 
 int overlay_open(void)
 {
-    return top_mode == MODE_IN_GAME && (int32_t)LD32(OVERLAY_PHASE) == PHASE_OVERLAY
+    return top_mode == MODE_IN_GAME && panel_overlay_up()
         && LD32(OVERLAY_SEL) < OVERLAY_ITEMS;
 }
 
