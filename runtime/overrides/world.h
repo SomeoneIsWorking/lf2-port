@@ -167,12 +167,22 @@ void coop_debug_tick(uint32_t self);   /* every LF2_COOP_* probe, once per gathe
  */
 enum { BG_REGISTRY = 0x00458b00 + 2004, BG_INDEX = 0x0044d024 };
 enum { BG_STRIDE_DW = 612, BG_MAX_LAYERS = 30 };
-enum { BG_LAYER_SPAN   = 81027604,      /* +0   bg.dat's `width:` -- the scroll span */
+enum { BG_LAYER_PIC    = 81027484,      /* -120 the picture handed to the draw call */
+       BG_LAYER_SPAN   = 81027604,      /* +0   bg.dat's `width:` -- the scroll span */
        BG_LAYER_X      = 81027724,      /* +120 */
        BG_LAYER_Y      = 81027844,      /* +240 -- appears verbatim in fn_0041a250 */
-       BG_LAYER_LOOP   = 81028084 };    /* +480 bg.dat's `loop:` -- repeat step, 0 = none */
+       BG_LAYER_HEIGHT = 81027964,      /* +360 only the colour-fill path reads this */
+       BG_LAYER_LOOP   = 81028084,      /* +480 bg.dat's `loop:` -- repeat step, 0 = none */
+       BG_LAYER_C1     = 81028204,      /* +600 bg.dat's `c1:` -- first animation frame */
+       BG_LAYER_C2     = 81028324,      /* +720 bg.dat's `c2:` -- last animation frame */
+       BG_LAYER_CC     = 81028444,      /* +840 bg.dat's `cc:` -- the frame count, 0 = static */
+       BG_LAYER_ANIM   = 81028564,      /* +960 the live frame counter, stepped every draw */
+       BG_LAYER_TINT   = 81028684,      /* +1080 non-zero: a colour fill, not a picture */
+       BG_LAYER_OBJ    = 81028804 };    /* +1200 the object the draw call is made on */
 enum { BG_STAGE_WIDTH  = 81026480,      /* -1124, per background, not per layer */
        BG_LAYER_COUNT  = 81026508 };    /* -1096; fn_0041a250 loops on this count */
+enum { BG_CAMERA_X     = 0x00450bc4 };  /* the world camera, in stage coordinates */
+enum { BG_SCREEN_W     = 794 };         /* the game's screen width, literal in fn_0041a250 */
 
 /* One layer field, or 0 when the index is out of range. Reads only; nothing here writes to
  * the game's own table. */

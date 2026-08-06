@@ -1479,6 +1479,14 @@ Three hooks in `runtime/ddraw.c`:
 
 ### The stage's own background layers
 
+- **`LF2_BG_ORIG=1`** hands the background layer draw back to the recompiled body instead of
+  `runtime/overrides/background.c`, and **`LF2_BG_SKEW=<n>`** shifts every layer's parallax
+  offset by `n` pixels. Both exist for one purpose: `ctest background` runs the same route
+  three ways and asserts the port's frames are byte-identical to the original's *and* that
+  the skewed arm differs. Without the third arm, "the two agreed" would be indistinguishable
+  from "the dump does not contain the background at all".
+
+
 - **`LF2_BG_TABLE=1`** prints the loaded stage's layer table once, the first frame a match is
   actually on screen. **`LF2_BG_TABLE=all`** prints *every* background record the registry
   holds — all twelve — regardless of which one is loaded.

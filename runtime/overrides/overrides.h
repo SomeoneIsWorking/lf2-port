@@ -20,6 +20,7 @@
  *                 standing in the fight
  *   text.c        the clip and glyph draw hooks
  *   assets.c      the data-file decrypt
+ *   background.c  the stage's background layers: their parallax, tiling and animation
  *
  * The line between coop.c and coop_debug.c is the one worth keeping: coop.c is what the
  * game does, coop_debug.c is how this port knows it did it. A probe that grows into a
@@ -38,6 +39,7 @@
  *   fn_00423940  text.c     font sheet selection
  *   fn_0043c4a0  text.c     text draw
  *   fn_004148a0  assets.c   the data-file decrypt
+ *   fn_0041a250  background.c  the stage's background layer draw -- parallax, tiling, cc/c1/c2
  *
  * charselect_mouse / modemenu_mouse / overlay_mouse in screens.c are not overrides of their
  * own -- they are called from the ones above, because the screens they drive have no

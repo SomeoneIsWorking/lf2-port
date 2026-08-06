@@ -10,3 +10,6 @@ __pycache__/
 # to reconstruct .text. A derivative of a binary this repository does not distribute.
 # Regenerate it from your own copy -- see docs/isa-scope.md.
 re/instructions.tsv
+
+# ctest writes this when it is run from the repo root instead of the build dir.
+Testing/
