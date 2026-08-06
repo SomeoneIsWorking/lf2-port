@@ -1035,43 +1035,20 @@ static void surf_Blt(uint32_t self)
                  keyed, s->key_lo, s->key_hi);
         }
     }
-    /* Widescreen: finish a tiling series the game stopped at 794.
+    /* There used to be a widescreen "finish a tiling series the game stopped at 794" hook
+     * here: it recognised a run of edge-to-edge copies by CONTIGUITY and kept repeating the
+     * last one to the edge of the surface. It is gone, and the reason is worth keeping.
      *
-     * Background layers that repeat are drawn as a run of edge-to-edge copies, and the
-     * count comes from an immediate 794 inside FUN_0041a250 -- baked into the recompiled
-     * code, so unlike the viewport words it cannot be written at runtime. The series
-     * therefore stops one copy short: HK Coliseum's arch band ends at 803 with 255 px of
-     * black beyond it.
+     * It could not tell a layer that repeats from a layer that does not, because by the time
+     * a layer reaches Blt the two are the same picture drawn edge to edge. So on Brokeback
+     * Clif -- whose cliffs are three DIFFERENT bitmaps abutting, with no repeat at all -- it
+     * repeated the middle one across the widened band with a hard seam at each end, inventing
+     * stage the game never draws. It also took its period from the last copy's DESTINATION
+     * width, which is short whenever that copy was clipped.
      *
-     * A copy is recognised as part of a series by being CONTIGUOUS with the blit before it
-     * -- same rows, left edge exactly where the last one ended -- which is what the game's
-     * own tiling looks like and what a lone prop (a lamp, a crate) never looks like. Given
-     * that, continuing at the same period is the game's layout carried on, not invented.
-     *
-     * A period of zero or a run that already reaches the edge does nothing, and the copies
-     * are bounded by the surface, so a pathological period cannot loop for ever. */
-    if (lf2_wide_width() && srcobj && d->w > NATIVE_W && dt >= HUD_BAND_H) {
-        /* Tracked for EVERY blit in the world band, not only the short ones: the previous
-         * rectangle is the evidence that this one continues a series, so letting it go
-         * stale would let an unrelated blit inherit a match. */
-        static int prev_l, prev_t, prev_r, prev_b;
-        const int period = dr - dl;
-        /* Size floor: the game draws its TEXT glyph by glyph, edge to edge, which is
-         * contiguous by exactly the same test -- without this the bottom-right "VS mode
-         * (Difficult)" caption tiled itself across the whole width. A background layer is
-         * never 8x16. */
-        enum { TILE_MIN_PERIOD = 48, TILE_MIN_HEIGHT = 30 };
-        if (dr < d->w && period >= TILE_MIN_PERIOD && db - dt >= TILE_MIN_HEIGHT
-            && prev_r > prev_l && dl == prev_r && dt == prev_t && db == prev_b) {
-            Surface *src = com_host(srcobj);
-            int sl, st, sr, sb;
-            read_rect(srect, &sl, &st, &sr, &sb, src->w, src->h);
-            for (int x = dr; x < d->w; x += period)
-                blit(d, x, dt, period, db - dt, src, sl, st, sr - sl, sb - st,
-                     (flags & DDBLT_KEYSRC) && src->has_key, src->key_lo, src->key_hi);
-        }
-        prev_l = dl; prev_t = dt; prev_r = dr; prev_b = db;
-    }
+     * The layer itself carries the answer (bg.dat's `loop:`), and the pass that draws it is
+     * now runtime/overrides/background.c. Continuing a run is decided there, from the data,
+     * before the blit exists. This comment is the whole of what is left. */
 
     if (d->primary) {
         if (getenv("LF2_BLT_DEBUG")) {

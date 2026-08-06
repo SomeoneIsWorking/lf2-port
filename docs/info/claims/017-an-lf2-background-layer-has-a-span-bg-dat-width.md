@@ -5,6 +5,8 @@ status: holds
 created: 2026-08-06
 tags: rendering,widescreen,re
 depends: runtime/overrides/world.h
+reconfirmed: 2026-08-06
+verified_at: 2026-08-06
 ---
 
 ## Claim
@@ -21,3 +23,7 @@ THREE independent sources agreeing.
 ## What would falsify it
 
 a stage whose non-looping layer still has picture beyond the 794 window at some camera, or any bg.dat whose runtime record disagrees with tools/bg_table_check.py
+
+## Re-confirmed 2026-08-06
+
+Re-verified after the mechanism was reimplemented from it. runtime/overrides/background.c now IS the formula the claim states, and tools/background_test.sh (ctest background) drives the same route five ways: at 794x550 the reimplementation is BYTE-IDENTICAL to the recompiled body at two camera positions, an LF2_BG_SKEW=3 arm differs (so the identity check can fail), and at 1600x550 it differs from the unwidened body. A formula that were wrong about span, loop, the parallax, the cc/c1/c2 window or the colour-fill path could not reproduce the original's pixels exactly. world.h changed in the same commit only by gaining the remaining field constants; the claim's substance is unaltered.
