@@ -5,7 +5,7 @@ status: open
 symptom: in a window wider than 794x550 the upper part of the stage background ends partway across and the rest of that band is black, while the ground and the tiling layers do fill the width
 tags: rendering
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-06
 ---
 
 OBSERVED, not reported, while verifying issue #20 -- and it is PRE-EXISTING, not caused by
@@ -32,3 +32,50 @@ that band deliberately or to leave it. Read the background data before choosing.
 
 DO NOT stretch the backdrop to the viewport width as a fix. It would fill the black, and it
 would make one stage's sky a different shape from every other element drawn beside it.
+
+### Note (2026-08-06)
+ESTABLISHED, 2026-08-06, by reading the game's own background data — and it CONTRADICTS the
+assumption this entry was filed on. The data does give more picture, and the sky is not a
+single fixed-width backdrop at all.
+
+HOW IT WAS READ. bg.dat is encrypted like every other data file, so tools/decrypt_dat.py (new)
+does the game's own cipher offline — the one from runtime/overrides/assets.c, proved
+byte-identical to the game's on all 77 files. `tools/decrypt_dat.py --layers game/bg/*/*/bg.dat`
+prints every stage.
+
+THE KEY FACT: a layer's `width:` is a REPEAT PERIOD, not the width of its picture. The two are
+different numbers and the difference is the whole answer:
+
+  CUHK        stage width 1600
+    sky1.bmp  period 967   x=0    bitmap 800x210
+    sky2.bmp  period 967   x=800  bitmap 167x210      <- 800 + 167 = 967, exactly the period
+  Template1/2/3               pic1 800 at x=0 + pic2 167 at x=800, period 967 — same shape
+  HK Coliseum stage width 794
+    back1.bmp period 794   x=0    bitmap 794x101      <- period == picture == stage: no scroll
+
+So a stage's sky is a PAIR of bitmaps laid end to end to fill one period, and the period
+repeats. Every stage but HK Coliseum is far wider than its sky's period — CUHK 1600 vs 967,
+The Great Wall 2400 vs 800, Lion Forest 3200 vs 800, Tai Hom Village 1600 vs 800, Forbidden
+Tower 2400 vs 797 — so THE GAME ITSELF REPEATS THE SKY as the camera scrolls. It has to.
+
+That kills this entry's premise. It said "a stage's sky/backdrop is a single blit of one
+fixed-width picture. It cannot be tiled -- it would visibly repeat". It is tiled, by the game,
+by design, on every stage in the game. Repeating it across a widened viewport is the game's
+own layout carried on, not something invented — the same justification the existing tiling
+continuation already rests on.
+
+WHY THE EXISTING CONTINUATION DOES NOT CATCH IT (runtime/ddraw.c, the `finish a tiling series`
+block). It recognises a series by CONTIGUITY: this blit's left edge exactly where the previous
+one ended, same rows. At camera 0 in a widened viewport the game draws sky1 clipped to its own
+794 and never draws sky2 at all, because sky2 starts at x=800 — past the clip. One blit, no
+predecessor, no continuation. And the period it would need is 967, the width of the PAIR,
+which is not the width of any single blit it can see.
+
+WHAT THE FIX NEEDS, and it is why this is not being landed in the same pass: the layer's period
+at runtime. It is in the game's parsed background structures — bg.dat's `width:` per layer —
+and locating that table is RE that has not been done. Guessing the period from the blit stream
+is exactly the kind of inference that produced the "phase word" mistake in menu.c.
+
+STILL CORRECT FROM THE ORIGINAL ENTRY: do not stretch the backdrop to the viewport width. That
+remains the wrong fix, and now for a sharper reason — the picture already has a period the game
+uses, so stretching would replace a real layout with an invented one.
