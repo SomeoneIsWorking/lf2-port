@@ -54,3 +54,49 @@ watches above report per host call, which is too coarse to say what the menu rea
 
 DO NOT fix this by making routes click twice. That hides it in nine tools files instead of
 one runtime file, and it is exactly the workaround that let it live this long.
+
+### Note (2026-08-06)
+NARROWED, 2026-08-06, with a new instrument and TWO more refuted theories. The cause is in the
+GAME's handling of the mouse messages, not in the click flag and not in the port's delivery.
+
+NEW INSTRUMENT (kept, in runtime/overrides/menu.c under LF2_MENU_DEBUG): what the front-end
+menu is entered with -- the game's click flag, its mouse pair, the port's index and pointer
+ownership -- plus a count at exit that prints even when it is zero. The watch on 0x00457580
+could not answer this: it reports per host call, so it says the flag changed between two
+calls, never whether the MENU saw it.
+
+WHAT IT SHOWED, and this is the heart of it. The swallowed click and the one that works are
+INDISTINGUISHABLE at the menu:
+
+  lone click at 1200   menu entered with click=1 at mouse=(403,228), index=0 screen=0 -> NOTHING
+  second of two        menu entered with click=1 at mouse=(403,228), index=0 screen=0 -> STARTS
+
+Identical state, opposite outcome. So nothing the port hands over distinguishes them, and no
+amount of work on the delivery path can: the difference is state inside the game.
+
+THE CONTROL THAT REFRAMES IT: a lone PAD confirm at the same frame 1200 starts the game
+(charselect@1206) -- and the run reports "0 frame(s) reached the front-end menu with the
+game's click flag set". The pad path does not go through that flag at the point the menu is
+entered at all; it writes the flag late in the override, immediately before the original body
+runs. So the pad succeeds WITHOUT the flag being set on entry and the mouse fails WITH it.
+
+REFUTED, implemented and measured, so nobody retries them:
+  1. "The game wants two sightings of the click flag" -- fitted everything (the pad holds it
+     for two frames via menu_confirm(); two clicks fifteen frames apart also work; one click
+     never does). Implemented as: a front-end click calls menu_confirm() like the pad does.
+     Measured -- on_item=1, port_edge=1, game_flag=1, menu_confirm() demonstrably fired, the
+     flag was then held for two further frames -- and the game STILL did not start. Reverted.
+  2. "The game never sees a WM_MOUSEMOVE before the button" (from the earlier pass) -- also
+     implemented, measured, reverted.
+
+WHAT IS LEFT, and it is now a narrow question: the mouse path additionally makes the game
+process WM_MOUSEMOVE and WM_LBUTTONDOWN in that frame, and the pad path does not. Something
+the game's own message handling sets is what suppresses the first activation. The candidate
+worth testing next is that the game acts on the button being RELEASED, or refuses to act
+while it believes the button is down -- which would explain why a second, later click works
+(the first release has happened by then) and why the pad, which never touches button state,
+is unaffected.
+
+A cheap discriminator for that: a scripted click whose HOLD is one frame rather than eight,
+and one whose hold spans the whole run. If activation follows the release, the first will act
+on its release frame and the second will never act at all.
