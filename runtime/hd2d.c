@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,23 +16,55 @@
 /* ---- the light rig ----
  *
  * The key light, as a direction in the stage's three axes: x across the screen, y up (LF2's
- * jump axis, claim C018), z toward the camera. Upper-left and slightly in front of the
- * fighters, which puts a shadow down and to the right where a player expects one.
+ * jump axis, claim C018), z toward the camera. Overhead, leaning slightly left and a little
+ * in front of the fighters.
  *
- * These are the ONLY light constants in the port. The shader shades with this vector and
- * hd2d_shadow_lean projects it onto the ground for the cast shadows, so there is no second
- * place where a shadow direction is written down and no way for the two to drift apart.
+ * It used to be (-0.55, 0.74, 0.38), which is a low SIDE light: it threw long shadows well
+ * out to the right and lit one whole flank of a fighter while leaving the other on ambient.
+ * A high key is the conventional one for this kind of art -- the shadow tucks in close under
+ * the fighter and the shading reads as form rather than as a direction.
+ *
+ * This is the ONE place a light direction is written down. The shader shades with this vector
+ * and hd2d_shadow_project projects it onto the ground for the cast shadows, so the two
+ * cannot drift apart.
  */
-static const float LIGHT[3] = { -0.55f, 0.74f, 0.38f };
+static float LIGHT[3] = { -0.25f, 0.94f, 0.22f };
 
-/* A shadow lies on the ground, so its shear is the light direction projected onto that
- * ground: the top of the laid-down sprite moves AWAY from the light by (-x/y) per unit of
- * height. Dividing by y is what makes a low sun throw a long shadow and a high one throw a
- * short one, which is the same relationship the shading has. */
-float hd2d_shadow_lean(void)
+/* The same direction as the two angles a player sets it with. Kept beside the vector rather
+ * than derived back out of it, because going back is ambiguous at the poles and the menu
+ * would jitter as it rounded. */
+static float light_az = -48.7f, light_el = 70.0f;
+
+void hd2d_light_angles(float *az, float *el) { *az = light_az; *el = light_el; }
+
+void hd2d_light_set_angles(float az, float el)
+{
+    /* Elevation is clamped well clear of the horizon: cot(elevation) is what stretches a
+     * shadow, and at 0 degrees it is infinite -- a shadow the length of the stage, which is
+     * not a look anyone would choose and would read as a bug. */
+    if (el < 12.0f) el = 12.0f;
+    if (el > 89.0f) el = 89.0f;
+    while (az < -180.0f) az += 360.0f;
+    while (az >  180.0f) az -= 360.0f;
+    light_az = az;
+    light_el = el;
+
+    const float a = az * 3.14159265f / 180.0f, e = el * 3.14159265f / 180.0f;
+    LIGHT[0] = cosf(e) * sinf(a);
+    LIGHT[1] = sinf(e);
+    LIGHT[2] = cosf(e) * cosf(a);
+}
+
+/* The shadow projection -- see hd2d.h. A point at height h above the ground casts to
+ * h * (-Lx/Ly, -Lz/Ly) in the stage's own axes, and LF2's z projects straight down the
+ * screen, so the second term is a screen-Y displacement UP the picture. Dividing by Ly is
+ * what makes a low light throw a long shadow and a high one throw a short one -- the same
+ * relationship the shading has, from the same vector. */
+void hd2d_shadow_project(float *across, float *up)
 {
     const float y = LIGHT[1] < 0.05f ? 0.05f : LIGHT[1];
-    return -LIGHT[0] / y;
+    *across = -LIGHT[0] / y;
+    *up     =  LIGHT[2] / y;
 }
 
 /* ---- state ---- */
@@ -158,6 +191,26 @@ int hd2d_init(SDL_Renderer *r)
         init_why = "a render state failed";
         fprintf(stderr, "hd2d: render state: %s\n", SDL_GetError());
         return 0;
+    }
+
+    /* LF2_HD2D_LIGHT=<azimuth>,<elevation> in degrees. A DIAGNOSTIC: the light is the
+     * player's, set from the pause menu's Options screen, and this exists so a test can put
+     * it somewhere known and check that the shadows actually followed. "The shape responds to
+     * the light" is not something a single screenshot can show. */
+    {
+        const char *v = getenv("LF2_HD2D_LIGHT");
+        if (v) {
+            float az = light_az, el = light_el;
+            if (sscanf(v, "%f,%f", &az, &el) == 2) {
+                hd2d_light_set_angles(az, el);
+                fprintf(stderr, "hd2d: LF2_HD2D_LIGHT put the key at azimuth %.0f, elevation "
+                                "%.0f\n", (double)light_az, (double)light_el);
+            } else {
+                fprintf(stderr, "hd2d: LF2_HD2D_LIGHT=%s is not <azimuth>,<elevation> -- the "
+                                "light is UNCHANGED at %.0f,%.0f\n",
+                        v, (double)light_az, (double)light_el);
+            }
+        }
     }
 
     init_ok = 1;
@@ -335,11 +388,11 @@ int hd2d_post(SDL_Texture *albedo, SDL_Texture *chars, SDL_Texture *shadow, SDL_
     if (show_is("shadow")) return show_stage(shadow, out);
 
     struct { Vec4 sun_dir, sun_color, sky, bounce, params, floor; } u;
-    u.sun_dir   = (Vec4){ LIGHT[0], LIGHT[1], LIGHT[2], knob("LF2_HD2D_KEY", 1.20f) };
+    u.sun_dir   = (Vec4){ LIGHT[0], LIGHT[1], LIGHT[2], knob("LF2_HD2D_KEY", 1.48f) };
     /* A warm key against a cool sky is what puts a temperature difference between the lit
      * side and the shaded side of a fighter, which is what makes flat art read as having a
      * form rather than just a brightness. */
-    u.sun_color = (Vec4){ 1.10f, 1.02f, 0.90f, knob("LF2_HD2D_AMBIENT", 0.62f) };
+    u.sun_color = (Vec4){ 1.10f, 1.02f, 0.90f, knob("LF2_HD2D_AMBIENT", 0.66f) };
     u.sky       = (Vec4){ 0.62f, 0.68f, 0.80f, knob("LF2_HD2D_BEVEL", 0.90f) };
     u.bounce    = (Vec4){ 0.55f, 0.52f, 0.50f, knob("LF2_HD2D_SHADOW", 0.55f) };
     u.params    = (Vec4){ 1.0f / (float)w, 1.0f / (float)h,

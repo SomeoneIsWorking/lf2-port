@@ -216,6 +216,16 @@ without it a build that always widened would pass everything else — and the la
 the ones that flipped when the aspect term came out, so a build that kept any aspect in the
 formula fails them and nothing else.
 
+**Objects are drawn at a whole-number multiple of the size the game drew them**, about their
+own base — so the world keeps its native resolution and its full field of view while the
+actors stay a sensible size. The factor is how many times the game's 550-row screen fits in
+the window, rounded to a whole number: 1x at the game's own size (exactly what it always was),
+2x in a 1080-row window. Whole, because these are nearest-neighbour pixel-art sprites and a
+fractional factor would put some of their pixels down two screen pixels wide and others three.
+Anchored at the sprite's base rather than at its ground point: the world is drawn 1:1, so only
+an actor's *size* may change, never its position — anchoring at the ground point doubled the
+height of a launched object already 314 px up and threw it off the top of the screen.
+
 **`LF2_WINDOW_SIZE=<w>x<h>`** sets the window's initial size. It is not the old knob renamed
 — it names a window, and the composition is derived from it by the same code a window manager
 drives when someone drags an edge. It exists because a headless run
@@ -239,6 +249,7 @@ keyboard and pad like every other menu here.
 | RESUME | |
 | DROP OUT | only when the device that OPENED the menu is driving a player this port put into the match — a drop-in. It runs the same `coop_leave` an unplugged pad does, which refuses any slot the game's own character selection filled |
 | LEAVE MATCH | drives the game's own way out of a fight — F4, then the pre-fight overlay's own Exit item — and lands on the character-select screen with the roster cleared |
+| OPTIONS | the light's direction: **LIGHT ANGLE** (which way it comes from) and **LIGHT HEIGHT** (how high it is), in degrees. Left/right adjust in 5° steps, confirm nudges, BACK returns. Both feed the *one* light vector, so the shading on the fighters, the direction their shadows point and how long those shadows are all move together — and the frame is frozen while you do it, so you watch them move |
 | QUIT GAME | ends the process |
 
 Two things about it are worth knowing before changing it.
@@ -258,6 +269,17 @@ resetting its own state.
 
 `ctest pause_dropout` covers the drop-out half end to end, including the negative that
 player one is still in the match afterwards.
+
+**RmlUi was considered for the Options page and declined**, and the reasoning sits beside the
+code in `runtime/pause.c`. Dusklight uses RmlUi for its game-facing UI and is right to — it
+has documents, components and a whole settings tree. This is two numbers on a menu that
+already exists, already takes keyboard, pad and mouse, and is already drawn with the game's
+own glyphs so it looks like the game. RmlUi is C++ with its own build, font stack and render
+backend, and would become the largest dependency in a port whose entire build is a C compiler
+and SDL. If a real settings screen ever lands that judgement should be revisited.
+
+The setting does **not** persist across runs: there is no config file in this port yet, and
+inventing one for two numbers is the wrong order to do things in.
 
 ## Scripted input
 
@@ -1525,6 +1547,11 @@ Three hooks in `runtime/ddraw.c`:
   "the character mask is empty". Each buffer is shown at the moment it is *final*; the first
   version showed them all at the end of the chain, by which time the shadow scratch had been
   reused, and `SHOW=shadow` confidently displayed a blurred copy of the scene.
+- **`LF2_HD2D_LIGHT=<azimuth>,<elevation>`** puts the key light at a known angle, in degrees.
+  The light is the *player's* — it is set from the pause menu's **Options** page — and this
+  exists so a test can place it and check the shadows actually followed. "The shadow's shape
+  responds to the light" is not something one screenshot can show; two are needed, and this is
+  how they are taken.
 - **`LF2_HD2D_KEY`, `_AMBIENT`, `_BEVEL`, `_BEVEL_PX`, `_HEIGHT_GAIN`, `_SHADOW`,
   `_FLOOR_FEATHER`** sweep the light rig while it is being tuned. They are not configuration.
   The defaults are chosen so a flat, unshadowed, camera-facing pixel comes out at almost
@@ -1563,8 +1590,14 @@ that the match frame *does* change. An effect that has quietly spread over the w
 passes the second check and fails the first, which is exactly how the bloom-and-haze version
 of this pass would have been caught.
 
-The shadow is the sprite's own silhouette laid on the ground and sheared along that same light
-vector, so the shading and the shadows cannot disagree. It is **crisp**: an earlier version
+The shadow is the sprite's own silhouette **projected** onto the ground: a point at height *h*
+lands at `h * (-Lx/Ly, Lz/Ly)` in screen units, and both terms come from the same light vector
+the shading uses. So a low light throws a long shadow, an overhead one throws almost none, and
+a fighter in the air has their shadow displaced along the light rather than welded under them.
+Measured at two elevations on the same frame: 13102 shadowed floor pixels spanning 311 rows at
+20°, against 5131 spanning 203 rows at 85°. An earlier version used the sideways term and a
+**constant** 0.30 in place of the other, which is why moving the light changed where a shadow
+pointed and never how long it was. It is **crisp**: an earlier version
 downsampled the mask to half resolution and blurred it, which is what a soft shadow wants and
 is not what this game wants — a 32-pixel sprite's silhouette, halved and blurred, is a
 shapeless dark smear with none of the fighter left in it. Its mask needs its own shader for a

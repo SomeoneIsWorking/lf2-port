@@ -16,6 +16,7 @@
  */
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "hd2d.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,12 +47,32 @@ int  hostwin_mouse_clicked(void);
  *
  * The rows are built per pause rather than being a fixed table, so the geometry, the hit
  * test and the drawing all agree without any of them knowing which items exist. */
-enum { IT_RESUME, IT_DROP, IT_EXIT, IT_QUIT, IT_KINDS };
+enum { IT_RESUME, IT_DROP, IT_EXIT, IT_OPTIONS, IT_QUIT,
+       IT_LIGHT_ANGLE, IT_LIGHT_HEIGHT, IT_BACK, IT_KINDS };
 static const char *const ITEM_TEXT[IT_KINDS] = {
-    "RESUME", "DROP OUT", "LEAVE MATCH", "QUIT GAME"
+    "RESUME", "DROP OUT", "LEAVE MATCH", "OPTIONS", "QUIT GAME",
+    "LIGHT ANGLE", "LIGHT HEIGHT", "BACK"
 };
 
-static int paused, sel;
+/* ---- OPTIONS, and why it is built out of the same rows as everything else ----
+ *
+ * The light's direction was a compiled-in constant and is now the player's (issue #37). It is
+ * two numbers -- which way the light comes from, and how high it is -- and both are things
+ * you want to see change while you look at the picture, which is exactly what a pause menu
+ * over a frozen frame gives for free.
+ *
+ * RmlUi was raised for this, as Dusklight uses it for its game-facing UI. It is the right
+ * answer to the problem Dusklight has and the wrong one here. That port has a whole UI to
+ * build -- documents, components, a settings tree -- and RmlUi earns its place. This is two
+ * numbers on a menu that already exists, already takes keyboard, pad and mouse, and is
+ * already drawn with the game's own glyphs so it looks like the game. RmlUi is C++ with its
+ * own build, font stack and render backend; adding it would make it the largest dependency in
+ * a port whose whole build is a C compiler and SDL. If the port ever grows a real settings
+ * screen that judgement should be revisited, and Dusklight's src/dusk/ui is where to start.
+ */
+enum { PAGE_MAIN, PAGE_OPTIONS };
+
+static int paused, sel, page;
 static int rows[IT_KINDS], row_n;   /* the item kinds on screen this pause, in order */
 static int pause_dev = -1;          /* the device that opened it; drop-out belongs to it */
 static int drop_slot = -1;          /* the player slot that device is driving, or -1 */
@@ -61,11 +82,40 @@ static int drop_slot = -1;          /* the player slot that device is driving, o
 static void build_rows(void)
 {
     row_n = 0;
+    if (page == PAGE_OPTIONS) {
+        rows[row_n++] = IT_LIGHT_ANGLE;
+        rows[row_n++] = IT_LIGHT_HEIGHT;
+        rows[row_n++] = IT_BACK;
+        return;
+    }
     rows[row_n++] = IT_RESUME;
     drop_slot = pause_dev >= 0 ? device_player(pause_dev) : -1;
     if (drop_slot >= 0 && coop_owns(drop_slot)) rows[row_n++] = IT_DROP;
     rows[row_n++] = IT_EXIT;
+    rows[row_n++] = IT_OPTIONS;
     rows[row_n++] = IT_QUIT;
+}
+
+/* A row's value, or NULL when it is a plain item. Written into the caller's buffer so the
+ * draw and nothing else owns the formatting. */
+static const char *row_value(int kind, char *buf, size_t n)
+{
+    float az, el;
+    hd2d_light_angles(&az, &el);
+    if (kind == IT_LIGHT_ANGLE)  { snprintf(buf, n, "%+d", (int)(az + (az < 0 ? -0.5f : 0.5f))); return buf; }
+    if (kind == IT_LIGHT_HEIGHT) { snprintf(buf, n, "%d", (int)(el + 0.5f)); return buf; }
+    return NULL;
+}
+
+/* Left and right on a value row. The step is 5 degrees: fine enough to place a shadow where
+ * you want it, coarse enough to cross the whole range without holding the key for a minute. */
+static void adjust(int delta)
+{
+    const int kind = sel >= 0 && sel < row_n ? rows[sel] : -1;
+    float az, el;
+    hd2d_light_angles(&az, &el);
+    if (kind == IT_LIGHT_ANGLE)       hd2d_light_set_angles(az + 5.0f * (float)delta, el);
+    else if (kind == IT_LIGHT_HEIGHT) hd2d_light_set_angles(az, el + 5.0f * (float)delta);
 }
 
 /* Panel geometry, in the primary surface's own pixels. Centred on whatever the viewport is,
@@ -115,14 +165,16 @@ static int edge(int *was, int now)
     return fired;
 }
 
-static void pad_state(int *up, int *down, int *confirm, int *start)
+static void pad_state(int *up, int *down, int *left, int *right, int *confirm, int *start)
 {
-    *up = *down = *confirm = *start = 0;
+    *up = *down = *left = *right = *confirm = *start = 0;
     for (int i = 0; i < 4; i++) {
         unsigned char b[7];
         if (!gamepad_player_buttons(i, b)) continue;
         *up      |= b[0];
         *down    |= b[1];
+        *left    |= b[2];
+        *right   |= b[3];
         *confirm |= b[4] || b[5];          /* attack or jump */
     }
     *start = gamepad_start_held();
@@ -159,6 +211,22 @@ static void activate(void)
         paused = 0;
         exit_to_menu_begin(pause_dev >= 0 ? pause_dev : 0);
         break;
+    case IT_OPTIONS:
+        page = PAGE_OPTIONS;
+        sel = 0;
+        build_rows();
+        break;
+    case IT_BACK:
+        page = PAGE_MAIN;
+        sel = 0;
+        build_rows();
+        break;
+    case IT_LIGHT_ANGLE:
+    case IT_LIGHT_HEIGHT:
+        /* Confirm on a value row nudges it, so the menu is usable with a device that has no
+         * left and right of its own rather than doing nothing and looking broken. */
+        adjust(+1);
+        break;
     case IT_QUIT:
         hostwin_request_quit();
         break;
@@ -169,9 +237,9 @@ static void activate(void)
 
 void pause_tick(void)
 {
-    static int was_esc, was_start, was_up, was_down, was_confirm;
-    int p_up, p_down, p_confirm, p_start;
-    pad_state(&p_up, &p_down, &p_confirm, &p_start);
+    static int was_esc, was_start, was_up, was_down, was_left, was_right, was_confirm;
+    int p_up, p_down, p_left, p_right, p_confirm, p_start;
+    pad_state(&p_up, &p_down, &p_left, &p_right, &p_confirm, &p_start);
 
     const int toggle = edge(&was_esc,   hostwin_key_held(0x1B) != 0)   /* Escape */
                      | edge(&was_start, p_start != 0);
@@ -184,6 +252,7 @@ void pause_tick(void)
         else if (panel_hud_up()) {
             paused = 1;
             sel = 0;                       /* RESUME is always the first row */
+            page = PAGE_MAIN;              /* never reopen inside a submenu */
             pause_dev = pausing_device();
             build_rows();
         }
@@ -192,6 +261,8 @@ void pause_tick(void)
 
     if (edge(&was_up,   hostwin_key_held(0x26) || p_up))   sel = (sel + row_n - 1) % row_n;
     if (edge(&was_down, hostwin_key_held(0x28) || p_down)) sel = (sel + 1) % row_n;
+    if (edge(&was_left,  hostwin_key_held(0x25) || p_left))  adjust(-1);
+    if (edge(&was_right, hostwin_key_held(0x27) || p_right)) adjust(+1);
 
     int mx, my;
     if (hostwin_pointer(&mx, &my)) {
@@ -281,8 +352,8 @@ void pause_draw(uint32_t pix, int w, int h, int pitch)
     fill(pix, pitch, w, h, px, py, px + PANEL_W, py + 2, 0x006080b0u);
     fill(pix, pitch, w, h, px, py + ph - 2, px + PANEL_W, py + ph, 0x006080b0u);
 
-    static const char TITLE[] = "PAUSED";
-    text(TITLE, px + (PANEL_W - (int)(sizeof TITLE - 1) * GLYPH_W) / 2, py + 10,
+    const char *title = page == PAGE_OPTIONS ? "OPTIONS" : "PAUSED";
+    text(title, px + (PANEL_W - (int)strlen(title) * GLYPH_W) / 2, py + 10,
          0x00ffffffu, pix, w, h, pitch);
 
     for (int i = 0; i < row_n; i++) {
@@ -291,7 +362,24 @@ void pause_draw(uint32_t pix, int w, int h, int pitch)
         if (i == sel) fill(pix, pitch, w, h, x0, y0, x1, y1, 0x004870a0u);
         const char *label = ITEM_TEXT[rows[i]];
         const int len = (int)strlen(label);
-        text(label, x0 + ((x1 - x0) - len * GLYPH_W) / 2, y0 + (ROW_H - 4 - GLYPH_H) / 2,
-             i == sel ? 0x00ffffffu : 0x00b0c0d0u, pix, w, h, pitch);
+        const uint32_t ink = i == sel ? 0x00ffffffu : 0x00b0c0d0u;
+        const int ty = y0 + (ROW_H - 4 - GLYPH_H) / 2;
+
+        char vbuf[16];
+        const char *value = row_value(rows[i], vbuf, sizeof vbuf);
+        if (!value) {
+            text(label, x0 + ((x1 - x0) - len * GLYPH_W) / 2, ty, ink, pix, w, h, pitch);
+            continue;
+        }
+        /* A value row reads left-to-right: the name against the left edge, the number against
+         * the right, and arrows on the selected one so it is obvious it can be changed rather
+         * than only chosen. */
+        text(label, x0 + 4, ty, ink, pix, w, h, pitch);
+        const int vlen = (int)strlen(value);
+        text(value, x1 - 12 - vlen * GLYPH_W, ty, ink, pix, w, h, pitch);
+        if (i == sel) {
+            text("<", x1 - 20 - (vlen + 1) * GLYPH_W, ty, ink, pix, w, h, pitch);
+            text(">", x1 - 10, ty, ink, pix, w, h, pitch);
+        }
     }
 }
