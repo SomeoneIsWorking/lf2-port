@@ -270,3 +270,53 @@ table.
 
 The layer-table work is not wasted (it is real, proved against the file, and is what
 established that the sky is drawn as a pair) but it is NOT on the path to this fix.
+
+### Note (2026-08-06)
+THE WHOLE MECHANISM IS NOW READ OUT OF THE GAME, 2026-08-06, and it settles what this issue
+can and cannot be fixed to. Claim C017 carries the evidence; the short version:
+
+fn_0041a250 (the background layer draw, 828 bytes, read end to end) is:
+
+    off = -(camera * (span - 794)) / (stage_width - 794)          // the parallax
+    if (loop)  for (x = layer_x; x < span; x += loop)  draw(off + x)
+    else       draw(off + layer_x)
+
+  span = bg.dat's `width:`   loop = bg.dat's `loop:`   794 = the game's screen width
+
+TWO THINGS IN THIS ISSUE'S EARLIER NOTES ARE NOW KNOWN TO BE WRONG.
+
+  1. "the count comes from an immediate 794 inside FUN_0041a250" -- the comment in
+     runtime/ddraw.c, and repeated here. It does not. The tiling loop terminates on the
+     LAYER'S SPAN. The 794 appears only in the parallax, twice.
+  2. "a stage's sky is a PAIR of bitmaps laid end to end to fill one period, and the period
+     repeats ... THE GAME ITSELF REPEATS THE SKY. It has to." It does not, and it does not
+     have to. CUHK's sky1|sky2 has no `loop:` and is drawn ONCE. Nor does any other stage's
+     sky: hkc back1 (span 794), gw sky (800), lf forests (800), ft sky (797), cuhk sky (967)
+     -- every one non-looping, every one a span barely over 794.
+
+WHY: a layer's span is authored so that span - 794 is exactly its scroll range, i.e. the
+layer covers the screen at EVERY camera position and by no more than a pixel. Measured on
+Brokeback Clif at maximum camera, the cliff chain's right edge lands on screen x 794 exactly.
+So a non-looping layer has 794 pixels of picture and never any more. THERE IS NO EXTRA
+PICTURE TO UNCOVER, at any camera, on any stage. The original entry's instinct was right and
+the middle notes were wrong.
+
+WHAT THAT MAKES THE FIX. Two halves, and they are one formula so they land together:
+
+  a. A LOOPING layer declares its own repeat, so carrying it past 794 is the game's layout
+     continued. The port must take the step from the `loop:` field, which it can now read
+     (BG_LAYER_LOOP, world.h) -- not from the blit stream.
+  b. A NON-LOOPING layer cannot be carried. The only honest lever is the CAMERA: clamp it to
+     (stage_width - view_width) instead of (stage_width - 794) and use the view width in the
+     parallax denominators, so the wider view never scrolls past what the layers cover. That
+     is issue #28, reported independently on the same day, and it is the same 794.
+
+WHAT THE PORT IS DOING NOW IS WORSE THAN THE BLACK BAND, and this is the immediate defect.
+runtime/ddraw.c's contiguity continuation cannot tell a looping layer from a non-looping one,
+so on Brokeback Clif at 1600x550 it repeats bc2 -- the middle cliff -- from x=1027 to the
+right edge, with a hard black seam at 1026 and another at 1487. Captured:
+scratch/wide23/frame_2250.png. It invents cliff the game never draws. Whatever lands for (a)
+and (b), that heuristic goes.
+
+STILL CORRECT FROM THE ORIGINAL ENTRY, now for the strongest possible reason: do not stretch
+and do not tile a backdrop. There is no more picture and the layer says so.

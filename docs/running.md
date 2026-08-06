@@ -1477,6 +1477,36 @@ Three hooks in `runtime/ddraw.c`:
   destination and prints everything that looks like a `.text` address. It is a rough
   backtrace, not an exact one, but it is enough to **diff two chains**.
 
+### The stage's own background layers
+
+- **`LF2_BG_TABLE=1`** prints the loaded stage's layer table once, the first frame a match is
+  actually on screen. **`LF2_BG_TABLE=all`** prints *every* background record the registry
+  holds — all twelve — regardless of which one is loaded.
+
+  Each layer line is `span` (bg.dat's `width:`, how far the layer scrolls and how far its
+  content reaches), `x`, `y`, and `loop` (bg.dat's `loop:`, the horizontal repeat step, `0`
+  for a layer that is drawn once). Those four are what `fn_0041a250` draws from, and claim
+  C017 has the formula.
+
+  Use `all`, not `1`, whenever the point is to *check* the table: VS mode picked the same
+  stage on six consecutive headless runs, so "run it again for a different background" is not
+  a way to get a second sample, while one `all` run yields twelve.
+
+  ```sh
+  cd game && SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+      LF2_VIRTUAL_PAD="$ROUTE" LF2_BG_TABLE=all LF2_QUIT_AFTER=2300 \
+      ../scratch/build/lf2 lf2.exe 2>&1 | grep "bg table" > ../scratch/alltables.txt
+  tools/bg_table_check.py scratch/alltables.txt          # 12/12 against the shipped bg.dat
+  tools/bg_table_check.py --selftest                     # asserts it can also say FAIL
+  ```
+
+  `tools/bg_table_check.py` is the reason the table is trusted (instrument I006): it decrypts
+  every `bg.dat` offline and matches each runtime record to a file by full geometry, with no
+  assumed ordering. It exits non-zero, saying it compared **nothing**, if the log holds no
+  table lines or the game tree holds no `bg.dat` — a missing corpus must not read as a pass.
+
+## Finding which code draws something — the blit chains
+
 The diff is the point. The chain for the ad panel and the chain for the character art share
 their entire outer frame and differ in one hop: the art goes out through `fn_00423840`, the
 ad through `fn_00423b00` with descriptor `0x0044d060`. Neither could be identified by

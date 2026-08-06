@@ -127,37 +127,58 @@ void coop_debug_tick(uint32_t self);   /* every LF2_COOP_* probe, once per gathe
 
 /* ---- the stage's background layers ----
  *
- * A background is a list of LAYERS, each a bitmap with a REPEAT PERIOD -- the period is the
- * `width:` in bg.dat and it is NOT the width of the bitmap. CUHK's sky is sky1.bmp (800
- * wide) at x=0 plus sky2.bmp (167 wide) at x=800, period 967 = 800 + 167: two pictures
- * filling one period, which then repeats for as long as the stage is wide. Every stage but
- * HK Coliseum is far wider than its sky's period, so the game repeats the sky as the camera
- * moves. That is the game's own layout, and it is what widescreen has to carry on (#23).
+ * A background is a list of LAYERS, each a bitmap with a SPAN and an optional LOOP, and the
+ * two are different fields with different jobs. Both were read straight out of fn_0041a250,
+ * which is the whole layer draw and is short enough to read end to end:
+ *
+ *     span   = bg.dat's `width:`   BG_LAYER_SPAN   -- how far the layer scrolls, and how far
+ *                                                    its content reaches
+ *     loop   = bg.dat's `loop:`    BG_LAYER_LOOP   -- the horizontal repeat step, 0 = none
+ *
+ * The draw is, in the game's own terms:
+ *
+ *     off = -(camera * (span - 794)) / (stage_width - 794)      // the parallax
+ *     if (loop)  for (x = layer_x; x < span; x += loop)  draw(off + x)
+ *     else       draw(off + layer_x)
+ *
+ * and the 794 is the game's screen width, appearing ONLY in that parallax -- not, as an
+ * earlier note in this file had it, as a loop bound. What the formula buys is the property
+ * the whole design rests on: a layer's span is chosen so that the layer covers the screen at
+ * EVERY camera position, exactly, with no margin. At camera 0 the layer's left edge is at
+ * screen 0; at the camera's maximum its right edge is at screen 794. Brokeback Clif's cliffs
+ * span 1379 over a 1500-wide stage, and 1379 - 794 == 585 == the offset measured at maximum
+ * camera, to the pixel.
+ *
+ * That is why widescreen leaves black beside a sky (#23) and why tiling it is not the answer:
+ * a non-looping layer has EXACTLY 794 pixels' worth of picture at any camera and no more. A
+ * LOOPING layer is different -- it declares its own repeat, so carrying it past the game's
+ * 794 is the game's layout continued rather than invented.
  *
  * The table is heap-resident, so there is no address to hardcode -- and an earlier pass
  * confirmed there is no pointer to it in .data or anywhere in the heap. It is reached the
- * way the game reaches it, which was read out of fn_0041a250 (the background layer draw,
- * named by arming the read watch on the array and letting it report the guest call ring):
+ * way the game reaches it:
  *
  *     registry = LD32(BG_REGISTRY)                  // the world object's registry pointer
  *     bg       = LD32(BG_INDEX)                     // which background is loaded
  *     field[i] = LD32(registry + (bg*BG_STRIDE_DW + i)*4 + <field constant>)
  *
- * Each background record is 612 dwords (2448 bytes) and each field a 30-entry array. The
- * constants were solved against a paired heap/.data dump on Brokeback Clif and they
- * self-check: BG_LAYER_Y was derived as BG_LAYER_PERIOD + 240 from the heap layout, and the
- * same number appears literally in fn_0041a250 as an array base indexed by bg*612.
+ * Each background record is 612 dwords (2448 bytes) and each layer field a 30-entry array.
+ * The two per-BACKGROUND fields below are addressed the same way but with no layer index.
  */
 enum { BG_REGISTRY = 0x00458b00 + 2004, BG_INDEX = 0x0044d024 };
 enum { BG_STRIDE_DW = 612, BG_MAX_LAYERS = 30 };
-enum { BG_LAYER_PERIOD = 81027604,      /* +0   the repeat period, bg.dat's `width:` */
+enum { BG_LAYER_SPAN   = 81027604,      /* +0   bg.dat's `width:` -- the scroll span */
        BG_LAYER_X      = 81027724,      /* +120 */
-       BG_LAYER_Y      = 81027844 };    /* +240 -- appears verbatim in fn_0041a250 */
+       BG_LAYER_Y      = 81027844,      /* +240 -- appears verbatim in fn_0041a250 */
+       BG_LAYER_LOOP   = 81028084 };    /* +480 bg.dat's `loop:` -- repeat step, 0 = none */
+enum { BG_STAGE_WIDTH  = 81026480,      /* -1124, per background, not per layer */
+       BG_LAYER_COUNT  = 81026508 };    /* -1096; fn_0041a250 loops on this count */
 
 /* One layer field, or 0 when the index is out of range. Reads only; nothing here writes to
  * the game's own table. */
 uint32_t bg_layer_field(uint32_t field_const, int layer);
-int      bg_layer_count(void);          /* layers with a non-zero period, up to BG_MAX_LAYERS */
+uint32_t bg_stage_field(uint32_t field_const);   /* a per-background field (no layer index) */
+int      bg_layer_count(void);          /* the game's own layer count, clamped to BG_MAX_LAYERS */
 void     bg_table_report(void);         /* LF2_BG_TABLE=1: the loaded stage's layers */
 
 #endif
