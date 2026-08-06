@@ -1493,6 +1493,27 @@ Three hooks in `runtime/ddraw.c`:
   rather than only when it finds nothing: GDI text goes straight into the surface without a
   Lock (`runtime/gdi.c`), and a lock whose writes cancelled out would hash the same.
 
+### The native renderer
+
+- **`LF2_RENDERER=soft`** presents the software compositor instead of the GPU renderer. Both
+  build every frame; this chooses which one is shown, and it is how `ctest render` diffs them.
+- **`LF2_HD2D=off`** turns off the bloom, and **`LF2_HD2D_BLOOM=<0..255>`** sets its strength
+  (default 110). The effect is **on by default** — it is a look, not a switch; these exist so
+  the renderer's *geometry* can be compared against the software path without the post-process
+  in the way, and so the pass can be shown to do something.
+- **`LF2_RENDER_SKIP=<n>`** drops every nth display-list entry. It is the negative arm of
+  `ctest render`: this comparison was fooled once already (the readback ran before the draw, so
+  every dump was the previous frame — which with a scrolling camera looked like a clean
+  one-pixel shift), so an arm that draws the frame *wrong* has to come out different.
+- **`LF2_RENDER_DEBUG=1`** reports what each frame was made of — quads, fills, tiles, cached
+  textures, uploads, dropped entries, and how many frames the HD2D pass ran on. It prints the
+  zeros too, and says explicitly when the GPU path presented no frames at all or when entries
+  were dropped, because "0 quads" and "the renderer was never called" are different faults.
+
+The renderer draws at the **window's resolution**, not the game's: the display list carries the
+game's own coordinates and the scale is applied as the quads are drawn. Frame dumps in GPU mode
+are therefore the size of the output, not of the composition.
+
 ### The stage's own background layers
 
 - **`LF2_BG_ORIG=1`** hands the background layer draw back to the recompiled body instead of

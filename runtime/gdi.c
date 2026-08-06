@@ -7,6 +7,7 @@
  * that. Surfaces and the game's BMPs are both 8-bit indexed, so the copy is a plain
  * index copy with no colour conversion.
  */
+#include "render.h"
 #include "com.h"
 #include "guest_ops.h"
 #include "hostwin.h"
@@ -503,6 +504,23 @@ static int text_draw_ttf(const char *text, int x, int y,
     const int tg = (int)((text_colour >> 8) & 0xff);
     const int tb = (int)(text_colour & 0xff);
 
+    uint32_t *tile = render_tile_begin(dpix, x, y, rgba->w, rgba->h);
+    if (tile) {
+        for (int ty = 0; ty < rgba->h; ty++) {
+            const uint32_t *src = (const uint32_t *)((const uint8_t *)rgba->pixels
+                                                     + (size_t)ty * (size_t)rgba->pitch);
+            for (int tx = 0; tx < rgba->w; tx++) {
+                const int a = (int)(src[tx] >> 24);
+                if (!a) continue;
+                tile[ty * rgba->w + tx] = ((uint32_t)a << 24)
+                                        | ((uint32_t)(tr * a / 255) << 16)
+                                        | ((uint32_t)(tg * a / 255) << 8)
+                                        | (uint32_t)(tb * a / 255);
+            }
+        }
+        render_tile_end();
+    }
+
     for (int ty = 0; ty < rgba->h; ty++) {
         const int dy = y + ty;
         if (dy < 0 || dy >= dhei) continue;
@@ -638,6 +656,24 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink,
 
     const int ir = (int)((ink >> 16) & 0xff), ig = (int)((ink >> 8) & 0xff);
     const int ib = (int)(ink & 0xff);
+
+    /* The native renderer does not see this draw -- it does not go through Blt -- so the
+     * same coverage is written into a display-list TILE as well, PREMULTIPLIED. The CPU
+     * blend below still runs: both renderers build every frame, and the software one is the
+     * reference the GPU path is diffed against. */
+    uint32_t *tile = render_tile_begin(dpix, x, y, GLYPH_W, GLYPH_H);
+    if (tile) {
+        for (int gy = 0; gy < GLYPH_H; gy++)
+            for (int gx = 0; gx < GLYPH_W; gx++) {
+                const int a = g->cov[gy * GLYPH_W + gx];
+                if (!a) continue;
+                tile[gy * GLYPH_W + gx] = ((uint32_t)a << 24)
+                                        | ((uint32_t)(ir * a / 255) << 16)
+                                        | ((uint32_t)(ig * a / 255) << 8)
+                                        | (uint32_t)(ib * a / 255);
+            }
+        render_tile_end();
+    }
 
     for (int gy = 0; gy < GLYPH_H; gy++) {
         const int dy = y + gy;

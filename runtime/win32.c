@@ -2,6 +2,7 @@
 #include "com.h"
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "render.h"
 #include "script.h"
 
 #include <SDL3/SDL.h>
@@ -159,6 +160,7 @@ static void h_CreateWindowExA(void)
                                  SDL_WINDOW_RESIZABLE);
     if (!hw.window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); abort(); }
     hw.renderer = SDL_CreateRenderer(hw.window, NULL);
+    render_init(hw.renderer);
     /* Before apply_window_mode: going fullscreen changes the size, and the geometry has to
      * exist before anything can follow a change to it. */
     hostwin_window_geometry(hw.win_w, hw.win_h);
