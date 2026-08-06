@@ -12,12 +12,11 @@
 # The anchors were MEASURED on this route, not assumed: charselect@962, overlay@1701,
 # match@2142, which is what the offsets below are relative to.
 #
-# THE CLICK AT 900 DOES NOTHING, and is kept only because removing it is a separate change
-# from this one. What starts the game is the KEY at 960 -- the post-load panel comes up at
-# 962, sixty frames after a click that is supposed to be "game start" and two after the key.
-# The click reaches the game (it sets the game's own click flag and its mouse X, at the very
-# coordinate the pad writes to start the game) and still does not start it. Why is issue #25,
-# open; until it is answered, do not derive an anchor from that click.
+# The click at 900 is the launcher's "game start" and it DOES start the game -- an earlier
+# version of this comment said it was dead, which was wrong and is retracted (issue #27).
+# What that click does not do is produce the post-load panel this port keys its `charselect`
+# anchor on, so the anchor lands after the KEY at 960 instead. Both inputs are real; only one
+# of them is what the screen signal sees.
 #
 # Every assertion here corresponds to a real regression:
 #   keyed blits   -- ADC/SBB dropped the carry, so DDBLT_KEYSRC was computed as 0 and

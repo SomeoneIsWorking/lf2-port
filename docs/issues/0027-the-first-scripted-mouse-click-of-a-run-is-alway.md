@@ -1,8 +1,8 @@
 ---
 id: 27
-title: The first scripted mouse click of a run is always swallowed
-status: open
-symptom: a run whose only click is on the launcher's game-start item reaches no screen at all; the same click with a second one after it starts the game, so every mouse route has silently been one click behind
+title: RETRACTED (was: the first scripted mouse click of a run is always swallowed) -- the click always worked; 'screens reached -- NONE' was misread
+status: dead-end
+symptom: a run whose only click is on the launcher's game-start item reports 'screens reached -- NONE' -- which was misread as the click doing nothing; the game in fact starts, loads and rests on the mode menu, and the open question is why the post-load panel signal fires for a pad press but not for a click
 tags: reported,mouse,testing,input
 created: 2026-08-06
 updated: 2026-08-06
@@ -136,3 +136,49 @@ overlay selection index and the mode menu's selection.
 DO NOT spend another pass on theories about the port's delivery path. Three have died there.
 The measurement above says the port hands over identical state; the next pass belongs in the
 game's own .data.
+
+### Note (2026-08-06)
+RETRACTED, 2026-08-06 — THE CENTRAL CLAIM OF THIS ENTRY IS WRONG. The first scripted mouse
+click is NOT swallowed. It starts the game, every time, and always did. I put a false finding
+in this registry and the correction matters more than any of the theorising above it.
+
+WHAT IS ACTUALLY TRUE, measured:
+
+  - A lone click on the launcher's game-start at frame 900 takes the game's top-level mode
+    word (0x00458b00) to 2 by frame 950 — mode 2 is the game proper. Dumped at 950, 1100,
+    1400, 1800 and 2200: all read 2.
+  - It does this BOTH with and without the scripted-pointer change of commit 1860861. That
+    change is therefore not implicated in either direction, and the A/B is the only reason
+    anyone can say so.
+  - The run then loads (vram 27 -> 393 allocations, bgm/main.wma) and comes to rest on the
+    MODE MENU. A frame dump at 2500 shows it plainly: the LF2 title screen with VS mode
+    highlighted.
+
+WHERE THE FALSE CLAIM CAME FROM, because the mechanism is the lesson. Every "the click did
+nothing" reading in this entry rests on one line of output:
+
+    scripted input: screens reached -- NONE
+
+That line means the port's `charselect` panel signal never fired. It does NOT mean the click
+did nothing, and I read it as though it did — for four theories and three code changes. The
+game had started, loaded and drawn its mode menu the whole time. Two of my runs even carried
+the contradiction in them: "vram: 27 allocations" at a 1400-frame cutoff and "vram: 393" at
+2600 is a load in progress, not a game that never started, and I read the first as proof of
+nothing happening.
+
+The instrument was not lying. It answered the question it was built for — which screens did a
+route reach — and I asked it a different one.
+
+WHAT SURVIVES, and it is a real question, just not the one this entry was titled for: in a
+run driven by a single PAD press the signal fires (charselect@906) while the game sits on the
+mode menu, and in a run driven by a single mouse CLICK that also ends on the mode menu it
+never fires at all. Both end in the same place; only one draws the panel this port keys on.
+That is worth understanding, and it is what the `charselect` signal's name already overstates
+(see docs/running.md — the signal is the post-load panel, not character selection).
+
+ALSO RETRACTED, downstream of this: "tools/mouse_test.sh's FIRST CLICK IS DEAD" (issue #25's
+note, and a comment I wrote into tools/smoke_test.sh). The first click starts the game; the
+second lands on the mode menu and picks VS mode. Its original comments were close to right
+and mine were wrong. Issue #26 is NOT affected — mouse_test still reaches only charselect@1352
+with no overlay and no match, and its assertions still pass regardless, which stands on its
+own measurements.
