@@ -163,3 +163,34 @@ currently infers a period from contiguity between blits, and for a sky it must i
 the period from this table for the layer being drawn. Matching a blit to its layer index is
 the one piece still to work out -- the y offsets (also in this table, at PERIOD+240) are the
 obvious discriminator, since backgrounds do not scroll vertically.
+
+### Note (2026-08-06)
+THE RUNTIME READ IS PROVEN, 2026-08-06. The address computation from the previous note is
+implemented (bg_layer_field in runtime/overrides/assets.c, addresses in world.h) and CHECKED
+AGAINST THE FILE on a real stage -- the two agree entry for entry:
+
+  from bg.dat (tools/decrypt_dat.py --layers)   from the running game (LF2_BG_TABLE=1)
+    bc1  period 1379  x=0    y=129                layer 0  period=1379  x=0    y=129
+    bc2  period 1379  x=460  y=129                layer 1  period=1379  x=460  y=129
+    bc3  period 1379  x=920  y=129                layer 2  period=1379  x=920  y=129
+    bc4  period 1500  x=0    y=261                layer 3  period=1500  x=0    y=261
+    bc5  period 1500  x=0    y=296                layer 4  period=1500  x=0    y=296
+
+Two independent sources -- a file decrypted offline and a heap-resident table addressed
+through the game's own registry pointer -- agreeing on fifteen numbers. The port can now ask
+the stage for a layer's repeat period at runtime.
+
+The diagnostic earned its keep immediately by being wrong in a way that SAID so: sampled on
+the first frame with a registry pointer, it caught the front end (background index 100, zero
+layers) and reported "NO LAYERS -- either no stage is loaded or the address computation is
+wrong; this says nothing either way". It now samples while panel_hud_up(), which is the moment
+a stage is certainly loaded, so a zero there would be a real negative.
+
+WHAT IS LEFT is the drawing change, and one question in it that is NOT yet answered: matching a
+blit to its layer index. The obvious discriminator is the layer y, which this table also
+carries, since backgrounds do not scroll vertically -- but y ALONE IS AMBIGUOUS. On CUHK the
+sky (period 967) and hill.bmp (period 1140) both sit at y=128, so a match on y would sometimes
+tile a hill at the sky's period or the reverse, and a wrong period tiles the wrong picture
+across the whole widened band. The blit's HEIGHT separates those two (sky1 is 210 tall,
+hill 264), so (y, height) is the candidate rule -- but it is a candidate, not a measurement,
+and it must be checked on more than one stage before it is trusted. That is the next step.

@@ -124,4 +124,40 @@ void coop_table_dump(uint32_t self);
 void coop_registry_dump(uint32_t self);
 void coop_debug_tick(uint32_t self);   /* every LF2_COOP_* probe, once per gather */
 
+
+/* ---- the stage's background layers ----
+ *
+ * A background is a list of LAYERS, each a bitmap with a REPEAT PERIOD -- the period is the
+ * `width:` in bg.dat and it is NOT the width of the bitmap. CUHK's sky is sky1.bmp (800
+ * wide) at x=0 plus sky2.bmp (167 wide) at x=800, period 967 = 800 + 167: two pictures
+ * filling one period, which then repeats for as long as the stage is wide. Every stage but
+ * HK Coliseum is far wider than its sky's period, so the game repeats the sky as the camera
+ * moves. That is the game's own layout, and it is what widescreen has to carry on (#23).
+ *
+ * The table is heap-resident, so there is no address to hardcode -- and an earlier pass
+ * confirmed there is no pointer to it in .data or anywhere in the heap. It is reached the
+ * way the game reaches it, which was read out of fn_0041a250 (the background layer draw,
+ * named by arming the read watch on the array and letting it report the guest call ring):
+ *
+ *     registry = LD32(BG_REGISTRY)                  // the world object's registry pointer
+ *     bg       = LD32(BG_INDEX)                     // which background is loaded
+ *     field[i] = LD32(registry + (bg*BG_STRIDE_DW + i)*4 + <field constant>)
+ *
+ * Each background record is 612 dwords (2448 bytes) and each field a 30-entry array. The
+ * constants were solved against a paired heap/.data dump on Brokeback Clif and they
+ * self-check: BG_LAYER_Y was derived as BG_LAYER_PERIOD + 240 from the heap layout, and the
+ * same number appears literally in fn_0041a250 as an array base indexed by bg*612.
+ */
+enum { BG_REGISTRY = 0x00458b00 + 2004, BG_INDEX = 0x0044d024 };
+enum { BG_STRIDE_DW = 612, BG_MAX_LAYERS = 30 };
+enum { BG_LAYER_PERIOD = 81027604,      /* +0   the repeat period, bg.dat's `width:` */
+       BG_LAYER_X      = 81027724,      /* +120 */
+       BG_LAYER_Y      = 81027844 };    /* +240 -- appears verbatim in fn_0041a250 */
+
+/* One layer field, or 0 when the index is out of range. Reads only; nothing here writes to
+ * the game's own table. */
+uint32_t bg_layer_field(uint32_t field_const, int layer);
+int      bg_layer_count(void);          /* layers with a non-zero period, up to BG_MAX_LAYERS */
+void     bg_table_report(void);         /* LF2_BG_TABLE=1: the loaded stage's layers */
+
 #endif
