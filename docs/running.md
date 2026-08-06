@@ -182,22 +182,39 @@ picture with bigger pixels — and it happens while the game is running, on the 
 resize. This used to be `LF2_WIDESCREEN=<w>`, read once at startup, which is a developer's
 escape hatch rather than a feature (issue #20).
 
-The composition follows the window's **aspect**, not its pixel width: a 1920x1080 window
-gets `550 * 1920/1080 = 978` pixels of world scaled up to fill it. Using the width itself
-would put a 1920-wide picture in a 1080-tall window — letterboxed to a strip, with the
-pixels shrunk to a quarter. A window narrower in aspect than the game's own 794x550 gets
-794 and is letterboxed at the sides, because the HUD strip is 792 wide and there is nothing
-sensible below that.
+The composition is the window's **real pixel width**, and it is drawn **1:1** — nothing is
+scaled anywhere. A 1920-wide window composes 1920 pixels of world, and because the game's own
+width words are patched to match (`wide_apply` in `runtime/overrides/menu.c`) that is more
+world at the size the artist drew it, not the same picture enlarged.
 
-| Window | Composition |
-|---|---|
-| 794x550 | 794x550 — widescreen off, the game's own picture |
-| 1600x550 | 1600x550 |
-| 1920x1080 | 978x550 |
-| 800x900 | 794x550 — taller in aspect than the game, so it clamps |
+This changed. It used to follow the window's *aspect* and keep the game's 550 rows — a
+1920x1080 window composed `550 * 1920/1080 = 978` and SDL scaled that up by 1.96. That is an
+upscale, and 1.96 is not an integer, so a game pixel landed as a block two **or** three screen
+pixels wide depending where it fell, and everything drawn afterwards was quantised to the
+small grid before being enlarged.
 
-`ctest widescreen` asserts exactly that table, the last row included: without a case that
-must NOT widen, a build that always widened would pass.
+**The height stays at the game's 550, and that is not a shortcut — it is all the world there
+is.** LF2's vertical screen axis carries the depth (z, bounded by `bg.dat`'s `zboundary:`) and
+the jump height, both fixed by the stage's own data, and every layer's picture is 550 rows
+tall. Composing 1080 rows was tried: the game draws its world in the top 550 and the remaining
+530 are black, because there is nothing behind them to draw. So the composition keeps the rows
+that exist and the port **centres** them in the window — black bands above and below, the
+shape of a widescreen film — rather than magnifying the picture to hide it.
+
+A window narrower than 794 still gets 794 and is cropped at the sides, because the HUD strip
+is 792 wide and there is nothing sensible below that.
+
+| Window | Composition | On screen |
+|---|---|---|
+| 794x550 | 794x550 | fills it — widescreen off, the game's own picture |
+| 1600x550 | 1600x550 | fills it |
+| 1920x1080 | 1920x550 | 1:1, centred, 265 black rows above and below |
+| 800x900 | 800x550 | 1:1, centred; the height no longer enters the formula at all |
+
+`ctest widescreen` asserts exactly that table. The 794 row is the one that must NOT widen —
+without it a build that always widened would pass everything else — and the last two rows are
+the ones that flipped when the aspect term came out, so a build that kept any aspect in the
+formula fails them and nothing else.
 
 **`LF2_WINDOW_SIZE=<w>x<h>`** sets the window's initial size. It is not the old knob renamed
 — it names a window, and the composition is derived from it by the same code a window manager
@@ -1503,13 +1520,13 @@ Three hooks in `runtime/ddraw.c`:
   nothing on top of it, and so the pass can be shown to do something.
 - **`LF2_HD2D_SHOW=albedo|chars|shadow`** presents one buffer of the chain instead of the lit
   frame: the composition as the game drew it, the character mask with its height channel, or
-  the softened cast-shadow mask. Every fault in the lighting looks the same from outside — a
+  the cast-shadow mask. Every fault in the lighting looks the same from outside — a
   picture that is slightly wrong — and this is what tells "the bevel is too tight" apart from
   "the character mask is empty". Each buffer is shown at the moment it is *final*; the first
   version showed them all at the end of the chain, by which time the shadow scratch had been
   reused, and `SHOW=shadow` confidently displayed a blurred copy of the scene.
 - **`LF2_HD2D_KEY`, `_AMBIENT`, `_BEVEL`, `_BEVEL_PX`, `_HEIGHT_GAIN`, `_SHADOW`,
-  `_SHADOW_BLUR`** sweep the light rig while it is being tuned. They are not configuration.
+  `_FLOOR_FEATHER`** sweep the light rig while it is being tuned. They are not configuration.
   The defaults are chosen so a flat, unshadowed, camera-facing pixel comes out at almost
   exactly the colour the game drew it: the light must be a *difference from flat*, not a
   brightness or a tint laid over the game.
@@ -1527,27 +1544,48 @@ Three hooks in `runtime/ddraw.c`:
   frames at all, when entries were dropped, or when the shaders never loaded and why, because
   "0 quads" and "the renderer was never called" are different faults.
 
-The renderer draws at the **window's resolution**, not the game's: the display list carries the
-game's own coordinates and the scale is applied as the quads are drawn, with `SDL_SCALEMODE_
-NEAREST` throughout, so a sprite is resampled exactly once and stays pixel-sharp. Frame dumps
-in GPU mode are therefore the size of the output, not of the composition.
+The renderer draws the display list **1:1** into a target the size of the window and places it
+there — no scale, no resample, `SDL_SCALEMODE_NEAREST` throughout. Frame dumps in GPU mode are
+therefore the size of the window, not of the composition.
 
 **What the lighting touches, and what it does not.** One key light, given as a direction in the
 stage's own three axes (x across, y up — LF2's jump axis, claim C018 — z toward the camera).
-It is applied *only* to the objects standing in the stage, which the game itself identifies by
-drawing a shadow ellipse at their feet immediately before drawing them. The background layers,
-the HUD, the text and the letterbox come through as the exact pixels the game composed. The
-one thing that reaches the floor is the cast shadow, which is the point of a cast shadow. On a
-frame with no fighters in it — the menu, character selection — the pass changes **nothing**,
-and `ctest render` asserts that as well as asserting that the match frame *does* change: an
-effect that has quietly spread over the whole picture passes the second check and fails the
-first.
+It **shades** only the objects standing in the stage, which the game itself identifies by
+drawing a shadow ellipse at their feet immediately before drawing them. The HUD, the text and
+the black bands are never touched at all. Two things do reach the stage, and both are
+geometry rather than decoration: the **cast shadow**, which is the point of a cast shadow, and
+the **floor's orientation** below — a hue shift at locked luminance, so it cannot change how
+bright the picture is.
+
+On a frame with no stage and no fighters in it — the menu, character selection — the pass
+changes **nothing at all**, byte for byte, and `ctest render` asserts that alongside asserting
+that the match frame *does* change. An effect that has quietly spread over the whole picture
+passes the second check and fails the first, which is exactly how the bloom-and-haze version
+of this pass would have been caught.
 
 The shadow is the sprite's own silhouette laid on the ground and sheared along that same light
-vector, so the shading and the shadows cannot disagree. Its mask needs its own shader for a
+vector, so the shading and the shadows cannot disagree. It is **crisp**: an earlier version
+downsampled the mask to half resolution and blurred it, which is what a soft shadow wants and
+is not what this game wants — a 32-pixel sprite's silhouette, halved and blurred, is a
+shapeless dark smear with none of the fighter left in it. Its mask needs its own shader for a
 reason worth knowing: SDL multiplies the vertex colour into the texture, so the fixed-function
 route gives `sprite.rgb * a` — the fighter's colours — and the shadow came out darker under
 the bright parts of them.
+
+**The floor is lit as a floor.** `bg.dat`'s `zboundary:` is where the walkable floor begins on
+the screen, because LF2's depth axis projects straight down it — that is why the game can
+depth-sort on z and why it puts the shadow ellipse at `y = z`. So the rows below it are a
+horizontal surface and the rows above are a wall, and the two see different amounts of sky.
+That difference is applied **as colour**: the tint is the ratio of the two lighting terms with
+each normalised to unit luminance, so the ground picks up the sky's colour without the picture
+getting brighter or darker. Measured over a match frame's floor with the fighters excluded,
+the mean luminance change is **-0.03 levels of 255** against a mean chroma change of **3.0**.
+It is a per-channel multiplier, so a strongly saturated pixel can still move in luminance —
+what is locked is the tint, not every pixel. The backdrop's multiplier is exactly 1: measured,
+**0 of 16880** sampled backdrop pixels changed, which is what lets the pass keep its promise
+that a frame with no stage and no fighters comes out byte-identical. It is gated on the in-match HUD: the
+background record stays loaded after a fight, so without that gate the front end would have
+its lower half tinted by a stage that is not on screen.
 
 **The shaders are compiled SPIR-V, committed** in `runtime/shaders/gen/`, so the build still
 needs nothing but a C compiler and SDL. `tools/build_shaders.sh` regenerates them and

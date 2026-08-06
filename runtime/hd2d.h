@@ -77,10 +77,15 @@ void hd2d_shadow_end(void);
 /* ---- the light ----
  *
  * albedo/chars/shadow are full-resolution targets render.c filled; `out` is where the lit
- * frame goes. Returns 0 without touching `out` if anything could not be created.
+ * frame goes. `floor_row` is the output row the stage's walkable floor begins at, from
+ * bg.dat's own z boundary, and `have_floor` is 0 when the stage did not say -- in which case
+ * the whole picture is lit as a surface facing the camera, which is what it was before the
+ * floor was located at all. Returns 0 without touching `out` if anything could not be
+ * created.
  */
 int  hd2d_post(struct SDL_Texture *albedo, struct SDL_Texture *chars,
-               struct SDL_Texture *shadow, struct SDL_Texture *out, int w, int h);
+               struct SDL_Texture *shadow, struct SDL_Texture *out, int w, int h,
+               float floor_row, int have_floor);
 
 void hd2d_report(void);         /* LF2_RENDER_DEBUG=1 */
 

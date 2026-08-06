@@ -10,7 +10,6 @@
 
 #include "shaders/gen/hd2d_gbuf_spv.h"
 #include "shaders/gen/hd2d_light_spv.h"
-#include "shaders/gen/hd2d_blur_spv.h"
 #include "shaders/gen/hd2d_shadow_spv.h"
 
 /* ---- the light rig ----
@@ -47,14 +46,13 @@ typedef struct {
 static SDL_Renderer  *R;
 static SDL_GPUDevice *DEV;
 
-static Shader sh_chars, sh_light, sh_blur, sh_shadow;
-static SDL_GPURenderState *st_chars, *st_light, *st_blur, *st_shadow;
+static Shader sh_chars, sh_light, sh_shadow;
+static SDL_GPURenderState *st_chars, *st_light, *st_shadow;
 static SDL_GPUSampler     *smp_linear;
 
-/* The shadow mask is softened at half resolution: cheaper, and softer than blurring it at
- * full size. Rebuilt, along with the render state that names one, on every resize. */
-static SDL_Texture *t_half0, *t_half1;
-static int          chain_w, chain_h;
+/* The lighting state names its two extra textures, so it is rebuilt whenever they are --
+ * which is every resize. */
+static int chain_w, chain_h;
 
 static long stat_runs, stat_char_quads;
 static int  init_done, init_ok;
@@ -125,10 +123,9 @@ int hd2d_init(SDL_Renderer *r)
 
     sh_chars = (Shader){ hd2d_gbuf_spv,  (int)sizeof hd2d_gbuf_spv,  1, NULL };
     sh_light = (Shader){ hd2d_light_spv, (int)sizeof hd2d_light_spv, 3, NULL };
-    sh_blur  = (Shader){ hd2d_blur_spv,  (int)sizeof hd2d_blur_spv,  1, NULL };
     sh_shadow = (Shader){ hd2d_shadow_spv, (int)sizeof hd2d_shadow_spv, 1, NULL };
     if (!shader_make(&sh_chars, "chars") || !shader_make(&sh_light, "light")
-        || !shader_make(&sh_blur, "blur") || !shader_make(&sh_shadow, "shadow")) {
+        || !shader_make(&sh_shadow, "shadow")) {
         init_why = "a shader failed to compile";
         return 0;
     }
@@ -155,12 +152,9 @@ int hd2d_init(SDL_Renderer *r)
     ci.fragment_shader = sh_chars.shader;
     st_chars = SDL_CreateGPURenderState(R, &ci);
     SDL_zero(ci);
-    ci.fragment_shader = sh_blur.shader;
-    st_blur = SDL_CreateGPURenderState(R, &ci);
-    SDL_zero(ci);
     ci.fragment_shader = sh_shadow.shader;
     st_shadow = SDL_CreateGPURenderState(R, &ci);
-    if (!st_chars || !st_blur || !st_shadow) {
+    if (!st_chars || !st_shadow) {
         init_why = "a render state failed";
         fprintf(stderr, "hd2d: render state: %s\n", SDL_GetError());
         return 0;
@@ -175,18 +169,16 @@ int hd2d_init(SDL_Renderer *r)
 
 void hd2d_shutdown(void)
 {
-    SDL_GPURenderState **states[] = { &st_chars, &st_light, &st_blur, &st_shadow };
+    SDL_GPURenderState **states[] = { &st_chars, &st_light, &st_shadow };
     for (unsigned i = 0; i < SDL_arraysize(states); i++)
         if (*states[i]) { SDL_DestroyGPURenderState(*states[i]); *states[i] = NULL; }
-    Shader *shaders[] = { &sh_chars, &sh_light, &sh_blur, &sh_shadow };
+    Shader *shaders[] = { &sh_chars, &sh_light, &sh_shadow };
     for (unsigned i = 0; i < SDL_arraysize(shaders); i++)
         if (shaders[i]->shader && DEV) {
             SDL_ReleaseGPUShader(DEV, shaders[i]->shader);
             shaders[i]->shader = NULL;
         }
     if (smp_linear && DEV) { SDL_ReleaseGPUSampler(DEV, smp_linear); smp_linear = NULL; }
-    if (t_half0) { SDL_DestroyTexture(t_half0); t_half0 = NULL; }
-    if (t_half1) { SDL_DestroyTexture(t_half1); t_half1 = NULL; }
     chain_w = chain_h = 0;
     init_done = init_ok = 0;
     R = NULL; DEV = NULL;
@@ -241,31 +233,21 @@ static SDL_GPUTexture *gpu_of(SDL_Texture *t)
  * either is -- which is every resize. Keeping it alive across one would leave the shader
  * reading a destroyed shadow buffer: a use-after-free that shows up as garbage light rather
  * than as a crash. */
-static int chain_build(SDL_Texture *chars, int w, int h)
+static int chain_build(SDL_Texture *chars, SDL_Texture *shadow, int w, int h)
 {
-    if (t_half0) { SDL_DestroyTexture(t_half0); t_half0 = NULL; }
-    if (t_half1) { SDL_DestroyTexture(t_half1); t_half1 = NULL; }
     if (st_light) { SDL_DestroyGPURenderState(st_light); st_light = NULL; }
 
-    const int hw = w / 2 > 1 ? w / 2 : 1, hh = h / 2 > 1 ? h / 2 : 1;
-    for (int i = 0; i < 2; i++) {
-        SDL_Texture **slot = i ? &t_half1 : &t_half0;
-        *slot = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
-                                  SDL_TEXTUREACCESS_TARGET, hw, hh);
-        if (!*slot) {
-            fprintf(stderr, "hd2d: could not create the %dx%d shadow buffers: %s\n",
-                    hw, hh, SDL_GetError());
-            return 0;
-        }
-        SDL_SetTextureScaleMode(*slot, SDL_SCALEMODE_LINEAR);
-        SDL_SetTextureBlendMode(*slot, SDL_BLENDMODE_NONE);
-    }
-
-    /* light: the albedo is sampler 0 (the texture being drawn), then the character buffer
-     * and the softened shadow mask, which lands in t_half1. */
+    /* light: the albedo is sampler 0 (the texture being drawn), then the character buffer and
+     * the cast-shadow mask -- both at FULL resolution, both sampled 1:1.
+     *
+     * The mask used to be downsampled to half and Gaussian-blurred on the way. That is what a
+     * soft shadow wants and it is not what this game wants: a 32-pixel sprite's silhouette,
+     * halved and then blurred, is a shapeless dark smear with none of the fighter left in it.
+     * The shadow is crisp now, which also means the blur shader and the two scratch targets
+     * that existed only to feed it are gone. */
     SDL_GPUTextureSamplerBinding lb[2] = {
-        { gpu_of(chars),   smp_linear },
-        { gpu_of(t_half1), smp_linear },
+        { gpu_of(chars),  smp_linear },
+        { gpu_of(shadow), smp_linear },
     };
     SDL_GPURenderStateCreateInfo ci;
     SDL_zero(ci);
@@ -293,20 +275,6 @@ static void pass(SDL_Texture *dst, SDL_Texture *src, SDL_GPURenderState *state)
     if (state) SDL_SetGPURenderState(R, NULL);
 }
 
-/* A separable Gaussian, in the source's texels. */
-static void blur(SDL_Texture *dst, SDL_Texture *tmp, SDL_Texture *src, float radius)
-{
-    float w = 1.0f, h = 1.0f;
-    SDL_GetTextureSize(src, &w, &h);
-    Vec4 u = { radius / w, 0.0f, 0.0f, 0.0f };
-    SDL_SetGPURenderStateFragmentUniforms(st_blur, 0, &u, sizeof u);
-    pass(tmp, src, st_blur);
-    SDL_GetTextureSize(tmp, &w, &h);
-    u = (Vec4){ 0.0f, radius / h, 0.0f, 0.0f };
-    SDL_SetGPURenderStateFragmentUniforms(st_blur, 0, &u, sizeof u);
-    pass(dst, tmp, st_blur);
-}
-
 /* ---- looking at one stage of the chain ----
  *
  * LF2_HD2D_SHOW=albedo|chars|shadow presents that buffer instead of the lit frame. Every
@@ -314,11 +282,12 @@ static void blur(SDL_Texture *dst, SDL_Texture *tmp, SDL_Texture *src, float rad
  * "the fighters look flat" is a bevel that is too tight, a character buffer with nothing in
  * it, or a shadow mask that was never drawn. Looking at the buffer says which.
  *
- * IT SHOWS EACH BUFFER AT THE MOMENT THAT BUFFER IS FINAL. The first version looked them all
- * up at the END of the chain, by which time the half-resolution scratch that had held the
- * shadow mask had been reused -- so `SHOW=shadow` displayed a blurred copy of the scene and
- * read as "the shadow mask contains the whole picture". A debug view that shows the wrong
- * buffer is worse than none: it answers confidently.
+ * It shows each buffer AT THE POINT THAT BUFFER IS FINAL. An earlier version looked them all
+ * up at the end of the chain, by which time a scratch target that had held the shadow mask
+ * had been reused -- so `SHOW=shadow` displayed a blurred copy of the scene and read as "the
+ * shadow mask contains the whole picture". A debug view that shows the wrong buffer is worse
+ * than none: it answers confidently. There is no scratch left to be reused now, but the
+ * ordering is kept, because the next thing added here would bring one back.
  */
 static int show_is(const char *name)
 {
@@ -354,39 +323,35 @@ static float knob(const char *name, float dflt)
 }
 
 int hd2d_post(SDL_Texture *albedo, SDL_Texture *chars, SDL_Texture *shadow, SDL_Texture *out,
-              int w, int h)
+              int w, int h, float floor_row, int have_floor)
 {
     if (!hd2d_ready() || !albedo || !chars || !shadow || !out) return 0;
     if (chain_w != w || chain_h != h) {
-        if (!chain_build(chars, w, h)) { chain_w = chain_h = 0; return 0; }
+        if (!chain_build(chars, shadow, w, h)) { chain_w = chain_h = 0; return 0; }
     }
 
     if (show_is("albedo")) return show_stage(albedo, out);
     if (show_is("chars"))  return show_stage(chars, out);
+    if (show_is("shadow")) return show_stage(shadow, out);
 
-    /* 1. The cast-shadow mask, softened. It is drawn at full resolution from the sprites'
-     *    own silhouettes; a hard edge off a 32-pixel sprite magnified to 1080p reads as a
-     *    decal rather than as a shadow. */
-    pass(t_half1, shadow, NULL);
-    blur(t_half1, t_half0, t_half1, knob("LF2_HD2D_SHADOW_BLUR", 1.3f));
-    if (show_is("shadow")) return show_stage(t_half1, out);
-
-    /* 2. The light. */
-    {
-        struct { Vec4 sun_dir, sun_color, sky, bounce, params; } u;
-        u.sun_dir   = (Vec4){ LIGHT[0], LIGHT[1], LIGHT[2], knob("LF2_HD2D_KEY", 1.06f) };
-        /* A warm key against a cool sky is what puts a temperature difference between the
-         * lit side and the shaded side of a fighter, which is what makes flat art read as
-         * having a form. */
-        u.sun_color = (Vec4){ 1.10f, 1.02f, 0.90f, knob("LF2_HD2D_AMBIENT", 0.85f) };
-        u.sky       = (Vec4){ 0.62f, 0.68f, 0.80f, knob("LF2_HD2D_BEVEL", 0.55f) };
-        u.bounce    = (Vec4){ 0.55f, 0.52f, 0.50f, knob("LF2_HD2D_SHADOW", 0.55f) };
-        u.params    = (Vec4){ 1.0f / (float)w, 1.0f / (float)h,
-                              knob("LF2_HD2D_BEVEL_PX", 4.0f),
-                              knob("LF2_HD2D_HEIGHT_GAIN", 0.9f) };
-        SDL_SetGPURenderStateFragmentUniforms(st_light, 0, &u, sizeof u);
-        pass(out, albedo, st_light);
-    }
+    struct { Vec4 sun_dir, sun_color, sky, bounce, params, floor; } u;
+    u.sun_dir   = (Vec4){ LIGHT[0], LIGHT[1], LIGHT[2], knob("LF2_HD2D_KEY", 1.20f) };
+    /* A warm key against a cool sky is what puts a temperature difference between the lit
+     * side and the shaded side of a fighter, which is what makes flat art read as having a
+     * form rather than just a brightness. */
+    u.sun_color = (Vec4){ 1.10f, 1.02f, 0.90f, knob("LF2_HD2D_AMBIENT", 0.62f) };
+    u.sky       = (Vec4){ 0.62f, 0.68f, 0.80f, knob("LF2_HD2D_BEVEL", 0.90f) };
+    u.bounce    = (Vec4){ 0.55f, 0.52f, 0.50f, knob("LF2_HD2D_SHADOW", 0.55f) };
+    u.params    = (Vec4){ 1.0f / (float)w, 1.0f / (float)h,
+                          knob("LF2_HD2D_BEVEL_PX", 5.0f),
+                          knob("LF2_HD2D_HEIGHT_GAIN", 0.9f) };
+    /* The feather is a few rows: the floor meets the wall at a line the art already draws,
+     * and a hard switch there would put a second, straighter line beside it. */
+    const float feather = knob("LF2_HD2D_FLOOR_FEATHER", 6.0f);
+    u.floor = (Vec4){ floor_row, 1.0f / (feather > 0.5f ? feather : 0.5f),
+                      have_floor ? 1.0f : 0.0f, 0.0f };
+    SDL_SetGPURenderStateFragmentUniforms(st_light, 0, &u, sizeof u);
+    pass(out, albedo, st_light);
 
     SDL_SetRenderTarget(R, NULL);
     stat_runs++;

@@ -48,6 +48,11 @@ enum { DDCKEY_SRCBLT = 0x8 };
 
 typedef struct {
     int      w, h, pitch;
+    int      rows;          /* rows the buffer was ALLOCATED for; 0 when h is the allocation.
+                               A window-following surface is allocated once at the maximum and
+                               only moves w/h, because vram_alloc is a bump allocator with no
+                               free and reallocating per resize event exhausts the arena
+                               during a single drag of a window edge (issue #20). */
     uint32_t pixels;        /* guest address of the pixel buffer */
     int      primary;
     int      has_key;
@@ -485,8 +490,14 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
         }
         SDL_UnlockTexture(hw.texture);
     }
+    /* 1:1 and centred, never stretched to fill. The composition is the window's width and
+     * the game's own 550 rows; the rows that do not exist are black bands, not an upscale. */
+    SDL_FRect place;
+    lf2_compose_placement(w, h, &place.x, &place.y);
+    place.w = (float)w; place.h = (float)h;
+    SDL_SetRenderDrawColor(hw.renderer, 0, 0, 0, 255);
     SDL_RenderClear(hw.renderer);
-    SDL_RenderTexture(hw.renderer, hw.texture, NULL, NULL);
+    SDL_RenderTexture(hw.renderer, hw.texture, NULL, &place);
     SDL_RenderPresent(hw.renderer);
     frame_pace();
 }
@@ -920,8 +931,13 @@ enum { NATIVE_W = 794, NATIVE_H = 550 };   /* the composition the game asks for 
  *
  * 4096 is the bound the port already validated widths against when this was an env var,
  * kept so the two do not disagree. A 32:9 monitor at full height asks for 1956; the rest of
- * the range is for a window someone has dragged very short and very wide. */
-enum { WIDE_MAX = 4096 };
+ * the range is for a window someone has dragged very short and very wide.
+ *
+ * HIGH_MAX is the same bargain on the other axis, and it exists because the composition now
+ * follows the window in BOTH dimensions rather than following its aspect. 4096x2304 is
+ * 37.7 MB per resizable surface out of a 1 GiB arena, and there are two of them in practice
+ * (the primary and the surface the game composes into). */
+enum { WIDE_MAX = 4096, HIGH_MAX = 2304 };
 enum { HUD_W = 792, HUD_BAND_H = 118 };   /* the in-match HUD strip and the band it owns */
 
 /* The in-match HUD's own centring offset, exposed because the GDI text path draws straight
@@ -1459,15 +1475,17 @@ static void surf_GetPixelFormat(uint32_t self)
 /* `maxw` is the width the PITCH is fixed at, which is not always the width the surface
  * starts out being: a surface that follows the window is allocated at WIDE_MAX so a resize
  * can move s->w without reallocating. See surfaces_follow_window. */
-static uint32_t make_surface(int w, int h, int primary, int maxw)
+static uint32_t make_surface(int w, int h, int primary, int maxw, int maxh)
 {
     Surface *s = SDL_calloc(1, sizeof *s);
     if (maxw < w) maxw = w;
+    if (maxh < h) maxh = h;
     s->w = w; s->h = h;
     s->pitch = maxw * 4;
-    s->pixels = vram_alloc((uint32_t)s->pitch * (uint32_t)h);
+    s->rows  = maxh;
+    s->pixels = vram_alloc((uint32_t)s->pitch * (uint32_t)maxh);
     s->primary = primary;
-    memset(g_mem + s->pixels, 0, (size_t)s->pitch * (size_t)h);
+    memset(g_mem + s->pixels, 0, (size_t)s->pitch * (size_t)maxh);
     return com_create(IF_SURFACE, s);
 }
 
@@ -1491,55 +1509,89 @@ static void follow_add(uint32_t obj)
             FOLLOW_MAX, obj);
 }
 
-static void surfaces_follow_window(int w)
+static void surfaces_follow_window(int w, int h)
 {
     for (int i = 0; i < follow_n; i++) {
         Surface *s = com_host(follow[i]);
         if (!s) continue;
-        /* Never past the pitch it was allocated with -- a surface created before the cap was
+        /* Never past what it was allocated with -- a surface created before the caps were
          * known (there are none today) would otherwise write off the end of its buffer. */
         s->w = w * 4 <= s->pitch ? w : s->pitch / 4;
+        s->h = (s->rows && h > s->rows) ? s->rows : h;
     }
 }
 
-/* The window changed size. The compose width follows its ASPECT, not its pixel width: a
- * 1920x1080 window wants 978x550 of world scaled up to fill it, not 1920x550 sitting in a
- * 1080-tall window with the pixels shrunk to a quarter. Anything narrower in aspect than the
- * game's own 794x550 gets 794 and is letterboxed, because the HUD strip is 792 wide and
- * there is nothing sensible below that. */
+/* The window changed size. THE COMPOSITION IS THE WINDOW'S REAL PIXELS, and the renderer
+ * draws it 1:1 -- nothing is scaled, anywhere.
+ *
+ * It used to follow the window's ASPECT: a 1920x1080 window composed 978x550 and SDL scaled
+ * that up by 1.96. That is an upscale, and 1.96 is not an integer, so a game pixel became a
+ * block two OR three screen pixels wide depending where it landed. Everything drawn
+ * afterwards -- text, the lighting -- was quantised to the small grid before being enlarged.
+ *
+ * THE WIDTH IS THE WINDOW'S WIDTH, in pixels. That is a real gain and not just sharpness:
+ * the game's own width words are patched to it (menu.c wide_apply), so a wider window is a
+ * wider FIELD OF VIEW -- more world, at the size the artist drew it.
+ *
+ * THE HEIGHT IS THE GAME'S 550, AND THAT IS NOT A SHORTCUT -- IT IS ALL THE WORLD THERE IS.
+ * LF2's vertical screen axis carries the depth (z, bounded by bg.dat's zboundary) and the
+ * jump height, both fixed by the stage's own data, and every layer's picture is 550 rows
+ * tall. Composing 1080 rows was tried and does exactly what that sentence predicts: the
+ * game draws its world in the top 550 and the remaining 530 are black, because there is
+ * nothing behind them to draw. So the composition keeps the rows that exist and the port
+ * CENTRES them in the window -- black above and below, the same shape as a widescreen film,
+ * rather than a picture magnified to hide the fact or shoved against the top edge.
+ *
+ * A window narrower than 794 still gets 794 and is cropped: below that the HUD strip does
+ * not fit, and squashing the world is the one thing worse than scaling it. */
 void hostwin_window_geometry(int win_w, int win_h)
 {
     if (win_w <= 0 || win_h <= 0) return;
     hw.win_w = win_w;
     hw.win_h = win_h;
 
-    long w = ((long)NATIVE_H * win_w + win_h / 2) / win_h;
+    long w = win_w;
     if (w < NATIVE_W) w = NATIVE_W;
     if (w > WIDE_MAX) {
         static int said;
         if (!said) {
             said = 1;
-            fprintf(stderr, "widescreen: a %dx%d window asks for a %ld-wide composition, "
-                            "past the %d this build allocates for; clamped, so the picture "
-                            "is letterboxed at the sides from here on\n",
-                    win_w, win_h, w, WIDE_MAX);
+            fprintf(stderr, "widescreen: a %dx%d window asks for a %ld-wide composition, past "
+                            "the %d this build allocates for; clamped, so the picture is "
+                            "cropped at the sides from here on\n", win_w, win_h, w, WIDE_MAX);
         }
         w = WIDE_MAX;
     }
 
-    if ((int)w == hw.width && hw.height == NATIVE_H) return;   /* the aspect did not move */
-    fprintf(stderr, "widescreen: window %dx%d -> composition %ldx%d (was %dx%d)\n",
+    if ((int)w == hw.width && hw.height == NATIVE_H) return;
+    fprintf(stderr, "widescreen: window %dx%d -> composition %ldx%d drawn 1:1 (was %dx%d)\n",
             win_w, win_h, w, NATIVE_H, hw.width, hw.height);
     hw.width = (int)w;
     hw.height = NATIVE_H;
 
-    surfaces_follow_window(hw.width);
+    surfaces_follow_window(hw.width, hw.height);
+    /* Logical presentation is what used to do the scaling, and there is none to do now. The
+     * renderer places the composition in the window itself, because it is the only thing that
+     * knows both sizes and it has to place the lighting's targets the same way. */
     if (hw.renderer)
-        SDL_SetRenderLogicalPresentation(hw.renderer, hw.width, hw.height,
-                                         SDL_LOGICAL_PRESENTATION_LETTERBOX);
+        SDL_SetRenderLogicalPresentation(hw.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
     /* The texture is sized to the composition, so it has to go with it. Recreated on the
      * next present rather than here, where the renderer may not exist yet. */
     if (hw.texture) { SDL_DestroyTexture(hw.texture); hw.texture = NULL; }
+}
+
+/* WHERE THE COMPOSITION SITS IN THE WINDOW: 1:1, centred, both axes.
+ *
+ * Both present paths need this and neither can work it out alone -- the software compositor
+ * knows the composition and the renderer knows the output -- so it is computed once here off
+ * the window geometry this file already owns. Negative is correct and deliberate: a window
+ * narrower than the 794 the composition floors at gets the middle of the picture rather than
+ * a squashed whole one.
+ */
+void lf2_compose_placement(int comp_w, int comp_h, float *x, float *y)
+{
+    *x = (float)((hw.win_w - comp_w) / 2);
+    *y = (float)((hw.win_h - comp_h) / 2);
 }
 
 /* Widescreen is ON whenever the window is wider in aspect than the game's own picture, and
@@ -1575,7 +1627,8 @@ static void dd_CreateSurface(uint32_t self)
     if (w <= 0) w = 1;
     if (h <= 0) h = 1;
 
-    const uint32_t obj = make_surface(w, h, primary, follows ? WIDE_MAX : w);
+    const uint32_t obj = make_surface(w, h, primary, follows ? WIDE_MAX : w,
+                                      follows ? HIGH_MAX : h);
     if (primary) primary_surface = obj;
     if (follows) follow_add(obj);
     ST32(out, obj);

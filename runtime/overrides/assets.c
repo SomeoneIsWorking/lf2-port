@@ -147,6 +147,67 @@ void bg_shadow_size(int *w, int *h)
 /* Which stage is loaded, so a shadow object learned on one is discarded on the next. */
 uint32_t bg_shadow_stage(void) { return LD32(BG_INDEX); }
 
+/* bg.dat's `zboundary:` -- see world.h for why this is the FLOOR and not just a clamp.
+ *
+ * Located by dumping the whole background record (LF2_BG_RECORD) and reading the per-stage
+ * scalar block. Brokeback Clif gives 1500, 300, 510, ..., 37, 9, 5 at -1124, -1120, -1116,
+ * -1104, -1100, -1096, and the first, the fourth/fifth and the sixth of those were ALREADY
+ * mapped and verified as the stage width, the shadow size and the layer count. The pair in
+ * the middle is 300 and 510, which is exactly the `zboundary: 300 510` that claim C018
+ * records for this stage from a completely different direction -- walking a fighter to the
+ * back wall and watching object+0x18 stop at 300.
+ *
+ * Checked against the game's own DRAWING as well as against the file: the shadow ellipses in
+ * a match span screen y 302..441, inside [300, 510] and touching the far edge. A band that
+ * did not bracket the markers would be the wrong field.
+ *
+ * The sanity test is not decoration. These are two dwords next to a POINTER (-1128), so a
+ * record read at the wrong stride returns a pointer-shaped number that would put the floor
+ * at row 600000000. Anything that is not an ordered pair inside the game's 550 rows is
+ * refused and the caller lights nothing. */
+int bg_z_bounds(int *zmin, int *zmax)
+{
+    if (!LD32(BG_REGISTRY)) return 0;
+    const int lo = (int)(int32_t)bg_stage_field(BG_Z_MIN);
+    const int hi = (int)(int32_t)bg_stage_field(BG_Z_MAX);
+    if (lo <= 0 || hi <= lo || hi > 550) return 0;
+    *zmin = lo; *zmax = hi;
+    return 1;
+}
+
+/* Every background's floor band at once, which is how a field located on ONE stage is shown
+ * not to be a coincidence of that stage. A wrong stride would give one plausible row and
+ * nonsense everywhere else; a field that were something other than the z boundary would not
+ * be an ordered pair inside 550 rows on every stage the game ships.
+ *
+ * It prints the REFUSALS too, and counts them: "20 of 20 stages have a sane floor band" and
+ * "1 of 20, and the walk stopped early" must not look alike. */
+static void bg_z_report(void)
+{
+    const uint32_t registry = LD32(BG_REGISTRY);
+    if (!registry) return;
+    const uint32_t here = LD32(BG_INDEX);
+    int sane = 0, seen = 0;
+    fprintf(stderr, "bg zboundary: the walkable floor of each background, from the record's "
+                    "own scalar block\n");
+    for (uint32_t bg = 0; bg < 60; bg++) {
+        const uint32_t base = registry + bg * BG_STRIDE_DW * 4u;
+        const int32_t count = (int32_t)LD32(base + BG_LAYER_COUNT);
+        const int32_t width = (int32_t)LD32(base + BG_STAGE_WIDTH);
+        if (count <= 0 && width <= 0) continue;      /* past the end of the table */
+        seen++;
+        const int lo = (int)(int32_t)LD32(base + BG_Z_MIN);
+        const int hi = (int)(int32_t)LD32(base + BG_Z_MAX);
+        const int ok = (lo > 0 && hi > lo && hi <= 550);
+        if (ok) sane++;
+        fprintf(stderr, "bg zboundary:  %2u %s  z %d..%d  (stage width %d, %d layer(s))%s\n",
+                bg, bg == here ? "<-loaded" : "        ", lo, hi, width, count,
+                ok ? "" : "   REFUSED: not an ordered pair inside 550 rows");
+    }
+    fprintf(stderr, "bg zboundary: %d of %d backgrounds give a sane floor band%s\n",
+            sane, seen, seen == 0 ? " -- the table was EMPTY, so this says nothing" : "");
+}
+
 /* The game's own count, which is what fn_0041a250 iterates on -- not a scan for the first
  * zero span. The two agree on every stage measured, but a scan would silently stop at a
  * layer the game is perfectly happy to draw, and "the layer list ends here" is exactly the
@@ -207,9 +268,9 @@ static void bg_record_dump(void)
     const uint32_t registry = LD32(BG_REGISTRY);
     if (!registry) return;
     const uint32_t base = registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u;
-    fprintf(stderr, "bg record: background %u, %d dwords from base-1200 to base+1440\n",
-            LD32(BG_INDEX), (1440 + 1200) / 4);
-    for (int32_t off = -1200; off <= 1440; off += 4) {
+    fprintf(stderr, "bg record: background %u, every non-zero dword from base-2600 to "
+                    "base+2600, offset relative to BG_LAYER_SPAN\n", LD32(BG_INDEX));
+    for (int32_t off = -2600; off <= 2600; off += 4) {
         const uint32_t v = LD32((uint32_t)((int32_t)(base + BG_LAYER_SPAN) + off));
         if (!v) continue;                       /* zeros are the bulk and say nothing */
         fprintf(stderr, "bg record:  %+5d = %10u  0x%08x\n", off, v, v);
@@ -232,6 +293,7 @@ void bg_table_report(void)
     done = 1;
     fprintf(stderr, "bg table: registry %08x, loaded background %u\n",
             registry, LD32(BG_INDEX));
+    bg_z_report();
     bg_record_dump();
     if (strcmp(want, "all") != 0) { bg_record_report(LD32(BG_INDEX)); return; }
     /* The count is not known from the table, so walk until a record has no layers AND no
