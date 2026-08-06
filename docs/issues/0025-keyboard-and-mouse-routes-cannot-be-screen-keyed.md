@@ -108,3 +108,19 @@ also the reason a mouse route needs five clicks where a pad route needs one pres
 DO NOT convert smoke or mouse to @charselect until this is understood. Their anchors would be
 derived from a route whose first input does nothing, which is how the current numbers came to
 be off by one screen in the first place.
+
+### Note (2026-08-06)
+CORRECTION, 2026-08-06: the note above claiming "tools/mouse_test.sh's FIRST CLICK IS DEAD" is
+RETRACTED. It is not dead -- it starts the game. See issue #27, which carries the measurement
+and the retraction: a lone click on the launcher takes the top-level mode word to 2 within
+fifty frames and the game goes on to load and draw its mode menu.
+
+What misled me was reading "screens reached -- NONE" as "the click did nothing", when it only
+means the port's post-load panel signal never fired. mouse_test's own comments were closer to
+right than my correction to them.
+
+The part of this issue that stands, unaffected: LF2_KEY_SCRIPT and LF2_CLICK_SCRIPT could not
+be screen-keyed at all until the shared module, three routes were frame-numbered, and two of
+them (smoke, pause_dropout) are now converted. What is left for the mouse route is issue #26 --
+it reaches only charselect and never a match -- and that was measured independently of any of
+this.
