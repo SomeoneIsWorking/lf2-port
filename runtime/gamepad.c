@@ -9,6 +9,7 @@
  */
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "script.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -260,72 +261,11 @@ static int button_by_name(const char *name, size_t n)
 
 /* ---- when a scripted press happens ----
  *
- * `button:<frame>` is an absolute frame number, and it is NOT reproducible. Frames are
- * presents, and the data load presents while it works, so a machine that is busy gets
- * through fewer presents for the same loading and the load finishes EARLIER in frame terms.
- * The whole route then shifts under a script that did not move. Measured, not theorised:
- * the same commit passed tools/coop_select_test.sh at 21:07 and failed it at 21:15, the
- * difference being five other ports building on the same box (issue #18).
- *
- * `button@<screen>[+<n>]` is the fix. It fires <n> frames after the named screen FIRST
- * appears, off the game's own drawing -- the same signal panel_hud_up() gives the widescreen
- * and drop-in code -- so a press aimed at the match lands in the match however long the load
- * took. Screens: `charselect`, `overlay`, `match`.
- *
- * A press whose screen never appears NEVER FIRES, and virtual_pad_report() says so at exit
- * with the screens that did appear. Silently not pressing is how a route that missed its
- * screen reads as a feature that did not work. */
-static long screen_first[3] = { -1, -1, -1 };   /* charselect, overlay, match */
-static const char *const SCREEN_NAME[3] = { "charselect", "overlay", "match" };
-
-static void screens_observe(long frame)
-{
-    const int up[3] = { panel_charselect_up(), panel_overlay_up(), panel_hud_up() };
-    for (int i = 0; i < 3; i++)
-        if (up[i] && screen_first[i] < 0) {
-            screen_first[i] = frame;
-            fprintf(stderr, "virtual pad: screen %s first up at frame %ld\n",
-                    SCREEN_NAME[i], frame);
-        }
-}
-
-/* Resolve one item's trigger frame. Returns -1 when it cannot fire YET (its screen has not
- * appeared), which is different from never. */
-static long item_frame(const char *spec, int *unresolved)
-{
-    if (*spec != '@') return strtol(spec, NULL, 10);
-    spec++;
-    for (int i = 0; i < 3; i++) {
-        const size_t n = strlen(SCREEN_NAME[i]);
-        if (strncmp(spec, SCREEN_NAME[i], n) != 0) continue;
-        const char *rest = spec + n;
-        const long off = (*rest == '+') ? strtol(rest + 1, NULL, 10) : 0;
-        if (screen_first[i] < 0) { *unresolved = 1; return -1; }
-        return screen_first[i] + off;
-    }
-    *unresolved = 1;
-    return -1;
-}
-
-/* Which presses have actually gone down, one flag per item in script order.
- *
- * This used to be a single sticky "something could not be resolved" flag, and it was wrong
- * in the direction that matters: item_frame() returns unresolved for a press whose screen
- * has not appeared YET, which on frame 0 is every screen-keyed press in the route. The flag
- * was therefore set on the first frame of every run and never cleared, so a route where all
- * three screens appeared and all fifteen presses fired still ended with "at least one
- * scripted press NEVER FIRED". A warning that is always on is a warning nobody reads --
- * and this one guards exactly the failure (a press aimed at a screen the run never reached)
- * that otherwise reads as a feature not working.
- *
- * Fired-ness is now a property of the press: set when it goes down, so the report is a list
- * of the ones that did not rather than an inference from whether anything was ever early. */
-enum { MAX_PRESSES = 128 };
-enum { PRESS_NEVER = 0, PRESS_FIRED = 1, PRESS_BAD_NAME = 2 };
-static unsigned char press_fired[JOY_SLOTS][MAX_PRESSES];
-static int press_count[JOY_SLOTS];       /* items seen, capped at MAX_PRESSES */
-static int press_overflow[JOY_SLOTS];    /* a route longer than the array: say so, never truncate silently */
-
+ * The timing model, the screen signal and the exit report are NOT here: they are shared
+ * with the keyboard and mouse scripts in runtime/script.c, because they were only ever
+ * right for the pad and the other two had neither (issue #25). What stays here is the pad's
+ * own syntax -- `<button>` and the button names -- and pressing the virtual device.
+ */
 static void play_script(int slot, SDL_Joystick *pad, const char *script, long frame)
 {
     int idx = 0;
@@ -343,77 +283,22 @@ static void play_script(int slot, SDL_Joystick *pad, const char *script, long fr
         while (*c == ',' || *c == ' ') c++;
 
         const int i = idx++;
-        if (i >= MAX_PRESSES) { press_overflow[slot] = 1; continue; }
-        if (i >= press_count[slot]) press_count[slot] = i + 1;
+        const int stream = slot == 0 ? SCRIPT_PAD0 : SCRIPT_PAD1;
+        script_seen(stream, i);
 
         /* A button name this build does not know never presses anything. Recorded as its
          * own state rather than skipped, because a typo that silently does nothing is the
          * same failure as a press that missed its screen, and reads the same from outside. */
-        if (btn < 0) { press_fired[slot][i] = PRESS_BAD_NAME; continue; }
+        if (btn < 0) { script_bad_item(stream, i); continue; }
 
         int un = 0;
-        const long at = item_frame(buf, &un);
+        const long at = script_when(buf, &un);
         if (un) continue;                  /* its screen has not appeared YET -- not never */
         if (frame == at) {
             SDL_SetJoystickVirtualButton(pad, btn, true);
-            press_fired[slot][i] = PRESS_FIRED;
+            script_fired(stream, i);
         } else if (frame == at + 8) {
             SDL_SetJoystickVirtualButton(pad, btn, false);
-        }
-    }
-}
-
-/* Called at exit. A route that never reached its screen is the failure most likely to be
- * misread as "the feature did nothing", so it is reported rather than left to inference. */
-void virtual_pad_report(void)
-{
-    if (!getenv("LF2_VIRTUAL_PAD") && !getenv("LF2_VIRTUAL_PAD2")) return;
-    fprintf(stderr, "virtual pad: screens reached --");
-    int any = 0;
-    for (int i = 0; i < 3; i++) {
-        if (screen_first[i] < 0) continue;
-        fprintf(stderr, " %s@%ld", SCREEN_NAME[i], screen_first[i]);
-        any = 1;
-    }
-    if (!any) fprintf(stderr, " NONE");
-    fprintf(stderr, "\n");
-
-    /* One line per script, ALWAYS, with the denominator in it. "12 of 12 presses fired" is
-     * the negative this report has to be able to print: without it, silence is
-     * indistinguishable from a report that was never reached, and a run whose route half
-     * missed looks exactly like a clean one. */
-    static const char *const VARS[JOY_SLOTS] = { "LF2_VIRTUAL_PAD", "LF2_VIRTUAL_PAD2" };
-    for (int slot = 0; slot < JOY_SLOTS; slot++) {
-        const char *script = getenv(VARS[slot]);
-        if (!script) continue;
-
-        int fired = 0;
-        for (int i = 0; i < press_count[slot]; i++)
-            if (press_fired[slot][i] == PRESS_FIRED) fired++;
-        fprintf(stderr, "virtual pad %d: %d of %d presses fired\n",
-                slot, fired, press_count[slot]);
-        if (press_overflow[slot])
-            fprintf(stderr, "virtual pad %d: route longer than %d presses -- the ones past "
-                            "that were NEVER PLAYED and are not counted above\n",
-                    slot, MAX_PRESSES);
-        if (fired == press_count[slot] && !press_overflow[slot]) continue;
-
-        /* Name them. "Something did not fire" makes the next person re-run with a bisected
-         * route to find out which; the parser already knows. */
-        int idx = 0;
-        for (const char *c = script; *c; ) {
-            const char *item = c;
-            while (*c && *c != ',' && *c != ' ') c++;
-            const int n = (int)(c - item);
-            while (*c == ',' || *c == ' ') c++;
-            const int i = idx++;
-            if (i >= press_count[slot]) break;
-            if (press_fired[slot][i] == PRESS_FIRED) continue;
-            fprintf(stderr, "virtual pad %d: press %d `%.*s' %s\n", slot, i, n, item,
-                    press_fired[slot][i] == PRESS_BAD_NAME
-                        ? "NEVER FIRED -- that is not a button name this build knows"
-                        : "NEVER FIRED -- its screen never appeared, so any assertion about "
-                          "what it should have done is about a press that did not happen");
         }
     }
 }
@@ -422,7 +307,7 @@ void virtual_pad_tick(long frame)
 {
     static const char *const VARS[JOY_SLOTS] = { "LF2_VIRTUAL_PAD", "LF2_VIRTUAL_PAD2" };
 
-    screens_observe(frame);
+    script_observe_screens(frame);
 
     for (int i = 0; i < JOY_SLOTS; i++) {
         const char *script = getenv(VARS[i]);

@@ -52,7 +52,7 @@ void menu_confirm(void);
 int  gamepad_player_buttons(int index, unsigned char out[7]);
 void input_report(void);
 void clock_sites_report(void);   /* LF2_CLOCK_SITES: who reads the clock, and who spins on it */
-void virtual_pad_report(void);   /* which screens a scripted route actually reached */
+/* The scripted-input exit report lives in runtime/script.h (script_report). */
 void window_resize_report(void); /* any LF2_WINDOW_RESIZE step the run never reached */
 void glyph_hint_set(int ch);
 void glyph_hint_clear(void);

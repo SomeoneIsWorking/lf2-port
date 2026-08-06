@@ -262,13 +262,13 @@ a feature that did not work.
 Every run prints its denominator, whether or not anything went wrong:
 
 ```
-virtual pad: screens reached -- charselect@906 overlay@1746 match@1968
-virtual pad 0: 15 of 15 presses fired
-virtual pad 0: press 12 `south@match+420' NEVER FIRED -- its screen never appeared, …
+scripted input: screens reached -- charselect@906 overlay@1746 match@1968
+LF2_VIRTUAL_PAD: 21 of 21 items fired
+LF2_CLICK_SCRIPT: item 0 `403,228:900' NEVER FIRED -- its screen never appeared, …
 ```
 
 The `N of M` line is the point: a clean run has to be distinguishable from a report that was
-never reached. It is printed per script, so `LF2_VIRTUAL_PAD2` gets its own. Presses that did
+never reached. It is printed per script, so each of the four gets its own line. Presses that did
 not fire are named with their own text out of the script, including a button name this build
 does not know — a typo used to be skipped in silence.
 
@@ -277,13 +277,27 @@ single sticky flag conflated "cannot fire *yet*, its screen has not appeared" �
 screen-keyed press on frame 0 — with "never fired", so **every** screen-keyed route ended with
 the warning, clean ones included.
 
+**All three devices take both forms.** They used to differ — the `@<screen>` form existed only
+for the pad, and the keyboard and mouse parsed a bare number — which is why four route tests
+were still stopwatches (issue #25). The timing model, the screen signal and the exit report
+now live in `runtime/script.c` and are shared.
+
 | Variable | Effect |
 |---|---|
-| `LF2_KEY_SCRIPT="<vk>:<frame>[,...]"` | press that key on that presented frame, held 8 frames |
-| `LF2_CLICK_SCRIPT="<x>,<y>:<frame>[;...]"` | place the pointer and click, same schedule |
+| `LF2_KEY_SCRIPT="<vk>@<screen>[+<n>][,...]"` | press that key *n* frames after that screen is first drawn, held 8 frames |
+| `LF2_KEY_SCRIPT="<vk>:<frame>[,...]"` | the same, keyed to a presented frame |
+| `LF2_CLICK_SCRIPT="<x>,<y>@<screen>[+<n>][;...]"` | place the pointer and click, keyed to a screen |
+| `LF2_CLICK_SCRIPT="<x>,<y>:<frame>[;...]"` | the same, keyed to a presented frame |
 | `LF2_VIRTUAL_PAD="<button>@<screen>[+<n>][,...]"` | the controller equivalent, keyed to a screen |
 | `LF2_VIRTUAL_PAD="<button>:<frame>[,...]"` | the same, keyed to a presented frame |
 | `LF2_WINDOW_RESIZE="<frame>:<w>x<h>[,...]"` | resize the window on that frame — a stand-in for a window manager |
+
+Screens are `charselect`, `overlay` and `match`. **`charselect` is the post-load panel, and
+that panel is also the mode menu** — the two share a blit destination, so the signal goes up
+when the mode menu appears, a little before character selection proper. It is a reliable
+reference point (it is the first thing after the load, and the load is the part that moves),
+but it does not mean character selection is on screen, and a route that needs to tell the two
+apart has to count frames from it.
 
 `LF2_WINDOW_RESIZE` exists because the headline of the widescreen work is that the field of
 view changes *while the game is running*, and no scripted run can produce that on its own: a

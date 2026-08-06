@@ -2,6 +2,7 @@
 #include "com.h"
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "script.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -214,19 +215,33 @@ static int click_script_state(int *x, int *y)
     if (!spec) return 0;
     const long frame = hostwin_frames();
 
+    int idx = 0;
     for (const char *c = spec; *c; ) {
         const int px = (int)strtol(c, (char **)&c, 10);
         while (*c == ',' || *c == ' ') c++;
         const int py = (int)strtol(c, (char **)&c, 10);
-        if (*c == ':') c++;
-        const long at = strtol(c, (char **)&c, 10);
+        const char *when = c;
+        if (*c == ':') { c++; when = c; }
+        char buf[64];
+        while (*c && *c != ';' && *c != ' ') c++;
+        size_t n = (size_t)(c - when);
+        if (n >= sizeof buf) n = sizeof buf - 1;
+        memcpy(buf, when, n); buf[n] = 0;
         while (*c == ';' || *c == ' ') c++;
+
+        const int i = idx++;
+        script_seen(SCRIPT_CLICKS, i);
+        int un = 0;
+        const long at = script_when(buf, &un);
+        if (un) continue;              /* its screen has not appeared YET -- not never */
+
         /* The pointer is placed a few frames early and the button pressed after, because
          * the menu hit-tests where the pointer IS when the click arrives -- moving and
          * clicking on the same frame races the game's own read. */
         if (frame >= at - 4 && frame < at + KEY_SCRIPT_HOLD) {
             *x = px; *y = py;
-            return frame >= at;
+            if (frame >= at) { script_fired(SCRIPT_CLICKS, i); return 1; }
+            return 0;
         }
     }
     return 0;
@@ -747,12 +762,30 @@ static int key_script_pressed(uint32_t vk)
     if (!script) return 0;
     const long frame = hostwin_frames();
 
+    int idx = 0;
     for (const char *c = script; *c; ) {
         const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
-        if (*c == ':') c++;
-        const long at = strtol(c, (char **)&c, 10);
+        const char *when = c;
+        if (*c == ':') { c++; when = c; }
+        char buf[64];
+        while (*c && *c != ',' && *c != ' ') c++;
+        size_t n = (size_t)(c - when);
+        if (n >= sizeof buf) n = sizeof buf - 1;
+        memcpy(buf, when, n); buf[n] = 0;
         while (*c == ',' || *c == ' ') c++;
-        if (key == vk && frame >= at && frame < at + KEY_SCRIPT_HOLD) return 1;
+
+        const int i = idx++;
+        script_seen(SCRIPT_KEYS, i);
+        int un = 0;
+        const long at = script_when(buf, &un);
+        if (un) continue;              /* its screen has not appeared YET -- not never */
+        if (frame < at || frame >= at + KEY_SCRIPT_HOLD) continue;
+
+        /* Recorded for every item whose window this frame is in, not only the one being
+         * asked about: this is polled per-vk, and an item's own key being queried is a
+         * property of the caller's loop rather than of the script. */
+        script_fired(SCRIPT_KEYS, i);
+        if (key == vk) return 1;
     }
     return 0;
 }

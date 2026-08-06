@@ -58,6 +58,7 @@ add_executable(lf2
     runtime/loadprof.c
     runtime/pause.c
     runtime/gamepad.c
+    runtime/script.c
     runtime/wsock.c
     runtime/overrides/menu.c
     runtime/overrides/screens.c
@@ -76,7 +77,8 @@ target_include_directories(lf2 PRIVATE runtime runtime/overrides)
 set_source_files_properties(
     runtime/guest.c runtime/flags.c runtime/strops.c runtime/rwatch.c runtime/imports.c
     runtime/com.c runtime/win32.c runtime/ddraw.c runtime/dsound.c runtime/dshow.c
-    runtime/gdi.c runtime/loadprof.c runtime/pause.c runtime/gamepad.c runtime/wsock.c
+    runtime/gdi.c runtime/loadprof.c runtime/pause.c runtime/gamepad.c runtime/script.c
+    runtime/wsock.c
     runtime/overrides/menu.c
     runtime/overrides/screens.c
     runtime/overrides/input.c
