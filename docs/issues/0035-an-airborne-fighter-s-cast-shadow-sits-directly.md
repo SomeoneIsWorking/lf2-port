@@ -3,7 +3,7 @@ id: 35
 title: An airborne fighter's cast shadow sits directly under them instead of offset along the light
 status: resolved
 symptom: reported: with the key light from the left, a character in the air should throw its shadow to the side in proportion to how high it is. The shadow is drawn at the ground marker with only a SHEAR applied and no offset by height, so it stays under the fighter however high they jump -- which reads as the shadow being glued to them
-tags: shadows
+tags: reported,rendering,shadows
 created: 2026-08-06
 updated: 2026-08-06
 ---

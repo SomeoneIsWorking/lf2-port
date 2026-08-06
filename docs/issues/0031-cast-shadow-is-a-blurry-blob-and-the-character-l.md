@@ -3,7 +3,7 @@ id: 31
 title: Cast shadow is a blurry blob and the character lighting is too faint to see
 status: resolved
 symptom: reported with a screenshot of an airborne fighter: the cast shadow on the ground below is a shapeless dark smear with no silhouette left in it, and the directional lighting on the fighter is too subtle to read as angled light. Wanted: a CRISP shadow that keeps the sprite's shape, and lighting that is visibly angled and visibly on the characters
-tags: shadows
+tags: reported,rendering,lighting,shadows
 created: 2026-08-06
 updated: 2026-08-06
 ---

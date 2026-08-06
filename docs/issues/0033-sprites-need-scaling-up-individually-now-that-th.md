@@ -3,7 +3,7 @@ id: 33
 title: Sprites need scaling up individually now that the frame is native resolution
 status: resolved
 symptom: reported: rendering at the window's real pixels is right, but at 1:1 a fighter is ~40 px tall in a 1080-row window and reads as tiny. The sprites themselves want scaling up per-sprite -- the world stays at native resolution and full field of view, the actors get drawn bigger. Scaling the whole composition again would undo the native resolution, so this has to be per-quad
-tags: renderer
+tags: reported,rendering,renderer
 created: 2026-08-06
 updated: 2026-08-06
 ---

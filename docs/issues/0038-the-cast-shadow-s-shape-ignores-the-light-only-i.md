@@ -3,7 +3,7 @@ id: 38
 title: The cast shadow's SHAPE ignores the light; only its distance follows
 status: resolved
 symptom: reported. draw_cast_shadow lays the sprite down at a FIXED 0.30 of its height and shears it by hd2d_shadow_lean(). So moving the light changes where the shadow points and how far it leans, but never how LONG it is -- a light near the horizon should throw a long shadow and one overhead should throw almost none, and neither happens. The true projection of a point at height H under a directional light L is a ground displacement of H*(-Lx/Ly, -Lz/Ly); the port uses the first term and a constant in place of the second. The airborne offset has the same defect -- it moves the shadow sideways but not up the screen
-tags: lighting
+tags: reported,rendering,shadows,lighting
 created: 2026-08-06
 updated: 2026-08-06
 ---

@@ -3,7 +3,7 @@ id: 37
 title: The key light's angle should be adjustable from a pause-menu Options screen
 status: resolved
 symptom: reported: the light direction is a compiled-in constant and should be something a player can set, from the pause menu under an Options item. RmlUi (as Dusklight uses for its game-facing UI) was raised as a possible way to build the screen
-tags: lighting
+tags: reported,ux,pause,lighting
 created: 2026-08-06
 updated: 2026-08-06
 ---
