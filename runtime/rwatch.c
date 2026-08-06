@@ -43,11 +43,36 @@ static int rw_seqn, rw_have_prev, rw_sweeps;
 static long rw_count[RW_SPAN];
 static int rw_raw = -1;
 
+/* Set by guest.c so the read watch can name the reader without depending on it: this file
+ * is deliberately linkable on its own (the load macros in guest.h reach it, and the test
+ * harnesses that use those macros do not pull in guest.c). A null hook is reported, not
+ * skipped. */
+void (*rwatch_trace_hook)(void);
+
+/* WHICH code reads the span, asked once.
+ *
+ * The offsets alone answer "is this array swept" and not "who sweeps it", and the comment
+ * above explains why the reading instruction is not tracked on the hot path -- it would cost
+ * something on every load. Naming the reader ONCE costs nothing measurable and is what turns
+ * "the layer periods are read" into a function to go and read (issue #23).
+ *
+ * The trace it prints is the guest call ring, which only exists in an LF2_FN_TRACE build.
+ * dump_fn_trace() says so itself when the ring is empty rather than printing nothing. */
+static int rw_named;
+
 void rwatch_hit(uint32_t a)
 {
     const uint32_t off = a - g_rwatch_lo;
     if (off >= RW_SPAN) return;
     rwatch_hits++;
+    if (!rw_named) {
+        rw_named = 1;
+        fprintf(stderr, "LF2_READ_WATCH: FIRST read in the span is at %08x (offset +%u); "
+                        "the guest call ring at that moment follows\n", a, off);
+        if (rwatch_trace_hook) rwatch_trace_hook();
+        else fprintf(stderr, "LF2_READ_WATCH: no call-ring hook is installed in this binary, "
+                             "so the reader cannot be named\n");
+    }
     if (rw_raw > 0) { rw_count[off]++; return; }
     if (rw_seqn == RW_SEQ) return;
     rw_seen[off] = 1;

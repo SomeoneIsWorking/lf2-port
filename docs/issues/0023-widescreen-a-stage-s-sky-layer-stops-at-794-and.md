@@ -123,3 +123,43 @@ the address is computed, and that computation -- not the address -- is what the 
 Reproducing the measurement: tools/decrypt_dat.py --layers gives the expected periods, and
 LF2_HEAP_DUMP=<frame> with LF2_MEM_DUMP=<frame> gives the pair of dumps this rests on. The
 route used was tools/controller_test.sh's, with the match reached at frame 1968.
+
+### Note (2026-08-06)
+UNBLOCKED, 2026-08-06 — the address computation is recovered, and it needs no magic constant.
+
+HOW. The read watch (instrument I001) gained one line: on the FIRST read in the watched span
+it prints the guest call ring. Armed on the period array during a match, the newest entry was
+0x0041a250 — which runtime/ddraw.c already names as the background layer draw ("the count
+comes from an immediate 794 inside FUN_0041a250"), so the two agree independently.
+
+Reading that function's generated C gives the computation in full:
+
+    registry = LD32(0x00458b00 + 2004)        // the world object's registry pointer
+    bg       = LD32(0x0044d024)               // the current background index (99 = the
+                                              //   built-in moon scene, cf. issue #3)
+    field[i] = LD32(registry + (bg*612 + i)*4 + CONST)
+
+Each background record is 612 dwords = 2448 bytes (the lifted code multiplies the index by
+2448 at 0x0041a274 and by 612 for the dword form), and each field is a 30-entry array inside
+it. Solved against the paired heap/.data dumps — registry 0x20129280, bg 6, period array
+0x24e72df4 — the constants are:
+
+    PERIOD   81027604      (0x4D46214)
+    X        81027724      (= PERIOD + 120)
+    Y        81027844      (= PERIOD + 240)
+
+AND IT SELF-CHECKS: 81027844 was derived here as PERIOD+240 from the heap layout, and it
+appears LITERALLY in the disassembly at 0x0041a2a4 as the base of an array indexed by bg*612.
+Two independent derivations landing on the same number is what makes this an identification
+rather than an arithmetic coincidence.
+
+So the port can read any layer's repeat period at runtime with every term coming from the
+game: a .data global for the background index, a .data global for the registry pointer, and a
+stride the lifted code states. Nothing is hardcoded to an allocation, which is what the
+previous note said the fix must avoid.
+
+WHAT REMAINS is the drawing change itself in runtime/ddraw.c: the tiling continuation
+currently infers a period from contiguity between blits, and for a sky it must instead take
+the period from this table for the layer being drawn. Matching a blit to its layer index is
+the one piece still to work out -- the y offsets (also in this table, at PERIOD+240) are the
+obvious discriminator, since backgrounds do not scroll vertically.
