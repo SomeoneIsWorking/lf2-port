@@ -118,6 +118,32 @@ static const struct { uint32_t screen; const Item *items; int n; } SCREENS[] = {
     { 7, RECORDING_INFO,   (int)(sizeof RECORDING_INFO / sizeof RECORDING_INFO[0]) },
 };
 
+/* Issue #27's instrument: the game's click flag as the front-end MENU sees it, with the
+ * count printed at exit whether or not it is zero.
+ *
+ * The watch on 0x00457580 cannot answer this -- it reports per host call, so it says the
+ * flag changed between two calls, not whether the menu ever saw it set. And "no frame
+ * reached the menu with the flag set" is the interesting answer, so it has to be printed:
+ * a probe that only speaks when it finds something cannot be told apart from one that never
+ * looked. That negative is exactly what identified the pad path as not using the flag at
+ * all. Under LF2_MENU_DEBUG, where this screen's other diagnostics already live. */
+static long menu_click_seen;
+
+static int menu_click_debug(void)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("LF2_MENU_DEBUG") != NULL;
+    return on;
+}
+
+void menu_click_report(void)
+{
+    if (!menu_click_debug()) return;
+    fprintf(stderr, "menu-click: %ld frame(s) reached the front-end menu with the game's "
+                    "click flag set%s\n", menu_click_seen,
+            menu_click_seen ? "" : " -- so nothing the menu could act on ever arrived");
+}
+
 static int menu_index;
 static int menu_confirm_frames;
 static int menu_owns_pointer;
@@ -280,6 +306,14 @@ void fn_004246b0(void)
     if (LD32(GX_CLICK) && (int32_t)LD32(GX_MOUSE_X) >= NOTICE_X
                        && (int32_t)LD32(GX_MOUSE_Y) < 18)
         ST32(GX_CLICK, 0);
+
+    if (menu_click_debug() && LD32(GX_CLICK)) {
+        menu_click_seen++;
+        fprintf(stderr, "menu-click: frame %ld -- the menu is entered with click=1 at "
+                        "mouse=(%d,%d), index=%d owns_pointer=%d screen=%u\n",
+                hostwin_frames(), (int32_t)LD32(GX_MOUSE_X), (int32_t)LD32(GX_MOUSE_Y),
+                menu_index, menu_owns_pointer, LD32(GX_SCREEN));
+    }
 
     modemenu_mouse();            /* pointer -> selection on the post-load mode menu */
     overlay_mouse();             /* pointer -> selection on the pre-fight overlay */

@@ -9,6 +9,8 @@
 #include "hostwin.h"
 #include "script.h"
 
+void menu_click_report(void);   /* issue #27: the click flag as the front-end menu sees it */
+
 #include <time.h>
 #include "loadprof.h"
 
@@ -319,6 +321,7 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
 void hostwin_shutdown(void)
 {
     script_report();
+    menu_click_report();
     clock_sites_report();
     window_resize_report();
     if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
