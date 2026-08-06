@@ -68,6 +68,7 @@ add_executable(lf2
     runtime/overrides/hud.c
     runtime/overrides/text.c
     runtime/overrides/assets.c
+    runtime/overrides/background.c
     runtime/main.c)
 target_include_directories(lf2 PRIVATE runtime runtime/overrides)
 
@@ -87,6 +88,7 @@ set_source_files_properties(
     runtime/overrides/hud.c
     runtime/overrides/text.c
     runtime/overrides/assets.c
+    runtime/overrides/background.c
     runtime/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
@@ -257,6 +259,17 @@ add_test(NAME widescreen
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(widescreen PROPERTIES
                      LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
+# The background layer draw is now an override (runtime/overrides/background.c). It is
+# verified by diffing frames against the recompiled body it replaces, with a deliberately
+# skewed parallax as the negative -- two arms agreeing proves nothing if the dump would agree
+# whatever was drawn.
+add_test(NAME background
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/background_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(background PROPERTIES
+                     LABELS slow TIMEOUT 900 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
 # Two humans in a MATCH. controller_2p proves the second pad joins at character selection
