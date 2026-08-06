@@ -1,7 +1,7 @@
 ---
 id: 39
 title: Widescreen adds all its extra world on the RIGHT instead of centring, and audio is still culled against 794
-status: open
+status: resolved
 symptom: reported, two faults from one cause. The port widens the composition and patches the game's width words, so the game's original 794-wide view stays anchored at the LEFT and every extra pixel appears on the right -- it should be centred on what the 4:3 view showed. And the game still culls SOUND against the 794 screen, so effects on the right of a wide view are silent (or audible when they should not be). Both are the same shape of defect: the port widened the viewport without following what the game itself derives from that width. Asked for explicitly: port it from the game's own source rather than shimming the consequences
 tags: reported,widescreen,audio,re
 created: 2026-08-06
@@ -62,3 +62,54 @@ three places the binary subtracts 794 (0x0041bba2, 0x0041bc54, 0x004377d1) are a
 walk-boundary code, so it is NOT one of those -- it will be a different constant or a
 comparison against the viewport words the port already patches. Start by finding the call
 sites that gate a DirectSound play.
+
+### Resolution (2026-08-06)
+Both halves fixed, each ported from the instructions rather than shimmed.
+
+THE CENTRING. The game puts the players' centroid in the middle of a 794-WIDE window, and it
+says so in one instruction -- fn_0041b5d0 at 0x0041bb7d, 'SUB ESI,0x18d', where 0x18d is 794/2
+and ESI is the mean of the live players' x. The port widened the composition and patched the
+game's width words but never touched that, so the centroid kept sitting 397 px from the left
+edge and every extra pixel appeared on the right.
+
+The world is now DRAWN from a camera shifted left by half the extra width -- bg_draw_camera()
+in background.c, used by the layer parallax and by a new thin wrapper on fn_0041a5a0, the
+object pass. It is a draw-time value and NOT a write to the camera, which is the trap worth
+recording: fn_0041b5d0 eases the camera toward its target by a seventh (the IDIV at
+0x0041bbc6) and reads back the camera word, so subtracting the offset there each frame has
+fixed point c* = target - 7*K. The view would end up SEVEN TIMES further off than asked for
+and drift there gradually, reading as a wandering camera rather than a wrong constant.
+
+Wrapping fn_0041a5a0 is safe and that was checked, not assumed: all nine of its camera uses
+are 'SUB reg, camera' turning a world x into a screen x, it never writes the camera, and it
+writes no world state through it. The shift is applied and removed inside one call.
+
+VERIFIED at three widths, and the report explains its own zeros because the offset is clamped
+at the stage's left edge and a correct run can shift nothing:
+    794x550   offset 0    -- nothing re-centred, by definition
+    1100x550  offset 153  -- 1466 of 1466 frames re-centred; camera 400 draws as 247
+    1920x1080 offset 563  -- nothing re-centred, and it says why: Brokeback Clif is 1500 wide,
+                             the whole stage already fits, the camera never leaves 0
+tools/background_test.sh's byte-identity arm still passes, which is what shows the 4:3 game is
+untouched.
+
+THE AUDIO. fn_00416fb0 and fn_00417090 (211 bytes each, identical but for their tables) pan a
+sound between two speakers placed on the SCREEN at x 200 and x 600, each reaching 400 px:
+
+    sx = world_x - camera
+    vol(d) = 100 if d < 200; (400-d)*100/200 if d < 400; else 0
+    left = vol(|sx-200|); right = vol(|sx-600|)
+
+Those are the 794 screen's quarter points written down as pixels, so the audible span is
+-200..1000 -- wider than the game's own picture, which is why nothing is ever culled at 794 and
+why nobody had reason to open this function. Widen the view and the span does not move: at 1920
+a sound past screen x 1000 had a volume of exactly zero. The right 48% of the picture, silent.
+
+Both functions are now overrides with the constants scaled by view/794. A SCALE rather than a
+re-derivation on purpose: view/4 gives 198 at the native width instead of the 200 the game
+shipped, and changing a game nobody asked to change is not a fix.
+
+VERIFIED by tools/audio_pan_test.sh, three arms: at 794 the speakers are at EXACTLY 200 and 600;
+at 1920 the audible span covers the whole picture; and with LF2_AUDIO_PAN_RAW=1 turning the
+scaling off, the same 1920 window fails to cover it. Without that third arm the second would
+pass on a build whose span was simply always enormous.

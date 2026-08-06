@@ -58,6 +58,7 @@
 #include <stdlib.h>
 
 void fn_0041a250__orig(void);
+void fn_0041a5a0__orig(void);
 
 enum { BG_ALT_PASS = 99 };              /* the index fn_0041a250 hands to fn_0041a050 */
 /* The camera's shadow copy and the two words that gate it, straight out of fn_0041b5d0:
@@ -144,6 +145,96 @@ static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, i
     static int skew = -1;
     if (skew < 0) { const char *s = getenv("LF2_BG_SKEW"); skew = s ? atoi(s) : 0; }
     return -(((span - w) * camera) / (stage_width - w)) + skew;
+}
+
+/* ---- WHERE THE WIDE VIEW IS CENTRED (issue #39) ----
+ *
+ * The game puts the players' centroid in the middle of a 794-WIDE window, and it says so in
+ * one instruction -- fn_0041b5d0 at 0x0041bb7d, `SUB ESI,0x18d`, where 0x18d is 794/2 and ESI
+ * is the mean of the live players' x. Widen the view without touching that and the centroid
+ * keeps sitting 397 px from the LEFT edge, so every extra pixel of picture appears on the
+ * RIGHT and the game looks like the 4:3 view with a strip bolted onto one side. It did.
+ *
+ * So the world is DRAWN from a camera shifted left by half the extra width. That puts the
+ * game's own 794 view in the middle of the wider one, which is what centring means here.
+ *
+ * WHY THIS IS A DRAW-TIME VALUE AND NOT A WRITE TO THE CAMERA, which is the trap: fn_0041b5d0
+ * EASES the camera toward its target by a seventh (the IDIV at 0x0041bbc6) and reads back
+ * whatever is in BG_CAMERA_X to do it. Subtracting the offset there each frame -- the way the
+ * clamp above safely does, because a clamp is idempotent and a shift is not -- has fixed point
+ * c* = target - 7*K. The view ends up SEVEN TIMES further off than asked for, and it drifts
+ * there gradually, so it reads as a wandering camera rather than as a wrong constant.
+ *
+ * Instead the game's camera is left exactly as the game computed it, and the shifted value is
+ * used only while the world is being drawn: here for the parallax, and inside the fn_0041a5a0
+ * wrapper below for the objects. Nothing outside those two ever sees it.
+ *
+ * Clamped at zero because there is no world left of the stage's start: at the left edge the
+ * view degrades to what it did before -- the extra width on the right -- rather than opening a
+ * band of nothing. At the game's own 794 the offset is exactly zero, which is why
+ * tools/background_test.sh's byte-identity arm still holds. */
+static long cam_frames, cam_shifted;
+static int32_t cam_game_max, cam_draw_max, cam_k;
+
+int bg_draw_camera(void)
+{
+    const int32_t cam = (int32_t)LD32(BG_CAMERA_X);
+    const int32_t k = (int32_t)((bg_view_width() - BG_SCREEN_W) / 2);
+    const int32_t c = (k <= 0) ? cam : (cam - k > 0 ? cam - k : 0);
+    cam_k = k;
+    cam_frames++;
+    if (c != cam) cam_shifted++;
+    if (cam > cam_game_max) cam_game_max = cam;
+    if (c   > cam_draw_max) cam_draw_max = c;
+    return (int)c;
+}
+
+/* LF2_CAMERA=1: whether the wide view was actually re-centred, and if not, WHY not.
+ *
+ * The offset is only applied where there is world to move into -- it is clamped at the
+ * stage's left edge -- so a run can be perfectly correct and shift NOTHING. Brokeback Clif is
+ * 1500 wide, so at a 1920 view the whole stage already fits, the camera never leaves 0 and
+ * there is nothing to centre. Reporting "0 of 900 frames shifted" without that reason would
+ * read as a broken feature, which is exactly the kind of silence this port does not accept. */
+void bg_camera_report(void)
+{
+    if (!getenv("LF2_CAMERA")) return;
+    const int view = bg_view_width();
+    const int32_t stage = (int32_t)bg_stage_field(BG_STAGE_WIDTH);
+    fprintf(stderr, "camera: view %d, centring offset %d; the game's camera reached %d and the "
+                    "drawing camera %d over %ld frame(s)\n",
+            view, cam_k, cam_game_max, cam_draw_max, cam_frames);
+    if (cam_shifted)
+        fprintf(stderr, "camera: %ld of %ld frames were re-centred, so the wide view is "
+                        "centred on what the 4:3 view showed rather than extended right\n",
+                cam_shifted, cam_frames);
+    else if (cam_k <= 0)
+        fprintf(stderr, "camera: NOTHING was re-centred, and correctly so -- the view is the "
+                        "game's own %d, where the offset is zero by definition\n", BG_SCREEN_W);
+    else if (stage <= view)
+        fprintf(stderr, "camera: NOTHING was re-centred -- the stage is %d wide and the view "
+                        "is %d, so the whole stage already fits and the camera never left 0. "
+                        "There is no world to centre into\n", stage, view);
+    else
+        fprintf(stderr, "camera: NOTHING was re-centred although the offset is %d and the "
+                        "stage (%d) is wider than the view (%d) -- the camera never got past "
+                        "the offset, so this run does NOT exercise the centring\n",
+                cam_k, stage, view);
+}
+
+/* fn_0041a5a0 -- the stage's object pass: it collects every live object, depth-sorts them and
+ * draws them. It reads the camera nine times and every one is a `SUB reg, camera` turning a
+ * world x into a screen x; it writes the camera never, and writes no world state through it.
+ * That is what makes this wrapper safe -- it changes where things are drawn and nothing else.
+ *
+ * The shift is applied and removed inside one call, so BG_CAMERA_X is never observed shifted
+ * by anything else, and there is no way to leak a shifted camera into the next frame's ease. */
+void fn_0041a5a0(void)
+{
+    const uint32_t saved = LD32(BG_CAMERA_X);
+    ST32(BG_CAMERA_X, (uint32_t)bg_draw_camera());
+    fn_0041a5a0__orig();
+    ST32(BG_CAMERA_X, saved);
 }
 
 /* The width the layers are drawn into: the game's 794, or the widescreen composition when
@@ -237,7 +328,15 @@ void fn_0041a250(void)
 
     /* Index 99 is a different pass entirely (fn_0041a050) and nothing here applies to it.
      * The original body is kept callable for exactly this, and for the escape below. */
-    if (bg == BG_ALT_PASS) { fn_0041a250__orig(); return; }
+    if (bg == BG_ALT_PASS) {
+        /* Background 99 is a different pass entirely (fn_0041a050) and reads the camera
+         * itself, so it gets the same treatment as the object pass. */
+        const uint32_t saved = LD32(BG_CAMERA_X);
+        ST32(BG_CAMERA_X, (uint32_t)bg_draw_camera());
+        fn_0041a250__orig();
+        ST32(BG_CAMERA_X, saved);
+        return;
+    }
 
     const uint32_t registry = LD32(self + 2004);
     const uint32_t base = registry + bg * BG_STRIDE_DW * 4u;
@@ -263,7 +362,10 @@ void fn_0041a250(void)
     const int32_t stage_width = (int32_t)LD32(base + BG_STAGE_WIDTH);
     const int32_t view = bg_view_width();
     camera_clamp_to_view(stage_width, view);
-    const int32_t camera = (int32_t)LD32(BG_CAMERA_X);
+    /* The layers are part of the world, so they are drawn from the same shifted camera the
+     * objects are -- their parallax included, because a re-centring IS a camera pan and a
+     * nearer layer must move further than a distant one. */
+    const int32_t camera = (int32_t)bg_draw_camera();
 
     for (int i = 0; i < (int)count; i++) {
         const uint32_t tint = lf(registry, bg, BG_LAYER_TINT, i);
