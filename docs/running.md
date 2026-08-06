@@ -1483,6 +1483,16 @@ Three hooks in `runtime/ddraw.c`:
   frame that is black everywhere, so the check is run against a build that does not clear and
   required to fail there.
 
+- **`LF2_DRAW_PATHS=1`** counts every route that can carry pixels — `Blt`, `BltFast`, and the
+  game writing into a surface between `Lock` and `Unlock` — and reports them together every
+  900 frames. The Lock route is counted by whether the pixels actually **changed**, since a
+  lock taken to read is not a draw. Measured over a full run to a match:
+  `Blt=19753 BltFast=0 Lock=0`, i.e. the game draws through one COM method (issue #30).
+
+  It prints all three counters including the zeros, and prints what it *cannot* see every time
+  rather than only when it finds nothing: GDI text goes straight into the surface without a
+  Lock (`runtime/gdi.c`), and a lock whose writes cancelled out would hash the same.
+
 ### The stage's own background layers
 
 - **`LF2_BG_ORIG=1`** hands the background layer draw back to the recompiled body instead of

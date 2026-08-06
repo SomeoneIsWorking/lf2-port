@@ -150,3 +150,42 @@ three paths reported at exit, not a per-frame dump.
 FOR THE SHADOW (piece 3 of this issue): one of those seven fn_0043f010 calls is the game's
 flat shadow ellipse. Identifying WHICH is what lets the port decline it the way text.c
 declines the ad notice and the game's mouse cursor. Not done.
+
+### Note (2026-08-06)
+THIRD SCOPING MEASUREMENT, 2026-08-06 -- the last of the three unknowns this entry was filed
+with. LF2_DRAW_PATHS=1 counts all three routes that can carry pixels, over a full run that
+reaches a match:
+
+    draw paths: Blt=19753  BltFast=0  Lock=0 (of which changed pixels=0)
+
+So the game draws through ONE COM method. surf_BltFast is never called and the game never
+writes into a surface between Lock and Unlock -- the Lock route is counted by whether the
+pixels CHANGED, not by whether a lock happened, because a lock taken to read is not a draw.
+
+HOW MUCH THIS IS WORTH, stated rather than left to be assumed. Blt=19753 in the same report
+proves the counters run, so the zeros are not a dead instrument. But BltFast's counter has
+never been seen non-zero on any run, so '0' is consistent with both 'unused' and 'miscounted';
+it is one line adjacent to the one that demonstrably works, which is as much confidence as is
+available without a synthetic call.
+
+WHAT THE INSTRUMENT SAYS IT CANNOT SEE, and it prints this every time rather than only when
+it finds nothing: GDI text goes straight into the surface without a Lock (runtime/gdi.c), and
+a lock whose writes cancelled out would hash the same. So the true answer is TWO routes:
+    fn_0043f010 / fn_0043f310 / the fills, reaching surf_Blt        -- all the sprites
+    runtime/gdi.c                                                   -- the game's text
+Both are named, both are already hooked in this port, and neither has to be recovered from
+pixels.
+
+ALL THREE ORIGINAL UNKNOWNS ARE NOW CLOSED:
+  chokepoint   yes -- a match frame's 137 blits come from four functions, 127 through
+               fn_0043f010, which is already an override
+  depth        yes -- fn_0041a5a0 has the object pointer live at every draw and sorts on
+               object+0x18; the glyph-hint pattern in text.c is the way to carry it across
+  paths        one COM method plus GDI text, measured above
+
+WHAT THE ARCHITECTURE QUESTION IS NOW, since it is no longer 'can this be fed': it is whether
+the renderer consumes a display list built in the overrides (sprite + rect + depth + key) or
+replaces runtime/ddraw.c's software blit with a GPU path behind the same COM surface. The
+first is the one that can be built incrementally alongside the current compositor and diffed
+against it frame by frame, which is how every other piece of this port was landed safely.
+Claim C010 (no alpha/blend path anywhere) is the first thing either design has to bring.
