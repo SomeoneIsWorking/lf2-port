@@ -7,6 +7,7 @@
 #include "guest_map.h"
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "script.h"
 
 #include <time.h>
 #include "loadprof.h"
@@ -317,7 +318,7 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
  * that runs at exit cannot tell an orderly stop from a crash. */
 void hostwin_shutdown(void)
 {
-    virtual_pad_report();
+    script_report();
     clock_sites_report();
     window_resize_report();
     if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");

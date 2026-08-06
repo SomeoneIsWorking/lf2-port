@@ -45,3 +45,30 @@ Lift them into one place, have all three scripts use it, then convert the four r
 
 DO NOT paper over it by giving those four bigger frame numbers. That is the same stopwatch
 aimed at the same moving target, and it is what made issue #18 look like a regression.
+
+### Note (2026-08-06)
+FOUND BY THE NEW REPORT, on the first run after the shared module went in, which is the
+argument for having built it: tools/mouse_test.sh's FIRST CLICK IS DEAD.
+
+    scripted input: screen charselect first up at frame 1352
+    LF2_CLICK_SCRIPT: 5 of 5 items fired
+
+The route is "403,228:900" (commented "launcher: game start"), then 1350, 1450, 1600, 1750.
+The post-load panel does not appear until frame 1352 -- one frame after the SECOND click. So
+the click at 900 does nothing at all, the click at 1350 (commented "mode menu: Stage mode")
+is what starts the game, and every later click is doing the job the comment gives the one
+before it. A click-only run with just "403,228:900" and 500 further frames never leaves the
+launcher: 27 vram allocations, 0 input gathers, no screen.
+
+The test PASSES, and passed before this was noticed, because the remaining numbers happen to
+land somewhere workable. That is the failure this issue is about, in its purest form: five
+items fired, every assertion green, and the route is not doing what it says. Note also that
+the pad route starts the game from a press at frame 900 and reaches the panel at 906 -- so
+the difference is the mouse path, not the frame.
+
+NOT YET ESTABLISHED, and it should be before the route is rewritten: WHY the click at
+(403,228) hits nothing. The game's own front-end hit test brackets y into bands starting at
+274 (menu.c records 274..300, 305..330, 336..361 for items 1..3), and 228 is above all of
+them -- but so is the 241 of the click that DOES work, so the port's own item table is the
+thing to read, not the game's. Do not "fix" the route by moving the coordinate until that is
+understood: a click that works for a reason nobody has established is the same bug again.
