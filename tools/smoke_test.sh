@@ -2,12 +2,22 @@
 # End-to-end smoke test: drive the port deep into the game and assert the things that have
 # actually broken before.
 #
-# It now reaches a running match every run, which it did not used to. The input is
-# scheduled by PRESENTED FRAME rather than by wall clock: a millisecond schedule drifts
-# with however long the ~13 s data load takes, so the last presses landed on "Fight!" or on
-# "Reset Random" depending on the run. The overlay's selection index was located
-# (0x0044d06c, see docs/running.md) and measured to start at 2, so two ups reach Fight!
-# deterministically.
+# It now reaches a running match every run, which it did not used to. The presses are keyed
+# to the SCREENS the game draws, not to frame numbers: a frame number is exact within a run,
+# but the frame a screen ARRIVES on moves with the ~13 s data load and with how busy the box
+# is, so the last presses landed on "Fight!" or on "Reset Random" depending on the run
+# (issues #18, #25). The overlay's selection index was located (0x0044d06c, see
+# docs/running.md) and measured to start at 2, so two ups reach Fight! deterministically.
+#
+# The anchors were MEASURED on this route, not assumed: charselect@962, overlay@1701,
+# match@2142, which is what the offsets below are relative to.
+#
+# THE CLICK AT 900 DOES NOTHING, and is kept only because removing it is a separate change
+# from this one. What starts the game is the KEY at 960 -- the post-load panel comes up at
+# 962, sixty frames after a click that is supposed to be "game start" and two after the key.
+# The click reaches the game (it sets the game's own click flag and its mouse X, at the very
+# coordinate the pad writes to start the game) and still does not start it. Why is issue #25,
+# open; until it is answered, do not derive an anchor from that click.
 #
 # Every assertion here corresponds to a real regression:
 #   keyed blits   -- ADC/SBB dropped the carry, so DDBLT_KEYSRC was computed as 0 and
@@ -52,10 +62,13 @@ echo "running a match headless (about 90s)..."
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
   LF2_CK_DEBUG=1 LF2_AUDIO_DEBUG=1 LF2_SCREEN_HASH=1 \
   LF2_CLICK_SCRIPT="403,228:900" \
-  LF2_KEY_SCRIPT="0x5A:960,0x5A:1020,0x5A:1080,0x5A:1140,0x5A:1200,0x5A:1260,0x5A:1320,\
-0x26:1380,0x26:1440,0x5A:1500,0x5A:1700,0x5A:1920,0x26:2020,0x26:2080,0x5A:2140,\
-0x27:2250,0x5A:2300" \
-  LF2_QUIT_AFTER=2600 \
+  LF2_KEY_SCRIPT="0x5A:960,\
+0x5A@charselect+58,0x5A@charselect+118,0x5A@charselect+178,0x5A@charselect+238,\
+0x5A@charselect+298,0x5A@charselect+358,0x26@charselect+418,0x26@charselect+478,\
+0x5A@charselect+538,0x5A@charselect+738,\
+0x5A@overlay+219,0x26@overlay+319,0x26@overlay+379,0x5A@overlay+439,\
+0x27@match+108,0x5A@match+158" \
+  LF2_QUIT_AFTER=3000 \
   ${TIMER:+$TIMER -f "%U %S %e" -o "$CPUFILE"} \
   timeout 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 rc=$?
