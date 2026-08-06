@@ -5,6 +5,7 @@
  */
 
 #include "overrides.h"
+#include "world.h"
 
 #include "../guest_ops.h"
 #include "../guest_map.h"
@@ -315,6 +316,7 @@ void fn_004246b0(void)
                 menu_index, menu_owns_pointer, LD32(GX_SCREEN));
     }
 
+    bg_table_report();           /* LF2_BG_TABLE=1: the loaded stage's layers, once */
     modemenu_mouse();            /* pointer -> selection on the post-load mode menu */
     overlay_mouse();             /* pointer -> selection on the pre-fight overlay */
     exit_to_menu_tick();         /* the pause menu's way back to the front end */

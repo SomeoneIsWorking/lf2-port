@@ -5,6 +5,7 @@
  */
 
 #include "overrides.h"
+#include "world.h"
 
 #include "../guest_ops.h"
 #include "../guest_map.h"
@@ -109,4 +110,62 @@ void fn_004148a0(void)
     free(buf);
     decrypt_dump();
     R(ESP) += 4;                 /* cdecl: the return address only */
+}
+
+/* ---- the stage's background layer table ----
+ *
+ * Read the way the game reads it (world.h carries the derivation). Nothing here writes to
+ * the table; this is the port learning the stage's own layout so widescreen can carry a
+ * tiling layer past the game's 794 at the period the DATA gives rather than one guessed
+ * from the blit stream (issue #23).
+ */
+uint32_t bg_layer_field(uint32_t field_const, int layer)
+{
+    if (layer < 0 || layer >= BG_MAX_LAYERS) return 0;
+    const uint32_t registry = LD32(BG_REGISTRY);
+    if (!registry) return 0;                      /* no stage loaded yet */
+    const uint32_t bg = LD32(BG_INDEX);
+    return LD32(registry + (bg * BG_STRIDE_DW + (uint32_t)layer) * 4u + field_const);
+}
+
+int bg_layer_count(void)
+{
+    int n = 0;
+    while (n < BG_MAX_LAYERS && bg_layer_field(BG_LAYER_PERIOD, n)) n++;
+    return n;
+}
+
+/* LF2_BG_TABLE=1 prints the loaded stage's layers once. It exists to be CHECKED against the
+ * file: `tools/decrypt_dat.py --layers game/bg/sys/<stage>/bg.dat` prints the same periods
+ * and offsets, and the two agreeing on a real stage is what makes the address computation
+ * above an identification rather than arithmetic that happened to land somewhere.
+ *
+ * A stage with no layers is reported as such rather than printing a header and nothing --
+ * "the table was empty" and "the table was never reached" must not look alike. */
+void bg_table_report(void)
+{
+    static int done;
+    if (done || !getenv("LF2_BG_TABLE")) return;
+    /* Sampled while a MATCH is on screen, which is the moment a stage is certainly loaded.
+     * Reporting on the first frame that had a registry pointer instead caught the front end,
+     * where the background index is 100 and there are no layers -- a true "nothing here" that
+     * says nothing about the address computation, and latching on it threw away the one
+     * sample that could have. */
+    if (!panel_hud_up()) return;
+    const uint32_t registry = LD32(BG_REGISTRY);
+    if (!registry) return;
+    done = 1;
+    const int n = bg_layer_count();
+    fprintf(stderr, "bg table: background %u, registry %08x, %d layer(s)\n",
+            LD32(BG_INDEX), registry, n);
+    if (n == 0) {
+        fprintf(stderr, "bg table: NO LAYERS -- either no stage is loaded or the address "
+                        "computation is wrong; this says nothing either way\n");
+        return;
+    }
+    for (int i = 0; i < n; i++)
+        fprintf(stderr, "bg table:   layer %-2d period=%-6u x=%-6d y=%d\n", i,
+                bg_layer_field(BG_LAYER_PERIOD, i),
+                (int32_t)bg_layer_field(BG_LAYER_X, i),
+                (int32_t)bg_layer_field(BG_LAYER_Y, i));
 }
