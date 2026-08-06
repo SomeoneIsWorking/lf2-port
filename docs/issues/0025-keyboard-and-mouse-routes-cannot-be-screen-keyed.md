@@ -72,3 +72,39 @@ NOT YET ESTABLISHED, and it should be before the route is rewritten: WHY the cli
 them -- but so is the 241 of the click that DOES work, so the port's own item table is the
 thing to read, not the game's. Do not "fix" the route by moving the coordinate until that is
 understood: a click that works for a reason nobody has established is the same bug again.
+
+### Note (2026-08-06)
+CORRECTION and PROGRESS, 2026-08-06.
+
+CORRECTION: it is THREE routes, not four. tools/widescreen_test.sh has no scripted input at
+all -- it drives LF2_WINDOW_SIZE and LF2_WINDOW_RESIZE, whose frames land in the launcher
+before any screen exists, where a frame number is exactly the right thing. My first survey
+counted it by grepping for four-digit numbers, which is the sort of sizing-from-a-grep this
+project already has a rule against. The affected set is smoke, mouse and pause_dropout.
+
+DONE: the shared module (runtime/script.c, commit df3d148) and tools/pause_dropout_test.sh,
+which is now keyed to charselect/overlay for pad one and entirely to @match for pad two --
+every one of pad two's presses is about the match, and a join landing before the match starts
+claims nothing, so the pause that follows would be a pause with no drop-out in it. Green in
+102 s. Its LF2_QUIT_AFTER went 2900 -> 3200 for headroom, since the quit frame is still a
+frame number and a route that now floats later must not be truncated by it.
+
+LEFT: smoke and mouse, and both are blocked on the same unanswered question -- WHAT ACTUALLY
+STARTS THE GAME on a mouse/keyboard route. Measured so far, and none of it fits the comments:
+
+  - The click at (403,228) sets the game's own click flag (0x00457580 goes 0 -> 1, at guest
+    ret 0x0043bc3a) and the game's own mouse X reaches 403 (0x004546f0 -> 0x193). So the
+    click and the position BOTH arrive, and the game still does not start.
+  - 0x004546f0 then oscillates 403 -> 0 every frame, zeroed at the same guest site that
+    consumes the click.
+  - (403,228) is not an invented coordinate: it is MAIN_MENU[0] in runtime/overrides/menu.c,
+    the port's own "game start" item, and the PAD drives the front end by writing exactly
+    that position plus the click flag -- and the pad route works.
+
+So a click and a pad confirm put the same two values in the same two places and only one of
+them starts the game. That difference is the thing to find, and it is worth finding: it is
+also the reason a mouse route needs five clicks where a pad route needs one press.
+
+DO NOT convert smoke or mouse to @charselect until this is understood. Their anchors would be
+derived from a route whose first input does nothing, which is how the current numbers came to
+be off by one screen in the first place.
