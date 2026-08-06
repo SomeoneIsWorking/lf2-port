@@ -1477,6 +1477,12 @@ Three hooks in `runtime/ddraw.c`:
   destination and prints everything that looks like a `.text` address. It is a rough
   backtrace, not an exact one, but it is enough to **diff two chains**.
 
+- **`LF2_PRIMARY_STALE=1`** disables the clear that stops a resize leaving the previous
+  size's pixels standing beside a centred screen (issue #29). It exists to be the negative arm
+  of `ctest resize`: "the band left of the panel is black" would pass just as happily on a
+  frame that is black everywhere, so the check is run against a build that does not clear and
+  required to fail there.
+
 ### The stage's own background layers
 
 - **`LF2_BG_ORIG=1`** hands the background layer draw back to the recompiled body instead of

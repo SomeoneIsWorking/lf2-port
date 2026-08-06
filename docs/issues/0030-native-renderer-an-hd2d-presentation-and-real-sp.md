@@ -112,3 +112,41 @@ THE SECOND UNKNOWN IS UNTOUCHED: whether a sprite's z is reachable at the draw. 
 six arguments are (x, y, clip index, picture, ?, ?) -- no depth among them, which is what the
 entry feared. The depth sort happens upstream in fn_0041a5a0, so the link from a draw back to
 the object it belongs to is the thing to map next.
+
+### Note (2026-08-06)
+SECOND SCOPING MEASUREMENT, 2026-08-06: IS A SPRITE'S DEPTH REACHABLE AT THE DRAW? Yes,
+and by a pattern this port already uses. This was the unknown the entry called the one that
+decides the architecture, so it is worth the detail.
+
+READ OUT OF fn_0041a5a0 (2173 bytes, the stage's object pass):
+
+  0041a5d0  walks 400 slots of the EXISTS byte array at this+4 -- the same byte hud.c
+            raises for a joining player -- and collects the live indices into a local list
+  0041a610  bubble-sorts that list on  [ [this + idx*4 + 0x194] + 0x18 ]
+            so this+0x194 is the OBJECT POINTER TABLE and +0x18 is the SORT KEY
+  0041a670  walks the sorted list with EAX = the object pointer, reading +0x8, +0x70, +0x98
+  and it calls fn_0043f010 SEVEN times in the body -- the sprite kinds of one object.
+
+So the object pointer is live at every draw in the pass, and the depth the game itself sorts
+on is one dereference from it. A renderer does not have to recover depth from the blit; the
+pass can hand it over.
+
++0x18 IS THE SORT KEY, MEASURED. That it is the Z AXIS is an inference from the game being
+2.5D and this being the depth sort -- reasonable, not verified. Verify it against a fighter's
+z before building on it (LF2_COOP_TRACK already reports live object fields, so this is cheap).
+
+THE MECHANISM TO USE, because it is already proven here rather than new: text.c's glyph hint.
+fn_0043f010 draws everything, so text.c sets a hint before calling the original body and
+clears it after, and the blit path reads it. The same shape gives every sprite its depth: an
+override of fn_0041a5a0 latches the current object before each of the seven draws and clears
+it after. No new plumbing, and it degrades safely -- a draw with no hint is simply a draw the
+pass did not issue.
+
+STILL NOT MEASURED, and it is now the only one of the three original unknowns left:
+whether surf_BltFast and direct writes through Lock carry any pixels. The frame hook cannot
+see them, so their absence from the earlier count says nothing. That needs a counter on all
+three paths reported at exit, not a per-frame dump.
+
+FOR THE SHADOW (piece 3 of this issue): one of those seven fn_0043f010 calls is the game's
+flat shadow ellipse. Identifying WHICH is what lets the port decline it the way text.c
+declines the ad notice and the game's mouse cursor. Not done.

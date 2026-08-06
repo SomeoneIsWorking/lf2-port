@@ -272,6 +272,15 @@ set_tests_properties(background PROPERTIES
                      LABELS slow TIMEOUT 900 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
+# A window resize must not leave the previous size's pixels standing (issue #29), with
+# LF2_PRIMARY_STALE as the negative -- "the band is black" would pass on a blank frame.
+add_test(NAME resize
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/resize_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(resize PROPERTIES
+                     LABELS slow TIMEOUT 600 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
 # Two humans in a MATCH. controller_2p proves the second pad joins at character selection
 # and stops there; this one reaches the fight and asserts pad two actually drives its
 # fighter, two-sided.
