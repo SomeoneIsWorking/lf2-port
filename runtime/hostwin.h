@@ -56,7 +56,8 @@ void menu_confirm(void);
 int  gamepad_player_buttons(int index, unsigned char out[7]);
 void input_report(void);
 void audio_pan_report(void);
-void bg_camera_report(void);   /* LF2_CAMERA: was the wide view actually re-centred? */   /* LF2_AUDIO_PAN: the audible span vs the picture (issue #39) */
+void bg_camera_report(void);
+void mode_force_report(void);  /* LF2_MODE: which mode a scripted run entered, and whether it did */   /* LF2_CAMERA: was the wide view actually re-centred? */   /* LF2_AUDIO_PAN: the audible span vs the picture (issue #39) */
 void clock_sites_report(void);   /* LF2_CLOCK_SITES: who reads the clock, and who spins on it */
 /* The scripted-input exit report lives in runtime/script.h (script_report). */
 void window_resize_report(void); /* any LF2_WINDOW_RESIZE step the run never reached */
