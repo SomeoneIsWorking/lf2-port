@@ -30,20 +30,31 @@ if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi
 if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; fi
 
 # Pad one takes the usual deterministic route into a VS match; see tools/controller_test.sh.
-PAD1="south:900,south:960,south:1020,south:1080,south:1140,south:1200,south:1260,south:1320"
-PAD1="$PAD1,up:1380,up:1440,south:1500,south:1700,south:1920,up:2020,up:2080,south:2140"
+#
+# Keyed to the screens the game DRAWS, not to frame numbers. The frame a screen arrives on
+# moves with the data load and with how busy the box is, so a frame-numbered route is a
+# stopwatch aimed at a moving target -- issue #18, and this route was one of the last three
+# still exposed to it (issue #25).
+PAD1="south:900,south:960,south:1020,south:1080"        # the front end, before any screen
+PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358,south@charselect+418"
+PAD1="$PAD1,south@charselect+618,south@charselect+838"  # join, then open the overlay
+PAD1="$PAD1,up@overlay+99,up@overlay+159,south@overlay+219"   # 2 -> 1 -> 0 = Fight!
 
 # Pad two: claim and open the choice, lock a character in, then START to pause, DOWN to move
 # from RESUME to DROP OUT, and attack to take it. One row down and no further: DROP OUT is
 # the second row exactly when this pad owns a slot, so landing anywhere else is itself the
 # failure this asserts.
-PAD2="south:2300,south:2400,start:2600,down:2660,south:2720"
+#
+# All five are keyed to the MATCH, which is the screen every one of them is about: a join
+# that lands before the match starts claims nothing, and the pause that follows would then
+# be a pause with no drop-out in it. The gaps are the ones the frame-numbered version used.
+PAD2="south@match+158,south@match+258,start@match+458,down@match+518,south@match+578"
 
 echo "pause drop-out: a joined player leaves from the pause menu (about 2.5 min)..."
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
   LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$PAD2" \
-  LF2_QUIT_AFTER=2900 timeout 260 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
+  LF2_QUIT_AFTER=3200 timeout 300 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 
 fail=0
 say_ok()   { echo "  ok    $1"; }
