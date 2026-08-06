@@ -3,7 +3,7 @@ id: 32
 title: The floor layers are not identified, so the ground cannot be lit as a ground plane
 status: resolved
 symptom: the lighting treats every surface as a camera-facing billboard. The floor a fighter stands on is a HORIZONTAL surface and would catch the key light differently -- that is real 3D shading from geometry that genuinely exists, and it is the one honest piece of 'make the stages 3D'. It needs the walkable z band (bg.dat zboundary) or the floor layers themselves located in the background record, and neither is
-tags: background
+tags: reported,rendering,re,background
 created: 2026-08-06
 updated: 2026-08-06
 ---

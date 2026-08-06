@@ -3,7 +3,7 @@ id: 39
 title: Widescreen adds all its extra world on the RIGHT instead of centring, and audio is still culled against 794
 status: open
 symptom: reported, two faults from one cause. The port widens the composition and patches the game's width words, so the game's original 794-wide view stays anchored at the LEFT and every extra pixel appears on the right -- it should be centred on what the 4:3 view showed. And the game still culls SOUND against the 794 screen, so effects on the right of a wide view are silent (or audible when they should not be). Both are the same shape of defect: the port widened the viewport without following what the game itself derives from that width. Asked for explicitly: port it from the game's own source rather than shimming the consequences
-tags: re
+tags: reported,widescreen,audio,re
 created: 2026-08-06
 updated: 2026-08-06
 ---

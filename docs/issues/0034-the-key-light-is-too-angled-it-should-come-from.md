@@ -3,7 +3,7 @@ id: 34
 title: The key light is too angled; it should come from the top, slightly left
 status: resolved
 symptom: reported. The rig is (-0.55, 0.74, 0.38) in stage axes, which is a low side-light. Wanted: mostly overhead with a slight lean to the left
-tags: lighting
+tags: reported,rendering,lighting
 created: 2026-08-06
 updated: 2026-08-06
 ---
