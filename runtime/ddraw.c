@@ -42,6 +42,7 @@ enum { DDBLTFX_FILLCOLOR = 80 };
 
 extern long ck_set, ck_blt_keyed, ck_blt_plain;
 void colorkey_report(void);
+void draw_paths_report(void);
 enum { DDCKEY_SRCBLT = 0x8 };
 
 typedef struct {
@@ -349,7 +350,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     dump_heap(frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
-    if (frames % 900 == 0) { colorkey_report(); vram_report(); com_release_report(); input_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); vram_report(); com_release_report(); input_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
     /* The read profile is reported on the same periodic boundary and reset each time, so
      * each block covers one window rather than the whole run: an array swept only during a
      * match would otherwise be averaged with the menus that came before it. */
@@ -500,6 +501,57 @@ static void pal_GetEntries(uint32_t self)
 
 /* ---- IDirectDrawSurface ---- */
 
+/* ---- LF2_DRAW_PATHS=1: which routes actually carry pixels ----
+ *
+ * A native renderer (issue #30) can only be fed from named draw calls if the draw calls are
+ * where the pixels are. Three routes exist in this file -- Blt, BltFast, and the game writing
+ * straight into a surface between Lock and Unlock -- and counting the first while assuming the
+ * other two are idle is exactly the kind of negative that cannot contradict itself.
+ *
+ * So all three are counted, and the Lock route is counted by whether the pixels CHANGED, not
+ * by whether a Lock happened: a Lock taken to read is not a draw. The hash is over the whole
+ * surface, which is why this is behind a switch.
+ */
+static long path_blt, path_bltfast, path_lock, path_lock_wrote;
+static uint32_t lock_hash_at_lock;
+static uint32_t lock_hash_surface;
+
+static int draw_paths_on(void)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("LF2_DRAW_PATHS") != NULL;
+    return on;
+}
+
+static uint32_t surface_hash(const Surface *s)
+{
+    uint32_t h = 2166136261u;
+    for (int y = 0; y < s->h; y++) {
+        const uint32_t *row = (const uint32_t *)(g_mem + s->pixels + (size_t)y * (size_t)s->pitch);
+        for (int x = 0; x < s->w; x++) { h ^= row[x]; h *= 16777619u; }
+    }
+    return h;
+}
+
+/* Prints every counter including the zeros, and says what it could not see. "BltFast: 0" and
+ * "I never instrumented BltFast" must not look alike -- that distinction is the entire reason
+ * this exists rather than a grep of the blit log. */
+void draw_paths_report(void)
+{
+    if (!draw_paths_on()) return;
+    fprintf(stderr, "draw paths: Blt=%ld BltFast=%ld Lock=%ld (of which changed pixels=%ld)\n",
+            path_blt, path_bltfast, path_lock, path_lock_wrote);
+    if (!path_blt && !path_bltfast && !path_lock)
+        fprintf(stderr, "draw paths: ALL ZERO -- this run drew nothing at all, so it says "
+                        "nothing about which route the game uses\n");
+    else if (!path_lock_wrote && path_lock)
+        fprintf(stderr, "draw paths: %ld locks and none of them changed a pixel, so on this "
+                        "route the game reads and does not draw\n", path_lock);
+    fprintf(stderr, "draw paths: NOT covered -- GDI text goes straight into the surface "
+                    "without Lock (runtime/gdi.c), and a lock whose writes cancel out would "
+                    "hash the same. Both would read as no-draw here.\n");
+}
+
 static void surf_Lock(uint32_t self)
 {
     Surface *s = com_host(self);
@@ -511,12 +563,19 @@ static void surf_Lock(uint32_t self)
     ST32(desc + SD_PITCH, (uint32_t)s->pitch);
     ST32(desc + SD_SURFACE, s->pixels);
     write_pixelformat(desc + SD_PIXELFORMAT);
+    if (draw_paths_on()) {
+        path_lock++;
+        lock_hash_surface = self;
+        lock_hash_at_lock = surface_hash(s);
+    }
     com_ret(5, DD_OK);
 }
 
 static void surf_Unlock(uint32_t self)
 {
     Surface *s = com_host(self);
+    if (draw_paths_on() && self == lock_hash_surface
+        && surface_hash(s) != lock_hash_at_lock) path_lock_wrote++;
     if (s->primary) present_primary();
     com_ret(2, DD_OK);
 }
@@ -880,6 +939,7 @@ static void surf_Blt(uint32_t self)
 {
     LOADPROF_SCOPE(LP_BLT);
     Surface *d = com_host(self);
+    if (draw_paths_on()) path_blt++;
     if (getenv("LF2_DUMP_SRC")) {
         static int done;
         const uint32_t want = (uint32_t)strtoul(getenv("LF2_DUMP_SRC"), NULL, 16);
@@ -1110,6 +1170,7 @@ static void surf_Blt(uint32_t self)
 static void surf_BltFast(uint32_t self)
 {
     Surface *d = com_host(self);
+    if (draw_paths_on()) path_bltfast++;
     const int dx = (int)ARG(1), dy = (int)ARG(2);
     Surface *s = ARG(3) ? com_host(ARG(3)) : NULL;
     const uint32_t srect = ARG(4), flags = ARG(5);
