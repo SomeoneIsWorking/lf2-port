@@ -217,3 +217,34 @@ This is the last thing this issue needed before design. Its inputs are known and
 sprites and their depth from fn_0041a5a0 / fn_0043f010, text from runtime/gdi.c, the stage's
 layers with their parallax rates from runtime/overrides/background.c, and z bounds per stage
 from bg.dat's zboundary.
+
+### Note (2026-08-06)
+THE PRESENT PATH IS NOT A GPU PIPELINE, and the codemap said it was. Checked 2026-08-06
+because a renderer design that believed it would start from the wrong place.
+
+WHAT IS ACTUALLY THERE (runtime/ddraw.c hostwin_present, runtime/win32.c):
+
+    SDL_CreateRenderer(window, NULL)            -- SDL's 2D renderer, driver unspecified
+    every frame: the composition, already flattened by the software blitter, is memcpy'd
+    row by row into ONE streaming SDL_PIXELFORMAT_XRGB8888 texture, then
+    SDL_RenderClear + SDL_RenderTexture(NULL, NULL) + SDL_RenderPresent
+
+So the GPU sees exactly one full-screen quad per frame, carrying pixels that were composed
+on the CPU. There is no per-sprite geometry, no render target, no shader, and no depth
+buffer anywhere in the port. The codemap's 'DirectDraw -> SDL3 GPU' was loose language for
+'SDL3's 2D renderer' and has been corrected.
+
+WHAT THAT MEANS FOR THE THREE PIECES ASKED FOR:
+  bloom / DOF     need a render target and a shader pass, neither of which exists. This is
+                  the smallest of the three -- it operates on the finished frame, so it does
+                  not require sprites to become quads.
+  per-sprite      needs the composition to stop being flattened on the CPU. That is the
+  lighting/depth  large change: the display list from the overrides has to reach the GPU as
+                  geometry instead of feeding the software blitter.
+  cast shadows    needs the sprite's alpha (the colour key gives it) AND a blend stage.
+                  Claim C010 says the port has no blend path at all.
+
+SO THE ORDER IS FORCED, and it is the opposite of the order the pieces were asked in: a
+render target and a blend stage first, because they are what every other piece needs; then
+sprites as geometry with the depth from C018; then the look. Anything built before the blend
+stage exists would be built on the software blitter and thrown away.
