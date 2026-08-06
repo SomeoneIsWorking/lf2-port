@@ -72,6 +72,18 @@ static int    ntexes;
 
 static uint8_t *tile_arena;
 static uint32_t tile_used;
+
+/* Tile textures are POOLED and reused across frames rather than allocated per frame; see
+ * tile_texture below for the GPU reset that made that necessary. */
+enum { TILE_TEX_MAX = 128 };
+typedef struct {
+    SDL_Texture *tex;
+    int          w, h;
+    int          busy;              /* claimed by an entry in the frame being drawn */
+} TileTex;
+static TileTex tile_pool[TILE_TEX_MAX];
+static int     tile_pool_n;
+static long    stat_tile_allocs, stat_tile_exhausted;
 static List    *tile_list;          /* the list the open tile belongs to */
 static int      tile_index;
 
@@ -84,6 +96,8 @@ static int          target_w, target_h;
 static long stat_frames, stat_tex, stat_fill, stat_tile, stat_uploads, stat_dropped;
 static long stat_soft_frames, stat_post, stat_ground, stat_shadow;
 static float ground_y_lo = 1e9f, ground_y_hi = -1e9f;
+static float stat_airborne_max;
+static long  stat_ground_orphan;
 
 int render_gpu_enabled(void)
 {
@@ -116,6 +130,9 @@ void render_shutdown(void)
     for (int i = 0; i < ntexes; i++)
         if (texes[i].tex) { SDL_DestroyTexture(texes[i].tex); texes[i].tex = NULL; }
     ntexes = 0;
+    for (int i = 0; i < tile_pool_n; i++)
+        if (tile_pool[i].tex) { SDL_DestroyTexture(tile_pool[i].tex); tile_pool[i].tex = NULL; }
+    tile_pool_n = 0;
     hd2d_shutdown();
     targets_free();
     for (int i = 0; i < nlists; i++) { free(lists[i].e); lists[i].e = NULL; }
@@ -301,20 +318,52 @@ void render_tile_end(void)
 
 /* ---- drawing ---- */
 
-/* Tiles become a texture ONCE per frame and are then used by every pass over the list. They
- * are small (a glyph is 8x16) and few, and caching them beyond the frame would need an
- * identity they do not have. */
+/* ---- tile textures, and why they are POOLED ----
+ *
+ * GDI text arrives as a few dozen small tiles per frame, and each needs a GPU texture. The
+ * first version created one per draw and destroyed it immediately; the second created one per
+ * frame and destroyed it in the frame reset. Both are wrong for the same reason, and it took
+ * a wedged GPU to see it: a match frame carries about 40 tiles, so at 30 frames a second that
+ * is roughly 2400 GPU texture allocations AND frees every second, sustained for the length of
+ * a run. On an amdgpu/RADV machine a long batch of those runs ended in 219 ring timeouts and
+ * 65 full GPU resets with VRAM loss -- none in the preceding 46 hours of the same boot.
+ *
+ * So they are POOLED and never freed until shutdown. A tile's size repeats constantly (a
+ * glyph run is one of a handful of widths), so after the first few frames the pool is warm
+ * and the steady-state allocation count is ZERO. The pool is keyed on exact size, the entries
+ * are marked in use for the frame and released by the frame reset, and an exhausted pool
+ * falls back to drawing nothing for that tile AND SAYS SO -- silently losing text would look
+ * like a font bug anywhere but here.
+ */
 static SDL_Texture *tile_texture(Entry *e)
 {
     if (e->tile_tex) return e->tile_tex;
-    SDL_Texture *t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
-                                       SDL_TEXTUREACCESS_STREAMING, e->tw, e->th);
-    if (!t) return NULL;
-    SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
-    /* PREMULTIPLIED: the writer already multiplied the colour by its coverage, so the blend
-     * is src + dst*(1-a) rather than src*a + dst*(1-a). Using plain BLEND here would darken
-     * every glyph edge. */
-    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+
+    SDL_Texture *t = NULL;
+    for (int i = 0; i < tile_pool_n; i++) {
+        TileTex *p = &tile_pool[i];
+        if (p->busy || p->w != e->tw || p->h != e->th) continue;
+        p->busy = 1;
+        t = p->tex;
+        break;
+    }
+    if (!t) {
+        if (tile_pool_n >= TILE_TEX_MAX) {
+            stat_tile_exhausted++;
+            return NULL;
+        }
+        t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
+                              SDL_TEXTUREACCESS_STREAMING, e->tw, e->th);
+        if (!t) { stat_tile_exhausted++; return NULL; }
+        SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
+        /* PREMULTIPLIED: the writer already multiplied the colour by its coverage, so the
+         * blend is src + dst*(1-a) rather than src*a + dst*(1-a). Using plain BLEND here
+         * would darken every glyph edge. */
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+        tile_pool[tile_pool_n++] = (TileTex){ t, e->tw, e->th, 1 };
+        stat_tile_allocs++;
+    }
+
     void *px = NULL; int dp = 0;
     if (SDL_LockTexture(t, NULL, &px, &dp)) {
         const uint32_t *src = (const uint32_t *)(tile_arena + e->tile_off);
@@ -346,12 +395,12 @@ static int render_skip(void)
  * object is and whatever shape it is in. Magnified it reads as a checkerboard, because the
  * dither was chosen for a 794x550 screen.
  *
- * A real one is the SPRITE's own silhouette, laid down on the ground and leaned away from the
- * light. It is drawn as a sheared quad through SDL_RenderGeometry -- SDL_RenderTexture cannot
- * shear, and without the shear a squashed sprite reads as a reflection rather than a shadow.
- * The lean is not a constant here: it is hd2d_shadow_lean(), the ONE light direction the
- * lighting shader also uses, projected onto the ground. Move the light and the shading and
- * the shadows move together.
+ * A real one is the SPRITE's own silhouette, projected onto the ground away from the light.
+ * It is drawn as a sheared quad through SDL_RenderGeometry -- SDL_RenderTexture cannot shear,
+ * and without the shear a squashed sprite reads as a reflection rather than a shadow.
+ * Nothing about its shape is a constant: hd2d_shadow_project() gives where a point at height
+ * 1 lands, from the ONE light direction the lighting shader also uses. Move the light and the
+ * shading, the shadow's direction and the shadow's LENGTH all move together.
  *
  * It is drawn into a MASK, not black over the picture. That is what lets the lighting pass
  * treat it as an absence of light -- so a shadow keeps the sky's colour in it instead of
@@ -368,28 +417,92 @@ static int render_skip(void)
 static void draw_cast_shadow(Tex *t, const SDL_FRect *src, const SDL_FRect *sprite,
                              const SDL_FRect *ground)
 {
+    /* THE PROJECTION, and it is the whole shadow. A point at height h above the ground lands
+     * at h * (across, -up) on the screen, both from the one light vector. So:
+     *
+     *   the sprite's TOP, at its own height above its base, gives the far edge of the shadow
+     *   -- which is what makes a low light throw a long one and an overhead light almost
+     *   none. This used to be a fixed 0.30 of the sprite's height, so moving the light
+     *   changed where a shadow pointed and never how long it was (issue #38).
+     *
+     *   the object's HEIGHT OFF THE FLOOR, when it is in the air, displaces the whole shadow
+     *   by the same rule. The ellipse the game draws is at the object's feet ON THE FLOOR,
+     *   but the sprite is lifted off it mid-jump; without this the shadow stayed welded under
+     *   a jumping fighter however high they went.
+     *
+     * Both use the same two numbers, so the shading, the shadow's direction, its length and
+     * its displacement in a jump cannot be given different lights.
+     */
+    float across = 0.0f, up = 0.0f;
+    hd2d_shadow_project(&across, &up);
+
     const float cx = ground->x + ground->w * 0.5f;
     const float gy = ground->y + ground->h;          /* the ellipse's bottom edge */
     const float w  = sprite->w;
-    const float h  = sprite->h * 0.30f;              /* laid down, not standing */
-    const float lean = h * hd2d_shadow_lean();
+
+    const float top_dx = sprite->h * across;         /* where the sprite's head lands */
+    const float top_dy = sprite->h * up;
+
+    const float airborne = gy - (sprite->y + sprite->h);
+    const float lift = airborne > 0.0f ? airborne : 0.0f;
+    const float lift_dx = lift * across;
+    const float lift_dy = lift * up;
+    if (airborne > stat_airborne_max) {
+        stat_airborne_max = airborne;
+        if (getenv("LF2_SHADOW_DEBUG"))
+            fprintf(stderr, "shadow: new highest lift %.0f px -- ground (%.0f,%.0f %.0fx%.0f), "
+                            "sprite (%.0f,%.0f %.0fx%.0f)\n", (double)airborne,
+                    (double)ground->x, (double)ground->y, (double)ground->w, (double)ground->h,
+                    (double)sprite->x, (double)sprite->y, (double)sprite->w, (double)sprite->h);
+    }
 
     const SDL_FColor c = { 1.0f, 1.0f, 1.0f, 1.0f };   /* the shader writes coverage */
     const float u0 = src->x / (float)t->w, u1 = (src->x + src->w) / (float)t->w;
     const float v0 = src->y / (float)t->h, v1 = (src->y + src->h) / (float)t->h;
 
-    /* bottom edge at the feet, top edge (the sprite's head) pushed away and sheared */
+    /* The sprite's foot edge sits at the ground point (displaced if it is in the air) and its
+     * head edge lands where the projection puts it. */
+    const float fx = cx + lift_dx, fy = gy - lift_dy;
+    const float hx = fx + top_dx,  hy = fy - top_dy;
+
     const SDL_Vertex v[4] = {
-        { { cx - w * 0.5f + lean, gy - h }, c, { u0, v0 } },   /* sprite top-left  */
-        { { cx + w * 0.5f + lean, gy - h }, c, { u1, v0 } },   /* sprite top-right */
-        { { cx + w * 0.5f,        gy     }, c, { u1, v1 } },   /* sprite bottom-right */
-        { { cx - w * 0.5f,        gy     }, c, { u0, v1 } },   /* sprite bottom-left  */
+        { { hx - w * 0.5f, hy }, c, { u0, v0 } },   /* sprite top-left     */
+        { { hx + w * 0.5f, hy }, c, { u1, v0 } },   /* sprite top-right    */
+        { { fx + w * 0.5f, fy }, c, { u1, v1 } },   /* sprite bottom-right */
+        { { fx - w * 0.5f, fy }, c, { u0, v1 } },   /* sprite bottom-left  */
     };
     const int idx[6] = { 0, 1, 2, 0, 2, 3 };
     /* NONE, not BLEND: the shader alpha-tests, so overlapping shadows overwrite instead of
      * accumulating into a doubly dark patch where two fighters stand together. */
     SDL_SetTextureBlendMode(t->tex, SDL_BLENDMODE_NONE);
     SDL_RenderGeometry(R, t->tex, v, 4, idx, 6);
+}
+
+/* HOW MUCH BIGGER THE OBJECTS ARE DRAWN THAN THE GAME DREW THEM.
+ *
+ * The frame is composed and drawn at the window's real pixels now, which is what makes it
+ * sharp and gives a wide field of view -- but it also means a fighter is drawn at the ~40
+ * rows the artist drew, and in a 1080-row window that is tiny. So the OBJECTS are scaled and
+ * the world is not: the scenery keeps its native resolution and its full extent, and the
+ * actors are drawn at the size a player expects.
+ *
+ * The factor is derived from real state rather than being a taste or an env var: it is how
+ * many times the game's own 550-row screen fits in the window, rounded to a WHOLE number.
+ * A whole number is not tidiness -- these are nearest-neighbour pixel-art sprites, and 1.96
+ * would put some of their pixels down two screen pixels wide and others three. So the game's
+ * own window gets 1x and is exactly what it always was, a 1080-row window gets 2x, and a
+ * fighter comes out the same apparent size as before with the background twice as sharp and
+ * twice as wide.
+ */
+static float object_scale(void)
+{
+    /* The WINDOW's height, not hostwin_height() -- that is the composition, which is pinned
+     * at the game's 550 and would make this constantly 1. */
+    const int wh = hw.win_h;
+    int n = (wh + 275) / 550;                        /* rounded, not truncated */
+    if (n < 1) n = 1;
+    if (n > 8) n = 8;
+    return (float)n;
 }
 
 enum Pass { PASS_COLOUR, PASS_CHARS, PASS_SHADOW };
@@ -406,6 +519,7 @@ enum Pass { PASS_COLOUR, PASS_CHARS, PASS_SHADOW };
 static void draw_list(List *l, int pass, float offx, float offy)
 {
     const int skip = render_skip();
+    const float scale = object_scale();
     int have_ground = 0;
     SDL_FRect ground = { 0, 0, 0, 0 };
 
@@ -440,9 +554,47 @@ static void draw_list(List *l, int pass, float offx, float offy)
         /* The two lighting passes have nothing to say about anything that is not an object
          * in the field, and an object is precisely a sprite with a ground marker in front
          * of it. Everything else is skipped here rather than filtered later. */
-        const int is_object = have_ground && e->kind == E_TEX;
+        /* THE PAIRING HAS TO BE CHECKED, not assumed. The game draws an object's shadow
+         * ellipse immediately before the object, so "the next sprite" is the right rule --
+         * until a sprite is DROPPED between them. A sprite clipped entirely off the edge of
+         * the composition arrives at Blt with an empty destination and never enters the list,
+         * and the marker then binds to the NEXT object's sprite instead. Measured: a marker
+         * at x 988 paired with a sprite at x 2076, a thousand pixels away and above the top
+         * of the screen, which put a shadow under nothing and reported an object 874 px in
+         * the air on a 550-row field.
+         *
+         * The test is the game's own geometry rather than a tolerance: the ellipse is drawn
+         * AT the object's feet, so the object's sprite must overlap it horizontally. A
+         * marker that fails it is discarded and the sprite is drawn as an ordinary one. */
+        int is_object = have_ground && e->kind == E_TEX;
+        if (is_object && (dst.x >= ground.x + ground.w || dst.x + dst.w <= ground.x)) {
+            is_object = 0;
+            stat_ground_orphan++;
+        }
         have_ground = 0;
         if (pass != PASS_COLOUR && !is_object) continue;
+
+        /* An object is drawn larger than the game drew it, about ITS OWN BASE: the sprite
+         * grows where it stands, and its POSITION stays exactly the game's.
+         *
+         * The first version anchored this at the ground marker instead, so that a jump grew
+         * by the same factor the fighter did. That is wrong, and measurably so: LF2 launches
+         * objects a long way up, and doubling the height of one already 314 px above the
+         * floor put it 628 px up and off the top of the screen. The world is drawn at 1:1
+         * here; only the actors are magnified, so only their SIZE may change. A standing
+         * object's base is its ground point anyway, which is why the two agree everywhere
+         * except in mid-air -- the one place the difference matters.
+         *
+         * Every pass uses the rectangle computed here, so the picture, the character mask and
+         * the shadow cannot disagree about where the object is or how big it is. */
+        if (is_object && scale != 1.0f) {
+            const float cx = dst.x + dst.w * 0.5f;
+            const float base = dst.y + dst.h;
+            dst.w *= scale;
+            dst.h *= scale;
+            dst.x = cx - dst.w * 0.5f;
+            dst.y = base - dst.h;
+        }
 
         if (e->kind == E_FILL) {
             SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
@@ -689,13 +841,11 @@ int render_readback(uint32_t *dst, int w, int h, int dst_pitch)
 void render_frame_reset(void)
 {
     for (int i = 0; i < nlists; i++) {
-        for (int j = 0; j < lists[i].n; j++)
-            if (lists[i].e[j].tile_tex) {
-                SDL_DestroyTexture(lists[i].e[j].tile_tex);
-                lists[i].e[j].tile_tex = NULL;
-            }
+        for (int j = 0; j < lists[i].n; j++) lists[i].e[j].tile_tex = NULL;
         lists[i].n = 0;
     }
+    /* The pooled textures are RELEASED, not destroyed -- see tile_texture. */
+    for (int i = 0; i < tile_pool_n; i++) tile_pool[i].busy = 0;
     tile_used = 0;
     tile_list = NULL;
 }
@@ -709,6 +859,18 @@ void render_report(void)
                     "tiles=%ld textures=%d uploads=%ld dropped=%ld\n",
             render_gpu_enabled() ? "on" : "off", stat_frames, stat_soft_frames,
             stat_tex, stat_fill, stat_tile, ntexes, stat_uploads, stat_dropped);
+    /* The allocation count is the number that matters: it must go FLAT once the pool is warm.
+     * A count that keeps climbing with the frame count means tiles of ever-changing sizes and
+     * the GPU allocator is being churned again, which is what wedged a GPU once. */
+    fprintf(stderr, "render: %ld tile draws served by %d pooled textures, %ld allocations "
+                    "(%.3f per frame -- this must be near zero once warm)%s\n",
+            stat_tile, tile_pool_n, stat_tile_allocs,
+            stat_frames ? (double)stat_tile_allocs / (double)stat_frames : 0.0,
+            stat_tile_exhausted ? "" : "");
+    if (stat_tile_exhausted)
+        fprintf(stderr, "render: %ld tiles were NOT DRAWN -- the %d-texture pool was full, so "
+                        "text is MISSING from those frames\n",
+                stat_tile_exhausted, TILE_TEX_MAX);
     fprintf(stderr, "render: the light ran on %ld frame(s); %ld cast shadows from %ld ground "
                     "markers\n", stat_post, stat_shadow, stat_ground);
     if (stat_ground)
@@ -716,6 +878,22 @@ void render_report(void)
                         "game's own coordinates -- that is the walkable floor, measured from "
                         "where the game put its shadows (issue #32)\n",
                 (double)ground_y_lo, (double)ground_y_hi);
+    /* The airborne term is invisible in a run where nobody leaves the floor, and "the shadow
+     * never moved" and "nothing ever jumped" look identical on a screenshot. So the highest
+     * lift seen is reported: a zero here means the offset was NEVER EXERCISED, not that it
+     * does not work. */
+    if (stat_ground_orphan)
+        fprintf(stderr, "render: %ld ground markers were discarded because the sprite that "
+                        "followed did not overlap them -- that object's own sprite was "
+                        "dropped (clipped off the composition), so the marker had nothing to "
+                        "belong to\n", stat_ground_orphan);
+    if (stat_shadow)
+        fprintf(stderr, "render: the highest an object got off its ground point was %.0f px%s\n",
+                (double)stat_airborne_max,
+                stat_airborne_max < 1.0f
+                    ? " -- so NOTHING jumped in this run and the shadow's airborne offset was "
+                      "never exercised"
+                    : ", and its shadow was offset along the light by that much");
     else
         fprintf(stderr, "render: NO ground markers were seen, so the floor band is UNKNOWN -- "
                         "this run reached no match, or the stage's shadow object was never "

@@ -186,6 +186,16 @@ enum { BG_STAGE_WIDTH  = 81026480,      /* -1124, per background, not per layer 
        BG_SHADOW_H     = 81026504,      /* -1100 */
        BG_LAYER_COUNT  = 81026508 };    /* -1096; fn_0041a250 loops on this count */
 enum { BG_CAMERA_X     = 0x00450bc4 };  /* the world camera, in stage coordinates */
+/* A SECOND upper bound on the camera, applied by fn_0041b5d0 right after the stage-width one
+ * and only when it is non-zero (0x0041bbad..0x0041bbba):
+ *
+ *     EAX = stage_width;  EAX += -794;  if (target > EAX) target = EAX;
+ *     EAX = [0x00450bb0]; if (EAX && target > EAX) target = EAX;
+ *
+ * That is the stage-mode section lock -- what stops the camera partway along a stage until
+ * the section is cleared. Like everything else in this game it is expressed against the 794
+ * screen, so a wider view sees straight past it (issue #36). */
+enum { BG_CAMERA_LOCK  = 0x00450bb0 };
 enum { BG_SCREEN_W     = 794 };         /* the game's screen width, literal in fn_0041a250 */
 
 /* One layer field, or 0 when the index is out of range. Reads only; nothing here writes to

@@ -52,12 +52,36 @@ int  hd2d_ready(void);          /* the shaders exist and the pass can run */
 /* ---- the light rig ----
  *
  * ONE direction, in the stage's axes: x across, y up, z toward the camera. It lives in
- * hd2d.c; the shader shades with it and this is the only thing outside that needs it --
- * how far the top of a laid-down sprite leans, per unit of its laid-down height, which is
- * that direction projected onto the ground. That projection is what a shadow's shear IS, so
- * the shading and the shadows cannot be given different lights.
+ * hd2d.c; the shader shades with it, and this is the only part of it anything outside needs.
+ *
+ * WHERE A POINT AT HEIGHT 1 LANDS ON THE GROUND, in screen units, relative to the point it
+ * is above. This is the whole of a directional light's shadow projection, and both numbers
+ * come from that one vector -- so a shadow's DIRECTION, its LENGTH, and how a jump displaces
+ * it all follow the light together, and none of them can be given a different one.
+ *
+ *   *across  = -Lx/Ly   how far sideways: which way the shadow points
+ *   *up      =  Lz/Ly   how far up the screen: how LONG the shadow is, since LF2's depth
+ *                       axis projects straight down the screen (claim C021)
+ *
+ * Both are cot(elevation) scaled by the light's heading, so a light near the horizon throws
+ * a long shadow and one overhead throws almost none. The version before this used the first
+ * of these and a CONSTANT 0.30 in place of the second, which is exactly why moving the light
+ * changed where a shadow pointed but never how long it was (issue #38).
  */
-float hd2d_shadow_lean(void);
+void hd2d_shadow_project(float *across, float *up);
+
+/* THE LIGHT AS TWO ANGLES, which is how a player thinks about it and how the pause menu's
+ * Options screen sets it (issue #37).
+ *
+ *   AZIMUTH    degrees around the fighters. 0 puts the light straight in front of them,
+ *              negative swings it to the left. It is what decides which way a shadow points.
+ *   ELEVATION  degrees above the horizon. 90 is straight overhead, and it is what decides how
+ *              long a shadow is -- the shear and the airborne offset are both cot(elevation).
+ *
+ * Setting them recomputes the one direction vector, so the shading and the cast shadows move
+ * together and cannot be given different lights. */
+void hd2d_light_angles(float *azimuth_deg, float *elevation_deg);
+void hd2d_light_set_angles(float azimuth_deg, float elevation_deg);
 
 /* ---- the character buffer ----
  *

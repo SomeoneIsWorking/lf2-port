@@ -105,7 +105,11 @@ if(LF2_STACK_CHECK)
 endif()
 
 find_package(SDL3 REQUIRED CONFIG)
-target_link_libraries(lf2 PRIVATE SDL3::SDL3)
+# libm: the light rig turns the player's two angles into a direction vector (runtime/hd2d.c).
+# gcc folds most of <math.h> inline and then does not, so this is linked explicitly rather
+# than relied on to keep being unnecessary.
+find_library(LF2_M m)
+target_link_libraries(lf2 PRIVATE SDL3::SDL3 $<$<BOOL:${LF2_M}>:${LF2_M}>)
 
 # Optional: a real font for the GDI text path. Without it the built-in debug font is used,
 # which is legible but looks like a debug overlay. Kept optional rather than required

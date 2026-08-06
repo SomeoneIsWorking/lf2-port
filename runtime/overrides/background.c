@@ -181,6 +181,30 @@ static void camera_clamp_to_view(int32_t stage_width, int32_t view)
 {
     int32_t camera = (int32_t)LD32(BG_CAMERA_X);
     int32_t max = stage_width - view;
+
+    /* THE STAGE-MODE SECTION LOCK gets the same substitution, and for the same reason
+     * (issue #36). fn_0041b5d0 bounds the camera a second time by [0x00450bb0] when that is
+     * non-zero, which is what holds the camera partway along a stage until the section is
+     * cleared. Both bounds are the game saying "the RIGHT EDGE OF THE SCREEN goes here", and
+     * both say it in terms of a 794-wide screen -- so on a wider view the camera stopped at
+     * the same world position and the player could see well past where they were allowed to
+     * walk.
+     *
+     * `lock + 794 - view` puts the right edge exactly where the 4:3 game puts it, which is
+     * the whole of the request: the camera stops the same distance from the walk boundary
+     * whatever the window is. At view == 794 it is `lock` unchanged, so this cannot alter
+     * the game's own picture -- which is what tools/background_test.sh's byte-identity arm
+     * checks.
+     *
+     * NOT VERIFIED IN STAGE MODE ITSELF: every scripted route this port has reaches VS mode,
+     * where the lock reads 0 and this branch never runs. The substitution is the same one the
+     * bound above it already gets and it is a no-op at the game's own width, but nobody has
+     * watched it hold a camera in a stage. */
+    const int32_t lock = (int32_t)LD32(BG_CAMERA_LOCK);
+    if (lock) {
+        const int32_t lock_max = lock + BG_SCREEN_W - view;
+        if (lock_max < max) max = lock_max;
+    }
     if (max < 0) max = 0;
     if (camera > max) camera = max;
     if (camera < 0) camera = 0;

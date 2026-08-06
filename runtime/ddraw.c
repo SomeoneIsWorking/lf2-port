@@ -933,11 +933,17 @@ enum { NATIVE_W = 794, NATIVE_H = 550 };   /* the composition the game asks for 
  * kept so the two do not disagree. A 32:9 monitor at full height asks for 1956; the rest of
  * the range is for a window someone has dragged very short and very wide.
  *
- * HIGH_MAX is the same bargain on the other axis, and it exists because the composition now
- * follows the window in BOTH dimensions rather than following its aspect. 4096x2304 is
- * 37.7 MB per resizable surface out of a 1 GiB arena, and there are two of them in practice
- * (the primary and the surface the game composes into). */
-enum { WIDE_MAX = 4096, HIGH_MAX = 2304 };
+ * HIGH_MAX is the same bargain on the other axis and it is deliberately the game's own 550,
+ * because that is every row the composition will ever have -- LF2's vertical screen axis
+ * carries z and jump height, both fixed by stage data, so the height does NOT follow the
+ * window (hostwin_window_geometry says why at length).
+ *
+ * It was briefly 2304, left over from trying a full-window composition, and that is worth
+ * recording rather than quietly deleting: it made every resizable surface 37.7 MB instead of
+ * 9 MB for rows nothing would ever draw into. Four times the committed guest memory per
+ * instance, on a machine that then ran out of it. An allocation sized for a feature that was
+ * measured and abandoned is exactly the kind of thing that survives a revert. */
+enum { WIDE_MAX = 4096, HIGH_MAX = NATIVE_H };
 enum { HUD_W = 792, HUD_BAND_H = 118 };   /* the in-match HUD strip and the band it owns */
 
 /* The in-match HUD's own centring offset, exposed because the GDI text path draws straight
