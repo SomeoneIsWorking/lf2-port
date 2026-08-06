@@ -57,6 +57,66 @@ void fn_00423b00__orig(void);
  */
 enum { GX_CLICK = 0x00457580, GX_SCREEN = 0x0044d064 };
 
+/* The post-load mode menu's selection -- screens.c located it and drives it for the mouse. */
+enum { MODEMENU_SEL_W = 0x00451160, MODEMENU_ITEMS_W = 8 };
+
+static const char *const MODE_NAME[MODEMENU_ITEMS_W] = {
+    "vs", "stage", "championship1", "championship2", "battle", "demo", "playback", "quit"
+};
+
+static long mode_force_frames;
+static int  mode_force_want = -2;      /* -2 not looked, -1 no request or a bad one */
+static int  mode_force_done;
+
+static void mode_force_tick(void)
+{
+    if (mode_force_want == -2) {
+        const char *v = getenv("LF2_MODE");
+        mode_force_want = -1;
+        if (v) {
+            for (int i = 0; i < MODEMENU_ITEMS_W; i++)
+                if (strcmp(v, MODE_NAME[i]) == 0) { mode_force_want = i; break; }
+            if (mode_force_want < 0)
+                fprintf(stderr, "menu: LF2_MODE=%s names no mode -- the run will enter "
+                                "whatever the menu was already on. Try one of: vs stage "
+                                "championship1 championship2 battle demo playback quit\n", v);
+            else
+                fprintf(stderr, "menu: LF2_MODE=%s -- holding the mode menu on item %d\n",
+                        v, mode_force_want);
+        }
+    }
+    if (mode_force_want < 0 || mode_force_done) return;
+    /* Once the overlay is up the mode has been chosen and the screen is gone. */
+    if (panel_overlay_up()) {
+        mode_force_done = 1;
+        fprintf(stderr, "menu: LF2_MODE held the mode menu for %ld frame(s); the overlay is up, "
+                        "so the mode is chosen and the hold is released\n", mode_force_frames);
+        return;
+    }
+    if (LD32(MODEMENU_SEL_W) >= MODEMENU_ITEMS_W) return;   /* not that screen */
+    if (LD32(MODEMENU_SEL_W) != (uint32_t)mode_force_want)
+        ST32(MODEMENU_SEL_W, (uint32_t)mode_force_want);
+    mode_force_frames++;
+}
+
+/* Said at exit, because "the mode was never held" and "the mode was held" look identical in a
+ * frame dump, and a route that silently entered VS when it asked for stage would be a green
+ * test for a mode it never visited. */
+void mode_force_report(void)
+{
+    if (mode_force_want < 0) return;
+    if (mode_force_frames)
+        fprintf(stderr, "menu: LF2_MODE=%s was held on %ld frame(s)%s\n",
+                MODE_NAME[mode_force_want], mode_force_frames,
+                mode_force_done ? " and released at the overlay" : " and never released -- the "
+                                  "run did not reach the pre-fight overlay");
+    else
+        fprintf(stderr, "menu: LF2_MODE=%s was NEVER held -- the mode menu was not reached in "
+                        "this run, so the game entered whatever it was already on and this "
+                        "run says NOTHING about %s mode\n",
+                MODE_NAME[mode_force_want], MODE_NAME[mode_force_want]);
+}
+
 /* 0x0044d070 was used here as an "which screen is up" word, derived from stage-mode .data
  * dumps where it reads -100 while players pick, 0 while the overlay is up and 1 in the
  * match. It is the GAME MODE, not the screen: in VS mode it reads 1 with the overlay open,
@@ -289,6 +349,28 @@ void fn_004246b0(void)
             fprintf(stderr, "overlay selection = %u\n", overlay);
         }
     }
+    /* ---- LF2_MODE=<name>: which game mode a scripted run enters ----
+     *
+     * THE PORT OWNS THE PATH IN. Before this, every route reached the game by pressing
+     * buttons at counted frames and taking whatever the mode menu happened to be sitting on,
+     * which is VS mode -- so the whole test suite only ever exercised one of the eight modes,
+     * and stage-mode work (issue #36) had no way to be verified at all.
+     *
+     * This does not press anything. It puts the GAME'S OWN selection where the run asked for
+     * it and lets the route's existing confirm dispatch it, so the mode change, its sound and
+     * its screen transition are all the game's -- the same shape as the mouse hover in
+     * screens.c, which writes the same word.
+     *
+     * The eight items are the game's own order (screens.c): VS, Stage, the two championships,
+     * Battle, Demo, Playback, Quit. Named rather than numbered because a route reading
+     * `LF2_MODE=stage` says what it is doing and `LF2_MODE=1` does not, and an unknown name is
+     * REFUSED loudly rather than silently entering VS -- a run that quietly took the wrong
+     * mode would produce a green test for a mode it never visited.
+     *
+     * It stops once the pre-fight overlay has been reached, so it cannot fight a later screen
+     * that happens to keep a small number in the same word. */
+    mode_force_tick();
+
     /* LF2_OVERLAY_FORCE=<n> pins the pre-fight overlay's selection so each item's screen
      * position can be read off a frame dump. Diagnostic scaffolding for building the
      * mouse hit-test table -- the positions have to come from the game, not from me

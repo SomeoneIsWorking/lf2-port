@@ -291,6 +291,16 @@ set_tests_properties(resize PROPERTIES
                      LABELS slow TIMEOUT 600 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
+# The port drives itself into STAGE mode (LF2_MODE), and the stage-mode camera lock follows
+# the view (issue #36). Three arms; the VS one is the negative that makes the others mean
+# something. Before this, every route only ever reached VS mode.
+add_test(NAME stage_mode
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/stage_mode_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(stage_mode PROPERTIES
+                     LABELS slow TIMEOUT 900 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
 # Widescreen must not silence the right of the picture (issue #39). Three arms, the last of
 # which turns the fix OFF and requires the failure to reappear.
 add_test(NAME audio_pan

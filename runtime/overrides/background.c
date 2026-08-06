@@ -173,8 +173,8 @@ static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, i
  * view degrades to what it did before -- the extra width on the right -- rather than opening a
  * band of nothing. At the game's own 794 the offset is exactly zero, which is why
  * tools/background_test.sh's byte-identity arm still holds. */
-static long cam_frames, cam_shifted;
-static int32_t cam_game_max, cam_draw_max, cam_k;
+static long cam_frames, cam_shifted, cam_locked, cam_lock_bound;
+static int32_t cam_game_max, cam_draw_max, cam_k, cam_lock_max;
 
 int bg_draw_camera(void)
 {
@@ -204,6 +204,19 @@ void bg_camera_report(void)
     fprintf(stderr, "camera: view %d, centring offset %d; the game's camera reached %d and the "
                     "drawing camera %d over %ld frame(s)\n",
             view, cam_k, cam_game_max, cam_draw_max, cam_frames);
+    /* The section lock is what stage mode uses to hold the camera until a section is cleared,
+     * and it is ZERO in VS mode. Reporting it is how a route can show it reached stage mode at
+     * all -- and it is the only evidence issue #36's clamp has ever run. */
+    if (cam_locked)
+        fprintf(stderr, "camera: the stage-mode section lock was set on %ld frame(s), reaching "
+                        "%d, and BOUND the camera on %ld of them -- so this run entered stage "
+                        "mode%s\n", cam_locked, cam_lock_max, cam_lock_bound,
+                cam_lock_bound ? " and the lock's view substitution did work (issue #36)"
+                               : ", but the stage's own bound was always tighter, so the "
+                                 "lock's view substitution was NOT exercised");
+    else
+        fprintf(stderr, "camera: the stage-mode section lock was NEVER set, so this run did not "
+                        "enter stage mode and says nothing about issue #36\n");
     if (cam_shifted)
         fprintf(stderr, "camera: %ld of %ld frames were re-centred, so the wide view is "
                         "centred on what the 4:3 view showed rather than extended right\n",
@@ -293,8 +306,13 @@ static void camera_clamp_to_view(int32_t stage_width, int32_t view)
      * watched it hold a camera in a stage. */
     const int32_t lock = (int32_t)LD32(BG_CAMERA_LOCK);
     if (lock) {
+        cam_locked++;
+        if (lock > cam_lock_max) cam_lock_max = lock;
         const int32_t lock_max = lock + BG_SCREEN_W - view;
-        if (lock_max < max) max = lock_max;
+        /* Counted separately from "the lock was set": the substitution only DOES anything
+         * when the lock is the binding constraint, and a run where the stage bound was
+         * always tighter would exercise none of it while still reporting a lock. */
+        if (lock_max < max) { max = lock_max; cam_lock_bound++; }
     }
     if (max < 0) max = 0;
     if (camera > max) camera = max;

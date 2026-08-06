@@ -227,6 +227,19 @@ perfectly correct and shift nothing:
 | 1100x550 | 153 | all frames re-centred — camera 400 draws as 247 |
 | 1920x1080 | 563 | nothing re-centred: Brokeback Clif is 1500 wide, the whole stage already fits, the camera never leaves 0 and there is no world to centre into |
 
+**Stage mode's section lock gets the same substitution.** `fn_0041b5d0` bounds the camera a
+second time by `[0x00450bb0]` when that is non-zero — the thing that holds the camera partway
+along a stage until the section is cleared — and says it, like everything else, against a
+794-wide screen. It is now bounded by `lock + 794 - view`, so the camera stops the same
+distance from the walk boundary at any window width. `LF2_CAMERA=1` reports whether the lock
+was set *and whether it actually bound the camera*, which are different things: the
+substitution only does work when the lock is the tighter of the two bounds.
+
+A note for anyone looking for these constants: a grep for `794` (`0x31a`) finds 34 sites and
+**none of them are the camera**. The binary writes it as `-794` = `0xfffffce6` inside an `ADD`
+or a `LEA`, and there are exactly three such sites — `0x0041bba2` and `0x0041bc54` in the
+camera, and `0x004377d1`, a walk-boundary test against a player's x.
+
 **Audio is no longer culled on the right.** The game pans a sound between two speakers placed
 on the *screen* at x 200 and x 600, each reaching 400 px — the 794 screen's quarter points,
 written down as pixels (`runtime/overrides/audio_pan.c`). That gives an audible span of
@@ -261,6 +274,20 @@ fractional factor would put some of their pixels down two screen pixels wide and
 Anchored at the sprite's base rather than at its ground point: the world is drawn 1:1, so only
 an actor's *size* may change, never its position — anchoring at the ground point doubled the
 height of a launched object already 314 px up and threw it off the top of the screen.
+
+**`LF2_MODE=<name>`** chooses which of the game's eight modes a run enters: `vs`, `stage`,
+`championship1`, `championship2`, `battle`, `demo`, `playback`, `quit`. It presses nothing — it
+puts the *game's own* mode-menu selection where the run asked and lets the route's existing
+confirm dispatch it, so the mode change, its sound and its screen transition are all the
+game's. The hold is released once the pre-fight overlay is up, so it cannot fight a later
+screen, and an unknown name is refused loudly rather than silently entering VS.
+
+This is what makes anything but VS mode testable. Every scripted route used to reach the game
+by pressing buttons at counted frames and take whatever the mode menu happened to be sitting
+on, so one of eight modes was exercised and seven were not — and the stage-mode camera lock
+had no way to be verified at all. `ctest stage_mode` uses it, and its report says explicitly
+when the mode menu was never reached, because a route that silently entered VS while asking
+for stage would be a green test for a mode it never visited.
 
 **`LF2_WINDOW_SIZE=<w>x<h>`** sets the window's initial size. It is not the old knob renamed
 — it names a window, and the composition is derived from it by the same code a window manager
