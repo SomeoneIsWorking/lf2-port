@@ -128,24 +128,67 @@ uint32_t bg_layer_field(uint32_t field_const, int layer)
     return LD32(registry + (bg * BG_STRIDE_DW + (uint32_t)layer) * 4u + field_const);
 }
 
-int bg_layer_count(void)
+uint32_t bg_stage_field(uint32_t field_const)
 {
-    int n = 0;
-    while (n < BG_MAX_LAYERS && bg_layer_field(BG_LAYER_PERIOD, n)) n++;
-    return n;
+    const uint32_t registry = LD32(BG_REGISTRY);
+    if (!registry) return 0;
+    return LD32(registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u + field_const);
 }
 
-/* LF2_BG_TABLE=1 prints the loaded stage's layers once. It exists to be CHECKED against the
- * file: `tools/decrypt_dat.py --layers game/bg/sys/<stage>/bg.dat` prints the same periods
- * and offsets, and the two agreeing on a real stage is what makes the address computation
- * above an identification rather than arithmetic that happened to land somewhere.
+/* The game's own count, which is what fn_0041a250 iterates on -- not a scan for the first
+ * zero span. The two agree on every stage measured, but a scan would silently stop at a
+ * layer the game is perfectly happy to draw, and "the layer list ends here" is exactly the
+ * kind of guess this table exists to remove. */
+int bg_layer_count(void)
+{
+    const int32_t n = (int32_t)bg_stage_field(BG_LAYER_COUNT);
+    if (n <= 0) return 0;
+    return n < BG_MAX_LAYERS ? (int)n : BG_MAX_LAYERS;
+}
+
+/* One background's record, printed in the form tools/decrypt_dat.py --layers prints so the
+ * two can be diffed line for line. `which` indexes the registry directly; the loaded stage is
+ * LD32(BG_INDEX). */
+static void bg_record_report(uint32_t which)
+{
+    const uint32_t registry = LD32(BG_REGISTRY);
+    const uint32_t base = registry + which * BG_STRIDE_DW * 4u;
+    const int32_t  cnt = (int32_t)LD32(base + BG_LAYER_COUNT);
+    const int n = cnt <= 0 ? 0 : (cnt < BG_MAX_LAYERS ? (int)cnt : BG_MAX_LAYERS);
+    fprintf(stderr, "bg table: background %u  stage width %u  %d layer(s)%s\n",
+            which, LD32(base + BG_STAGE_WIDTH), n,
+            which == LD32(BG_INDEX) ? "   <- loaded" : "");
+    if (n == 0) {
+        fprintf(stderr, "bg table:   NO LAYERS -- this record is empty; that is a fact about "
+                        "this index, not about the address computation\n");
+        return;
+    }
+    for (int i = 0; i < n; i++)
+        fprintf(stderr, "bg table:   layer %-2d span=%-6u x=%-6d y=%-4d loop=%u\n", i,
+                LD32(base + BG_LAYER_SPAN + (uint32_t)i * 4u),
+                (int32_t)LD32(base + BG_LAYER_X + (uint32_t)i * 4u),
+                (int32_t)LD32(base + BG_LAYER_Y + (uint32_t)i * 4u),
+                LD32(base + BG_LAYER_LOOP + (uint32_t)i * 4u));
+}
+
+/* LF2_BG_TABLE=1 prints the loaded stage's layers once; LF2_BG_TABLE=all prints EVERY
+ * background the registry holds. It exists to be CHECKED against the files:
+ * `tools/decrypt_dat.py --layers` over every bg.dat under game/bg prints the same spans,
+ * offsets and loops, and the two agreeing is what makes the address computation an
+ * identification rather than arithmetic that happened to land somewhere.
+ *
+ * `all` is the stronger check and the reason it exists: VS mode picked the same stage on six
+ * consecutive headless runs, so "run it again and hope for a different background" is not a
+ * way to test a second stage. The registry holds all of them at once, and the loaded index
+ * only selects which one is drawn -- so one run can be checked against twelve files.
  *
  * A stage with no layers is reported as such rather than printing a header and nothing --
  * "the table was empty" and "the table was never reached" must not look alike. */
 void bg_table_report(void)
 {
     static int done;
-    if (done || !getenv("LF2_BG_TABLE")) return;
+    const char *want = getenv("LF2_BG_TABLE");
+    if (done || !want) return;
     /* Sampled while a MATCH is on screen, which is the moment a stage is certainly loaded.
      * Reporting on the first frame that had a registry pointer instead caught the front end,
      * where the background index is 100 and there are no layers -- a true "nothing here" that
@@ -155,17 +198,19 @@ void bg_table_report(void)
     const uint32_t registry = LD32(BG_REGISTRY);
     if (!registry) return;
     done = 1;
-    const int n = bg_layer_count();
-    fprintf(stderr, "bg table: background %u, registry %08x, %d layer(s)\n",
-            LD32(BG_INDEX), registry, n);
-    if (n == 0) {
-        fprintf(stderr, "bg table: NO LAYERS -- either no stage is loaded or the address "
-                        "computation is wrong; this says nothing either way\n");
-        return;
+    fprintf(stderr, "bg table: registry %08x, loaded background %u\n",
+            registry, LD32(BG_INDEX));
+    if (strcmp(want, "all") != 0) { bg_record_report(LD32(BG_INDEX)); return; }
+    /* The count is not known from the table, so walk until a record has no layers AND no
+     * stage width -- and say how far the walk got, so a run that found one background reads
+     * differently from a run that found twelve. */
+    int found = 0;
+    for (uint32_t i = 0; i < 64; i++) {
+        const uint32_t base = registry + i * BG_STRIDE_DW * 4u;
+        if ((int32_t)LD32(base + BG_LAYER_COUNT) <= 0 && !LD32(base + BG_STAGE_WIDTH)) continue;
+        bg_record_report(i);
+        found++;
     }
-    for (int i = 0; i < n; i++)
-        fprintf(stderr, "bg table:   layer %-2d period=%-6u x=%-6d y=%d\n", i,
-                bg_layer_field(BG_LAYER_PERIOD, i),
-                (int32_t)bg_layer_field(BG_LAYER_X, i),
-                (int32_t)bg_layer_field(BG_LAYER_Y, i));
+    fprintf(stderr, "bg table: %d non-empty background record(s) in the first 64 slots\n",
+            found);
 }
