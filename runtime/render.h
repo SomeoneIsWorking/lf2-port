@@ -52,6 +52,19 @@ void render_blit(uint32_t dst_pixels,
                  int sl, int st, int sr, int sb,
                  int keyed, uint32_t key_lo, uint32_t key_hi);
 
+/* The game's own shadow ellipse, identified by the object it is drawn on. It is NOT added to
+ * the list as a picture: its rectangle is where the object stands on the ground, and that is
+ * the one thing a cast shadow needs that the sprite itself cannot supply. The next sprite
+ * drawn is the object it belongs to -- the game draws the ellipse immediately before it. */
+void render_shadow_ground(uint32_t dst_pixels, int dl, int dt, int dr, int db);
+
+/* Whether the cast shadows are in force. With them off -- or with the shaders unavailable,
+ * because the mask they draw into would then be consumed by nothing -- the game's own ellipse
+ * is recorded as an ordinary picture and the GPU frame stays byte-comparable with the
+ * software one. It is also what MARKS AN OBJECT: a sprite with a ground marker in front of
+ * it is a fighter standing in the field, which is the only thing the lighting touches. */
+int  render_shadows_enabled(void);
+
 /* A solid rectangle, the game's DDBLT_COLORFILL. */
 void render_fill(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t argb);
 

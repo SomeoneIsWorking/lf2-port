@@ -5,6 +5,7 @@
  */
 
 #include "overrides.h"
+#include "world.h"
 
 #include "../guest_ops.h"
 #include "../guest_map.h"
@@ -70,6 +71,19 @@ void fn_0043f010(void)
     /* A clip drawn from a font sheet is a text glyph, and the clip index IS the character
      * code. Tell the blit path, which is the only place that also knows the destination
      * surface, and clear it afterwards so an ordinary sprite is never mistaken for text. */
+    /* THE STAGE'S OWN SHADOW. The game draws a flat dithered ellipse under every object from
+     * a per-stage bitmap (bg.dat's `shadow:` / `shadowsize:`). Which OBJECT that draw is made
+     * on is what identifies it, and it is learned rather than assumed: clip_obj_note hands
+     * the blit path the object of the draw in progress, and the blit path -- which is the
+     * only place that knows the rectangle -- reports back which object drew the ellipse.
+     *
+     * An earlier attempt read a pointer out of the background record at -1128, next to the
+     * shadowsize. It was wrong: 40000 clip draws with a stage loaded, ZERO on that pointer.
+     * It belongs to the neighbouring background's record, the records being contiguous. */
+    clip_obj_note(R(ECX));
+    const uint32_t shadow_obj = shadow_object();
+    shadow_hint_set(shadow_obj && R(ECX) == shadow_obj);
+
     const int sheet = font_sheet_index(R(ECX));
     if (sheet >= 0) {
         glyph_hint_set((int32_t)LD32(R(ESP) + 12));

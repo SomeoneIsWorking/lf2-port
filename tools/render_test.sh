@@ -50,15 +50,15 @@ arm() {   # arm <dir> [VAR=value ...]
           timeout 300 "$BUILD/lf2" lf2.exe ) >/dev/null 2>&1 || true
 }
 
-# The GEOMETRY arms run with the HD2D pass off: this comparison is about whether the renderer
-# draws the same picture, and a bloom would swamp it. The pass gets its own arm below, which
-# has to DIFFER -- an effect that changes nothing is an effect that is not running, and that
-# is the failure a "looks fine to me" check would never catch.
+# The GEOMETRY arms run with the lighting off: this comparison is about whether the renderer
+# draws the same picture. The light gets its own arm below, which has to change the MATCH
+# frame and must NOT change the menu frame -- see the assertion for why that pair is the whole
+# point.
 echo "native renderer vs the software compositor: four runs, about 8 minutes..."
 arm soft LF2_RENDERER=soft
 arm gpu  LF2_HD2D=off
 arm skip LF2_HD2D=off LF2_RENDER_SKIP=7
-arm hd2d
+arm light
 
 # "<maxdiff> <differing> <total>" for two PPMs, or "ERR ..." -- never silence.
 cmp_ppm() {
@@ -134,24 +134,50 @@ for f in "$OUT/soft"/*.ppm; do
         fail=1
     fi
 
-    # The HD2D pass must change the picture, over a wide area and by a visible amount. This
-    # checks that it RAN; it does not check that it looks right, and nothing here can -- a
-    # bloom composited with the wrong blend mode would still pass this. What it does catch is
-    # the failure that would otherwise be silent: render targets that were never created, so
-    # the pass quietly did nothing and the picture stayed the plain composition.
-    if [ -f "$OUT/hd2d/$n" ]; then
-        set -- $(cmp_ppm "$OUT/gpu/$n" "$OUT/hd2d/$n")
-        if [ "$1" = "ERR" ]; then echo "  FAIL  $n: hd2d compare: $2"; fail=1; continue; fi
+    # THE LIGHT ARM, and the reason it asserts two OPPOSITE things on the two frames.
+    #
+    # The lighting and the cast shadows apply to the objects standing in the stage and to
+    # nothing else -- not the background layers, not the HUD, not the text. So:
+    #
+    #   the MATCH frame      has fighters in it and MUST change.
+    #   the MENU frame       has none, and must come out BYTE-IDENTICAL.
+    #
+    # The second is the one worth having. "The effect changed some pixels" is satisfied by an
+    # effect that has quietly spread over the whole frame, which is exactly what the version
+    # before this one did -- a bloom and a haze that touched every pixel and left the game
+    # looking washed out. A test that only checks the effect RAN cannot see that; a test that
+    # also checks WHERE it stopped can.
+    if [ -f "$OUT/light/$n" ]; then
+        set -- $(cmp_ppm "$OUT/gpu/$n" "$OUT/light/$n")
+        if [ "$1" = "ERR" ]; then echo "  FAIL  $n: light compare: $2"; fail=1; continue; fi
         hmax=$1; hn=$2
-        if [ "$hmax" -gt 4 ] && [ "$hn" -gt 10000 ]; then
-            echo "  ok    $n: the HD2D pass changes $hn px by up to $hmax, so it is running"
-        else
-            echo "  FAIL  $n: the HD2D pass changed $hn px by up to $hmax -- it is not"
-            echo "        running, or its render targets were never created"
-            fail=1
-        fi
+        case "$n" in
+        *002250*)
+            if [ "$hmax" -gt 8 ] && [ "$hn" -gt 2000 ]; then
+                echo "  ok    $n: the light changes $hn px by up to $hmax on a frame with"
+                echo "        fighters in it, so it is running"
+            else
+                echo "  FAIL  $n: the light changed $hn px by up to $hmax on a MATCH frame --"
+                echo "        it is not running, the character buffer is empty, or its render"
+                echo "        targets were never created"
+                fail=1
+            fi
+            ;;
+        *)
+            if [ "$hn" -eq 0 ]; then
+                echo "  ok    $n: the light changes NOTHING on a frame with no fighters in it,"
+                echo "        so it is confined to the stage's characters"
+            else
+                echo "  FAIL  $n: the light changed $hn px by up to $hmax on a frame with NO"
+                echo "        fighters in it. It is meant to touch the stage's characters and"
+                echo "        nothing else -- the scenery, the HUD and the text must come"
+                echo "        through as the game composed them"
+                fail=1
+            fi
+            ;;
+        esac
     else
-        echo "  FAIL  $n: the hd2d arm produced no such frame"; fail=1
+        echo "  FAIL  $n: the light arm produced no such frame"; fail=1
     fi
 done
 

@@ -70,6 +70,7 @@ add_executable(lf2
     runtime/overrides/assets.c
     runtime/overrides/background.c
     runtime/render.c
+    runtime/hd2d.c
     runtime/main.c)
 target_include_directories(lf2 PRIVATE runtime runtime/overrides)
 
@@ -91,6 +92,7 @@ set_source_files_properties(
     runtime/overrides/assets.c
     runtime/overrides/background.c
     runtime/render.c
+    runtime/hd2d.c
     runtime/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
@@ -282,6 +284,15 @@ add_test(NAME resize
 set_tests_properties(resize PROPERTIES
                      LABELS slow TIMEOUT 600 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
+# The SPIR-V in runtime/shaders/gen/ is committed, so the build needs no shader compiler --
+# which also means an edited shader that was never recompiled would ship the old lighting and
+# nothing would say so. This recompiles and compares wherever glslc exists, and SKIPS (77)
+# where it does not, saying which.
+add_test(NAME shaders
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/build_shaders.sh --check
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(shaders PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 # The native renderer draws what the software compositor draws (issue #30), with a
 # deliberately-broken arm as the negative -- this comparison was fooled once already by

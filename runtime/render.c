@@ -1,6 +1,8 @@
-/* The native renderer -- see runtime/render.h for what it is and why it exists. */
+/* The native renderer -- see runtime/render.h for what it is and why it exists, and
+ * runtime/hd2d.h for what is done with the geometry once it is here. */
 
 #include "render.h"
+#include "hd2d.h"
 #include "guest.h"
 
 #include <SDL3/SDL.h>
@@ -22,7 +24,7 @@
  */
 enum { LIST_MAX = 8192, SURF_MAX = 8, TEX_MAX = 512, TILE_BYTES_MAX = 4u << 20 };
 
-enum EntryKind { E_TEX, E_FILL, E_TILE };
+enum EntryKind { E_TEX, E_FILL, E_TILE, E_GROUND };
 
 typedef struct {
     int kind;
@@ -38,6 +40,7 @@ typedef struct {
     /* E_TILE */
     uint32_t tile_off;              /* byte offset into the frame's tile arena */
     int      tw, th;
+    SDL_Texture *tile_tex;          /* made once per frame, used by every pass over the list */
 } Entry;
 
 typedef struct {
@@ -71,13 +74,14 @@ static uint32_t tile_used;
 static List    *tile_list;          /* the list the open tile belongs to */
 static int      tile_index;
 
-static SDL_Texture *target;         /* the render target the frame is drawn into */
+static SDL_Texture *target;         /* the frame the player is shown */
+static SDL_Texture *rt_albedo;      /* the composition, exactly as the game drew it */
+static SDL_Texture *rt_chars;       /* which of those pixels are a fighter, and how high */
+static SDL_Texture *rt_shadow;      /* the cast-shadow mask */
 static int          target_w, target_h;
 
 static long stat_frames, stat_tex, stat_fill, stat_tile, stat_uploads, stat_dropped;
-static long stat_soft_frames, stat_post;
-
-static void post_free(void);
+static long stat_soft_frames, stat_post, stat_ground, stat_shadow;
 
 int render_gpu_enabled(void)
 {
@@ -94,6 +98,15 @@ void render_init(SDL_Renderer *r)
     R = r;
     if (!render_gpu_enabled()) return;
     if (!tile_arena) tile_arena = malloc(TILE_BYTES_MAX);
+    hd2d_init(r);
+}
+
+static void targets_free(void)
+{
+    SDL_Texture **ts[] = { &target, &rt_albedo, &rt_chars, &rt_shadow };
+    for (unsigned i = 0; i < SDL_arraysize(ts); i++)
+        if (*ts[i]) { SDL_DestroyTexture(*ts[i]); *ts[i] = NULL; }
+    target_w = target_h = 0;
 }
 
 void render_shutdown(void)
@@ -101,8 +114,8 @@ void render_shutdown(void)
     for (int i = 0; i < ntexes; i++)
         if (texes[i].tex) { SDL_DestroyTexture(texes[i].tex); texes[i].tex = NULL; }
     ntexes = 0;
-    if (target) { SDL_DestroyTexture(target); target = NULL; }
-    post_free();
+    hd2d_shutdown();
+    targets_free();
     for (int i = 0; i < nlists; i++) { free(lists[i].e); lists[i].e = NULL; }
     nlists = 0;
     free(tile_arena); tile_arena = NULL;
@@ -152,8 +165,8 @@ static uint32_t sample_hash(const uint8_t *base, int w, int h, int pitch)
 
 /* The colour key becomes ALPHA. This is where this port's blend stage comes from: the
  * software blitter could only skip a keyed pixel, so nothing could ever be partly
- * transparent; a keyed source uploaded as RGBA can be, and that is what a cast shadow and
- * every HD2D pass need. */
+ * transparent; a keyed source uploaded as RGBA can be, and that is what a cast shadow, a
+ * silhouette in the g-buffer and every lighting term need. */
 static void upload(Tex *t, const uint8_t *base, int w, int h, int pitch)
 {
     void *px = NULL;
@@ -196,6 +209,10 @@ static Tex *tex_for(uint32_t pixels, int w, int h, int pitch,
     t->tex = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
                                SDL_TEXTUREACCESS_STREAMING, w, h);
     if (!t->tex) return NULL;
+    /* NEAREST, always. This is pixel art magnified two or three times; anything else turns
+     * a 32-pixel fighter into a smear. The frame is built at the window's resolution so the
+     * sprite is resampled exactly ONCE, here, and every later pass runs on the result at
+     * 1:1 -- which is the other half of keeping the pixels crisp. */
     SDL_SetTextureScaleMode(t->tex, SDL_SCALEMODE_NEAREST);
     SDL_SetTextureBlendMode(t->tex, keyed ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
     t->pixels = pixels; t->keyed = keyed; t->key_lo = key_lo; t->key_hi = key_hi;
@@ -228,6 +245,19 @@ void render_blit(uint32_t dst_pixels,
     e->src_pixels = src_pixels;
     e->sw = sw; e->sh = sh; e->spitch = spitch;
     e->keyed = keyed; e->key_lo = key_lo; e->key_hi = key_hi;
+}
+
+/* The ground marker. Recorded in the list rather than kept in a side variable so it keeps its
+ * ORDER: the ellipse belongs to the sprite drawn immediately after it, and with several
+ * objects on screen the pairing is only correct if both stay in sequence. It is also the
+ * object's DEPTH, which is the other thing the sprite cannot supply. */
+void render_shadow_ground(uint32_t dst_pixels, int dl, int dt, int dr, int db)
+{
+    if (!render_gpu_enabled() || dr <= dl || db <= dt) return;
+    Entry *e = entry_push(dst_pixels);
+    if (!e) return;
+    e->kind = E_GROUND;
+    e->dst = (SDL_FRect){ (float)dl, (float)dt, (float)(dr - dl), (float)(db - dt) };
 }
 
 void render_fill(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t argb)
@@ -269,11 +299,12 @@ void render_tile_end(void)
 
 /* ---- drawing ---- */
 
-static SDL_Texture *tile_texture(const Entry *e)
+/* Tiles become a texture ONCE per frame and are then used by every pass over the list. They
+ * are small (a glyph is 8x16) and few, and caching them beyond the frame would need an
+ * identity they do not have. */
+static SDL_Texture *tile_texture(Entry *e)
 {
-    /* Tiles are one-shot: a fresh texture each frame, destroyed after the draw. They are
-     * small (a glyph is 8x16) and few, and caching them would need an identity they do not
-     * have. */
+    if (e->tile_tex) return e->tile_tex;
     SDL_Texture *t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
                                        SDL_TEXTUREACCESS_STREAMING, e->tw, e->th);
     if (!t) return NULL;
@@ -290,6 +321,7 @@ static SDL_Texture *tile_texture(const Entry *e)
                    (size_t)e->tw * 4);
         SDL_UnlockTexture(t);
     }
+    e->tile_tex = t;
     return t;
 }
 
@@ -306,133 +338,164 @@ static int render_skip(void)
     return n;
 }
 
-static void draw_list(const List *l, float offx)
+/* ---- cast shadows ----
+ *
+ * The game's shadow is one flat dithered ellipse per object, the same bitmap wherever the
+ * object is and whatever shape it is in. Magnified it reads as a checkerboard, because the
+ * dither was chosen for a 794x550 screen.
+ *
+ * A real one is the SPRITE's own silhouette, laid down on the ground and leaned away from the
+ * light. It is drawn as a sheared quad through SDL_RenderGeometry -- SDL_RenderTexture cannot
+ * shear, and without the shear a squashed sprite reads as a reflection rather than a shadow.
+ * The lean is not a constant here: it is hd2d_shadow_lean(), the ONE light direction the
+ * lighting shader also uses, projected onto the ground. Move the light and the shading and
+ * the shadows move together.
+ *
+ * It is drawn into a MASK, not black over the picture. That is what lets the lighting pass
+ * treat it as an absence of light -- so a shadow keeps the sky's colour in it instead of
+ * being a hole -- and it is what lets the mask be blurred into a soft edge. The mask carries
+ * the sprite's COVERAGE, which takes a shader (hd2d_shadow.frag): the fixed-function blender
+ * can only give `sprite.rgb * a`, and a mask made of the fighter's own colours makes a shadow
+ * that is darker under the bright parts of them.
+ *
+ * WHERE it goes comes from the game, not from a guess: the ellipse the game drew is at the
+ * object's feet, so its centre and its bottom edge are the ground point. A sprite with no
+ * preceding ellipse -- the background, the HUD, anything the object pass did not draw --
+ * casts nothing.
+ */
+static void draw_cast_shadow(Tex *t, const SDL_FRect *src, const SDL_FRect *sprite,
+                             const SDL_FRect *ground)
+{
+    const float cx = ground->x + ground->w * 0.5f;
+    const float gy = ground->y + ground->h;          /* the ellipse's bottom edge */
+    const float w  = sprite->w;
+    const float h  = sprite->h * 0.30f;              /* laid down, not standing */
+    const float lean = h * hd2d_shadow_lean();
+
+    const SDL_FColor c = { 1.0f, 1.0f, 1.0f, 1.0f };   /* the shader writes coverage */
+    const float u0 = src->x / (float)t->w, u1 = (src->x + src->w) / (float)t->w;
+    const float v0 = src->y / (float)t->h, v1 = (src->y + src->h) / (float)t->h;
+
+    /* bottom edge at the feet, top edge (the sprite's head) pushed away and sheared */
+    const SDL_Vertex v[4] = {
+        { { cx - w * 0.5f + lean, gy - h }, c, { u0, v0 } },   /* sprite top-left  */
+        { { cx + w * 0.5f + lean, gy - h }, c, { u1, v0 } },   /* sprite top-right */
+        { { cx + w * 0.5f,        gy     }, c, { u1, v1 } },   /* sprite bottom-right */
+        { { cx - w * 0.5f,        gy     }, c, { u0, v1 } },   /* sprite bottom-left  */
+    };
+    const int idx[6] = { 0, 1, 2, 0, 2, 3 };
+    /* NONE, not BLEND: the shader alpha-tests, so overlapping shadows overwrite instead of
+     * accumulating into a doubly dark patch where two fighters stand together. */
+    SDL_SetTextureBlendMode(t->tex, SDL_BLENDMODE_NONE);
+    SDL_RenderGeometry(R, t->tex, v, 4, idx, 6);
+}
+
+enum Pass { PASS_COLOUR, PASS_CHARS, PASS_SHADOW };
+
+/* The three passes walk the SAME list in the SAME order through this one function, because
+ * the alternative -- three loops kept in step by hand -- is how a character buffer ends up
+ * describing a frame that was not the one drawn.
+ *
+ * PASS_COLOUR draws everything, exactly as the game composed it. The other two draw ONLY the
+ * objects standing in the stage, which are the ones the game put a shadow ellipse in front
+ * of: that is where the lighting applies and where the shadows come from, and it is why the
+ * background, the HUD and the text are untouched by both.
+ */
+static void draw_list(List *l, int pass, float offx, float scale_y)
 {
     const int skip = render_skip();
+    int have_ground = 0;
+    SDL_FRect ground = { 0, 0, 0, 0 };
+
     for (int i = 0; i < l->n; i++) {
         if (skip > 0 && (i % skip) == 0) continue;
-        const Entry *e = &l->e[i];
+        Entry *e = &l->e[i];
         SDL_FRect dst = e->dst;
         dst.x += offx;
+
+        if (e->kind == E_GROUND) {
+            /* The game's ellipse is REPLACED, not drawn under: leaving it would put a
+             * checkerboard beneath every real shadow. With the light off it was never
+             * recorded as a ground marker in the first place, and the game's own draw
+             * stands. */
+            ground = dst;
+            have_ground = 1;
+            if (pass == PASS_COLOUR) stat_ground++;
+            continue;
+        }
+
+        /* The two lighting passes have nothing to say about anything that is not an object
+         * in the field, and an object is precisely a sprite with a ground marker in front
+         * of it. Everything else is skipped here rather than filtered later. */
+        const int is_object = have_ground && e->kind == E_TEX;
+        have_ground = 0;
+        if (pass != PASS_COLOUR && !is_object) continue;
+
         if (e->kind == E_FILL) {
             SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
             SDL_SetRenderDrawColor(R, (uint8_t)(e->argb >> 16), (uint8_t)(e->argb >> 8),
                                    (uint8_t)e->argb, 255);
             SDL_RenderFillRect(R, &dst);
             stat_fill++;
-        } else if (e->kind == E_TEX) {
+            continue;
+        }
+
+        if (e->kind == E_TEX) {
             Tex *t = tex_for(e->src_pixels, e->sw, e->sh, e->spitch,
                              e->keyed, e->key_lo, e->key_hi);
             if (!t) continue;
+            if (pass == PASS_SHADOW) {
+                draw_cast_shadow(t, &e->src, &dst, &ground);
+                stat_shadow++;
+                continue;
+            }
+            if (pass == PASS_CHARS) {
+                hd2d_chars_quad((ground.y + ground.h) * scale_y);
+                SDL_SetTextureBlendMode(t->tex, SDL_BLENDMODE_NONE);
+                SDL_RenderTexture(R, t->tex, &e->src, &dst);
+                continue;
+            }
+            SDL_SetTextureBlendMode(t->tex, e->keyed ? SDL_BLENDMODE_BLEND
+                                                     : SDL_BLENDMODE_NONE);
             SDL_RenderTexture(R, t->tex, &e->src, &dst);
             stat_tex++;
-        } else {
-            SDL_Texture *t = tile_texture(e);
-            if (!t) continue;
-            SDL_RenderTexture(R, t, NULL, &dst);
-            SDL_DestroyTexture(t);
-            stat_tile++;
+            continue;
         }
+
+        /* E_TILE, which only the colour pass reaches: GDI text is not in the field. */
+        SDL_Texture *tt = tile_texture(e);
+        if (!tt) continue;
+        SDL_SetTextureBlendMode(tt, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+        SDL_RenderTexture(R, tt, NULL, &dst);
+        stat_tile++;
     }
 }
 
-/* ---- the HD2D pass ----
- *
- * A bloom, built out of render targets and blend modes only. SDL 3.4 can take custom shaders
- * through SDL_GPURenderState, but only as precompiled SPIR-V/DXIL/MSL -- that is a shader
- * toolchain in a build that currently needs nothing but a C compiler and SDL, on a port whose
- * whole point is that it builds anywhere. So the bright pass is done with arithmetic the
- * fixed-function blender already has:
- *
- *   BRIGHT PASS   dst = frame * frame, which is SDL_BLENDMODE_MOD of the frame over a copy
- *                 of itself. Squaring in 0..1 leaves highlights near their value and pushes
- *                 midtones down quadratically -- a soft threshold with no branch and no
- *                 shader. A plain additive glow without it just brightens everything and
- *                 looks like a washed-out screen rather than light.
- *   BLUR          successive downsamples with LINEAR filtering, then one upsample. The
- *                 filtering IS the blur; doing it in two steps (1/4 then 1/16) spreads it
- *                 far enough to read as light rather than as a halo.
- *   COMPOSITE     added back over the frame.
- *
- * LF2_HD2D=off turns it off. That is a DIAGNOSTIC, not how the feature is reached: the effect
- * is on by default, because a look nobody can find is not a look. It exists so
- * tools/render_test.sh can compare the renderer's GEOMETRY against the software compositor
- * without the post-process in the way, and so the pass can be shown to do something.
- */
-static SDL_Texture *bp_q, *bp_sq, *bp_bloom;
-static int bp_w, bp_h;
+/* ---- presenting ---- */
 
-static int hd2d_on(void)
+/* The cast shadows are part of the HD2D look, so they follow the same switch -- and they
+ * follow whether the shaders actually loaded, because a mask nothing consumes would simply
+ * delete the game's shadow and put nothing in its place. ddraw.c asks before it decides
+ * whether the game's own ellipse becomes a ground marker or stays a picture. */
+int render_shadows_enabled(void) { return hd2d_ready(); }
+
+static SDL_Texture *rt_make(int w, int h, SDL_ScaleMode mode)
 {
-    static int on = -1;
-    if (on < 0) {
-        const char *v = getenv("LF2_HD2D");
-        on = !(v && (strcmp(v, "off") == 0 || strcmp(v, "0") == 0));
+    SDL_Texture *t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
+                                       SDL_TEXTUREACCESS_TARGET, w, h);
+    if (t) {
+        SDL_SetTextureScaleMode(t, mode);
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
     }
-    return on;
+    return t;
 }
 
-static int hd2d_strength(void)
+static void clear_to(SDL_Texture *rt, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
-    static int a = -1;
-    if (a < 0) { const char *v = getenv("LF2_HD2D_BLOOM"); a = v ? atoi(v) : 110; }
-    return a < 0 ? 0 : (a > 255 ? 255 : a);
-}
-
-static SDL_Texture *post_target(SDL_Texture **slot, int w, int h)
-{
-    if (*slot) return *slot;
-    *slot = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w, h);
-    if (*slot) SDL_SetTextureScaleMode(*slot, SDL_SCALEMODE_LINEAR);
-    return *slot;
-}
-
-static void post_free(void)
-{
-    if (bp_q)     { SDL_DestroyTexture(bp_q);     bp_q = NULL; }
-    if (bp_sq)    { SDL_DestroyTexture(bp_sq);    bp_sq = NULL; }
-    if (bp_bloom) { SDL_DestroyTexture(bp_bloom); bp_bloom = NULL; }
-}
-
-/* Draws `src` filling the current target, with one blend mode. */
-static void post_draw(SDL_Texture *src, SDL_BlendMode bm, int alpha)
-{
-    SDL_SetTextureBlendMode(src, bm);
-    SDL_SetTextureAlphaMod(src, (uint8_t)alpha);
-    SDL_RenderTexture(R, src, NULL, NULL);
-    SDL_SetTextureAlphaMod(src, 255);
-}
-
-/* Runs the pass over `frame`, leaving the result in `frame`. Returns 0 and changes nothing
- * if any target could not be made -- a failed effect must not cost the player the picture. */
-static int hd2d_apply(SDL_Texture *frame, int w, int h)
-{
-    if (!hd2d_on() || hd2d_strength() == 0) return 0;
-    const int qw = w / 4 > 1 ? w / 4 : 1, qh = h / 4 > 1 ? h / 4 : 1;
-    const int sw = w / 16 > 1 ? w / 16 : 1, sh = h / 16 > 1 ? h / 16 : 1;
-    if (bp_w != w || bp_h != h) { post_free(); bp_w = w; bp_h = h; }
-    if (!post_target(&bp_q, qw, qh) || !post_target(&bp_sq, qw, qh)
-        || !post_target(&bp_bloom, sw, sh)) return 0;
-
-    SDL_SetTextureScaleMode(frame, SDL_SCALEMODE_LINEAR);
-
-    SDL_SetRenderTarget(R, bp_q);
-    post_draw(frame, SDL_BLENDMODE_NONE, 255);
-
-    /* frame*frame. MOD is dst*src, so the copy has to be laid down first. */
-    SDL_SetRenderTarget(R, bp_sq);
-    post_draw(bp_q, SDL_BLENDMODE_NONE, 255);
-    post_draw(bp_q, SDL_BLENDMODE_MOD, 255);
-
-    SDL_SetRenderTarget(R, bp_bloom);
-    post_draw(bp_sq, SDL_BLENDMODE_NONE, 255);
-
-    SDL_SetRenderTarget(R, frame);
-    post_draw(bp_bloom, SDL_BLENDMODE_ADD, hd2d_strength());
-
-    SDL_SetTextureScaleMode(frame, SDL_SCALEMODE_NEAREST);
-    SDL_SetRenderTarget(R, NULL);
-    return 1;
+    SDL_SetRenderTarget(R, rt);
+    SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(R, r, g, b, a);
+    SDL_RenderClear(R);
 }
 
 int render_present(uint32_t src_pixels, int off, int w, int h)
@@ -461,14 +524,14 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
      *
      * The software compositor has no choice about this: it fills a 794x550 (or as-wide-as-the
      * -aspect) buffer and SDL point-scales that one texture up to the window, so on a 1080p
-     * screen every game pixel becomes a 2x2 block and everything -- text, the bloom, anything
-     * added later -- is quantised to the small grid before it is ever enlarged.
+     * screen every game pixel becomes a 2x2 block and everything -- text, the lighting,
+     * anything added later -- is quantised to the small grid before it is ever enlarged.
      *
      * Drawing from a display list removes that constraint: the quads carry the game's own
      * coordinates and the SCALE is applied as they are drawn, so the render target is the size
      * of the output and every later pass runs at full resolution. Sprites are pixel art and
-     * still land on the same grid (nearest, integer coordinates), but they are resampled ONCE
-     * instead of twice, and the post-process is no longer working on an upscaled thumbnail.
+     * still land on the same grid (NEAREST, above), but they are resampled ONCE instead of
+     * twice, and the lighting is no longer working on an upscaled thumbnail.
      *
      * Logical presentation is turned off while this happens: it exists to scale the software
      * path's small buffer, and leaving it on would scale the full-resolution frame a second
@@ -482,37 +545,67 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED)
         SDL_SetRenderLogicalPresentation(R, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
 
-    if (target && (target_w != ow || target_h != oh)) {
-        SDL_DestroyTexture(target); target = NULL;
-    }
+    if (target && (target_w != ow || target_h != oh)) targets_free();
     if (!target) {
-        /* A render target, which the port has never had. It is what every later pass needs:
-         * a finished frame that can be read back and processed rather than one that has
-         * already gone to the screen. */
-        target = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
-                                   SDL_TEXTUREACCESS_TARGET, ow, oh);
-        if (!target) {
+        target = rt_make(ow, oh, SDL_SCALEMODE_NEAREST);
+        if (hd2d_ready()) {
+            rt_albedo = rt_make(ow, oh, SDL_SCALEMODE_NEAREST);
+            rt_chars   = rt_make(ow, oh, SDL_SCALEMODE_NEAREST);
+            rt_shadow = rt_make(ow, oh, SDL_SCALEMODE_LINEAR);
+        }
+        if (!target || (hd2d_ready() && (!rt_albedo || !rt_chars || !rt_shadow))) {
+            fprintf(stderr, "render: could not create the %dx%d render targets (%s) -- the "
+                            "software compositor is presenting\n", ow, oh, SDL_GetError());
+            targets_free();
             if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED)
                 SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
+            stat_soft_frames++;
             return 0;
         }
-        SDL_SetTextureScaleMode(target, SDL_SCALEMODE_NEAREST);
         target_w = ow; target_h = oh;
     }
+    const float sx = (float)ow / (float)w, sy = (float)oh / (float)h;
+    const int   run_hd2d = hd2d_ready() && rt_albedo && rt_chars && rt_shadow;
 
-    SDL_SetRenderTarget(R, target);
-    SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
-    SDL_SetRenderDrawColor(R, 0, 0, 0, 255);
-    SDL_RenderClear(R);
-    SDL_SetRenderScale(R, (float)ow / (float)w, (float)oh / (float)h);
-    /* The widescreen centring offset is in the game's coordinates, so it goes on before the
-     * scale rather than after -- which is what applying it per rectangle gets for free. */
-    draw_list(l, (float)off);
+    /* 1. THE PICTURE, exactly as the game composed it. With the light off this is the frame,
+     *    and it is what tools/render_test.sh compares against the software compositor byte
+     *    for byte. */
+    clear_to(run_hd2d ? rt_albedo : target, 0, 0, 0, 255);
+    SDL_SetRenderScale(R, sx, sy);
+    draw_list(l, PASS_COLOUR, (float)off, sy);
     SDL_SetRenderScale(R, 1.0f, 1.0f);
 
-    /* The frame exists as a texture now, which is the whole reason the render target is
-     * here: it can be read back, blurred and composited before anyone sees it. */
-    if (hd2d_apply(target, ow, oh)) stat_post++;
+    if (run_hd2d) {
+        /* 2. WHICH PIXELS ARE A FIGHTER. Cleared to zero: everything the game drew that is
+         *    not an object standing in the field stays out of the mask, and the lighting
+         *    leaves those pixels exactly as they are. */
+        clear_to(rt_chars, 0, 0, 0, 255);
+        SDL_SetRenderScale(R, sx, sy);
+        if (hd2d_chars_begin(1.0f / (float)oh)) {
+            draw_list(l, PASS_CHARS, (float)off, sy);
+            hd2d_chars_end();
+        }
+        SDL_SetRenderScale(R, 1.0f, 1.0f);
+
+        /* 3. THE CAST SHADOWS, as a mask the light is taken away through. */
+        clear_to(rt_shadow, 0, 0, 0, 255);
+        SDL_SetRenderScale(R, sx, sy);
+        if (hd2d_shadow_begin()) {
+            draw_list(l, PASS_SHADOW, (float)off, sy);
+            hd2d_shadow_end();
+        }
+        SDL_SetRenderScale(R, 1.0f, 1.0f);
+
+        if (hd2d_post(rt_albedo, rt_chars, rt_shadow, target, ow, oh)) {
+            stat_post++;
+        } else {
+            /* The pass could not run this frame. Show the picture rather than nothing --
+             * and hd2d_report says why at the end of the run. */
+            SDL_SetRenderTarget(R, target);
+            SDL_SetTextureBlendMode(rt_albedo, SDL_BLENDMODE_NONE);
+            SDL_RenderTexture(R, rt_albedo, NULL, NULL);
+        }
+    }
 
     SDL_SetRenderTarget(R, NULL);
     SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
@@ -525,8 +618,8 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
     stat_frames++;
     if (stat_frames == 1)
-        fprintf(stderr, "render: drawing %dx%d of game at %dx%d output (scale %.2fx)\n",
-                w, h, ow, oh, (float)ow / (float)w);
+        fprintf(stderr, "render: drawing %dx%d of game at %dx%d output (scale %.2fx), "
+                        "lighting %s\n", w, h, ow, oh, sx, run_hd2d ? "on" : "OFF");
     return 1;
 }
 
@@ -549,15 +642,6 @@ int render_readback(uint32_t *dst, int w, int h, int dst_pitch)
     SDL_Surface *cv = (sf->format == SDL_PIXELFORMAT_ARGB8888)
                     ? sf : SDL_ConvertSurface(sf, SDL_PIXELFORMAT_ARGB8888);
     int ok = 0;
-    {
-        static int said;
-        if (!said) {
-            said = 1;
-            fprintf(stderr, "render: readback target %dx%d -> surface %dx%d pitch %d "
-                            "(asked %dx%d)\n", target_w, target_h, sf->w, sf->h, sf->pitch,
-                    w, h);
-        }
-    }
     if (cv) {
         for (int y = 0; y < h && y < cv->h; y++)
             memcpy((uint8_t *)dst + (size_t)y * (size_t)dst_pitch,
@@ -574,7 +658,14 @@ int render_readback(uint32_t *dst, int w, int h, int dst_pitch)
  * must not survive into a frame that did not build them. */
 void render_frame_reset(void)
 {
-    for (int i = 0; i < nlists; i++) lists[i].n = 0;
+    for (int i = 0; i < nlists; i++) {
+        for (int j = 0; j < lists[i].n; j++)
+            if (lists[i].e[j].tile_tex) {
+                SDL_DestroyTexture(lists[i].e[j].tile_tex);
+                lists[i].e[j].tile_tex = NULL;
+            }
+        lists[i].n = 0;
+    }
     tile_used = 0;
     tile_list = NULL;
 }
@@ -588,12 +679,15 @@ void render_report(void)
                     "tiles=%ld textures=%d uploads=%ld dropped=%ld\n",
             render_gpu_enabled() ? "on" : "off", stat_frames, stat_soft_frames,
             stat_tex, stat_fill, stat_tile, ntexes, stat_uploads, stat_dropped);
-    fprintf(stderr, "render: hd2d=%s bloom=%d applied to %ld frame(s)\n",
-            hd2d_on() ? "on" : "off", hd2d_strength(), stat_post);
-    if (hd2d_on() && stat_frames && !stat_post)
-        fprintf(stderr, "render: the HD2D pass ran on NO frames although %ld were drawn -- "
-                        "its render targets could not be created, so the picture is the "
-                        "plain composition\n", stat_frames);
+    fprintf(stderr, "render: the light ran on %ld frame(s); %ld cast shadows from %ld ground "
+                    "markers\n", stat_post, stat_shadow, stat_ground);
+    hd2d_report();
+    if (hd2d_ready() && stat_ground && !stat_shadow)
+        fprintf(stderr, "render: %ld ground markers but NO cast shadows -- every one was "
+                        "followed by something that could not be drawn\n", stat_ground);
+    if (hd2d_ready() && stat_frames && !stat_ground)
+        fprintf(stderr, "render: NO ground markers were seen, so no shadow was replaced -- "
+                        "the stage's shadow object was never identified\n");
     if (render_gpu_enabled() && stat_frames == 0)
         fprintf(stderr, "render: the GPU path presented NO frames -- every one fell back to "
                         "the software compositor, so these counters describe nothing\n");
