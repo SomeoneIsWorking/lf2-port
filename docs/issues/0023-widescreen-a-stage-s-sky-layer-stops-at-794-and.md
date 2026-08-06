@@ -79,3 +79,47 @@ is exactly the kind of inference that produced the "phase word" mistake in menu.
 STILL CORRECT FROM THE ORIGINAL ENTRY: do not stretch the backdrop to the viewport width. That
 remains the wrong fix, and now for a sharper reason — the picture already has a period the game
 uses, so stretching would replace a real layout with an invented one.
+
+### Note (2026-08-06)
+THE LAYER TABLE IS LOCATED, 2026-08-06 — the fix now needs one more step, and it is named.
+
+The stage was identified from a frame capture rather than assumed (Brokeback Clif, whose
+bg.dat gives periods 1379/1379/1379/1500/1500 and stage width 1500). Those five dwords sit
+contiguously in the guest heap, IN FILE ORDER, and from there the structure resolves as
+PARALLEL ARRAYS OF 30 ENTRIES:
+
+    +0     repeat period    1379, 1379, 1379, 1500, 1500
+    +120   layer x          0, 460, 920, 0, 0
+    +240   layer y          129, 129, 129, 261, 296
+
+Every value matches the decrypted bg.dat exactly, which is what makes this an identification
+rather than one number coinciding. 120 bytes = 30 dwords per field, so a background holds at
+most 30 layers.
+
+NOT located, and deliberately not guessed: the transparency array. Every stage's transparency
+is 0, so a search for [0,0,0,0,0] matched several hundred places. A query that cannot
+discriminate between candidates has not found anything, and picking a plausible hit from it is
+how the "phase word" mistake in menu.c happened.
+
+WHAT BLOCKS THE FIX, precisely. The port needs the period at runtime, and the table is
+heap-resident:
+  - It appeared at 0x24e72df4 in TWO separate runs, so allocation is deterministic. Hardcoding
+    that address is not the fix -- it is a magic constant that breaks the moment anything
+    upstream allocates differently, and it would look correct until it did.
+  - There is NO pointer to it in .data. Not a near miss: .data holds 494 pointers into the
+    guest heap (clustered at 0x200bxxxx, 0x206fxxxx, 0x25fxxxxx) and none of them lands within
+    256K before the table.
+  - There is no stored pointer to it anywhere in the HEAP either, scanned for targets within
+    +/-512 bytes of the arrays.
+So the game reaches these arrays as an offset inside a larger allocation whose base it holds
+in a register or reaches through a chain -- which is exactly the shape that a pointer scan
+cannot find.
+
+THE NEXT STEP, and it uses an instrument this project already has rather than more scanning:
+arm the READ WATCH (LF2_READ_WATCH, runtime/rwatch.c, instrument I001) on the period array and
+let it name the guest instruction that reads it. The disassembly at that site then shows how
+the address is computed, and that computation -- not the address -- is what the port copies.
+
+Reproducing the measurement: tools/decrypt_dat.py --layers gives the expected periods, and
+LF2_HEAP_DUMP=<frame> with LF2_MEM_DUMP=<frame> gives the pair of dumps this rests on. The
+route used was tools/controller_test.sh's, with the match reached at frame 1968.
