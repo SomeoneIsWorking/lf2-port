@@ -69,6 +69,7 @@ add_executable(lf2
     runtime/overrides/text.c
     runtime/overrides/assets.c
     runtime/overrides/background.c
+    runtime/render.c
     runtime/main.c)
 target_include_directories(lf2 PRIVATE runtime runtime/overrides)
 
@@ -89,6 +90,7 @@ set_source_files_properties(
     runtime/overrides/text.c
     runtime/overrides/assets.c
     runtime/overrides/background.c
+    runtime/render.c
     runtime/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
@@ -279,6 +281,16 @@ add_test(NAME resize
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(resize PROPERTIES
                      LABELS slow TIMEOUT 600 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
+# The native renderer draws what the software compositor draws (issue #30), with a
+# deliberately-broken arm as the negative -- this comparison was fooled once already by
+# reading the same buffer twice.
+add_test(NAME render
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/render_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(render PROPERTIES
+                     LABELS slow TIMEOUT 900 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
 # Two humans in a MATCH. controller_2p proves the second pad joins at character selection

@@ -7,6 +7,7 @@
 #include "guest_map.h"
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "render.h"
 #include "script.h"
 
 void menu_click_report(void);   /* issue #27: the click flag as the front-end menu sees it */
@@ -339,18 +340,61 @@ static long frames;
 long hostwin_frames(void) { return frames; }
 
 static void frame_pace(void);
+/* Declared here because both the present and the frame boundary need it, and its definition
+ * sits further down with the controls hint it belongs to. */
+static int hint_on;
+
+/* The composition the last copy-to-primary came from, and the centring offset it was copied
+ * with. Recorded at the copy and consumed at the present, because those are two different
+ * calls and only the first knows which surface the frame was built in. */
+static uint32_t frame_src_pixels;
+static int      frame_src_off;
+void frame_source_note(uint32_t pixels, int off) { frame_src_pixels = pixels; frame_src_off = off; }
 
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
 {
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
-    screen_change_check(pixels, w, h, src_pitch, frames);
-    dump_frame(pixels, w, h, src_pitch, frames);
+    /* DRAW FIRST, then look at what was drawn. The GPU frame has to exist before it can be
+     * read back, and getting this order wrong is not a subtle bug with an obvious symptom:
+     * reading the target before drawing dumps the PREVIOUS frame, and with the camera
+     * scrolling about a pixel a frame that presents as a clean one-pixel horizontal shift of
+     * the whole world -- which reads as a sampler or half-texel problem and sends you looking
+     * in entirely the wrong place. */
+    static uint32_t *shot;
+    static int shot_w, shot_h;
+    const uint8_t *shown = pixels;
+    int shown_pitch = src_pitch;
+    const int gpu = hw.renderer && render_gpu_enabled() && !pause_active() && !hint_on
+                    && render_present(frame_src_pixels, frame_src_off, w, h);
+    int shown_w = w, shown_h = h;
+    if (gpu) {
+        /* The GPU frame is the size of the OUTPUT, not of the composition -- the renderer
+         * draws at the window's resolution. Dumping it at the composition's size would slice
+         * the top-left corner out of it and call that the frame. */
+        render_output_size(&shown_w, &shown_h);
+        if (shown_w <= 0 || shown_h <= 0) { shown_w = w; shown_h = h; }
+        if (shot && (shot_w != shown_w || shot_h != shown_h)) { free(shot); shot = NULL; }
+        if (!shot) {
+            shot = malloc((size_t)shown_w * (size_t)shown_h * 4);
+            shot_w = shown_w; shot_h = shown_h;
+        }
+        if (shot && render_readback(shot, shown_w, shown_h, shown_w * 4)) {
+            shown = (const uint8_t *)shot;
+            shown_pitch = shown_w * 4;
+        } else { shown_w = w; shown_h = h; }
+    }
+    /* Whatever was presented is what the dumps and the screen-change detector see. Dumping
+     * `pixels` regardless would hand every A/B the software compositor's buffer no matter
+     * which renderer drew the screen, and the comparison would be of a buffer against
+     * itself. */
+    screen_change_check(shown, shown_w, shown_h, shown_pitch, frames);
+    dump_frame(shown, shown_w, shown_h, shown_pitch, frames);
     dump_data(frames);
     dump_heap(frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
-    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); vram_report(); com_release_report(); input_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); com_release_report(); input_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
     /* The read profile is reported on the same periodic boundary and reset each time, so
      * each block covers one window rather than the whole run: an array swept only during a
      * match would otherwise be averaged with the menus that came before it. */
@@ -359,7 +403,10 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
         snprintf(when, sizeof when, "frames %ld-%ld", frames - 299, frames);
         rwatch_raw_flush(when);
     }
+    render_frame_reset();
     if (!hw.renderer) return;
+    if (gpu) { frame_pace(); return; }
+
     /* The texture is the size of the composition, and the composition follows the window, so
      * it is checked against the frame in hand rather than created once. Sizes are kept here
      * because SDL_GetTextureSize is a call per frame to learn what this port already knows. */
@@ -438,7 +485,6 @@ static void frame_pace(void)
  * override turns it on outside the game proper and off inside it. Rendered with the same
  * glyph renderer the game's own text uses -- without SDL3_ttf there are no glyphs and
  * the hint simply does not appear, which costs nothing but the hint. */
-static int hint_on;
 void controls_hint_enable(int on) { hint_on = on; }
 
 static void controls_hint_draw(const Surface *s)
@@ -975,6 +1021,7 @@ static void surf_Blt(uint32_t self)
          * these did not follow the layers: without this the ground simply stopped at 794
          * and the rest of the stage floor was black. */
         if (lf2_wide_width() && dl == 0 && dr == NATIVE_W && d->w > NATIVE_W) dr = d->w;
+        if (!d->primary) render_fill(d->pixels, dl, dt, dr, db, fill);
         for (int y = dt; y < db && y < d->h; y++) {
             if (y < 0) continue;
             uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
@@ -1136,6 +1183,13 @@ static void surf_Blt(uint32_t self)
                                d->pixels, d->w, d->h, d->pitch)) {
             glyphs_drawn++;
         } else {
+            /* Recorded for the native renderer and ALSO composed in software. Both paths
+             * build every frame; which one is presented is decided at the copy-to-primary.
+             * Running them together is what makes tools/render_test.sh able to diff them. */
+            if (!d->primary)
+                render_blit(d->pixels, dl, dt, dr, db,
+                            s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb,
+                            keyed, s->key_lo, s->key_hi);
             blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
                  keyed, s->key_lo, s->key_hi);
         }
@@ -1154,6 +1208,16 @@ static void surf_Blt(uint32_t self)
      * The layer itself carries the answer (bg.dat's `loop:`), and the pass that draws it is
      * now runtime/overrides/background.c. Continuing a run is decided there, from the data,
      * before the blit exists. This comment is the whole of what is left. */
+
+    /* THE FRAME BOUNDARY. The game composes off-screen and copies that surface to the
+     * primary in one blit, so this call names the composition -- which is how the renderer
+     * finds the right display list without anyone hardcoding a surface address. The software
+     * copy still happens; which path is PRESENTED is decided in hostwin_present, so the
+     * primary always holds the software frame and a frame dump can be taken of either. */
+    if (d->primary && srcobj) {
+        Surface *cs = com_host(srcobj);
+        if (cs) frame_source_note(cs->pixels, screen_offset_x());
+    }
 
     if (d->primary) {
         if (getenv("LF2_BLT_DEBUG")) {

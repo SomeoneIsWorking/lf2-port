@@ -35,11 +35,19 @@ python3 -c "" 2>/dev/null || { echo "SKIP: no python3 to read the frame dumps"; 
 # so the band holds pixels written at a DIFFERENT offset.
 FRAME=1550
 
+# PINNED TO THE SOFTWARE COMPOSITOR, and that is not a convenience. What this test guards is
+# primary_clear_on_move(), which belongs to the software present: the centring offset is added
+# to a full-width copy INTO THE PRIMARY, so the leftmost `offset` columns are never written and
+# keep the previous size's pixels. The native renderer cannot have that bug -- it draws into a
+# render target that is cleared every frame -- so under it the LF2_PRIMARY_STALE arm comes out
+# clean and the test loses its negative. It said so and failed rather than reporting a pass it
+# could not justify, which is exactly what the third arm is for.
 arm() {   # arm <dir> [VAR=value ...]
     dir=$1; shift
     mkdir -p "$OUT/$dir"
     ( cd "$GAME" && \
       env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+          LF2_RENDERER=soft \
           LF2_VIRTUAL_PAD="south:900,south:960,south:1020,south:1080" \
           LF2_WINDOW_SIZE=1900x800 \
           LF2_WINDOW_RESIZE="1400:1200x800,1500:1900x800" \
