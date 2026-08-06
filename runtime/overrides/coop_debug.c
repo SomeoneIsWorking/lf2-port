@@ -652,9 +652,18 @@ void coop_debug_tick(uint32_t self)
                  * so a position sampled there would enter a movement measurement as a jump
                  * from x=0 -- which is exactly the false failure that found this. */
                 if (o && LD8(EXISTS + (uint32_t)k) && coop_match_running(self))
-                    fprintf(stderr, "coop track: frame %ld entry %d x=%d y=%d +000=%d\n",
-                            f, k, (int32_t)LD32(o + 0x10), (int32_t)LD32(o + 0x18),
-                            (int32_t)LD32(o + 0x000));
+                    /* x, y, z -- and +0x18 is Z, not the `y` this line used to call it.
+                     * Measured by driving one input at a time: pressing RIGHT moves +0x10
+                     * and leaves +0x18 at 334, pressing UP moves +0x18 and not +0x10, and
+                     * +0x14 only twitches to -6 mid-jump. Confirmed independently by the
+                     * stage data -- up walked +0x18 to exactly 300, which is Brokeback
+                     * Clif's `zboundary: 300 510` lower bound.
+                     *
+                     * The old label mattered: fn_0041a5a0 depth-sorts the world on this
+                     * word, and a renderer told it was `y` would sort on the jump height. */
+                    fprintf(stderr, "coop track: frame %ld entry %d x=%d y=%d z=%d +000=%d\n",
+                            f, k, (int32_t)LD32(o + 0x10), (int32_t)LD32(o + 0x14),
+                            (int32_t)LD32(o + 0x18), (int32_t)LD32(o + 0x000));
                 else
                     fprintf(stderr, "coop track: frame %ld entry %d is NOT in the world\n",
                             f, k);
