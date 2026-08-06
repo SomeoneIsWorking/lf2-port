@@ -194,3 +194,40 @@ tile a hill at the sky's period or the reverse, and a wrong period tiles the wro
 across the whole widened band. The blit's HEIGHT separates those two (sky1 is 210 tall,
 hill 264), so (y, height) is the candidate rule -- but it is a candidate, not a measurement,
 and it must be checked on more than one stage before it is trusted. That is the next step.
+
+### Note (2026-08-06)
+MATCHING A BLIT TO ITS LAYER, analysed 2026-08-06 — and the obvious rule is NOT available.
+This is the last unknown before the drawing change, so it is written down rather than tried.
+
+Y ALONE IS AMBIGUOUS, measured over all twelve backgrounds (decrypt_dat.py over every
+bg.dat). Three stages have layers at the same y with DIFFERENT periods:
+
+  cuhk  y=128  sky1/sky2 period 967   vs  hill.bmp period 1140
+  cuhk  y=283  statue    period 1175  vs  grass.bmp period 1210
+  ft    y=129  w1.bmp    period 1500  vs  c1/f1..fd period 2300
+  thv   y=128  5.bmp     period 800   vs  4.bmp     period 840
+
+and cuhk's collision is on the SKY, which is exactly what this issue is about. So y-only
+matching would either skip the case that matters or tile a hill at the sky's period.
+
+(Y, HEIGHT) IS UNAMBIGUOUS — zero collision groups across all twelve — but the port cannot
+use it, because the LAYER's height is not in the layer table. Searched the record for the
+bitmap heights [150,150,150,35,231] and the widths [460,460,459,800,600] of Brokeback Clif:
+neither appears as a contiguous in-order run. The dimensions live in the loaded surfaces, not
+here. Nor is there a per-layer surface handle to match a blit's source against: every other
+120-byte field array in the record is zero for this stage except one at +480, which holds
+[0,0,0,800,600] — the last two layers' bitmap widths and nothing for the first three, so it is
+not a dimensions array either.
+
+RECOMMENDED NEXT STEP — match by DRAW ORDER, not by geometry. fn_0041a250 walks the layers of
+one background in table order, so the Nth background blit of a frame is layer N and the period
+is a direct index. That is exact rather than a heuristic, and it needs no geometry at all.
+What it assumes, and what must be MEASURED before it is trusted: that the loop draws every
+layer exactly once per frame and never skips one that is off-screen. Instrument it by counting
+the world-band blits in a frame and comparing against bg_layer_count() — equal on every stage
+means the index is safe; any stage where it differs kills the approach outright.
+
+DO NOT implement geometric matching as a fallback for stages where the count disagrees. A rule
+that is exact on some stages and approximate on others is one nobody can reason about, and a
+wrong period tiles the wrong picture across the whole widened band -- which is worse than the
+black strip this issue started from.
