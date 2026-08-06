@@ -231,3 +231,42 @@ DO NOT implement geometric matching as a fallback for stages where the count dis
 that is exact on some stages and approximate on others is one nobody can reason about, and a
 wrong period tiles the wrong picture across the whole widened band -- which is worse than the
 black strip this issue started from.
+
+### Note (2026-08-06)
+CORRECTION, 2026-08-06: "a layer's `width:` is the repeat period" IS WRONG, and claim C016 is
+falsified. What replaces it makes the fix SIMPLER, not harder.
+
+MEASURED, from the blits the game itself emits (LF2_BLT_FRAME), on Brokeback Clif at two
+different camera positions. Layer 3 is bc4.bmp, bitmap 800x35, bg.dat width 1500:
+
+  camera A   dst=(0,261)-(379,296)   srect=(421,0)-(800,35)
+             dst=(379,261)-(794,296) srect=(0,0)-(415,35)
+  camera B   dst=(0,261)-(201,296)   srect=(599,0)-(800,35)
+             dst=(201,261)-(794,296) srect=(0,0)-(593,35)
+
+Both wrap at 800 -- the BITMAP width -- with no gap anywhere. Were the repeat the 1500 of the
+`width:` field, an 800-wide bitmap would leave a 700-pixel hole, and there is none at either
+position. Layer 4 (bc5.bmp, 600 wide, also width 1500) repeats every 600 the same way.
+
+So the game wraps a layer's SOURCE horizontally at its bitmap width. `width:` is something
+else -- plausibly the scroll span that sets the parallax rate, since bc4's 1500 equals the
+stage width (tracks the camera 1:1) while the cliffs' 1379 is less and they scroll slower.
+That reading is a guess and is NOT recorded as established.
+
+WHY THIS SIMPLIFIES THE FIX. The whole chain of work above -- locating the heap table,
+recovering its address computation, the blit-to-layer matching problem and its ambiguities --
+was in service of getting a period the port could not otherwise know. It turns out the port
+already has it: the repeat distance is the SOURCE BITMAP WIDTH, which every blit carries.
+runtime/ddraw.c's continuation currently repeats at `dr - dl`, the destination width of the
+last blit in a run -- 593 for bc4 above, where the answer is 800. That is the bug, and it is
+one expression.
+
+WHAT IS STILL NOT SOLVED: a layer drawn as a CHAIN of different bitmaps side by side. The
+cliffs are bc1|bc2|bc3 (460+460+459) and cuhk's sky is sky1|sky2 (800+167); continuing past
+794 has to cycle through the chain rather than repeat the last bitmap, so the run's members
+and their order have to be tracked, not just its period. The chain is recognisable from the
+blits themselves -- contiguous, same rows, different source surfaces -- so this too needs no
+table.
+
+The layer-table work is not wasted (it is real, proved against the file, and is what
+established that the sky is drawn as a pair) but it is NOT on the path to this fix.
