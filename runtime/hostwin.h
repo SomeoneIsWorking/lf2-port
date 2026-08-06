@@ -31,8 +31,8 @@ void music_set_volume(int32_t centibels);
 long hostwin_frames(void);
 int  lf2_loading_now(void);              /* runtime/imports.c */
 enum { GUEST_FRAME_NS = 33333333 };      /* the guest clock's tick, shared with imports.c */
-/* The window changed size (or was just created): recompute the compose width from its
- * aspect and re-point everything that depends on it. In runtime/ddraw.c, because that is
+/* The window changed size (or was just created): recompute the composition from its PIXEL
+ * width and re-point everything that depends on it. In runtime/ddraw.c, because that is
  * where the surfaces and the presentation live. */
 void hostwin_window_geometry(int win_w, int win_h);
 
@@ -41,6 +41,10 @@ int  panel_charselect_up(void);
 int  panel_overlay_up(void);
 int  panel_hud_up(void);
 int  lf2_wide_width(void);    /* the composition's width when it is wider than 794, else 0 */
+
+/* Where the composition sits in the window: 1:1, centred. Both present paths use it, and it
+ * is what replaced SDL's logical presentation -- there is no scaling left to do. */
+void lf2_compose_placement(int comp_w, int comp_h, float *x, float *y);
 int  screen_offset_x(void);   /* centring offset for fixed-width screens */
 int  hud_offset_x(int dst_w, int bottom);   /* the in-match HUD's own centring */
 void hostwin_shutdown(void);
@@ -58,7 +62,7 @@ void glyph_hint_set(int ch);
 void glyph_hint_clear(void);
 
 /* The clip-draw override tells the blit path when a draw is the stage's own shadow ellipse,
- * identified by the object it is drawn on (world.h, BG_SHADOW_OBJ). */
+ * identified by the object it is drawn on -- learned per stage, see runtime/ddraw.c. */
 void shadow_hint_set(int on);
 
 /* The clip-draw override hands over the object each draw is made on; the blit path learns
@@ -69,6 +73,11 @@ uint32_t shadow_object(void);
 /* runtime/overrides/assets.c -- the stage's shadow geometry, from the background record. */
 void     bg_shadow_size(int *w, int *h);
 uint32_t bg_shadow_stage(void);
+
+/* The stage's walkable floor, from bg.dat's `zboundary:` -- which is where the floor IS on
+ * the screen, because LF2's depth axis projects straight down it. 0 when no stage is loaded
+ * or the record does not give an ordered pair inside 550 rows. */
+int      bg_z_bounds(int *zmin, int *zmax);
 int  hostwin_key_held(uint32_t vk);
 void hostwin_request_quit(void);
 int  hostwin_width(void);

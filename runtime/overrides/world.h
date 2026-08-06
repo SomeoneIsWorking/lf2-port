@@ -180,6 +180,8 @@ enum { BG_LAYER_PIC    = 81027484,      /* -120 the picture handed to the draw c
        BG_LAYER_TINT   = 81028684,      /* +1080 non-zero: a colour fill, not a picture */
        BG_LAYER_OBJ    = 81028804 };    /* +1200 the object the draw call is made on */
 enum { BG_STAGE_WIDTH  = 81026480,      /* -1124, per background, not per layer */
+       BG_Z_MIN        = 81026484,      /* -1120 bg.dat's `zboundary:` -- the far edge of */
+       BG_Z_MAX        = 81026488,      /* -1116   the walkable floor, and the near edge   */
        BG_SHADOW_W     = 81026500,      /* -1104 bg.dat's `shadowsize:` */
        BG_SHADOW_H     = 81026504,      /* -1100 */
        BG_LAYER_COUNT  = 81026508 };    /* -1096; fn_0041a250 loops on this count */
@@ -203,5 +205,18 @@ int      bg_view_width(void);
  * from the background record the same way every other field is. */
 void     bg_shadow_size(int *w, int *h);
 uint32_t bg_shadow_stage(void);
+
+/* THE WALKABLE FLOOR, from bg.dat's `zboundary:` (issue #32).
+ *
+ * z IS the screen row a fighter's feet are on -- LF2's depth axis projects straight down the
+ * screen, which is why the game can depth-sort on it and why the shadow ellipse lands at
+ * y = z. So this pair is not just a movement clamp: it is where the FLOOR IS on the screen,
+ * in the game's own coordinates, and therefore which rows are a horizontal surface and which
+ * are the backdrop standing behind it.
+ *
+ * Returns 0 and leaves the outputs alone when no stage is loaded or the pair is not a sane
+ * band, because a lighting pass handed a floor from nowhere would light the whole screen as
+ * ground. */
+int      bg_z_bounds(int *zmin, int *zmax);
 
 #endif

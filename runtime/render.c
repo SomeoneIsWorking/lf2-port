@@ -4,6 +4,7 @@
 #include "render.h"
 #include "hd2d.h"
 #include "guest.h"
+#include "hostwin.h"
 
 #include <SDL3/SDL.h>
 
@@ -82,6 +83,7 @@ static int          target_w, target_h;
 
 static long stat_frames, stat_tex, stat_fill, stat_tile, stat_uploads, stat_dropped;
 static long stat_soft_frames, stat_post, stat_ground, stat_shadow;
+static float ground_y_lo = 1e9f, ground_y_hi = -1e9f;
 
 int render_gpu_enabled(void)
 {
@@ -401,7 +403,7 @@ enum Pass { PASS_COLOUR, PASS_CHARS, PASS_SHADOW };
  * of: that is where the lighting applies and where the shadows come from, and it is why the
  * background, the HUD and the text are untouched by both.
  */
-static void draw_list(List *l, int pass, float offx, float scale_y)
+static void draw_list(List *l, int pass, float offx, float offy)
 {
     const int skip = render_skip();
     int have_ground = 0;
@@ -412,8 +414,19 @@ static void draw_list(List *l, int pass, float offx, float scale_y)
         Entry *e = &l->e[i];
         SDL_FRect dst = e->dst;
         dst.x += offx;
+        dst.y += offy;
 
         if (e->kind == E_GROUND) {
+            /* THE FLOOR, AS THE GAME ITSELF DRAWS IT. Every ground marker is a point a
+             * fighter is standing on, so the band these span IS the walkable floor on the
+             * screen -- the game's own answer, and the cross-check any field read out of the
+             * background record has to agree with before it can be called the z boundary
+             * (issue #32). Collected in the colour pass only, so it counts each marker once. */
+            if (pass == PASS_COLOUR) {
+                const float gy = e->dst.y + e->dst.h;   /* the GAME's y, before placement */
+                if (gy < ground_y_lo) ground_y_lo = gy;
+                if (gy > ground_y_hi) ground_y_hi = gy;
+            }
             /* The game's ellipse is REPLACED, not drawn under: leaving it would put a
              * checkerboard beneath every real shadow. With the light off it was never
              * recorded as a ground marker in the first place, and the game's own draw
@@ -450,7 +463,7 @@ static void draw_list(List *l, int pass, float offx, float scale_y)
                 continue;
             }
             if (pass == PASS_CHARS) {
-                hd2d_chars_quad((ground.y + ground.h) * scale_y);
+                hd2d_chars_quad(ground.y + ground.h);
                 SDL_SetTextureBlendMode(t->tex, SDL_BLENDMODE_NONE);
                 SDL_RenderTexture(R, t->tex, &e->src, &dst);
                 continue;
@@ -551,7 +564,7 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         if (hd2d_ready()) {
             rt_albedo = rt_make(ow, oh, SDL_SCALEMODE_NEAREST);
             rt_chars   = rt_make(ow, oh, SDL_SCALEMODE_NEAREST);
-            rt_shadow = rt_make(ow, oh, SDL_SCALEMODE_LINEAR);
+            rt_shadow = rt_make(ow, oh, SDL_SCALEMODE_NEAREST);
         }
         if (!target || (hd2d_ready() && (!rt_albedo || !rt_chars || !rt_shadow))) {
             fprintf(stderr, "render: could not create the %dx%d render targets (%s) -- the "
@@ -564,39 +577,55 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         }
         target_w = ow; target_h = oh;
     }
-    const float sx = (float)ow / (float)w, sy = (float)oh / (float)h;
-    const int   run_hd2d = hd2d_ready() && rt_albedo && rt_chars && rt_shadow;
+    /* NOTHING IS SCALED. The composition is the window's width and the game's own 550 rows
+     * (runtime/ddraw.c hostwin_window_geometry says why the height cannot follow), so the
+     * quads go down at 1:1 and are placed in the window rather than stretched to fill it.
+     * The rows the game has no world for are black bands, above and below.
+     *
+     * `off` is the game's own widescreen centring, in the composition's coordinates;
+     * ox/oy place the composition in the window. They are separate because they answer
+     * different questions and a resize moves only the second. */
+    float ox = 0.0f, oy = 0.0f;
+    lf2_compose_placement(w, h, &ox, &oy);
+    const int run_hd2d = hd2d_ready() && rt_albedo && rt_chars && rt_shadow;
 
     /* 1. THE PICTURE, exactly as the game composed it. With the light off this is the frame,
      *    and it is what tools/render_test.sh compares against the software compositor byte
      *    for byte. */
     clear_to(run_hd2d ? rt_albedo : target, 0, 0, 0, 255);
-    SDL_SetRenderScale(R, sx, sy);
-    draw_list(l, PASS_COLOUR, (float)off, sy);
-    SDL_SetRenderScale(R, 1.0f, 1.0f);
+    draw_list(l, PASS_COLOUR, (float)off + ox, oy);
 
     if (run_hd2d) {
         /* 2. WHICH PIXELS ARE A FIGHTER. Cleared to zero: everything the game drew that is
          *    not an object standing in the field stays out of the mask, and the lighting
          *    leaves those pixels exactly as they are. */
         clear_to(rt_chars, 0, 0, 0, 255);
-        SDL_SetRenderScale(R, sx, sy);
         if (hd2d_chars_begin(1.0f / (float)oh)) {
-            draw_list(l, PASS_CHARS, (float)off, sy);
+            draw_list(l, PASS_CHARS, (float)off + ox, oy);
             hd2d_chars_end();
         }
-        SDL_SetRenderScale(R, 1.0f, 1.0f);
 
         /* 3. THE CAST SHADOWS, as a mask the light is taken away through. */
         clear_to(rt_shadow, 0, 0, 0, 255);
-        SDL_SetRenderScale(R, sx, sy);
         if (hd2d_shadow_begin()) {
-            draw_list(l, PASS_SHADOW, (float)off, sy);
+            draw_list(l, PASS_SHADOW, (float)off + ox, oy);
             hd2d_shadow_end();
         }
-        SDL_SetRenderScale(R, 1.0f, 1.0f);
 
-        if (hd2d_post(rt_albedo, rt_chars, rt_shadow, target, ow, oh)) {
+        /* Where the stage says its floor begins, in the window's rows. The lighting needs it
+         * in the space it shades in, and this is the only place that knows both the game's
+         * answer and where the composition was placed.
+         *
+         * GATED ON THE MATCH HUD, and that gate is not belt-and-braces. The background record
+         * stays loaded after a fight, so the front end, the mode menu and character selection
+         * would all be handed a perfectly valid floor band and would get their lower half
+         * tinted -- a stage's geometry applied to a screen that has no stage in it. The HUD
+         * strip is up exactly while the world is on screen, which is the same signal the
+         * widescreen centring already switches on. */
+        int zmin = 0, zmax = 0;
+        const int have_floor = panel_hud_up() && bg_z_bounds(&zmin, &zmax);
+        if (hd2d_post(rt_albedo, rt_chars, rt_shadow, target, ow, oh,
+                      (float)zmin + oy, have_floor)) {
             stat_post++;
         } else {
             /* The pass could not run this frame. Show the picture rather than nothing --
@@ -618,8 +647,9 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
     stat_frames++;
     if (stat_frames == 1)
-        fprintf(stderr, "render: drawing %dx%d of game at %dx%d output (scale %.2fx), "
-                        "lighting %s\n", w, h, ow, oh, sx, run_hd2d ? "on" : "OFF");
+        fprintf(stderr, "render: %dx%d of game drawn 1:1 into a %dx%d window at (%.0f,%.0f), "
+                        "lighting %s\n", w, h, ow, oh, (double)ox, (double)oy,
+                run_hd2d ? "on" : "OFF");
     return 1;
 }
 
@@ -681,6 +711,15 @@ void render_report(void)
             stat_tex, stat_fill, stat_tile, ntexes, stat_uploads, stat_dropped);
     fprintf(stderr, "render: the light ran on %ld frame(s); %ld cast shadows from %ld ground "
                     "markers\n", stat_post, stat_shadow, stat_ground);
+    if (stat_ground)
+        fprintf(stderr, "render: the ground markers seen so far span y %.0f..%.0f in the "
+                        "game's own coordinates -- that is the walkable floor, measured from "
+                        "where the game put its shadows (issue #32)\n",
+                (double)ground_y_lo, (double)ground_y_hi);
+    else
+        fprintf(stderr, "render: NO ground markers were seen, so the floor band is UNKNOWN -- "
+                        "this run reached no match, or the stage's shadow object was never "
+                        "identified\n");
     hd2d_report();
     if (hd2d_ready() && stat_ground && !stat_shadow)
         fprintf(stderr, "render: %ld ground markers but NO cast shadows -- every one was "
