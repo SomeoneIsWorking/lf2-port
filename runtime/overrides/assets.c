@@ -135,6 +135,18 @@ uint32_t bg_stage_field(uint32_t field_const)
     return LD32(registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u + field_const);
 }
 
+/* bg.dat's `shadowsize:`, which is what identifies the stage's shadow bitmap in the blit
+ * stream. Read from the background record beside the stage width, and checked against the
+ * file: Brokeback Clif's bg.dat says `shadowsize: 37 9` and the record holds 37 and 9. */
+void bg_shadow_size(int *w, int *h)
+{
+    *w = (int)(int32_t)bg_stage_field(BG_SHADOW_W);
+    *h = (int)(int32_t)bg_stage_field(BG_SHADOW_H);
+}
+
+/* Which stage is loaded, so a shadow object learned on one is discarded on the next. */
+uint32_t bg_shadow_stage(void) { return LD32(BG_INDEX); }
+
 /* The game's own count, which is what fn_0041a250 iterates on -- not a scan for the first
  * zero span. The two agree on every stage measured, but a scan would silently stop at a
  * layer the game is perfectly happy to draw, and "the layer list ends here" is exactly the
@@ -184,6 +196,26 @@ static void bg_record_report(uint32_t which)
  *
  * A stage with no layers is reported as such rather than printing a header and nothing --
  * "the table was empty" and "the table was never reached" must not look alike. */
+/* LF2_BG_RECORD=1 dumps the loaded background's whole record as dwords, with each offset
+ * given relative to BG_LAYER_SPAN so it can be read against the field constants in world.h.
+ * It exists to LOCATE a field rather than to guess one: the stage's shadow bitmap is drawn
+ * from a surface whose handle LF2_BLT_FRAME shows, and finding that handle in this dump is
+ * what turns "the shadow is probably that small sprite" into an identification. */
+static void bg_record_dump(void)
+{
+    if (!getenv("LF2_BG_RECORD")) return;
+    const uint32_t registry = LD32(BG_REGISTRY);
+    if (!registry) return;
+    const uint32_t base = registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u;
+    fprintf(stderr, "bg record: background %u, %d dwords from base-1200 to base+1440\n",
+            LD32(BG_INDEX), (1440 + 1200) / 4);
+    for (int32_t off = -1200; off <= 1440; off += 4) {
+        const uint32_t v = LD32((uint32_t)((int32_t)(base + BG_LAYER_SPAN) + off));
+        if (!v) continue;                       /* zeros are the bulk and say nothing */
+        fprintf(stderr, "bg record:  %+5d = %10u  0x%08x\n", off, v, v);
+    }
+}
+
 void bg_table_report(void)
 {
     static int done;
@@ -200,6 +232,7 @@ void bg_table_report(void)
     done = 1;
     fprintf(stderr, "bg table: registry %08x, loaded background %u\n",
             registry, LD32(BG_INDEX));
+    bg_record_dump();
     if (strcmp(want, "all") != 0) { bg_record_report(LD32(BG_INDEX)); return; }
     /* The count is not known from the table, so walk until a record has no layers AND no
      * stage width -- and say how far the walk got, so a run that found one background reads

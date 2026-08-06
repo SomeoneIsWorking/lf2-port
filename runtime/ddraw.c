@@ -103,7 +103,60 @@ static int glyph_hint = -1;
 long glyphs_drawn;
 
 void glyph_hint_set(int ch) { glyph_hint = ch; }
+
+/* Set by the clip-draw override when the draw is the stage's own shadow bitmap, cleared by
+ * the next draw that is not. Latched here because this is the only place that also knows the
+ * destination rectangle -- which is where the object stands on the ground, and therefore
+ * where a real cast shadow belongs. */
+static int shadow_hint;
+void shadow_hint_set(int on) { shadow_hint = on; }
+
 void glyph_hint_clear(void) { glyph_hint = -1; }
+
+/* ---- learning which object draws the stage's shadow ----
+ *
+ * The shadow is one bitmap per stage, drawn under every object from a source surface whose
+ * size the stage record gives (bg.dat's `shadowsize:`). So the FIRST blit whose source
+ * surface is that size names the object the ellipse is drawn on, and every later draw on
+ * that object is a shadow -- an identification made once per stage rather than a size test
+ * applied to every blit for the rest of the run.
+ *
+ * WHAT WOULD MAKE THIS WRONG, since it is a size match and not a handle: a sprite sheet that
+ * happens to be within two pixels of the shadow's size and is drawn BEFORE the first shadow
+ * would be learned instead, and that object's draws would be swallowed as ground markers for
+ * the rest of the stage. No stage measured does this -- LF2_SHADOW_DEBUG prints the size that
+ * matched and the object, so a wrong learn is visible rather than silent -- but it is a size
+ * match, not proof, and the honest fix if it ever bites is the shadow's own handle out of the
+ * background record. That handle was looked for and NOT found: the offset that looked right
+ * matched 0 of 40000 clip draws (claim C019).
+ *
+ * If no such blit is ever seen the port simply never replaces the shadow, and says so.
+ */
+static uint32_t clip_obj, shadow_obj_learned;
+static int      shadow_obj_stage = -1;
+void clip_obj_note(uint32_t obj) { clip_obj = obj; }
+uint32_t shadow_object(void) { return shadow_obj_learned; }
+
+static void shadow_learn(const Surface *s)
+{
+    const int stage = (int)bg_shadow_stage();
+    if (stage != shadow_obj_stage) {          /* a new stage: the old object is stale */
+        shadow_obj_stage = stage;
+        shadow_obj_learned = 0;
+    }
+    if (shadow_obj_learned || !clip_obj) return;
+    int sw = 0, sh = 0;
+    bg_shadow_size(&sw, &sh);
+    if (sw <= 0 || sh <= 0) return;
+    /* Matched within two pixels: the two numbers in bg.dat are the size the game DRAWS at,
+     * which need not be the bitmap's own. */
+    if (abs(s->w - sw) > 2 || abs(s->h - sh) > 2) return;
+    shadow_obj_learned = clip_obj;
+    if (getenv("LF2_SHADOW_DEBUG"))
+        fprintf(stderr, "shadow: stage %d draws its ellipse on object %08x "
+                        "(source %dx%d, shadowsize %dx%d)\n",
+                stage, clip_obj, s->w, s->h, sw, sh);
+}
 
 int game_glyph_draw(int ch, int x, int y, uint32_t ink,
                     uint32_t dpix, int dwid, int dhei, int dpitch);
@@ -1161,6 +1214,7 @@ static void surf_Blt(uint32_t self)
          * question is about the flags; if nothing changes, they are composited elsewhere
          * (Lock) and the Blt path is innocent. Run against both classes before believing
          * either. */
+        shadow_learn(s);
         const int keyed = ((flags & DDBLT_KEYSRC) || getenv("LF2_CK_FORCE")) && s->has_key;
         if (keyed) ck_blt_keyed++; else ck_blt_plain++;
         if (getenv("LF2_CK_DEBUG")) {
@@ -1186,10 +1240,28 @@ static void surf_Blt(uint32_t self)
             /* Recorded for the native renderer and ALSO composed in software. Both paths
              * build every frame; which one is presented is decided at the copy-to-primary.
              * Running them together is what makes tools/render_test.sh able to diff them. */
-            if (!d->primary)
-                render_blit(d->pixels, dl, dt, dr, db,
-                            s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb,
-                            keyed, s->key_lo, s->key_hi);
+            if (!d->primary) {
+                /* The stage's own shadow becomes a GROUND MARKER for the renderer rather
+                 * than a picture: it says where the object standing here meets the floor,
+                 * which is the one thing a cast shadow needs and the sprite cannot give.
+                 * With the effect off it is recorded as the picture it is, so the GPU frame
+                 * stays comparable with the software one. */
+                if (getenv("LF2_SHADOW_DEBUG")) {
+                    static long hits, miss;
+                    if (shadow_hint) hits++; else miss++;
+                    if ((hits + miss) % 4000 == 0)
+                        fprintf(stderr, "shadow: hint set on %ld of %ld sprite blits "
+                                        "(learned obj %08x, shadows enabled %d)\n",
+                                hits, hits + miss, shadow_object(),
+                                render_shadows_enabled());
+                }
+                if (shadow_hint && render_shadows_enabled())
+                    render_shadow_ground(d->pixels, dl, dt, dr, db);
+                else
+                    render_blit(d->pixels, dl, dt, dr, db,
+                                s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb,
+                                keyed, s->key_lo, s->key_hi);
+            }
             blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
                  keyed, s->key_lo, s->key_hi);
         }

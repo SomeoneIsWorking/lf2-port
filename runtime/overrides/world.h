@@ -180,6 +180,8 @@ enum { BG_LAYER_PIC    = 81027484,      /* -120 the picture handed to the draw c
        BG_LAYER_TINT   = 81028684,      /* +1080 non-zero: a colour fill, not a picture */
        BG_LAYER_OBJ    = 81028804 };    /* +1200 the object the draw call is made on */
 enum { BG_STAGE_WIDTH  = 81026480,      /* -1124, per background, not per layer */
+       BG_SHADOW_W     = 81026500,      /* -1104 bg.dat's `shadowsize:` */
+       BG_SHADOW_H     = 81026504,      /* -1100 */
        BG_LAYER_COUNT  = 81026508 };    /* -1096; fn_0041a250 loops on this count */
 enum { BG_CAMERA_X     = 0x00450bc4 };  /* the world camera, in stage coordinates */
 enum { BG_SCREEN_W     = 794 };         /* the game's screen width, literal in fn_0041a250 */
@@ -195,5 +197,11 @@ void     bg_table_report(void);         /* LF2_BG_TABLE=1: the loaded stage's la
  * background.c owns it; it is out here because a renderer wanting the stage's geometry
  * (issue #30) needs the same number the layers were placed against. */
 int      bg_view_width(void);
+
+/* The stage's own shadow: the size bg.dat's `shadowsize:` gives, and an identity for the
+ * loaded stage so a learned object can be discarded when the stage changes. Both are read
+ * from the background record the same way every other field is. */
+void     bg_shadow_size(int *w, int *h);
+uint32_t bg_shadow_stage(void);
 
 #endif

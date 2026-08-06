@@ -56,6 +56,19 @@ void clock_sites_report(void);   /* LF2_CLOCK_SITES: who reads the clock, and wh
 void window_resize_report(void); /* any LF2_WINDOW_RESIZE step the run never reached */
 void glyph_hint_set(int ch);
 void glyph_hint_clear(void);
+
+/* The clip-draw override tells the blit path when a draw is the stage's own shadow ellipse,
+ * identified by the object it is drawn on (world.h, BG_SHADOW_OBJ). */
+void shadow_hint_set(int on);
+
+/* The clip-draw override hands over the object each draw is made on; the blit path learns
+ * from it which object draws the stage's shadow ellipse, and answers with shadow_object(). */
+void     clip_obj_note(uint32_t obj);
+uint32_t shadow_object(void);
+
+/* runtime/overrides/assets.c -- the stage's shadow geometry, from the background record. */
+void     bg_shadow_size(int *w, int *h);
+uint32_t bg_shadow_stage(void);
 int  hostwin_key_held(uint32_t vk);
 void hostwin_request_quit(void);
 int  hostwin_width(void);

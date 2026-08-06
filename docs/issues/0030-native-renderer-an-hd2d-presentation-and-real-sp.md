@@ -248,3 +248,142 @@ SO THE ORDER IS FORCED, and it is the opposite of the order the pieces were aske
 render target and a blend stage first, because they are what every other piece needs; then
 sprites as geometry with the depth from C018; then the look. Anything built before the blend
 stage exists would be built on the software blitter and thrown away.
+
+### Note (2026-08-06)
+DELIVERED 2026-08-06 -- the renderer, the HD2D pass and the sprite-cast shadows are all in.
+
+  NATIVE RENDERER   runtime/render.c. The game's draws become a display list, recorded per
+                    destination surface; the game composes off-screen and copies to the
+                    primary, so the source of that copy NAMES the composition and the frame
+                    boundary is found from the game's own blits with nothing hardcoded.
+                    Drawn as GPU quads into a render target AT THE WINDOW'S RESOLUTION --
+                    measured drawing 978x550 of game at 1920x1079. GDI text, which never goes
+                    through Blt, rides as premultiplied tiles at their real place in the list.
+  BLEND STAGE       the colour key becomes ALPHA on upload. This is what claim C010 said the
+                    port did not have and could not do without; everything below needs it.
+  HD2D              bloom with no shader toolchain: the bright pass is SDL_BLENDMODE_MOD of
+                    the frame over itself (squaring in 0..1 is a soft threshold), two linear
+                    downsamples are the blur, then additive. SDL 3.4 can take SPIR-V/DXIL/MSL
+                    through SDL_GPURenderState, but that is a shader compiler in a build that
+                    otherwise needs only a C compiler and SDL.
+  CAST SHADOWS      the sprite's own silhouette, sheared onto the ground through
+                    SDL_RenderGeometry -- SDL_RenderTexture cannot shear, and without the
+                    shear a squashed sprite reads as a reflection. Vertex colour is black with
+                    alpha, so SDL's multiply leaves the sprite's alpha and zeroes its colour:
+                    the silhouette exactly. WHERE it goes is the game's own answer -- the
+                    ellipse it drew is at the object's feet, so its centre and bottom edge are
+                    the ground point, and the sprite that follows is the object it belongs to.
+
+WHAT WAS REPLACED AND WHY IT MATTERED: the game's shadow is one flat DITHERED ellipse per
+object. At 794x550 it reads as soft; at 1920 it is a visible checkerboard, which is what
+rendering at the window's resolution exposed. Claim C019 carries the identification, including
+the wrong answer that came first -- a pointer at record offset -1128 that looks like a shadow
+handle and matched 0 of 40000 clip draws, because the records are contiguous and it belongs to
+the previous background.
+
+VERIFIED, ctest render, four arms: with the effect off the GPU frame matches the software
+compositor to a MAX of 1-2 levels of 255 (antialiased glyph edges only); dropping every 7th
+draw changes 134928 px, so the match can fail; the HD2D arm differs. 2778 ground markers
+produced 2778 cast shadows in one run -- every marker consumed.
+
+STILL OPEN on this issue, and not pretended otherwise:
+  - depth-sorted LIGHTING. The depth is available (C018, object+0x18) and the object pass is
+    the place to latch it, but nothing uses it yet: the shadows are placed from the game's own
+    ellipse rather than from z.
+  - tilt-shift / DOF, the other half of the HD2D look.
+  - GDI text is still rendered at the composition's resolution and scaled up with everything
+    else. It is a TTF glyph and could be rendered at output resolution; the tile mechanism
+    already carries an arbitrary-sized bitmap, so this is small.
+  - the pause menu and the controls hint still present through the software compositor,
+    because they draw straight onto the primary and are in no display list.
+
+### Note (2026-08-06)
+NARROWED AND DELIVERED 2026-08-06, after a first attempt that was rejected on sight.
+
+WHAT WAS WRONG WITH THE FIRST ATTEMPT, because it is the useful half of this note. It read
+"HD2D presentation" as the full Octopath post chain and shipped bloom, depth of field,
+atmospheric haze, a vignette and a colour grade on top of the lighting. Every one of those
+touches every pixel of the frame. Together they did not read as light in a scene; they read
+as a filter over a screenshot -- the game came out foggy, washed out and blurred, and the
+verdict was "you just spammed all sorts of effects". The bright pass was also not a bright
+pass: with no shader path it approximated a threshold with SDL_BLENDMODE_MOD of the frame
+over itself, which is squaring, so every midtone still contributed and the glow was uniform.
+
+THE SCOPE THAT WAS ACTUALLY WANTED, and what shipped:
+
+  ISOMETRIC LIGHTING, ON THE STAGE'S CHARACTERS ONLY. One key light given as a direction in
+  the stage's own three axes -- x across, y up (LF2's jump axis, C018), z toward the camera --
+  plus a hemisphere ambient. Normals come from the gradient of the sprite's own silhouette,
+  which bevels the edge of a fighter and leaves the middle facing the camera; the interior
+  shading stays the artist's, which is the right answer for pixel art. It is applied ONLY
+  where the character mask is set. The background layers, the HUD, the text and the letterbox
+  come out as the exact pixels the game composed.
+
+  CAST SHADOWS. The sprite's own silhouette laid on the ground and sheared along the SAME
+  light vector -- there is no second constant anywhere for a shadow direction, so the shading
+  and the shadows cannot disagree.
+
+WHICH DRAWS ARE CHARACTERS is the game's own answer and cost nothing: LF2 draws the stage's
+shadow ellipse at an object's feet immediately before drawing the object, so a sprite with a
+ground marker in front of it is an object in the field. That one fact supplies the mask, the
+ground point for the shadow, and the height-above-ground channel, and it is why the whole
+placement-hint mechanism the first attempt grew (per-layer parallax depth, a UI hint stack
+threaded through background.c, hud.c and text.c) could be deleted outright.
+
+THREE THINGS THAT WENT WRONG IN THE BUILDING, all worth not repeating:
+
+  THE DEBUG VIEW LIED. LF2_HD2D_SHOW looked its buffers up at the END of the chain, by which
+  time the half-resolution scratch that had held the shadow mask had been reused by a later
+  blur -- so SHOW=shadow displayed a blurred copy of the whole scene and read as "the shadow
+  mask contains the entire picture". It now shows each buffer at the moment that buffer is
+  final. A debug view that shows the wrong buffer is worse than none: it answers confidently.
+
+  THE SHADOW MASK CARRIED THE FIGHTER'S COLOURS. SDL multiplies the vertex colour into the
+  texture, so a white vertex gives sprite.rgb * a, not coverage; the lighting then read the
+  teal jacket as "how much shadow" and the shadow was darker under the bright parts of the
+  sprite. No fixed-function blend factor substitutes 1 for the source colour, so the mask
+  needs its own fragment shader (hd2d_shadow.frag). Alpha-tested, not blended, so two
+  fighters standing together do not throw a doubly dark shadow.
+
+  THE BEVEL WAS A BLACK OUTLINE. The raw Sobel of a binary mask is 4 at a step edge, which
+  tips the normal almost into the screen plane, and a hard max(dot,0) then sent one whole side
+  of every fighter to ambient only. Divided by its own maximum, and wrapped (dot*0.5+0.5,
+  squared) so the shaded side still sees the sky.
+
+INFRASTRUCTURE THIS NEEDED. SDL's default renderer order picks the OpenGL backend, which has
+no SDL_GPUDevice and therefore no SDL_GPURenderState -- no shaders at all. The renderer is now
+created as SDL_GPU_RENDERER by name, with a checked fallback. Shaders are committed SPIR-V
+(tools/build_shaders.sh; ctest shaders recompiles and compares wherever glslc exists, proven
+to fail on a stale blob), so the build still needs only a C compiler and SDL. A backend that
+cannot take SPIR-V is told about on stderr and gets the plain composition -- deliberately no
+approximation to fall back on, since that is exactly how the fake bloom survived.
+
+VERIFIED, ctest render, four arms: the GPU frame matches the software compositor to max 1-2
+levels of 255 on antialiased glyph edges only; dropping every 7th draw changes 134928 px, so
+the match can fail; the light changes 8613 px on the MATCH frame; and the light changes ZERO
+pixels on the character-select frame. That last arm is the one worth having -- "the effect
+ran" is satisfied by an effect that has spread over the whole frame, which is precisely the
+failure that shipped the first time.
+
+STILL OPEN ON THIS ISSUE:
+  - MAKING THE STAGES THEMSELVES 3D. Asked for; not done, and not for want of trying to see
+    how. A stage is N painted 2D layers plus a floor, and the only depth information in the
+    data is each layer's parallax rate. That rate is 1/depth exactly -- and LF2's own linear
+    parallax formula is already the correct projection of a billboard at that depth for a
+    camera that only pans horizontally, which is the only camera the game has. So putting the
+    layers in a perspective frustum at their measured depths reproduces the picture the game
+    already draws, pixel for pixel, and buys nothing. Anything beyond that -- tilting the
+    floor into a receding plane, extruding the cliffs, a camera that dollies -- means
+    inventing geometry the stage does not have, on art that is already painted in
+    perspective. Two things WOULD be real and are the honest next step if this is wanted:
+    (a) light the floor as a GROUND PLANE rather than as a billboard, which is real 3D
+    shading from geometry that genuinely exists (the floor is horizontal); this needs the
+    floor layers identified, which is not done. (b) let fighters occlude and be occluded by
+    scenery by z rather than by draw order -- but the game already depth-sorts, so this too
+    would change nothing visible.
+  - the floor is lit as a billboard, per the above.
+  - GDI text is still rendered at the composition's resolution and scaled up with everything
+    else. It is a TTF glyph and could be rendered at output resolution; the tile mechanism
+    already carries an arbitrary-sized bitmap, so this is small.
+  - the pause menu and the controls hint still present through the software compositor,
+    because they draw straight onto the primary and are in no display list.

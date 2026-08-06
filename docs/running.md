@@ -1493,26 +1493,68 @@ Three hooks in `runtime/ddraw.c`:
   rather than only when it finds nothing: GDI text goes straight into the surface without a
   Lock (`runtime/gdi.c`), and a lock whose writes cancelled out would hash the same.
 
-### The native renderer
+### The native renderer, the lighting and the cast shadows
 
 - **`LF2_RENDERER=soft`** presents the software compositor instead of the GPU renderer. Both
   build every frame; this chooses which one is shown, and it is how `ctest render` diffs them.
-- **`LF2_HD2D=off`** turns off the bloom, and **`LF2_HD2D_BLOOM=<0..255>`** sets its strength
-  (default 110). The effect is **on by default** — it is a look, not a switch; these exist so
-  the renderer's *geometry* can be compared against the software path without the post-process
-  in the way, and so the pass can be shown to do something.
+- **`LF2_HD2D=off`** turns off the lighting *and* the sprite-cast shadows, which restores the
+  game's own dithered ellipse. The lighting is **on by default** — it is a look, not a switch;
+  this exists so the renderer's *geometry* can be compared against the software path with
+  nothing on top of it, and so the pass can be shown to do something.
+- **`LF2_HD2D_SHOW=albedo|chars|shadow`** presents one buffer of the chain instead of the lit
+  frame: the composition as the game drew it, the character mask with its height channel, or
+  the softened cast-shadow mask. Every fault in the lighting looks the same from outside — a
+  picture that is slightly wrong — and this is what tells "the bevel is too tight" apart from
+  "the character mask is empty". Each buffer is shown at the moment it is *final*; the first
+  version showed them all at the end of the chain, by which time the shadow scratch had been
+  reused, and `SHOW=shadow` confidently displayed a blurred copy of the scene.
+- **`LF2_HD2D_KEY`, `_AMBIENT`, `_BEVEL`, `_BEVEL_PX`, `_HEIGHT_GAIN`, `_SHADOW`,
+  `_SHADOW_BLUR`** sweep the light rig while it is being tuned. They are not configuration.
+  The defaults are chosen so a flat, unshadowed, camera-facing pixel comes out at almost
+  exactly the colour the game drew it: the light must be a *difference from flat*, not a
+  brightness or a tint laid over the game.
+- **`LF2_SHADOW_DEBUG=1`** reports which object the loaded stage draws its shadow ellipse on,
+  and how often that identification fires. The object is learned per stage from `bg.dat`'s
+  `shadowsize:`, not read from a fixed offset — the offset that looked right matched 0 of
+  40000 draws (claim C019).
 - **`LF2_RENDER_SKIP=<n>`** drops every nth display-list entry. It is the negative arm of
   `ctest render`: this comparison was fooled once already (the readback ran before the draw, so
   every dump was the previous frame — which with a scrolling camera looked like a clean
   one-pixel shift), so an arm that draws the frame *wrong* has to come out different.
 - **`LF2_RENDER_DEBUG=1`** reports what each frame was made of — quads, fills, tiles, cached
-  textures, uploads, dropped entries, and how many frames the HD2D pass ran on. It prints the
-  zeros too, and says explicitly when the GPU path presented no frames at all or when entries
-  were dropped, because "0 quads" and "the renderer was never called" are different faults.
+  textures, uploads, dropped entries, ground markers, cast shadows and how many frames the
+  light ran on. It prints the zeros too, and says explicitly when the GPU path presented no
+  frames at all, when entries were dropped, or when the shaders never loaded and why, because
+  "0 quads" and "the renderer was never called" are different faults.
 
 The renderer draws at the **window's resolution**, not the game's: the display list carries the
-game's own coordinates and the scale is applied as the quads are drawn. Frame dumps in GPU mode
-are therefore the size of the output, not of the composition.
+game's own coordinates and the scale is applied as the quads are drawn, with `SDL_SCALEMODE_
+NEAREST` throughout, so a sprite is resampled exactly once and stays pixel-sharp. Frame dumps
+in GPU mode are therefore the size of the output, not of the composition.
+
+**What the lighting touches, and what it does not.** One key light, given as a direction in the
+stage's own three axes (x across, y up — LF2's jump axis, claim C018 — z toward the camera).
+It is applied *only* to the objects standing in the stage, which the game itself identifies by
+drawing a shadow ellipse at their feet immediately before drawing them. The background layers,
+the HUD, the text and the letterbox come through as the exact pixels the game composed. The
+one thing that reaches the floor is the cast shadow, which is the point of a cast shadow. On a
+frame with no fighters in it — the menu, character selection — the pass changes **nothing**,
+and `ctest render` asserts that as well as asserting that the match frame *does* change: an
+effect that has quietly spread over the whole picture passes the second check and fails the
+first.
+
+The shadow is the sprite's own silhouette laid on the ground and sheared along that same light
+vector, so the shading and the shadows cannot disagree. Its mask needs its own shader for a
+reason worth knowing: SDL multiplies the vertex colour into the texture, so the fixed-function
+route gives `sprite.rgb * a` — the fighter's colours — and the shadow came out darker under
+the bright parts of them.
+
+**The shaders are compiled SPIR-V, committed** in `runtime/shaders/gen/`, so the build still
+needs nothing but a C compiler and SDL. `tools/build_shaders.sh` regenerates them and
+`ctest shaders` recompiles and compares wherever `glslc` is present, so an edited shader that
+was never recompiled fails the build rather than shipping last week's lighting. On a GPU
+backend that does not take SPIR-V (Metal, D3D12) the port says so on stderr and presents the
+plain composition; there is deliberately no approximation to fall back to.
 
 ### The stage's own background layers
 

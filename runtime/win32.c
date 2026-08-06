@@ -159,7 +159,23 @@ static void h_CreateWindowExA(void)
     hw.window = SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h,
                                  SDL_WINDOW_RESIZABLE);
     if (!hw.window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); abort(); }
-    hw.renderer = SDL_CreateRenderer(hw.window, NULL);
+    /* THE GPU RENDERER BY NAME, not whichever SDL picks. SDL's default order puts the
+     * OpenGL backend first, and that one has no SDL_GPUDevice -- so SDL_GPURenderState, and
+     * with it every shader the HD2D pass is made of, is simply unavailable on it. The
+     * default was fine while the port only copied rectangles; it stopped being fine the
+     * moment the frame started being lit.
+     *
+     * Asked for, then checked: if the GPU backend is not there (an old driver, a machine
+     * with no Vulkan/Metal/D3D12) the port falls back to SDL's choice and says so, and
+     * hd2d_init reports that the look cannot run rather than pretending it did. */
+    hw.renderer = SDL_CreateRenderer(hw.window, SDL_GPU_RENDERER);
+    if (!hw.renderer) {
+        fprintf(stderr, "video: the '%s' renderer is unavailable (%s) -- falling back to "
+                        "SDL's choice. The HD2D pass needs a GPU device and will report "
+                        "itself off.\n", SDL_GPU_RENDERER, SDL_GetError());
+        hw.renderer = SDL_CreateRenderer(hw.window, NULL);
+    }
+    if (!hw.renderer) { fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError()); abort(); }
     render_init(hw.renderer);
     /* Before apply_window_mode: going fullscreen changes the size, and the geometry has to
      * exist before anything can follow a change to it. */
