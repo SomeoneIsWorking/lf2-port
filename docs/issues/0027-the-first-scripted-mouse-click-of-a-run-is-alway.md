@@ -100,3 +100,39 @@ is unaffected.
 A cheap discriminator for that: a scripted click whose HOLD is one frame rather than eight,
 and one whose hold spans the whole run. If activation follows the release, the first will act
 on its release frame and the second will never act at all.
+
+### Note (2026-08-06)
+THIRD THEORY REFUTED, 2026-08-06, and one of them without needing a run at all.
+
+REFUTED FROM EVIDENCE ALREADY IN HAND -- "the game acts on the button being RELEASED, and
+refuses while it believes the button is down". This was the candidate the previous note named
+as most promising. It does not survive the lone-click run: the scripted click is held eight
+frames, so the release happened at frame 1208, and that run reached NO screen through frame
+1500. If activation followed the release it would have started the game at ~1210. No new
+measurement was needed; the old log already contained the answer, which is worth noting as a
+habit -- the run that refutes a theory is often one already on disk.
+
+REFUTED BY MEASUREMENT -- "the periodic WM_MOUSEMOVE tells the game the pointer is at (0,0)".
+This had a real defect behind it: autoclick_state only writes a position while a click window
+is open, so pump_autoclick seeded x,y from 0 and the scripted pointer teleported to the origin
+between clicks, with the 500 ms resend then reporting (0,0) to the game -- outside every menu
+band. Making the pointer persist where it was put changed nothing: the lone click at 1200
+still reached no screen.
+
+That fix was kept anyway, unlike the previous two, because it is right on its own terms rather
+than as a theory about this bug -- a real mouse does not go home between clicks -- and because
+it measured neutral on the full mouse route (charselect@1352, plays=4, 5 of 5 items fired,
+identical before and after). It is NOT a fix for this issue and must not be read as one.
+
+WHERE THAT LEAVES IT. Three mechanisms are now excluded: the click flag's timing (two
+sightings), the missing prior move, and the pointer position. The menu is entered with
+identical state in the swallowed and the working case, so the remaining difference is
+something the game's own WM_MOUSEMOVE/WM_LBUTTONDOWN handling sets that is not any of the
+three words the port writes. The next step is to find what the game's window proc touches
+besides 0x00457580 and 0x004546f0/0x00453cdc -- a .data diff across the first click, against a
+control frame with no click, would name it, and that is the same method that located the
+overlay selection index and the mode menu's selection.
+
+DO NOT spend another pass on theories about the port's delivery path. Three have died there.
+The measurement above says the port hands over identical state; the next pass belongs in the
+game's own .data.

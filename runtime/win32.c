@@ -360,10 +360,18 @@ void window_resize_report(void)
 
 static void pump_autoclick(void)
 {
-    int x = 0, y = 0;
+    /* The scripted pointer STAYS WHERE IT WAS PUT. autoclick_state only writes a position
+     * while a click's window is open, so seeding these from 0 meant the pointer teleported
+     * to the origin between clicks -- and the periodic resend below then told the GAME the
+     * mouse was at (0,0), which is outside every menu band. A real mouse does not go home
+     * between clicks, and nothing downstream expects one that does. */
+    static int last_x = -1, last_y = -1;
+    int x = last_x, y = last_y;
     static int was_down, announced;
     if (!getenv("LF2_AUTOCLICK") && !getenv("LF2_CLICK_SCRIPT")) return;
     const int down = autoclick_state(&x, &y);
+    last_x = x; last_y = y;
+    if (x < 0) return;                  /* no scripted point yet: nothing to report */
 
     /* Resend periodically rather than once: a single move pushed before the game starts
      * draining its queue is simply lost. Every pump is far too often -- that floods the
