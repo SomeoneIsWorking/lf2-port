@@ -38,6 +38,8 @@ void guest_init(void)
     memset(&cpu, 0, sizeof cpu);
     cpu.st_top = 0;
     cpu.fcw = 0x027F;      /* MSVC default: exceptions masked, 53-bit precision */
+    extern void (*rwatch_trace_hook)(void);
+    rwatch_trace_hook = dump_fn_trace;
     rwatch_init();
     R(ESP) = STACK_TOP;
     R(EBP) = STACK_TOP;
@@ -305,7 +307,16 @@ void fn_enter(uint32_t addr)
 
 void dump_fn_trace(void)
 {
-    if (!fn_pos) return;
+    /* An empty ring used to print nothing at all, which reads as "no functions were
+     * entered" when it actually means "this build records no trace". Every caller here is
+     * trying to attribute something to code, so silence is the one answer that must not be
+     * ambiguous. */
+    if (!fn_pos) {
+        fprintf(stderr, "guest functions entered: NONE RECORDED -- this build has no "
+                        "function trace, so nothing can be attributed to a caller. "
+                        "Rebuild with -DLF2_FN_TRACE=ON.\n");
+        return;
+    }
     fprintf(stderr, "guest functions entered (newest last):");
     for (unsigned i = 0; i < FN_TRACE_N; i++) {
         uint32_t a = fn_ring[(fn_pos + i) % FN_TRACE_N];

@@ -60,6 +60,7 @@ void rwatch_frame(void);
 void rwatch_selftest(void);
 void rwatch_raw_flush(const char *when);   /* LF2_READ_WATCH_RAW: per-dword read profile */
 void rwatch_init(void);
+void dump_fn_trace(void);
 int  rwatch_triggered(void);
 #define RWATCH(a) \
     do { if (__builtin_expect((a) - g_rwatch_lo < g_rwatch_hi - g_rwatch_lo, 0)) \
