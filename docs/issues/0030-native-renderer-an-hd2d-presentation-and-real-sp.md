@@ -189,3 +189,31 @@ replaces runtime/ddraw.c's software blit with a GPU path behind the same COM sur
 first is the one that can be built incrementally alongside the current compositor and diffed
 against it frame by frame, which is how every other piece of this port was landed safely.
 Claim C010 (no alpha/blend path anywhere) is the first thing either design has to bring.
+
+### Note (2026-08-06)
+THE DEPTH FIELD IS NOW MEASURED, NOT INFERRED, 2026-08-06 -- and the port had it mislabelled.
+
+The note above said '+0x18 IS THE SORT KEY, MEASURED. That it is the Z AXIS is an inference'.
+It is now measured too, and claim C018 carries it:
+
+  pressing RIGHT   x (+0x10) moves 815 -> 731 -> 804 -> 993;  +0x18 stays 334 throughout
+  pressing UP      +0x18 moves 334 -> 300 and stays;          +0x14 never leaves 0
+  +0x14 shows -6 for one sample mid-jump, which is the vertical axis and nothing else is
+
+and independently: up walked +0x18 to exactly 300, while Brokeback Clif's bg.dat says
+'zboundary: 300 510'. The stage data's own lower z bound and the field's floor are the same
+number, from two sources that share nothing.
+
+So an object is x at +0x10, y (jump height) at +0x14, z at +0x18, and fn_0041a5a0 sorts on z,
+which is correct for a 2.5D game.
+
+THE PORT WAS CALLING +0x18 'y'. LF2_COOP_TRACK printed 'x=%d y=%d' with y reading +0x18 --
+harmless for the movement assertions, which only use x, but a renderer built on that label
+would have depth-sorted the world on JUMP HEIGHT, and it would have looked nearly right until
+someone jumped. Fixed in runtime/overrides/coop_debug.c, which now prints x, y and z with the
+measurement written beside them.
+
+This is the last thing this issue needed before design. Its inputs are known and named:
+sprites and their depth from fn_0041a5a0 / fn_0043f010, text from runtime/gdi.c, the stage's
+layers with their parallax rates from runtime/overrides/background.c, and z bounds per stage
+from bg.dat's zboundary.
