@@ -204,6 +204,42 @@ shape of a widescreen film — rather than magnifying the picture to hide it.
 A window narrower than 794 still gets 794 and is cropped at the sides, because the HUD strip
 is 792 wide and there is nothing sensible below that.
 
+**The wider view is CENTRED on what the 4:3 view showed**, not extended to the right. The game
+puts the players' centroid in the middle of a 794-wide window and says so in one instruction
+(`SUB ESI,0x18d` at `0x0041bb7d`, where 0x18d is 794/2), so a wider view left the centroid 397
+px from the left edge and bolted the extra picture onto one side. The world is now *drawn* from
+a camera shifted left by half the extra width.
+
+That is a **draw-time** value, and the reason matters: `fn_0041b5d0` eases the camera toward
+its target by a seventh and reads back whatever is in the camera word, so subtracting the
+offset there each frame has fixed point `target - 7*offset` — the view ends up seven times
+further off than asked for, and drifts there gradually, which reads as a wandering camera
+rather than a wrong constant. The game's camera is left exactly as the game computed it; only
+the parallax and the object pass see the shifted one.
+
+It is clamped at the stage's left edge, so it only applies where there is world to move into.
+**`LF2_CAMERA=1`** reports whether it fired *and why not when it didn't* — a run can be
+perfectly correct and shift nothing:
+
+| Window | Offset | What happens |
+|---|---|---|
+| 794x550 | 0 | nothing re-centred, by definition |
+| 1100x550 | 153 | all frames re-centred — camera 400 draws as 247 |
+| 1920x1080 | 563 | nothing re-centred: Brokeback Clif is 1500 wide, the whole stage already fits, the camera never leaves 0 and there is no world to centre into |
+
+**Audio is no longer culled on the right.** The game pans a sound between two speakers placed
+on the *screen* at x 200 and x 600, each reaching 400 px — the 794 screen's quarter points,
+written down as pixels (`runtime/overrides/audio_pan.c`). That gives an audible span of
+-200..1000, wider than the game's own picture, which is why nothing is ever culled at 794 and
+why the function had never been looked at. Widen the view and the span does not move: at 1920
+everything past screen x 1000 had a volume of exactly zero — the right 48% of the picture,
+silent. The constants are now scaled by `view/794`, which is a scale rather than a
+re-derivation on purpose: `view/4` would give 198 at the native width instead of the 200 that
+shipped. **`LF2_AUDIO_PAN=1`** prints the audible span against the picture's width, and
+`ctest audio_pan` asserts the speakers are at *exactly* 200 and 600 at 794, that the span
+covers a 1920 picture, and — the arm that gives the others meaning — that with
+**`LF2_AUDIO_PAN_RAW=1`** turning the scaling off, the silence comes back.
+
 | Window | Composition | On screen |
 |---|---|---|
 | 794x550 | 794x550 | fills it — widescreen off, the game's own picture |

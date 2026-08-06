@@ -210,6 +210,14 @@ void     bg_table_report(void);         /* LF2_BG_TABLE=1: the loaded stage's la
  * (issue #30) needs the same number the layers were placed against. */
 int      bg_view_width(void);
 
+/* The camera the WORLD IS DRAWN FROM, which is the game's shifted left by half the extra
+ * width so a wider view is CENTRED on what the 4:3 view showed rather than extended to the
+ * right (issue #39). Equal to the game's own camera at 794. It is a draw-time value on
+ * purpose -- writing it back would feed the camera's own easing and drift; background.c says
+ * why in full. */
+int      bg_draw_camera(void);
+void     bg_camera_report(void);   /* LF2_CAMERA=1: was the wide view actually re-centred? */
+
 /* The stage's own shadow: the size bg.dat's `shadowsize:` gives, and an identity for the
  * loaded stage so a learned object can be discarded when the stage changes. Both are read
  * from the background record the same way every other field is. */

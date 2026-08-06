@@ -69,6 +69,7 @@ add_executable(lf2
     runtime/overrides/text.c
     runtime/overrides/assets.c
     runtime/overrides/background.c
+    runtime/overrides/audio_pan.c
     runtime/render.c
     runtime/hd2d.c
     runtime/main.c)
@@ -91,6 +92,7 @@ set_source_files_properties(
     runtime/overrides/text.c
     runtime/overrides/assets.c
     runtime/overrides/background.c
+    runtime/overrides/audio_pan.c
     runtime/render.c
     runtime/hd2d.c
     runtime/main.c
@@ -287,6 +289,15 @@ add_test(NAME resize
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(resize PROPERTIES
                      LABELS slow TIMEOUT 600 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
+
+# Widescreen must not silence the right of the picture (issue #39). Three arms, the last of
+# which turns the fix OFF and requires the failure to reappear.
+add_test(NAME audio_pan
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/audio_pan_test.sh
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(audio_pan PROPERTIES
+                     LABELS slow TIMEOUT 900 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
                      ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
 
 # The SPIR-V in runtime/shaders/gen/ is committed, so the build needs no shader compiler --

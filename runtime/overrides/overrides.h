@@ -21,6 +21,7 @@
  *   text.c        the clip and glyph draw hooks
  *   assets.c      the data-file decrypt
  *   background.c  the stage's background layers: their parallax, tiling and animation
+ *   audio_pan.c   how loud a sound is in each ear, from where it is on screen
  *
  * The line between coop.c and coop_debug.c is the one worth keeping: coop.c is what the
  * game does, coop_debug.c is how this port knows it did it. A probe that grows into a
@@ -40,6 +41,8 @@
  *   fn_0043c4a0  text.c     text draw
  *   fn_004148a0  assets.c   the data-file decrypt
  *   fn_0041a250  background.c  the stage's background layer draw -- parallax, tiling, cc/c1/c2
+ *   fn_00416fb0  audio_pan.c   stereo pan for one sound source, category A
+ *   fn_00417090  audio_pan.c   the same, category B -- identical but for its tables
  *
  * charselect_mouse / modemenu_mouse / overlay_mouse in screens.c are not overrides of their
  * own -- they are called from the ones above, because the screens they drive have no
