@@ -745,8 +745,12 @@ int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_
  *
  * So they are centred instead. One offset, applied to every blit destination in the frames
  * where the world is not on screen, and subtracted again from the pointer so the game's own
- * hit tests and the ported menus still line up with what the player sees. The band either
- * side is the game's own full-screen clear, which already covers the whole viewport. */
+ * hit tests and the ported menus still line up with what the player sees.
+ *
+ * The band either side is NOT covered by the game's own full-screen clear, which is what this
+ * comment used to claim: that clear goes to the compose surface, and the offset then shifts
+ * it off the primary's left band. Nothing writes that band, so it holds whatever was there
+ * when the geometry last changed -- issue #29. primary_clear_on_move() is what covers it. */
 enum { NATIVE_W = 794, NATIVE_H = 550 };   /* the composition the game asks for */
 
 /* The widest composition this port will hand the game, and the width every resizable
@@ -779,6 +783,46 @@ int screen_offset_x(void)
     if (!wide || panel_hud_up()) return 0;
     const int off = (hw.width - NATIVE_W) / 2;
     return off > 0 ? off : 0;
+}
+
+/* Issue #29: after a resize, character selection kept a ghost of itself standing to its left.
+ *
+ * WHAT IS ACTUALLY WRONG, measured rather than guessed. The composition is copied to the
+ * primary in ONE blit whose source is the WHOLE compose surface, and the centring offset is
+ * added to that copy's destination:
+ *
+ *     blt 13  dst=(256,0)-(1562,550)  src=[1306x550]      into a 1306-wide primary
+ *
+ * So the copy hangs 256 px off the right and never writes the leftmost 256 px at all. The
+ * comment above screen_offset_x() claimed "the band either side is the game's own full-screen
+ * clear, which already covers the whole viewport" -- and that clear does exist, but it goes
+ * to the COMPOSE surface (blt 1, dst 0..1306), and the shift is what moves it off the
+ * primary's left band. The band is therefore never written by anything.
+ *
+ * At a steady size that is invisible: the primary starts black and the unwritten band stays
+ * black. It only shows after a RESIZE, when the band still holds pixels drawn at the previous
+ * size and offset -- which is exactly a ghost of the old, differently-centred panel.
+ *
+ * So the fix is not a per-frame clear of the primary; the band is stale only when the
+ * geometry MOVES. Clear it when the offset or the surface size changes, which is the moment
+ * the previously-written region stops matching the one about to be written. */
+static void primary_clear_on_move(Surface *d, int off)
+{
+    /* LF2_PRIMARY_STALE=1 disables the clear, restoring the bug. It is the negative arm of
+     * tools/resize_test.sh: a test that asserts "the band left of the panel is black" would
+     * pass just as happily on a frame that is black everywhere, so the check has to be shown
+     * failing on a build that does not clear. Never set in normal use. */
+    static int disabled = -1;
+    if (disabled < 0) disabled = getenv("LF2_PRIMARY_STALE") != NULL;
+    if (disabled) return;
+
+    static int last_off = -1, last_w = -1, last_h = -1;
+    if (off == last_off && d->w == last_w && d->h == last_h) return;
+    last_off = off; last_w = d->w; last_h = d->h;
+    for (int y = 0; y < d->h; y++) {
+        uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
+        for (int x = 0; x < d->w; x++) row[x] = 0;
+    }
 }
 
 /* LF2_BLT_FRAME=<frame>[,...] -- every blit that composes those presented frames, with both
@@ -857,6 +901,7 @@ static void surf_Blt(uint32_t self)
      * everything twice -- a 132 px margin came out at 264. */
     if (d->primary) {
         const int off = screen_offset_x();
+        primary_clear_on_move(d, off);
         dl += off; dr += off;
     }
 

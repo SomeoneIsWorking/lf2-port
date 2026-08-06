@@ -1,7 +1,7 @@
 ---
 id: 29
 title: Character select leaves stale panel fragments beside itself after a window resize
-status: open
+status: resolved
 symptom: after resizing the window while character selection is up, blue vertical lines and a partial second copy of the panel are left standing to the LEFT of the centred panel, over the black surround; the panel itself draws correctly
 tags: reported,widescreen,rendering,resize,charselect
 created: 2026-08-06
@@ -33,3 +33,6 @@ write to hide a one-frame staleness, and it would hide any future version of thi
 clear belongs where the offset CHANGES.
 
 Related: #20 (widescreen follows the window), #23 (the layer band), #28 (the camera clamp).
+
+### Resolution (2026-08-06)
+The centring offset was applied to the FINAL full-width copy of the composition to the primary, not to the 794-wide content inside it. Measured with LF2_BLT_FRAME: 'blt 13 dst=(256,0)-(1562,550) src=[1306x550]' into a 1306-wide primary -- the copy hangs 256 px off the right and never writes the leftmost 256 px at all. The comment above screen_offset_x() claimed the band either side was covered by 'the game's own full-screen clear'; that clear is real but goes to the COMPOSE surface, and the shift is precisely what moves it off the primary's left band. At a steady size the band is black because the primary started black, which is why this only ever showed after a resize -- the band then held pixels drawn at the previous size and offset, i.e. a ghost of the old panel. Fixed by primary_clear_on_move() in runtime/ddraw.c, which clears the primary when the offset or the surface size changes -- the moment the previously-written region stops matching the one about to be written. NOT a per-frame clear, which the entry warned against and which would have hidden any future version of this. Regression test tools/resize_test.sh (ctest resize): shrinks and re-grows the window while character selection is up, asserts the band is entirely black AND that the frame has 184900 lit pixels in it (so a blank frame cannot pass), AND that LF2_PRIMARY_STALE=1 -- the clear disabled -- leaves 65145 stray pixels, so the check is shown able to fail.
