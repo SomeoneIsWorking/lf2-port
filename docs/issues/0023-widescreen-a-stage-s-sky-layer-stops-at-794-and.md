@@ -320,3 +320,34 @@ and (b), that heuristic goes.
 
 STILL CORRECT FROM THE ORIGINAL ENTRY, now for the strongest possible reason: do not stretch
 and do not tile a backdrop. There is no more picture and the layer says so.
+
+### Note (2026-08-06)
+PARTIALLY FIXED, 2026-08-06 -- the invented content is gone and the looping layers now carry
+correctly. What remains is the part that has no honest answer at this layer of the port.
+
+WHAT LANDED. The layer pass is now runtime/overrides/background.c, and the widescreen change
+in it is one substitution: the game's literal 794 becomes the live view width, in the parallax
+and in the tiling bound. A LOOPING layer is carried past 794 at its own declared `loop:`
+step, which is the stage's layout continued; a NON-LOOPING layer is drawn once and pinned
+(the parallax inverts below span == view, so it would drift the wrong way).
+
+runtime/ddraw.c's contiguity continuation is DELETED. It was the source of the worst of this:
+on Brokeback Clif at 1600x550 it repeated the middle cliff across the widened band with hard
+seams at 1026 and 1487. Before/after: scratch/wide23/frame_2250.png vs fixed_2250.png.
+
+VERIFIED, three ways, by tools/background_test.sh (ctest background):
+  794x550   byte-identical to the recompiled body at two camera positions
+  control   LF2_BG_SKEW=3 differs, so the identity above is not a blind pass
+  1600x550  differs from the unwidened body, so the view width really does reach the pass
+
+WHAT REMAINS OPEN, and it is the original entry's question: a non-looping layer has exactly
+794 pixels of picture, so beside it there is black. On Brokeback Clif at 1600 that is the
+221 px past the cliffs' 1379 span. Every stage's sky is in the same position.
+
+THE DECISION TAKEN, so nobody re-opens it as a bug: leave it black for now. The three
+alternatives were weighed and each is worse HERE --
+  tile the sky            invents layout the stage does not have and visibly repeats
+  pillarbox to the span   faithful but effectively disables widescreen (gw's sky is 800)
+  edge-extend the columns invention too, and wrong on any sky with detail at its edge
+The right answer is a lit backdrop from a real renderer, which is issue #30, and that is
+where this should be finished rather than in the blit compositor.

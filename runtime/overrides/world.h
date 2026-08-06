@@ -191,4 +191,9 @@ uint32_t bg_stage_field(uint32_t field_const);   /* a per-background field (no l
 int      bg_layer_count(void);          /* the game's own layer count, clamped to BG_MAX_LAYERS */
 void     bg_table_report(void);         /* LF2_BG_TABLE=1: the loaded stage's layers */
 
+/* The width the layer pass draws into -- the game's 794, or the widescreen composition.
+ * background.c owns it; it is out here because a renderer wanting the stage's geometry
+ * (issue #30) needs the same number the layers were placed against. */
+int      bg_view_width(void);
+
 #endif

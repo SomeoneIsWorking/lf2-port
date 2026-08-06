@@ -1,7 +1,7 @@
 ---
 id: 28
 title: Widescreen: the camera still stops at the 4:3 limit, so a wide view sees past the stage's walls
-status: open
+status: resolved
 symptom: in a window wider than 794x550, running to a stage's right wall keeps scrolling until the world runs out -- the view shows past the edge a character can walk to, instead of stopping where 4:3 stops
 tags: reported,widescreen,rendering,camera
 created: 2026-08-06
@@ -31,3 +31,6 @@ what pushes the view past both the walls (this issue) and the layers (#23).
 WHAT THE FIX MUST NOT BE: clamping the camera in the port while leaving the game's parallax
 on 794. The two are one formula; correcting one and not the other moves the black band rather
 than removing it.
+
+### Resolution (2026-08-06)
+The camera is clamped to (stage_width - view_width) instead of the game's (stage_width - 794), in camera_clamp_to_view() in runtime/overrides/background.c. The game's own clamp is at 0x0041bc47..0x0041bc60 inside fn_0041b5d0; the port re-applies it with the real view width at the top of the layer draw, which is the boundary between the camera update and anything that draws from it -- fn_0041b5d0 calls the layer draw as its last act, and the only other call site is immediately before the object draw fn_0041a5a0, so the clamp lands ahead of the sprites too. The mirror at 0x00450b7c is kept in step under the same condition the game reads it back, or the unclamped value would come round on the next frame. Where the view is wider than the whole stage no camera value can help, so the maximum floors at 0. Verified on Brokeback Clif (1500 wide) at 1600x550: the fighter now reaches the right edge of the view instead of the view scrolling 800 px past the wall.

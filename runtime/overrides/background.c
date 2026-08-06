@@ -60,6 +60,13 @@
 void fn_0041a250__orig(void);
 
 enum { BG_ALT_PASS = 99 };              /* the index fn_0041a250 hands to fn_0041a050 */
+/* The camera's shadow copy and the two words that gate it, straight out of fn_0041b5d0:
+ * when both gates are set the camera is READ from the mirror at 0x0041bc2f and written back
+ * to it at 0x0041bc6e. What they select is not identified and does not need to be -- the
+ * clamp only has to leave the mirror agreeing with the camera it clamped. */
+enum { CAM_MIRROR    = 0x00450b7c,
+       CAM_MIRROR_ON_A = 0x00450b74,
+       CAM_MIRROR_ON_B = 0x00450b84 };
 enum { DRAW_CLIP = 0x0043f010,          /* six args, stdcall: the callee pops them */
        DRAW_FILL = 0x00415160 };        /* five args, cdecl:  this function pops them */
 
@@ -123,12 +130,67 @@ static void fill_layer(uint32_t registry, uint32_t bg, int i, uint32_t tint)
  * reproduce a latent crash. */
 static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, int32_t w)
 {
-    if (stage_width <= w) return 0;
+    /* A layer with less picture than the view is wide cannot be scrolled to cover it, and
+     * the formula run past that point inverts -- (span - w) goes negative and the layer
+     * drifts RIGHT as the camera moves right. Pin it at its authored position instead. That
+     * is the honest answer to "there is no more picture", and it is issue #23: every stage's
+     * sky is non-looping and only just wider than 794, so beyond that width the band beside
+     * it is black. Filling it would mean inventing layout the stage does not have. */
+    if (stage_width <= w || span <= w) return 0;
     /* LF2_BG_SKEW=<n> shifts every parallax offset by n. It exists so the byte-identity
      * check in tools/background_test.sh has a NEGATIVE case: a frame dump that is identical
-     * whatever this function returns would be measuring nothing. Never set in normal use. */
-    const char *skew = getenv("LF2_BG_SKEW");
-    return -(((span - w) * camera) / (stage_width - w)) + (skew ? atoi(skew) : 0);
+     * whatever this function returns would be measuring nothing. Never set in normal use.
+     * Read once -- this runs for every layer of every frame. */
+    static int skew = -1;
+    if (skew < 0) { const char *s = getenv("LF2_BG_SKEW"); skew = s ? atoi(s) : 0; }
+    return -(((span - w) * camera) / (stage_width - w)) + skew;
+}
+
+/* The width the layers are drawn into: the game's 794, or the widescreen composition when
+ * one is up. This ONE substitution is the whole of the widescreen change in this file --
+ * the game's own formula, with its screen width made the real one. */
+int bg_view_width(void)
+{
+    const int w = lf2_wide_width();
+    return w > BG_SCREEN_W ? w : BG_SCREEN_W;
+}
+
+/* Issue #28: the camera is still clamped to the 4:3 limit, so a wider view scrolls past the
+ * wall a character can walk to.
+ *
+ * The game's own clamp is at 0x0041bc47..0x0041bc60, inside fn_0041b5d0:
+ *
+ *     if (camera < 0)                     camera = 0;
+ *     if (camera > stage_width - 794)     camera = stage_width - 794;
+ *
+ * with 794 a literal, exactly as in the parallax. Re-applied here with the real view width.
+ *
+ * WHY IT IS APPLIED HERE rather than in fn_0041b5d0, and why that is not a workaround. The
+ * clamp has to land between the camera update and anything that draws from it, and
+ * fn_0041b5d0 does BOTH -- it updates the camera and then calls this function as its last
+ * act (0x0041bc7b). So the top of the layer draw IS that boundary, from the game's own
+ * structure rather than by luck: fn_0041a250 has exactly two call sites, and the other
+ * (0x0041d748) is immediately before the object draw fn_0041a5a0, so the clamp lands ahead
+ * of the sprites too. Nothing reads the camera in between at either site. Overriding
+ * fn_0041b5d0 (1722 bytes) to move it a few instructions earlier would change no pixel.
+ *
+ * A view wider than the whole stage cannot be helped by any camera value -- there is less
+ * world than view -- so the maximum floors at 0 and the remainder is black. That is the
+ * stage being narrower than the window, not a scrolling fault. */
+static void camera_clamp_to_view(int32_t stage_width, int32_t view)
+{
+    int32_t camera = (int32_t)LD32(BG_CAMERA_X);
+    int32_t max = stage_width - view;
+    if (max < 0) max = 0;
+    if (camera > max) camera = max;
+    if (camera < 0) camera = 0;
+    ST32(BG_CAMERA_X, (uint32_t)camera);
+
+    /* The game mirrors the camera into CAM_MIRROR under the same two conditions it reads it
+     * back from there (0x0041bc2f / 0x0041bc6e). Keeping the mirror in step matters because
+     * that read happens BEFORE the clamp on the next frame -- leaving it stale would let the
+     * unclamped value come back round. */
+    if (LD32(CAM_MIRROR_ON_A) && LD32(CAM_MIRROR_ON_B)) ST32(CAM_MIRROR, (uint32_t)camera);
 }
 
 void fn_0041a250(void)
@@ -139,13 +201,15 @@ void fn_0041a250(void)
 
     /* LF2_BG_ORIG=1 hands every frame to the recompiled body instead. It is the A/B this
      * file is verified by, not a fallback anyone should need: tools/background_test.sh runs
-     * the same route both ways and asserts the dumped frames are BYTE-IDENTICAL. A
-     * reimplementation that cannot be diffed against what it replaces is a rewrite.
+     * the same route five ways and asserts that at 794x550 the dumped frames are
+     * BYTE-IDENTICAL to this body's, and that at 1600x550 they are not. A reimplementation
+     * that cannot be diffed against what it replaces is a rewrite.
      *
-     * The comparison is only worth anything because it can fail: the test also runs an arm
-     * with the parallax deliberately off by one, and asserts THAT differs. Two runs that
-     * agree prove nothing if the dump would agree no matter what was drawn. */
-    if (getenv("LF2_BG_ORIG")) { fn_0041a250__orig(); return; }
+     * The identity is only worth anything because it can fail, which is what LF2_BG_SKEW is
+     * for. Two runs agreeing proves nothing if the dump would agree whatever was drawn. */
+    static int use_orig = -1;
+    if (use_orig < 0) use_orig = getenv("LF2_BG_ORIG") != NULL;
+    if (use_orig) { fn_0041a250__orig(); return; }
 
     /* Index 99 is a different pass entirely (fn_0041a050) and nothing here applies to it.
      * The original body is kept callable for exactly this, and for the escape below. */
@@ -173,6 +237,8 @@ void fn_0041a250(void)
     }
 
     const int32_t stage_width = (int32_t)LD32(base + BG_STAGE_WIDTH);
+    const int32_t view = bg_view_width();
+    camera_clamp_to_view(stage_width, view);
     const int32_t camera = (int32_t)LD32(BG_CAMERA_X);
 
     for (int i = 0; i < (int)count; i++) {
@@ -180,7 +246,7 @@ void fn_0041a250(void)
         if (tint) { fill_layer(registry, bg, i, tint); continue; }
 
         const int32_t span = (int32_t)lf(registry, bg, BG_LAYER_SPAN, i);
-        const int32_t off = layer_offset(span, stage_width, camera, BG_SCREEN_W);
+        const int32_t off = layer_offset(span, stage_width, camera, view);
 
         /* The frame counter is stepped whether or not this frame draws -- it is what makes
          * the animation run -- so it must happen before the range test, not inside it. */
@@ -199,7 +265,14 @@ void fn_0041a250(void)
         const int32_t loop = (int32_t)lf(registry, bg, BG_LAYER_LOOP, i);
 
         if (loop > 0) {
-            for (int32_t x = lx; x < span; x += loop)
+            /* The game stops at the layer's span, which is exactly enough to fill 794. A
+             * wider view needs more copies, and a LOOPING layer is the one kind that can
+             * honestly provide them: the repeat step is the layer's own declared `loop:`,
+             * so carrying it on is the stage's layout continued rather than invented. At
+             * the game's own 794 this adds nothing -- a layer's span always reaches the
+             * right edge there, which is why the native-width arm of the test still comes
+             * out byte-identical. */
+            for (int32_t x = lx; x < span || off + x < view; x += loop)
                 draw_layer(obj, off + x, y, pic, arg0);
         } else {
             /* loop < 0 would spin for ever; the game would too, but it is a data error and

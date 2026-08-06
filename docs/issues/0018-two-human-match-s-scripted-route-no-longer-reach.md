@@ -188,7 +188,7 @@ to 0 the same run went from 20 s of user CPU to 111 s and hit its timeout. Somet
 game watches the clock WITHOUT sleeping, and with a clock that only sleeps advance it, that
 loop waits for a time that can never arrive. 1 us per read terminates it.
 
-WHAT IS UNRESOLVED, and why this is not committed: with the change in, Test project /home/bhamil/repo/pc/lf2 went from
+WHAT IS UNRESOLVED, and why this is not committed: with the change in, the full ctest run went from
 79 s to over 150 s and timed out, while all nine other tests passed -- controller,
 controller_2p, coop_dropin, coop_select, pause_dropout, widescreen, two_human_match, mouse.
 Smoke is the run with LF2_CK_DEBUG, LF2_AUDIO_DEBUG and LF2_SCREEN_HASH all on, so the
