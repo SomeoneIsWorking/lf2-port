@@ -228,3 +228,51 @@ every object in the game to fix one label's clamp, and the defect it fixes is on
 184 px early in a wide view. It wants a session with the instruction listing open and a way to
 verify the pass draws identically at 794 before the clamp is touched -- that byte-identity arm
 is the acceptance gate and it does not exist yet either.
+
+### Note (2026-08-12)
+THE CAUSE IS NOW MEASURED RATHER THAN READ OFF THE DECOMPILATION, and the blocker this entry
+recorded against the port is gone -- the receivers are recoverable after all. Claim C025.
+
+THE DISCRIMINATING RUN, which is what the earlier notes on this entry never had. A 794-based
+clamp and a view-based bound predict DIFFERENT freeze positions, so two window widths separate
+them: view-based would freeze at 1091 and at 969, 794-based freezes at 785 in both.
+
+    window 1100x550    tag x=785 on 1268 frames
+    window 1920x1080   tag x=785 on 1268 frames
+
+Identical to the frame count. It is the game's 794, not the view.
+
+THE CLAMP IN MACHINE CODE (re/instructions.tsv, 0041a9c9..0041aa33):
+
+    0041a9e2  SUB ESI,dword ptr [0x00450bc4]   ; world - camera
+    0041a9f3  XOR ESI,ESI                      ; low clamp at 0
+    0041aa0e  MOV ECX,0x31a / SUB ECX,EAX      ; 0x31a == 794
+    0041aa15  CMP ESI,ECX / JLE
+    0041aa2e  MOV ESI,0x31a / SUB ESI,EDX      ; high clamp at 794 - 9*len
+
+FOUR sites load 0x31a in this function -- 0041aa0e, 0041aa2e, 0041abf0, 0041ac10 -- i.e. TWO
+clamp pairs, the ordinary name tag and the MENU_CLIP7 variant the decompilation shows as the
+second branch. A port must fix all four, and a port that fixes one will look correct until
+whatever draws the second variant appears.
+
+THE RECEIVER PROBLEM IS SOLVED, so the note above it that called the port "bigger than 368
+lines" overstated the obstacle. Ghidra elides the __thiscall receiver, but the listing does not:
+
+    0041ab15  MOV ECX,dword ptr [0x0044faf4]   <- the receiver
+    0041ab21  CALL 0x0043f010                  <- the tag glyph draw (ret 0041ab26, measured)
+
+Every other call site resolves the same way by reading back from the CALL to the nearest ECX
+load. The function is 636 instructions.
+
+WHAT IS STILL TRUE: 0x31a is an immediate in code the recompiler bakes into C, so no ST32
+reaches it and the fix is still a hand-port of fn_0041a5a0 with its four sites reading
+bg_view_width(). NOT STARTED, deliberately and not for lack of information: the pass WRITES
+BACK through the objects it draws (the effects loop at obj+0x3c0 advances per-effect counters),
+so a half-correct port corrupts state rather than misplacing a pixel, and the acceptance gate
+it needs -- byte-identity against fn_0041a5a0__orig at a 794 view, the shape background.c
+already has with LF2_BG_ORIG -- does not exist yet. Those two together are the session's worth
+of work, and starting them half-way is worse than not starting.
+
+DO NOT, when that port is written, "fix" this by widening only the high clamp. The low clamp at
+0 is correct only because the shifted camera keeps screen x >= 0; check it against the shift
+rather than assuming it.
