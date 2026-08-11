@@ -87,7 +87,7 @@ CLICKS="$CLICKS;150,25@overlay+120"
 
 echo "driving the game from the mouse alone into a match (fast)..."
 ( cd "$GAME" && \
-  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
+  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_RENDERER=soft \
   LF2_SCREEN_HASH=1 LF2_AUDIO_DEBUG=1 LF2_CK_DEBUG=1 \
   LF2_CLICK_SCRIPT="$CLICKS" LF2_QUIT_AFTER=3200 \
   timeout -k 5 220 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1

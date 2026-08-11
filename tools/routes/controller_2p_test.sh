@@ -42,7 +42,7 @@ run() {   # run <logfile> [second-pad script]
     # LF2_VIRTUAL_PAD2 is exported rather than set inline: `${2:+VAR="$2"}` expands to a
     # single word the shell tries to EXECUTE, not to a variable assignment.
     ( cd "$GAME" && \
-      export SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
+      export SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_RENDERER=soft \
              LF2_TEXT_DEBUG=1 LF2_VIRTUAL_PAD="$PAD1" LF2_QUIT_AFTER=1060 && \
       if [ -n "${2:-}" ]; then export LF2_VIRTUAL_PAD2="$2"; else unset LF2_VIRTUAL_PAD2; fi && \
       timeout -k 5 120 "$BUILD/lf2" lf2.exe ) > "$1" 2>&1

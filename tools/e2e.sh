@@ -27,10 +27,19 @@
 # instances on one machine take long enough to trip it -- concurrency here produces failures
 # from scripts that pass individually. That is why this loops rather than backgrounding.
 #
-# THE `-k` IS LOAD-BEARING. Plain `timeout N` sends TERM and then waits forever if the child
-# does not act on it, which is not a guard at all: a run was found alive at 920 s under a
-# `timeout 400`, holding the whole sweep open with nothing to show for it. `-k 5` follows with
-# KILL, which nothing can decline.
+# THE `-k` IS LOAD-BEARING, and what it guards against is not a stubborn signal handler.
+# Plain `timeout N` sends TERM and then waits forever if the child does not act on it, and a
+# run was found alive at 920 s under a `timeout 400`, holding the whole sweep open. The kernel
+# log named that exact PID in an amdgpu fault: the process was wedged on a GPU that had reset,
+# which is why TERM went nowhere. `-k 5` follows with KILL, which nothing can decline -- but
+# the wedge itself is issue #40, and the mitigation for THAT is the LF2_RENDERER=soft pins
+# below, not the timeout.
+#
+# MOST ROUTES DO NOT TEST THE RENDERER, so they no longer run on the GPU. Only render_test
+# (which diffs the two renderers), pause_dropout_test (which asserts the native renderer drew
+# the paused frames) and smoke_test (whose CPU-usage assertion is calibrated on the GPU path)
+# still touch it. Running thirteen GPU instances back to back is how a sweep turned into the
+# batch that wedges the card.
 #
 # Unplug any physical controller first: an attached pad binds gamepad slot 0 and silently
 # stalls every scripted route at the front end.
