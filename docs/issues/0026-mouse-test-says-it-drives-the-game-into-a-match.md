@@ -2,7 +2,7 @@
 id: 26
 title: mouse_test says it drives the game into a match and never reaches one
 status: resolved
-symptom: tools/mouse_test.sh passes every assertion while the run stops at the post-load panel: no overlay, no match, and the 'sound effects (a match started)' check is satisfied by menu sounds
+symptom: tools/routes/mouse_test.sh passes every assertion while the run stops at the post-load panel: no overlay, no match, and the 'sound effects (a match started)' check is satisfied by menu sounds
 tags: reported,testing,verification,mouse
 created: 2026-08-06
 updated: 2026-08-07
@@ -24,7 +24,7 @@ are landing on something else entirely. Every assertion still passes:
   sound effects >= 2          plays=4, all of them menu sounds
   keyed blits >= 1000         6744, which is the character-select screen drawing sprites
 
-THE THRESHOLD IS THE BUG, not the number. tools/smoke_test.sh's own comment records what this
+THE THRESHOLD IS THE BUG, not the number. tools/routes/smoke_test.sh's own comment records what this
 discriminator is worth: "a run that stopped at the overlay measured plays=1, one that reached
 the match measured plays=7". mouse_test asks for >= 2 and calls it "(a match started)". Four
 menu sounds clear it, so the check cannot fail for the reason it names, and the test's first

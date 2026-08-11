@@ -17,7 +17,7 @@ is presented on only TWO frames of a run (902-903), which is why nobody had look
 
 THE MECHANISM, as established: the loading screen's background is the resource bitmap MENU_WAIT,
 794x550, drawn WHOLE at (0,0) as a BLIT -- not a colour fill. The offscreen surface it lives in
-is one of the surfaces that FOLLOW THE WINDOW (runtime/ddraw.c surfaces_follow_window), so at a
+is one of the surfaces that FOLLOW THE WINDOW (runtime/video/ddraw.c surfaces_follow_window), so at a
 wide composition that surface is 2542 columns wide. The game's own GetDC + StretchBlt then
 fills all 2542 columns of it, while the draw that puts the picture on screen takes a fixed
 794-wide SOURCE rect -- so the source rect samples the left third of a picture that has already

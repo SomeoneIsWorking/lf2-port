@@ -19,7 +19,7 @@ Screen map, measured with LF2_MENU_DEBUG:
 Adding mouse to mode 2 needs the mirror of the front-end trick: pointer -> selection index.
 That needs each screen's selection variable and item rectangles.
 
-DEAD END, do not repeat: tools/diff_data.py cannot find the character-select slot state.
+DEAD END, do not repeat: tools/re/diff_data.py cannot find the character-select slot state.
 Diffing .data across a right-arrow press showed 5 changed dwords -- and a NEGATIVE CONTROL
 run with no key press between the same two frames changed the SAME 5 (00450b8c, 00450bd0,
 00450bd4, 00451224, 00458580). They are free-running counters. Input is not the problem:
@@ -35,7 +35,7 @@ byte-identical to each other. Reaching the overlay needs a longer key script fir
 
 ### Resolution (2026-08-05)
 Done. Every screen from the launcher to a running match takes mouse, keyboard and pad, and a
-mouse-only route reaches a match with no key and no pad (tools/mouse_test.sh, ctest -R mouse).
+mouse-only route reaches a match with no key and no pad (tools/routes/mouse_test.sh, ctest -R mouse).
 
 Selection variables, all four:
   launcher (0/6/7)  the game's own index, from its hit-test constants

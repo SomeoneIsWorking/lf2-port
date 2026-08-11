@@ -17,7 +17,7 @@ DESIGN, settled by reading the code rather than guessed:
     Using the width directly letterboxes hugely and shrinks the pixels: a 1920x1080 window
     wants 978x550 of world scaled up, not 1920x550 in a 1080-tall window.
   - The compose surface must be ALLOCATED ONCE at the display's maximum width with its PITCH
-    FIXED there, and a resize then only changes s->w. vram_alloc (runtime/ddraw.c) is a bump
+    FIXED there, and a resize then only changes s->w. vram_alloc (runtime/video/ddraw.c) is a bump
     allocator with NO FREE, so reallocating per resize event would exhaust the arena during
     a single drag of the window edge.
   - surf_Lock reports w/h/pitch fresh on every call, so the game picks a changed width up on

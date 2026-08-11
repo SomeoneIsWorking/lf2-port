@@ -7,7 +7,7 @@ created: 2026-08-05
 
 ## Instrument
 
-LF2_READ_WATCH_RAW=1 (runtime/rwatch.c) -- per-byte read profile over a watched span
+LF2_READ_WATCH_RAW=1 (runtime/cpu/rwatch.c) -- per-byte read profile over a watched span
 
 ## Validated by
 

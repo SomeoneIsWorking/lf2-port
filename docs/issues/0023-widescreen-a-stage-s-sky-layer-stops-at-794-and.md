@@ -38,9 +38,9 @@ ESTABLISHED, 2026-08-06, by reading the game's own background data — and it CO
 assumption this entry was filed on. The data does give more picture, and the sky is not a
 single fixed-width backdrop at all.
 
-HOW IT WAS READ. bg.dat is encrypted like every other data file, so tools/decrypt_dat.py (new)
+HOW IT WAS READ. bg.dat is encrypted like every other data file, so tools/re/decrypt_dat.py (new)
 does the game's own cipher offline — the one from runtime/overrides/assets.c, proved
-byte-identical to the game's on all 77 files. `tools/decrypt_dat.py --layers game/bg/*/*/bg.dat`
+byte-identical to the game's on all 77 files. `tools/re/decrypt_dat.py --layers game/bg/*/*/bg.dat`
 prints every stage.
 
 THE KEY FACT: a layer's `width:` is a REPEAT PERIOD, not the width of its picture. The two are
@@ -64,7 +64,7 @@ by design, on every stage in the game. Repeating it across a widened viewport is
 own layout carried on, not something invented — the same justification the existing tiling
 continuation already rests on.
 
-WHY THE EXISTING CONTINUATION DOES NOT CATCH IT (runtime/ddraw.c, the `finish a tiling series`
+WHY THE EXISTING CONTINUATION DOES NOT CATCH IT (runtime/video/ddraw.c, the `finish a tiling series`
 block). It recognises a series by CONTIGUITY: this blit's left edge exactly where the previous
 one ended, same rows. At camera 0 in a widened viewport the game draws sky1 clipped to its own
 794 and never draws sky2 at all, because sky2 starts at x=800 — past the clip. One blit, no
@@ -116,20 +116,20 @@ in a register or reaches through a chain -- which is exactly the shape that a po
 cannot find.
 
 THE NEXT STEP, and it uses an instrument this project already has rather than more scanning:
-arm the READ WATCH (LF2_READ_WATCH, runtime/rwatch.c, instrument I001) on the period array and
+arm the READ WATCH (LF2_READ_WATCH, runtime/cpu/rwatch.c, instrument I001) on the period array and
 let it name the guest instruction that reads it. The disassembly at that site then shows how
 the address is computed, and that computation -- not the address -- is what the port copies.
 
-Reproducing the measurement: tools/decrypt_dat.py --layers gives the expected periods, and
+Reproducing the measurement: tools/re/decrypt_dat.py --layers gives the expected periods, and
 LF2_HEAP_DUMP=<frame> with LF2_MEM_DUMP=<frame> gives the pair of dumps this rests on. The
-route used was tools/controller_test.sh's, with the match reached at frame 1968.
+route used was tools/routes/controller_test.sh's, with the match reached at frame 1968.
 
 ### Note (2026-08-06)
 UNBLOCKED, 2026-08-06 — the address computation is recovered, and it needs no magic constant.
 
 HOW. The read watch (instrument I001) gained one line: on the FIRST read in the watched span
 it prints the guest call ring. Armed on the period array during a match, the newest entry was
-0x0041a250 — which runtime/ddraw.c already names as the background layer draw ("the count
+0x0041a250 — which runtime/video/ddraw.c already names as the background layer draw ("the count
 comes from an immediate 794 inside FUN_0041a250"), so the two agree independently.
 
 Reading that function's generated C gives the computation in full:
@@ -158,7 +158,7 @@ game: a .data global for the background index, a .data global for the registry p
 stride the lifted code states. Nothing is hardcoded to an allocation, which is what the
 previous note said the fix must avoid.
 
-WHAT REMAINS is the drawing change itself in runtime/ddraw.c: the tiling continuation
+WHAT REMAINS is the drawing change itself in runtime/video/ddraw.c: the tiling continuation
 currently infers a period from contiguity between blits, and for a sky it must instead take
 the period from this table for the layer being drawn. Matching a blit to its layer index is
 the one piece still to work out -- the y offsets (also in this table, at PERIOD+240) are the
@@ -169,7 +169,7 @@ THE RUNTIME READ IS PROVEN, 2026-08-06. The address computation from the previou
 implemented (bg_layer_field in runtime/overrides/assets.c, addresses in world.h) and CHECKED
 AGAINST THE FILE on a real stage -- the two agree entry for entry:
 
-  from bg.dat (tools/decrypt_dat.py --layers)   from the running game (LF2_BG_TABLE=1)
+  from bg.dat (tools/re/decrypt_dat.py --layers)   from the running game (LF2_BG_TABLE=1)
     bc1  period 1379  x=0    y=129                layer 0  period=1379  x=0    y=129
     bc2  period 1379  x=460  y=129                layer 1  period=1379  x=460  y=129
     bc3  period 1379  x=920  y=129                layer 2  period=1379  x=920  y=129
@@ -257,7 +257,7 @@ WHY THIS SIMPLIFIES THE FIX. The whole chain of work above -- locating the heap 
 recovering its address computation, the blit-to-layer matching problem and its ambiguities --
 was in service of getting a period the port could not otherwise know. It turns out the port
 already has it: the repeat distance is the SOURCE BITMAP WIDTH, which every blit carries.
-runtime/ddraw.c's continuation currently repeats at `dr - dl`, the destination width of the
+runtime/video/ddraw.c's continuation currently repeats at `dr - dl`, the destination width of the
 last blit in a run -- 593 for bc4 above, where the answer is 800. That is the bug, and it is
 one expression.
 
@@ -286,7 +286,7 @@ fn_0041a250 (the background layer draw, 828 bytes, read end to end) is:
 TWO THINGS IN THIS ISSUE'S EARLIER NOTES ARE NOW KNOWN TO BE WRONG.
 
   1. "the count comes from an immediate 794 inside FUN_0041a250" -- the comment in
-     runtime/ddraw.c, and repeated here. It does not. The tiling loop terminates on the
+     runtime/video/ddraw.c, and repeated here. It does not. The tiling loop terminates on the
      LAYER'S SPAN. The 794 appears only in the parallax, twice.
   2. "a stage's sky is a PAIR of bitmaps laid end to end to fill one period, and the period
      repeats ... THE GAME ITSELF REPEATS THE SKY. It has to." It does not, and it does not
@@ -312,7 +312,7 @@ WHAT THAT MAKES THE FIX. Two halves, and they are one formula so they land toget
      is issue #28, reported independently on the same day, and it is the same 794.
 
 WHAT THE PORT IS DOING NOW IS WORSE THAN THE BLACK BAND, and this is the immediate defect.
-runtime/ddraw.c's contiguity continuation cannot tell a looping layer from a non-looping one,
+runtime/video/ddraw.c's contiguity continuation cannot tell a looping layer from a non-looping one,
 so on Brokeback Clif at 1600x550 it repeats bc2 -- the middle cliff -- from x=1027 to the
 right edge, with a hard black seam at 1026 and another at 1487. Captured:
 scratch/wide23/frame_2250.png. It invents cliff the game never draws. Whatever lands for (a)
@@ -331,11 +331,11 @@ and in the tiling bound. A LOOPING layer is carried past 794 at its own declared
 step, which is the stage's layout continued; a NON-LOOPING layer is drawn once and pinned
 (the parallax inverts below span == view, so it would drift the wrong way).
 
-runtime/ddraw.c's contiguity continuation is DELETED. It was the source of the worst of this:
+runtime/video/ddraw.c's contiguity continuation is DELETED. It was the source of the worst of this:
 on Brokeback Clif at 1600x550 it repeated the middle cliff across the widened band with hard
 seams at 1026 and 1487. Before/after: scratch/wide23/frame_2250.png vs fixed_2250.png.
 
-VERIFIED, three ways, by tools/background_test.sh (tools/e2e.sh background):
+VERIFIED, three ways, by tools/routes/background_test.sh (tools/e2e.sh background):
   794x550   byte-identical to the recompiled body at two camera positions
   control   LF2_BG_SKEW=3 differs, so the identity above is not a blind pass
   1600x550  differs from the unwidened body, so the view width really does reach the pass

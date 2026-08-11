@@ -33,7 +33,7 @@ and what binds it to a player index.
 ALSO NOTED, unverified: the device selector table spans eight entries
 (0x00450b4c..0x00450b6c) but the ported gather loops `i < 4`. If the game really supports
 eight players, that cap is a port limitation -- but changing it without evidence would risk
-the two-player path that `tools/controller_2p_test.sh` covers, so it is left alone.
+the two-player path that `tools/routes/controller_2p_test.sh` covers, so it is left alone.
 
 DEAD END TO AVOID: watching 0x00450b50 for the write that makes a slot live. The device
 selector is the CONTROL CONFIG index (slots 0..3 read 1,2,3,4 from character selection

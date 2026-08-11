@@ -6,7 +6,7 @@
  * WHY THIS IS AN OVERRIDE AND NOT A BLIT-PATH HEURISTIC. Widescreen has to decide, for every
  * background layer, whether there is more picture to show beside the game's 794 and at what
  * step to repeat it. The blit stream cannot answer that: a layer that repeats and a layer
- * that does not look identical by the time they reach Blt, and runtime/ddraw.c's contiguity
+ * that does not look identical by the time they reach Blt, and runtime/video/ddraw.c's contiguity
  * rule -- "this copy starts exactly where the last one ended, so continue the run" -- guessed
  * wrong on Brokeback Clif and repeated the middle cliff across the widened band with a hard
  * seam at each end. The layer itself says which it is; this is the function that reads it.
@@ -45,16 +45,16 @@
  * layer can be carried further, and then at its own declared step rather than a guessed one.
  *
  * Verified against the body it replaces by drawing the same frames both ways: see
- * tools/background_test.sh.
+ * tools/routes/background_test.sh.
  */
 
 #include "overrides.h"
 #include "world.h"
 #include "geom.h"
 
-#include "../com.h"
-#include "../guest_ops.h"
-#include "../hostwin.h"
+#include "com.h"
+#include "guest_ops.h"
+#include "hostwin.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -122,7 +122,7 @@ static void fill_layer(uint32_t registry, uint32_t bg, int i, uint32_t tint)
      *
      * fn_00415160 is the game's ONE colour-fill helper -- the stage's tinted layers and the
      * front end's screen backdrop both go through it -- so by the time a fill reaches Blt
-     * nothing in it says which of the two it was. runtime/ddraw.c used to guess from the
+     * nothing in it says which of the two it was. runtime/video/ddraw.c used to guess from the
      * rectangle: "0 to 794 is the whole native width, so it is a full-width band, stretch it
      * across the viewport". That test matches the FRONT END exactly, because the front end's
      * backdrop is a fill of the whole 794-wide screen -- so a wide window painted the menu's
@@ -151,14 +151,14 @@ static void fill_layer(uint32_t registry, uint32_t bg, int i, uint32_t tint)
 static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, int32_t w)
 {
     /* The formula, and the pin for a layer with less picture than the view is wide, are
-     * geom_layer_offset -- checked by runtime/test_geom.c without booting the game. The
+     * geom_layer_offset -- checked by tests/test_geom.c without booting the game. The
      * pin is issue #23: every stage's sky is non-looping and only just wider than 794, so
      * beyond that width the band beside it is black, and filling it would mean inventing
      * layout the stage does not have. */
     if (stage_width <= w || span <= w) return 0;      /* pinned: the skew must not move it */
     const int32_t off = geom_layer_offset(span, stage_width, camera, w);
     /* LF2_BG_SKEW=<n> shifts every parallax offset by n. It exists so the byte-identity
-     * check in tools/background_test.sh has a NEGATIVE case: a frame dump that is identical
+     * check in tools/routes/background_test.sh has a NEGATIVE case: a frame dump that is identical
      * whatever this function returns would be measuring nothing. Never set in normal use.
      * Read once -- this runs for every layer of every frame. */
     static int skew = -1;
@@ -191,7 +191,7 @@ static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, i
  * Clamped at zero because there is no world left of the stage's start: at the left edge the
  * view degrades to what it did before -- the extra width on the right -- rather than opening a
  * band of nothing. At the game's own 794 the offset is exactly zero, which is why
- * tools/background_test.sh's byte-identity arm still holds. */
+ * tools/routes/background_test.sh's byte-identity arm still holds. */
 static long cam_frames, cam_shifted, cam_locked, cam_lock_bound;
 static int32_t cam_game_max, cam_draw_max, cam_k, cam_lock_max;
 
@@ -318,7 +318,7 @@ static void camera_clamp_to_view(int32_t stage_width, int32_t view)
      * `lock + 794 - view` puts the right edge exactly where the 4:3 game puts it, which is
      * the whole of the request: the camera stops the same distance from the walk boundary
      * whatever the window is. At view == 794 it is `lock` unchanged, so this cannot alter
-     * the game's own picture -- which is what tools/background_test.sh's byte-identity arm
+     * the game's own picture -- which is what tools/routes/background_test.sh's byte-identity arm
      * checks.
      *
      * NOT VERIFIED IN STAGE MODE ITSELF: every scripted route this port has reaches VS mode,
@@ -326,7 +326,7 @@ static void camera_clamp_to_view(int32_t stage_width, int32_t view)
      * bound above it already gets and it is a no-op at the game's own width, but nobody has
      * watched it hold a camera in a stage. */
     const int32_t lock = (int32_t)LD32(BG_CAMERA_LOCK);
-    /* Both bounds and the floor at zero are geom_camera_max, which runtime/test_geom.c checks
+    /* Both bounds and the floor at zero are geom_camera_max, which tests/test_geom.c checks
      * at the game's own width and wider. What is here is the guest read and the counters. */
     const int32_t max = (int32_t)geom_camera_max(stage_width, view, lock);
     if (lock) {
@@ -355,7 +355,7 @@ void fn_0041a250(void)
     const uint32_t bg = LD32(BG_INDEX);
 
     /* LF2_BG_ORIG=1 hands every frame to the recompiled body instead. It is the A/B this
-     * file is verified by, not a fallback anyone should need: tools/background_test.sh runs
+     * file is verified by, not a fallback anyone should need: tools/routes/background_test.sh runs
      * the same route five ways and asserts that at 794x550 the dumped frames are
      * BYTE-IDENTICAL to this body's, and that at 1600x550 they are not. A reimplementation
      * that cannot be diffed against what it replaces is a rewrite.

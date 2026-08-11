@@ -39,4 +39,4 @@ character selection, the pre-fight overlay and a match — 16,375 `TextOutA` dra
 85 of 85 distinct characters across both corpora.
 
 If a mod ever puts CJK in front of this, the port will draw nothing for those codepoints and
-say so rather than substituting silently — see `runtime/gdi.c`.
+say so rather than substituting silently — see `runtime/win32/gdi.c`.

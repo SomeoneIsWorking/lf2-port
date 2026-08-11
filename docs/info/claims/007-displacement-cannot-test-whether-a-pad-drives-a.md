@@ -4,7 +4,7 @@ kind: claim
 status: holds
 created: 2026-08-05
 tags: coop,testing,method
-depends: tools/coop_dropin_test.sh
+depends: tools/routes/coop_dropin_test.sh
 ---
 
 ## Claim

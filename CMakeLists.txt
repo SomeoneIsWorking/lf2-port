@@ -31,7 +31,7 @@ enable_testing()
 #     tools/e2e.sh mouse render # by name
 #
 # A claim that COULD be checked offline belongs in runtime/overrides/geom.h and
-# runtime/test_geom.c rather than in a script. The audio pan is the worked example: a
+# tests/test_geom.c rather than in a script. The audio pan is the worked example: a
 # three-run, 270-second script became 20 assertions in a millisecond, and gained a walk across
 # every on-screen pixel that the script had never done.
 
@@ -65,22 +65,22 @@ add_custom_command(
 
 add_executable(lf2
     ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
-    runtime/guest.c
-    runtime/flags.c
-    runtime/strops.c
-    runtime/rwatch.c
-    runtime/imports.c
-    runtime/com.c
-    runtime/win32.c
-    runtime/ddraw.c
-    runtime/dsound.c
-    runtime/dshow.c
-    runtime/gdi.c
-    runtime/loadprof.c
-    runtime/pause.c
-    runtime/gamepad.c
-    runtime/script.c
-    runtime/wsock.c
+    runtime/cpu/guest.c
+    runtime/cpu/flags.c
+    runtime/cpu/strops.c
+    runtime/cpu/rwatch.c
+    runtime/win32/imports.c
+    runtime/win32/com.c
+    runtime/win32/win32.c
+    runtime/video/ddraw.c
+    runtime/audio/dsound.c
+    runtime/win32/dshow.c
+    runtime/win32/gdi.c
+    runtime/app/loadprof.c
+    runtime/app/pause.c
+    runtime/input/gamepad.c
+    runtime/app/script.c
+    runtime/win32/wsock.c
     runtime/overrides/menu.c
     runtime/overrides/screens.c
     runtime/overrides/input.c
@@ -91,19 +91,25 @@ add_executable(lf2
     runtime/overrides/assets.c
     runtime/overrides/background.c
     runtime/overrides/audio_pan.c
-    runtime/render.c
-    runtime/hd2d.c
-    runtime/main.c)
-target_include_directories(lf2 PRIVATE runtime runtime/overrides)
+    runtime/video/render.c
+    runtime/video/hd2d.c
+    runtime/app/main.c)
+# EVERY subsystem directory is on the include path, which is what lets a file say
+# #include "guest_ops.h" wherever it happens to live. The alternative -- relative "../"
+# includes -- ties each file to its position in the tree and turns any future regrouping into
+# an edit of every header line (issue #46).
+target_include_directories(lf2 PRIVATE
+    runtime runtime/cpu runtime/win32 runtime/video runtime/audio runtime/input runtime/app
+    runtime/overrides)
 
 # Warnings on the hand-written runtime only. The recompiled output is machine-emitted and
 # would bury the signal, so it is compiled without them rather than the whole target being
 # left unchecked -- which is how four real warnings sat unnoticed.
 set_source_files_properties(
-    runtime/guest.c runtime/flags.c runtime/strops.c runtime/rwatch.c runtime/imports.c
-    runtime/com.c runtime/win32.c runtime/ddraw.c runtime/dsound.c runtime/dshow.c
-    runtime/gdi.c runtime/loadprof.c runtime/pause.c runtime/gamepad.c runtime/script.c
-    runtime/wsock.c
+    runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c
+    runtime/win32/com.c runtime/win32/win32.c runtime/video/ddraw.c runtime/audio/dsound.c runtime/win32/dshow.c
+    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/input/gamepad.c runtime/app/script.c
+    runtime/win32/wsock.c
     runtime/overrides/menu.c
     runtime/overrides/screens.c
     runtime/overrides/input.c
@@ -114,9 +120,9 @@ set_source_files_properties(
     runtime/overrides/assets.c
     runtime/overrides/background.c
     runtime/overrides/audio_pan.c
-    runtime/render.c
-    runtime/hd2d.c
-    runtime/main.c
+    runtime/video/render.c
+    runtime/video/hd2d.c
+    runtime/app/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
 if(LF2_FN_TRACE)
@@ -128,7 +134,7 @@ if(LF2_STACK_CHECK)
 endif()
 
 find_package(SDL3 REQUIRED CONFIG)
-# libm: the light rig turns the player's two angles into a direction vector (runtime/hd2d.c).
+# libm: the light rig turns the player's two angles into a direction vector (runtime/video/hd2d.c).
 # gcc folds most of <math.h> inline and then does not, so this is linked explicitly rather
 # than relied on to keep being unnecessary.
 find_library(LF2_M m)
@@ -187,24 +193,24 @@ endif()
 # The port's geometry, tested WITHOUT booting the game. Every claim in it used to cost a
 # three-thousand-frame headless run; they are arithmetic, and runtime/overrides/geom.h is that
 # arithmetic factored out so the overrides and this test share one copy of it.
-add_executable(test_geom runtime/test_geom.c)
-target_include_directories(test_geom PRIVATE runtime runtime/overrides)
+add_executable(test_geom tests/test_geom.c)
+target_include_directories(test_geom PRIVATE runtime runtime/overrides runtime/cpu)
 target_compile_options(test_geom PRIVATE -Wall -Wextra)
 add_test(NAME geometry COMMAND test_geom)
 
-add_executable(test_blit runtime/test_blit.c)
-target_include_directories(test_blit PRIVATE runtime)
+add_executable(test_blit tests/test_blit.c)
+target_include_directories(test_blit PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)
 target_compile_options(test_blit PRIVATE -Wall -Wextra)
 add_test(NAME blit COMMAND test_blit)
 
-add_executable(test_mixer runtime/test_mixer.c runtime/mixer.c)
-target_include_directories(test_mixer PRIVATE runtime)
+add_executable(test_mixer tests/test_mixer.c runtime/audio/mixer.c)
+target_include_directories(test_mixer PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)
 target_compile_options(test_mixer PRIVATE -Wall -Wextra)
 target_link_libraries(test_mixer PRIVATE m)
 add_test(NAME mixer COMMAND test_mixer)
 
-add_executable(test_flags runtime/test_flags.c runtime/flags.c)
-target_include_directories(test_flags PRIVATE runtime)
+add_executable(test_flags tests/test_flags.c runtime/cpu/flags.c)
+target_include_directories(test_flags PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)
 add_test(NAME flags COMMAND test_flags)
 set_tests_properties(flags PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -230,8 +236,8 @@ add_custom_command(
     DEPENDS lift ${INSN_TSV_DEP}
     COMMENT "Generating instruction differential cases")
 
-add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c runtime/test_insn.c runtime/flags.c runtime/strops.c runtime/rwatch.c)
-target_include_directories(test_insn PRIVATE runtime)
+add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c tests/test_insn.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c)
+target_include_directories(test_insn PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)
 # The committed golden vectors let a non-x86 host replay the x86 truth; on such a host
 # the bare `test_insn` run below automatically becomes a replay against this file.
 target_compile_definitions(test_insn PRIVATE
@@ -258,6 +264,6 @@ endif()
 # nothing would say so. This recompiles and compares wherever glslc exists, and SKIPS (77)
 # where it does not, saying which.
 add_test(NAME shaders
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/build_shaders.sh --check
+         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/build/build_shaders.sh --check
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(shaders PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)

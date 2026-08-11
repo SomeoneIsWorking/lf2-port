@@ -35,7 +35,7 @@ WHAT HAS TO BE FOUND, and none of it is established yet:
     zero. `LF2_MODE=stage` drives the port into stage mode (runtime/overrides/menu.c) and
     `tools/e2e.sh stage_mode` already reaches it, so there is a route to observe this on.
 
-HOW TO READ IT: tools/ghidra_scripts/DecompDump.py, see docs/running.md. fn_0041b5d0 is the
+HOW TO READ IT: tools/re/ghidra_scripts/DecompDump.py, see docs/running.md. fn_0041b5d0 is the
 function that already gave up the camera bounds; the object step fn_004064d0 is the other
 candidate and has not been decompiled.
 

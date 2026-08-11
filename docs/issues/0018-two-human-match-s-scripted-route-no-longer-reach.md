@@ -49,7 +49,7 @@ presents, so a busier machine should just take longer to REACH frame 2300, not b
 different screen when it gets there. The data load presents while it works. Under
 contention it gets through fewer presents for the same loading work, so the load finishes
 EARLIER in frame terms and the whole route shifts relative to the script.
-tools/coop_dropin_test.sh already says this in passing ("the data load does not take a fixed
+tools/routes/coop_dropin_test.sh already says this in passing ("the data load does not take a fixed
 number of frames"); what is new is that the variable behind it is OTHER PROCESSES, so a
 run's result depends on what else the machine happens to be doing.
 
@@ -93,7 +93,7 @@ only bgm/main.wma ever loaded, and no screen appeared at all.
 That also explains the timing exactly, with no appeal to load: the failures began when the
 user plugged a pad in, not when the machine got busy.
 
-FIXED in runtime/gamepad.c: when LF2_VIRTUAL_PAD or LF2_VIRTUAL_PAD2 is set the run is a
+FIXED in runtime/input/gamepad.c: when LF2_VIRTUAL_PAD or LF2_VIRTUAL_PAD2 is set the run is a
 test, and ONLY virtual pads bind. A physical controller is ignored and SAID SO, because a
 run that silently ignored the hardware would be the next confusion.
 
@@ -131,7 +131,7 @@ presses at frames 900-1080 (which cannot be screen-keyed, since no screen exists
 no longer reach a menu that is where they expect it.
 
 WHY, and this is the ROOT CAUSE this entry already named without following through: the guest
-clock is WALL-CLOCK derived. guest_ns() in runtime/imports.c reads CLOCK_MONOTONIC and feeds
+clock is WALL-CLOCK derived. guest_ns() in runtime/win32/imports.c reads CLOCK_MONOTONIC and feeds
 GetTickCount, QueryPerformanceCounter and timeGetTime. So the relationship between a PRESENTED
 FRAME and the game's own sense of time is set by how fast the machine happens to be: under
 load the port presents fewer frames per second, so by frame 900 the game has lived through far
@@ -160,7 +160,7 @@ than shipped half-verified. The next session should start from this, not from sc
 
 THE DESIGN, which worked:
 
-  runtime/imports.c -- guest_ns() stops reading CLOCK_MONOTONIC entirely and returns a
+  runtime/win32/imports.c -- guest_ns() stops reading CLOCK_MONOTONIC entirely and returns a
   VIRTUAL timeline advanced only by the guest's own behaviour:
     * Sleep(ms) credits ms in full, whether or not the port actually sleeps (a skipped Sleep
       is a promise the time passed; without the credit the game's wait becomes a spin).
@@ -208,7 +208,7 @@ stops being a stopwatch.
 ### Note (2026-08-06)
 THE SPIN IS NAMED, 2026-08-06, and it changes what the virtual clock's fix should be.
 
-HOW: a new instrument, LF2_CLOCK_SITES (runtime/imports.c, registered as I005), records every
+HOW: a new instrument, LF2_CLOCK_SITES (runtime/win32/imports.c, registered as I005), records every
 guest call site that reads the clock with two numbers -- total reads, and the longest RUN of
 reads with no Sleep between them. The second is the one that discriminates: a well-behaved
 deadline loop reads constantly and sleeps between reads, so call count alone cannot tell it

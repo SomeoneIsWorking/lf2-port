@@ -7,7 +7,7 @@ created: 2026-08-05
 
 ## Instrument
 
-LF2_VIRTUAL_PAD scripted routes (runtime/gamepad.c) -- button:<frame> or button@<screen>[+n], with virtual_pad_report() naming the screens reached
+LF2_VIRTUAL_PAD scripted routes (runtime/input/gamepad.c) -- button:<frame> or button@<screen>[+n], with virtual_pad_report() naming the screens reached
 
 ## Validated by
 

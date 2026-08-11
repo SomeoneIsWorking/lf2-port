@@ -50,7 +50,7 @@ This is worth stating plainly because it was invisible for the life of the proje
 differential passed 66,984 checks every time it ran, and the game rendered correctly. A
 second compiler was the instrument that could see it.
 
-`tools/build_matrix.sh` builds and tests every compiler on the machine at two optimisation
+`tools/build/build_matrix.sh` builds and tests every compiler on the machine at two optimisation
 levels — evaluation order is the front end's choice and can differ with `-O` too — so this
 stays a routine check rather than something done once. Pass `-R instructions` for just the
 differential; the whole suite is a second and a half. It warns when fewer than
@@ -373,7 +373,7 @@ function do*. When the question is a constant or a piece of layout, decompile in
 printf '00429730\n' > scratch/decomp_targets.txt
 LF2_DECOMP_TARGETS=scratch/decomp_targets.txt \
 analyzeHeadless scratch/ghidra lf2 -process lf2.exe -noanalysis \
-  -scriptPath tools/ghidra_scripts -postScript DecompDump.py
+  -scriptPath tools/re/ghidra_scripts -postScript DecompDump.py
 # -> scratch/decomp/00429730.c
 ```
 
@@ -421,7 +421,7 @@ resetting its own state.
 player one is still in the match afterwards.
 
 **RmlUi was considered for the Options page and declined**, and the reasoning sits beside the
-code in `runtime/pause.c`. Dusklight uses RmlUi for its game-facing UI and is right to — it
+code in `runtime/app/pause.c`. Dusklight uses RmlUi for its game-facing UI and is right to — it
 has documents, components and a whole settings tree. This is two numbers on a menu that
 already exists, already takes keyboard, pad and mouse, and is already drawn with the game's
 own glyphs so it looks like the game. RmlUi is C++ with its own build, font stack and render
@@ -469,7 +469,7 @@ the warning, clean ones included.
 **All three devices take both forms.** They used to differ — the `@<screen>` form existed only
 for the pad, and the keyboard and mouse parsed a bare number — which is why four route tests
 were still stopwatches (issue #25). The timing model, the screen signal and the exit report
-now live in `runtime/script.c` and are shared.
+now live in `runtime/app/script.c` and are shared.
 
 | Variable | Effect |
 |---|---|
@@ -511,7 +511,7 @@ whose defaults were the numpad; the investigation notes below still reference th
 
 ### Reaching a match, deterministically
 
-Both `tools/smoke_test.sh` (mouse and keyboard) and `tools/controller_test.sh` (pad only)
+Both `tools/routes/smoke_test.sh` (mouse and keyboard) and `tools/routes/controller_test.sh` (pad only)
 now play a VS match every run. The part that used to be luck was the pre-fight overlay —
 Fight! / Reset All / Reset Random / Background / Difficulty / Exit — where a blind press
 landed on whatever was selected, usually Reset Random, which re-rolls the characters and
@@ -523,11 +523,11 @@ it is **2 on entry** (measured from boot, not assumed). So two ups reach Fight!.
 Finding it is worth recording as a method, because reading the disassembly did not work:
 searching `fn_0041bc90` for the compare returned twenty-odd candidates that could not be
 told apart on sight. Instead `LF2_MEM_DUMP=<frame>[,...]` writes the whole `.data` section
-and `tools/diff_data.py` compares two dumps across a single press:
+and `tools/re/diff_data.py` compares two dumps across a single press:
 
 ```sh
 LF2_MEM_DUMP=2290,2450 LF2_VIRTUAL_PAD="...,up:2350" ./lf2 lf2.exe
-tools/diff_data.py scratch/data_002290.bin scratch/data_002450.bin --max 8
+tools/re/diff_data.py scratch/data_002290.bin scratch/data_002450.bin --max 8
 # 12745 dwords compared, 9 differed, 2 after filters
 # 0044d06c  2 -> 1
 ```
@@ -705,7 +705,7 @@ All are environment variables read at run time, and all are off by default.
 | `LF2_WATCH_REL=<off>` | arm the memory watch on a slot in that function's frame |
 | `LF2_ESP_LOG` | log ESP either side of every host call once the watched function is entered |
 | `LF2_DUMP_SURF` | write each surface to `scratch/surf_NN.ppm` after a GDI blit |
-| `LF2_COM_TRACE` + `tools/diff_trace.py` | compare the call sequence against a Wine oracle capture |
+| `LF2_COM_TRACE` + `tools/re/diff_trace.py` | compare the call sequence against a Wine oracle capture |
 
 Two are build options rather than environment variables, because they need code emitted
 into the generated file:
@@ -980,7 +980,7 @@ with the reason rather than falling back to a hard-coded id.
 It stays **opt-in** because a late joiner still gets no character-select screen; what they
 get is chosen for them.
 
-`tools/coop_dropin_test.sh` (ctest `coop_dropin`) guards it two-sided — the same join with
+`tools/routes/coop_dropin_test.sh` (ctest `coop_dropin`) guards it two-sided — the same join with
 and without a direction pressed afterwards. Both arms assert the join happened first,
 because a run that never reached the match would otherwise pass the quiet assertion for the
 wrong reason.
@@ -1011,7 +1011,7 @@ same distinction, and the drop-in and `LF2_COOP_TRACK` both use it now.
 
 ### Two humans in a match
 
-`tools/two_human_match_test.sh` (ctest `two_human_match`) covers what `controller_2p` never
+`tools/routes/two_human_match_test.sh` (ctest `two_human_match`) covers what `controller_2p` never
 reached: `controller_2p` proves the second pad *joins at character selection* and quits at
 frame 1900, so "a second human's fighter is actually driven once the fight starts" had no
 coverage.
@@ -1045,7 +1045,7 @@ Demo, Playback, Quit. Player 1's keys then drive it: up is Keypad 8 (`0x68`) and
 Keypad 5 (`0x65`), which the control settings page states outright. From there it reaches
 Character Selection and the Battle-mode team setup.
 
-Main menu bands, from `tools/click_bands.py`:
+Main menu bands, from `tools/re/click_bands.py`:
 
 | Item | Game y | Band |
 |---|---|---|
@@ -1066,11 +1066,11 @@ before searching it.
 
 ### Tools
 
-- `tools/click_bands.py` — recovers clickable bands from the game's own comparison
+- `tools/re/click_bands.py` — recovers clickable bands from the game's own comparison
   constants. Only comparisons against the register the mouse coordinate was loaded into
   count; bounds stay in source order, since sorting destroys the lo/hi pairing. An x pair
   may be followed by several y pairs (one menu, several entries).
-- `tools/find_path.py` — greedily extends a click path, keeping any candidate that yields
+- `tools/re/find_path.py` — greedily extends a click path, keeping any candidate that yields
   one more screen transition.
 - `LF2_SCREEN_HASH=1` — reports a screen change when a large fraction of a subsampled
   framebuffer signature differs, so menu animation does not register. This is the only
@@ -1198,13 +1198,13 @@ There is one ctest suite and it is fast — that is deliberate, and it is a bar,
 description. This is a 2001 game whose logic is arithmetic over a few megabytes; anything
 here that took minutes was measuring the wrong thing in the wrong place. So what can be
 checked without a running game is checked without one: `runtime/overrides/geom.h` holds the
-port's pure geometry and `runtime/test_geom.c` walks all of it in a millisecond, and the
+port's pure geometry and `tests/test_geom.c` walks all of it in a millisecond, and the
 overrides *include* that header rather than keeping their own copy of the arithmetic.
 
 `tools/e2e.sh` keeps the rest — the questions only a running instance can answer. It runs
 them one at a time and prints a summary that distinguishes a skip from a pass.
 
-`tools/smoke_test.sh` drives the port deep into the game headless and asserts what has
+`tools/routes/smoke_test.sh` drives the port deep into the game headless and asserts what has
 actually broken before: colour-keyed blits, sound effects firing, a non-zero mix peak, the
 device being pulled, music decoding, and no aborts. Thresholds sit far below observed
 values so it fails on "broken", not on "slightly different". It skips itself if the game
@@ -1248,7 +1248,7 @@ landed on the preceding menu instead; the frame dump is what established that th
 genuinely never reached the match.
 
 `LF2_MEM_DUMP=<frame>[,...]` is the same idea for state: it writes the whole `.data`
-section to `data_<frame>.bin`, and `tools/diff_data.py` compares two of them. Together they
+section to `data_<frame>.bin`, and `tools/re/diff_data.py` compares two of them. Together they
 answer "which variable is behind this pixel" — dump both, change one thing, diff. See the
 scripted-input section above for the worked example.
 
@@ -1457,7 +1457,7 @@ time.
 
 Pads are handed to live player slots in order, so **a second controller is player two**,
 with no configuration either. `LF2_VIRTUAL_PAD2` attaches a second software pad and
-`tools/controller_2p_test.sh` (ctest target `controller_2p`) asserts it.
+`tools/routes/controller_2p_test.sh` (ctest target `controller_2p`) asserts it.
 
 This claim has been wrong in both directions, which is worth recording:
 
@@ -1483,7 +1483,7 @@ both.
 
 ### Why this needed a port rather than a shim
 
-`joyGetPosEx` and friends are reimplemented on SDL3 in `runtime/gamepad.c`, and they were
+`joyGetPosEx` and friends are reimplemented on SDL3 in `runtime/input/gamepad.c`, and they were
 answering correctly long before a controller did anything useful. The reason nothing
 happened is one level up: **a controller reaches a player only if that player's control
 config names a joystick**, and nothing sets that without a trip to the settings screen.
@@ -1513,7 +1513,7 @@ The front-end menu is the one exception, because it is mouse-driven rather than
 button-driven, so what a pad moves there is the ported menu's selection index. Selecting
 works by placing the pointer, so the game highlights the entry exactly as a mouse would —
 the highlight is the game's, not something drawn on top. The band coordinates come from the
-game's own hit-test constants (`tools/click_bands.py`).
+game's own hit-test constants (`tools/re/click_bands.py`).
 
 This replaced an earlier version that synthesised player-1 keypresses at the window
 boundary for all of it. That worked, but it made a controller pretend to be a keyboard
@@ -1532,7 +1532,7 @@ untestable and were therefore pure assumption:
 - **auto-detect** — the runtime reports `controller 0 connected: lf2 virtual pad`
 - **hotswap** — the pad attaches *after* the game has started and already probed its
   joysticks, and is still picked up, which is exactly the case the stock game cannot handle
-- **the whole route** — `tools/controller_test.sh` (ctest target `controller`) drives from
+- **the whole route** — `tools/routes/controller_test.sh` (ctest target `controller`) drives from
   the title screen into character selection with **no keyboard and no mouse input at all**,
   and asserts on the input gather's own counters
 
@@ -1570,7 +1570,7 @@ renderer highlights it, and raises the game's click flag to activate — so the 
 the click sound, and the screen change all remain the game's code. Nothing is drawn or
 dispatched by the port.
 
-A controller drives it directly (`runtime/gamepad.c`), and a mouse still works as before.
+A controller drives it directly (`runtime/input/gamepad.c`), and a mouse still works as before.
 The two are kept consistent: if the pointer moves to somewhere the port did not put it, a
 mouse is being used, so whatever it is pointing at becomes the selection and the port hands
 control back. Picking up the mouse after using a pad does not fight it, and vice versa.
@@ -1589,7 +1589,7 @@ So **the front end is the default branch, not a numbered mode**; the value obser
 written to match. Mode 1 is the one value that is never live for a whole frame, so the port
 never ran at all: the game used its original body, the menus worked, the ads were still
 gone (that is a separate override), and every test stayed green. A dead port and a working
-port were indistinguishable from the outside — which is why `tools/controller_test.sh`
+port were indistinguishable from the outside — which is why `tools/routes/controller_test.sh`
 exists and why it was checked against the bug re-introduced on purpose.
 
 `0x0044d064` is only the sub-screen *within* the front end, so both are checked — keying
@@ -1625,7 +1625,7 @@ plus A lands on the control settings page, and the mouse-driven smoke test is un
 ## Every menu takes every device
 
 The chain from the launcher to a running match is mouse-drivable end to end, with no key
-and no pad: `tools/mouse_test.sh` is that route, and `ctest -R mouse` runs it.
+and no pad: `tools/routes/mouse_test.sh` is that route, and `ctest -R mouse` runs it.
 
 | screen | selection | how it was located |
 |---|---|---|
@@ -1658,7 +1658,7 @@ transitions, 1 sound effect); with it live it reaches a match (4 and 10).
 
 ## Finding which code draws something
 
-Three hooks in `runtime/ddraw.c`:
+Three hooks in `runtime/video/ddraw.c`:
 
 - **`LF2_BLT_FRAME=<frame>[,...]`** logs *every* blit that composes those presented frames —
   both rectangles, the source surface and its size, the flags, the calling guest address —
@@ -1696,7 +1696,7 @@ Three hooks in `runtime/ddraw.c`:
 
   It prints all three counters including the zeros, and prints what it *cannot* see every time
   rather than only when it finds nothing: GDI text goes straight into the surface without a
-  Lock (`runtime/gdi.c`), and a lock whose writes cancelled out would hash the same.
+  Lock (`runtime/win32/gdi.c`), and a lock whose writes cancelled out would hash the same.
 
 ### The native renderer, the lighting and the cast shadows
 
@@ -1792,7 +1792,7 @@ background record stays loaded after a fight, so without that gate the front end
 its lower half tinted by a stage that is not on screen.
 
 **The shaders are compiled SPIR-V, committed** in `runtime/shaders/gen/`, so the build still
-needs nothing but a C compiler and SDL. `tools/build_shaders.sh` regenerates them and
+needs nothing but a C compiler and SDL. `tools/build/build_shaders.sh` regenerates them and
 `ctest shaders` recompiles and compares wherever `glslc` is present, so an edited shader that
 was never recompiled fails the build rather than shipping last week's lighting. On a GPU
 backend that does not take SPIR-V (Metal, D3D12) the port says so on stderr and presents the
@@ -1825,11 +1825,11 @@ plain composition; there is deliberately no approximation to fall back to.
   cd game && SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
       LF2_VIRTUAL_PAD="$ROUTE" LF2_BG_TABLE=all LF2_QUIT_AFTER=2300 \
       ../scratch/build/lf2 lf2.exe 2>&1 | grep "bg table" > ../scratch/alltables.txt
-  tools/bg_table_check.py scratch/alltables.txt          # 12/12 against the shipped bg.dat
-  tools/bg_table_check.py --selftest                     # asserts it can also say FAIL
+  tools/re/bg_table_check.py scratch/alltables.txt          # 12/12 against the shipped bg.dat
+  tools/re/bg_table_check.py --selftest                     # asserts it can also say FAIL
   ```
 
-  `tools/bg_table_check.py` is the reason the table is trusted (instrument I006): it decrypts
+  `tools/re/bg_table_check.py` is the reason the table is trusted (instrument I006): it decrypts
   every `bg.dat` offline and matches each runtime record to a file by full geometry, with no
   assumed ordering. It exits non-zero, saying it compared **nothing**, if the log holds no
   table lines or the game tree holds no `bg.dat` — a missing corpus must not read as a pass.

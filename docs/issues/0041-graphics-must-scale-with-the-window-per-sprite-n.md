@@ -18,7 +18,7 @@ bigger, at full precision, into a full-window target -- not that a 794x550 image
 and then blown up.
 
 WHERE THE PORT IS TODAY, and why this is a change of position rather than a missing feature.
-runtime/ddraw.c's hostwin_window_geometry composes at the window's real pixel WIDTH and the
+runtime/video/ddraw.c's hostwin_window_geometry composes at the window's real pixel WIDTH and the
 game's own 550 ROWS, drawn 1:1 and centred, so a 1920x1080 window gets 265 black rows above
 and below. That was a deliberate decision and the comment there argues for it at length: the
 height cannot follow the window because LF2's vertical screen axis carries z and jump height,
@@ -37,12 +37,12 @@ each quad at full float precision in a full-resolution target: the geometry is e
 the sprite's own texels are magnified. That is the "render at a higher res" in the report.
 
 WHAT ALREADY EXISTS THAT THIS BUILDS ON:
-  - The native renderer (runtime/render.c) already has every draw as a QUAD in a display list
+  - The native renderer (runtime/video/render.c) already has every draw as a QUAD in a display list
     with its own source and destination rect. Scaling per sprite is a transform on that list,
     which is exactly the thing a display list makes cheap. The software compositor cannot do
     it -- it flattens to pixels on the CPU -- so this is native-renderer-only and the soft
     path stays letterboxed. Say so rather than letting the two silently differ.
-  - runtime/render.c already magnifies OBJECTS by a whole-number factor (geom_object_scale in
+  - runtime/video/render.c already magnifies OBJECTS by a whole-number factor (geom_object_scale in
     runtime/overrides/geom.h: a 1080-row window gives fighters 2x) while leaving the stage at
     1x. That is this feature done to half the draws, and the half-done state is itself a
     defect -- a 2x fighter stands on a 1x floor. Whatever lands here should subsume it, not
@@ -61,7 +61,7 @@ WHAT IS NOT ESTABLISHED and must be measured before the design is fixed:
   - GDI TEXT is rasterised at the composition's resolution (docs/codemap.md). Scaled up it
     would be a blurry or blocky bitmap while everything else got sharper. It has to be
     rasterised at the FINAL size to honour "render at a higher res", and that is a separate
-    change in runtime/gdi.c.
+    change in runtime/win32/gdi.c.
   - The HUD, the pause menu and the controls hint draw straight onto the primary and are in
     NO display list, so a per-sprite scale in render.c does not reach them. They would stay
     at 1x while the world grew. That is the same seam that stops them being lit today.
@@ -86,7 +86,7 @@ window instead of one, and keeping them apart is the whole design:
 The height buys SCALE because there is no more world vertically at any window size; the
 leftover width buys FIELD OF VIEW because there is. Both live in runtime/overrides/geom.h
 (geom_world_scale, geom_compose_width, geom_compose_rect) and are walked by `ctest geometry`
-in a millisecond, and runtime/render.c's draw_list applies the scale PER QUAD as it draws into
+in a millisecond, and runtime/video/render.c's draw_list applies the scale PER QUAD as it draws into
 a target the size of the window.
 
 WHAT THE ORDER OF OPERATIONS HAS TO BE, since it is the one thing here that is easy to get
@@ -121,7 +121,7 @@ WHAT IS NOT DONE, and it is the second half of the original report:
 
   GDI TEXT IS STILL RASTERISED AT THE COMPOSITION'S RESOLUTION and then scaled up with
   everything else, so it is the one thing in the frame that does not get sharper as the window
-  grows -- "render at a higher res" is only half honoured. The fix is in runtime/gdi.c:
+  grows -- "render at a higher res" is only half honoured. The fix is in runtime/win32/gdi.c:
   rasterise the tile at the final size. Left separate because it is a different subsystem and
   because the geometry had to be right first.
 
@@ -141,7 +141,7 @@ WHAT IS NOT DONE, and it is the second half of the original report:
 ### A SECOND BUG THE SCALE EXPOSED, and it was already there
 
 THE POINTER WAS NEVER MAPPED BACK OUT OF THE WINDOW PROPERLY. `mouse_lparam` in
-runtime/win32.c turned a window point into a game point by subtracting `screen_offset_x()`
+runtime/win32/win32.c turned a window point into a game point by subtracting `screen_offset_x()`
 -- a horizontal offset -- and passing y through unchanged. It leaned on
 SDL_RenderCoordinatesFromWindow for the rest, which does NOTHING here: that function undoes
 SDL's logical presentation, and this port turns logical presentation off precisely because it

@@ -17,16 +17,16 @@ An LF2 background layer has a SPAN (bg.dat 'width:') and an optional LOOP (bg.da
 
 THREE independent sources agreeing.
 (1) THE CODE. fn_0041a250 (828 bytes) read end to end from re/instructions.tsv: 0041a309 SUB EAX,0x31a / 0041a30e IMUL EAX,[0x00450bc4] / 0041a316 SUB EBP,0x31a / 0041a31c IDIV EBP / 0041a31e NEG EAX is the parallax verbatim, with [0x450bc4] the camera and 0x31a = 794. The loop branch at 0041a4a4..0041a4ef steps EBP by the loop field and terminates on CMP EBP,[layer span] -- the span, not 794.
-(2) THE DATA. tools/bg_table_check.py compares LF2_BG_TABLE=all against every shipped bg.dat: 12 of 12 background records matched exactly, 152 layers, span/x/y/loop each, no unmatched file. The checker has a --selftest that asserts it REJECTS a wrong loop value, so 'all ok' is not the only thing it can print.
+(2) THE DATA. tools/re/bg_table_check.py compares LF2_BG_TABLE=all against every shipped bg.dat: 12 of 12 background records matched exactly, 152 layers, span/x/y/loop each, no unmatched file. The checker has a --selftest that asserts it REJECTS a wrong loop value, so 'all ok' is not the only thing it can print.
 (3) THE PIXELS. Brokeback Clif at a 1600x550 window, four camera positions from LF2_BLT_FRAME. Ground layer bc4 (span 1500, loop 800) wraps its source at 800 with no gap at every position; the cliffs bc1|bc2|bc3 (span 1379, no loop) never repeat. At maximum camera the ground offset is 706 = 1500-794 and the cliffs' is 585 = 1379-794, and the cliff chain ends at screen x 794 to the pixel -- which is the 'covers the screen exactly, no margin' property, measured rather than argued.
 
 ## What would falsify it
 
-a stage whose non-looping layer still has picture beyond the 794 window at some camera, or any bg.dat whose runtime record disagrees with tools/bg_table_check.py
+a stage whose non-looping layer still has picture beyond the 794 window at some camera, or any bg.dat whose runtime record disagrees with tools/re/bg_table_check.py
 
 ## Re-confirmed 2026-08-06
 
-Re-verified after the mechanism was reimplemented from it. runtime/overrides/background.c now IS the formula the claim states, and tools/background_test.sh (tools/e2e.sh background) drives the same route five ways: at 794x550 the reimplementation is BYTE-IDENTICAL to the recompiled body at two camera positions, an LF2_BG_SKEW=3 arm differs (so the identity check can fail), and at 1600x550 it differs from the unwidened body. A formula that were wrong about span, loop, the parallax, the cc/c1/c2 window or the colour-fill path could not reproduce the original's pixels exactly. world.h changed in the same commit only by gaining the remaining field constants; the claim's substance is unaltered.
+Re-verified after the mechanism was reimplemented from it. runtime/overrides/background.c now IS the formula the claim states, and tools/routes/background_test.sh (tools/e2e.sh background) drives the same route five ways: at 794x550 the reimplementation is BYTE-IDENTICAL to the recompiled body at two camera positions, an LF2_BG_SKEW=3 arm differs (so the identity check can fail), and at 1600x550 it differs from the unwidened body. A formula that were wrong about span, loop, the parallax, the cc/c1/c2 window or the colour-fill path could not reproduce the original's pixels exactly. world.h changed in the same commit only by gaining the remaining field constants; the claim's substance is unaltered.
 
 ## Re-confirmed 2026-08-06
 

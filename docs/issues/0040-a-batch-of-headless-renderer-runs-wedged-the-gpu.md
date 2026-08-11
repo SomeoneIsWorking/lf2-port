@@ -24,7 +24,7 @@ wedges an allocator, and the evidence is one-sided enough not to wait for proof:
 
   219 timeouts and 65 resets in 75 minutes; ZERO in the preceding 46 hours of the same boot.
 
-1. GPU TEXTURE CHURN, runtime/render.c. GDI text arrives as ~40 small tiles per frame and each
+1. GPU TEXTURE CHURN, runtime/video/render.c. GDI text arrives as ~40 small tiles per frame and each
    was given a freshly created SDL texture, destroyed again at the frame reset. At 30 fps that
    is about 2400 GPU texture allocations AND frees per second, sustained for the length of
    every run, across dozens of runs. Now POOLED and keyed on exact size -- a tile's size
@@ -32,7 +32,7 @@ wedges an allocator, and the evidence is one-sided enough not to wait for proof:
    report prints allocations PER FRAME precisely so a return of the churn is visible as a
    number rather than as a wedged machine three hours later.
 
-2. AN ABANDONED ALLOCATION, runtime/ddraw.c. HIGH_MAX was raised to 2304 rows while trying a
+2. AN ABANDONED ALLOCATION, runtime/video/ddraw.c. HIGH_MAX was raised to 2304 rows while trying a
    full-window composition. That experiment was measured, rejected and reverted -- but the
    allocation stayed, so every window-following surface was 37.7 MB instead of 9 MB for rows
    nothing would ever draw into: 302 MB of committed guest memory per instance instead of 72.
@@ -94,7 +94,7 @@ LEADING HYPOTHESIS, NOT YET TESTED: a stray guest write into GPU-visible memory.
 gives the guest a 4 GiB address space with hand-rolled arenas (guest_map.h) and has ALREADY
 had a surface arena overrun a sound arena and play bitmaps as audio. A wild write landing in
 a mapped GPU buffer produces exactly this signature. Second candidate: use-after-free of a
-GPU resource in the new hd2d path (runtime/hd2d.c), which is the newest and least-verified
+GPU resource in the new hd2d path (runtime/video/hd2d.c), which is the newest and least-verified
 GPU code in the tree, landed in cb246df.
 
 WHAT A VERIFICATION MUST LOOK LIKE (none of this has been done):

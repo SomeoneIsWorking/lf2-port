@@ -59,11 +59,11 @@ Non-black columns in the dump: 874..2541. 874 is exactly (2542-794)/2, the centr
 
 TWO CAUSES, one on top of the other.
 
-1. THE WIDENING RULE FIRED ON THE FRONT END. runtime/ddraw.c widened any COLORFILL of
+1. THE WIDENING RULE FIRED ON THE FRONT END. runtime/video/ddraw.c widened any COLORFILL of
    `dl == 0 && dr == 794` to the whole composition, on the reasoning that a fill spanning the
    native width is a stage band -- the sky, the ground, the road. But that rectangle IS the
    front end's backdrop: the front end fills its whole 794-wide screen. Decompiled to be sure
-   (tools/ghidra_scripts/DecompDump.py): FUN_00415160 is the game's ONE colour-fill helper --
+   (tools/re/ghidra_scripts/DecompDump.py): FUN_00415160 is the game's ONE colour-fill helper --
    it takes (x, y, w, h, colour), builds a RECT and calls Blt with DDBLT_COLORFILL -- and
    runtime/overrides/background.c calls the SAME function for the stage's tinted layers,
    passing each layer's own authored span. So the call site cannot tell the two apart and the
@@ -91,7 +91,7 @@ TWO CAUSES, one on top of the other.
    screens by their rectangles in the game's own coordinates and is what decides the offset in
    the first place -- shifting before it would feed the offset back into its own input.
 
-   GDI text needed the same offset added explicitly (runtime/gdi.c), because it writes straight
+   GDI text needed the same offset added explicitly (runtime/win32/gdi.c), because it writes straight
    into the surface and never goes through Blt. It used to get the shift for free by riding on
    the whole-composition copy.
 
@@ -101,7 +101,7 @@ and menu centred on top of it.
 AND IT REMOVED ISSUE #29'S BUG CLASS BY CONSTRUCTION. That bug was the leftmost `offset`
 columns of the primary never being written and holding a ghost of the previously-centred
 screen; a clear covered it. With the copy 1:1 every column of the primary is written every
-frame, so there is nothing to clear and primary_clear_on_move() is gone. tools/resize_test.sh
+frame, so there is nothing to clear and primary_clear_on_move() is gone. tools/routes/resize_test.sh
 went red the moment that landed -- its negative arm, LF2_PRIMARY_STALE, disabled a clear that
 no longer existed, so the arm could not fail and the test said so rather than reporting a pass
 it could not justify. LF2_PRIMARY_STALE is now a defect INJECTOR that reproduces the old bug

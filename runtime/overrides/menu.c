@@ -7,9 +7,9 @@
 #include "overrides.h"
 #include "world.h"
 
-#include "../guest_ops.h"
-#include "../guest_map.h"
-#include "../hostwin.h"
+#include "guest_ops.h"
+#include "guest_map.h"
+#include "hostwin.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -123,7 +123,7 @@ void mode_force_report(void)
  * so the overlay took no mouse input at all there and only stage mode ever worked. It was
  * derived from stage-mode dumps and checked against stage-mode dumps, which is why it
  * looked perfect. The screen is now taken from what the game DRAWS -- see panel_overlay_up()
- * in runtime/ddraw.c -- and this word is deliberately not used. */
+ * in runtime/video/ddraw.c -- and this word is deliberately not used. */
 
 /* Selectable items per screen, taken from the game's own hit-test constants -- the centre
  * of each band it brackets the pointer against. Adding a screen is a matter of reading its
@@ -275,7 +275,7 @@ uint32_t game_top_mode(void) { return top_mode; }
  * The distinction is the whole feature. Enlarging only the window makes the game scale its
  * 794-wide composition up, which is the same picture with bigger pixels. What is wanted is
  * MORE WORLD, and that needs the surface the game composes into to be wider AND the game's
- * own idea of its viewport to match. The surface is the host half, in runtime/ddraw.c; this
+ * own idea of its viewport to match. The surface is the host half, in runtime/video/ddraw.c; this
  * is the game's own idea, and both read lf2_wide_width() so they cannot disagree.
  *
  * The game keeps its viewport size in .data rather than only as immediates, which is what
@@ -341,7 +341,7 @@ void fn_004246b0(void)
                     mode, screen, LD32(0x00458424));
         }
         /* The pre-fight overlay's selection index, located by diffing .data across one
-         * d-pad press (tools/diff_data.py) and confirmed against the frame it drew. */
+         * d-pad press (tools/re/diff_data.py) and confirmed against the frame it drew. */
         static uint32_t last_overlay = 0xfffffffdu;
         const uint32_t overlay = LD32(OVERLAY_SEL);
         if (overlay != last_overlay) {

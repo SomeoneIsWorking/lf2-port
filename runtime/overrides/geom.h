@@ -12,7 +12,7 @@
  * the arithmetic was buried inside functions that also touched guest memory.
  *
  * So the arithmetic lives here, `static inline`, and is included BY the overrides that use it
- * and BY runtime/test_geom.c. Not copied into the test -- included. A test carrying its own
+ * and BY tests/test_geom.c. Not copied into the test -- included. A test carrying its own
  * copy of the implementation proves the copy works.
  *
  * WHAT BELONGS HERE: a function whose inputs are all numbers the caller already has. What
@@ -47,7 +47,7 @@ enum { GEOM_SCREEN_W = 794, GEOM_SCREEN_H = 550 };
  * THIS IS NOT THE SCALE THE PORT REMOVED. That one composed a small frame and let SDL blow
  * the finished picture up, so every game pixel became a 2x2 block and text and lighting were
  * quantised to the small grid before being enlarged. This scale is applied PER QUAD as the
- * display list is drawn into a full-resolution target (runtime/render.c): the geometry stays
+ * display list is drawn into a full-resolution target (runtime/video/render.c): the geometry stays
  * exact at float precision and only a sprite's own texels are magnified. The distinction is
  * the whole of issue #41 and it is why this is a renderer property, not a presentation one.
  *
@@ -116,17 +116,19 @@ static inline void geom_window_to_compose(int win_w, int win_h, int comp_w, int 
  * wider composition each one therefore needs a horizontal placement, and the port had exactly
  * ONE answer for all of them -- centre.
  *
- * That is wrong for two of them, and the binary says so rather than a preference: on the front
- * end and the mode menu the character portrait (MENU_BACK<n>, 257-409 px wide) is drawn at a
- * hard literal x = 0, hanging on the screen's LEFT EDGE. Centring a screen whose art is
- * anchored to an edge moves the anchor into the middle of the window. So those two are
- * LEFT-aligned, which puts the portrait back on the edge it was composed against, and the
- * rest -- whose art is centred within the 794 -- stay CENTRED.
+ * EVERY SCREEN IS CENTRED, including the two menus -- their MENU itself, its logo and its list,
+ * sit in the middle of the window like everything else. What is special about those two is only
+ * their BACKDROP ART: the character portrait (MENU_BACK<n>, 257-409 px wide and 546 of the
+ * screen's 550 rows tall) is drawn at a hard literal x = 0 and bleeds off the LEFT EDGE, so it
+ * keeps that edge while the menu in front of it is centred. That exception is applied where the
+ * draw happens (runtime/video/ddraw.c, backdrop_art), not here.
  *
- * The alignment is a property of the SCREEN, and which screen is up is decided in ddraw.c from
- * what the game draws (its own full-screen fill colour). This is only the arithmetic, so that
- * the four consumers of the offset share one definition of it and runtime/test_geom.c can walk
- * it without booting the game. */
+ * An earlier attempt left-aligned the WHOLE screen, which dragged the logo and the menu list to
+ * the edge with the picture. GEOM_ALIGN_LEFT survives because the arithmetic of "anchored at
+ * x 0" is worth having in one place and tested, but nothing asks for it screen-wide any more.
+ *
+ * This is only the arithmetic, so that the four consumers of the offset share one definition of
+ * it and tests/test_geom.c can walk it without booting the game. */
 enum { GEOM_ALIGN_CENTRE = 0, GEOM_ALIGN_LEFT = 1 };
 
 static inline int geom_screen_offset_x(int comp_w, int align)

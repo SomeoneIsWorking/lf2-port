@@ -14,7 +14,7 @@ already knows that bears on it, so the first session on this does not re-derive 
 WHAT IS ASKED FOR, as three separable pieces. They are listed apart because they have very
 different prerequisites and the first is a hard dependency of the other two:
 
-  1. A NATIVE RENDERER. Today runtime/ddraw.c composes into a software surface and hands it
+  1. A NATIVE RENDERER. Today runtime/video/ddraw.c composes into a software surface and hands it
      to SDL3. Every sprite the game draws arrives as a Blt with a source rect, a destination
      rect and an optional colour key. An HD2D pass needs those as textured quads with depth,
      not as pixels already flattened into one buffer.
@@ -67,7 +67,7 @@ TWO THINGS FROM THE SAME DAY'S WORK THAT BEAR DIRECTLY ON THIS, 2026-08-06.
    expressed with the game's own drawing'. Everything is an opaque or colour-keyed copy. Bloom,
    depth of field and a soft cast shadow are all blend operations, so the FIRST thing the
    native renderer has to bring is a blend stage. Note that C010 is currently flagged STALE by
-   `info.py claim check` (six commits to runtime/ddraw.c since it was verified) -- re-verify
+   `info.py claim check` (six commits to runtime/video/ddraw.c since it was verified) -- re-verify
    it rather than citing it, and either way the conclusion for this issue is the same.
 
 2. THE BACKGROUND IS NOW A CLEAN SEAM TO BUILD ON. runtime/overrides/background.c owns the
@@ -103,7 +103,7 @@ WHAT THIS DOES NOT ESTABLISH, and must not be read as establishing:
   - It is ONE frame of ONE stage in ONE mode. The front end, the character-select screen and
     the other stages have not been counted. A path used only by the menu would not appear.
   - It counts blits reaching surf_Blt. surf_BltFast and direct writes through Lock are
-    separate paths in runtime/ddraw.c and were NOT counted here; the frame hook does not see
+    separate paths in runtime/video/ddraw.c and were NOT counted here; the frame hook does not see
     them, so their absence from this list says nothing at all about whether they are used.
     Counting all three per run is the next measurement, and it needs a counter rather than a
     per-frame dump.
@@ -169,10 +169,10 @@ it is one line adjacent to the one that demonstrably works, which is as much con
 available without a synthetic call.
 
 WHAT THE INSTRUMENT SAYS IT CANNOT SEE, and it prints this every time rather than only when
-it finds nothing: GDI text goes straight into the surface without a Lock (runtime/gdi.c), and
+it finds nothing: GDI text goes straight into the surface without a Lock (runtime/win32/gdi.c), and
 a lock whose writes cancelled out would hash the same. So the true answer is TWO routes:
     fn_0043f010 / fn_0043f310 / the fills, reaching surf_Blt        -- all the sprites
-    runtime/gdi.c                                                   -- the game's text
+    runtime/win32/gdi.c                                                   -- the game's text
 Both are named, both are already hooked in this port, and neither has to be recovered from
 pixels.
 
@@ -185,7 +185,7 @@ ALL THREE ORIGINAL UNKNOWNS ARE NOW CLOSED:
 
 WHAT THE ARCHITECTURE QUESTION IS NOW, since it is no longer 'can this be fed': it is whether
 the renderer consumes a display list built in the overrides (sprite + rect + depth + key) or
-replaces runtime/ddraw.c's software blit with a GPU path behind the same COM surface. The
+replaces runtime/video/ddraw.c's software blit with a GPU path behind the same COM surface. The
 first is the one that can be built incrementally alongside the current compositor and diffed
 against it frame by frame, which is how every other piece of this port was landed safely.
 Claim C010 (no alpha/blend path anywhere) is the first thing either design has to bring.
@@ -214,7 +214,7 @@ someone jumped. Fixed in runtime/overrides/coop_debug.c, which now prints x, y a
 measurement written beside them.
 
 This is the last thing this issue needed before design. Its inputs are known and named:
-sprites and their depth from fn_0041a5a0 / fn_0043f010, text from runtime/gdi.c, the stage's
+sprites and their depth from fn_0041a5a0 / fn_0043f010, text from runtime/win32/gdi.c, the stage's
 layers with their parallax rates from runtime/overrides/background.c, and z bounds per stage
 from bg.dat's zboundary.
 
@@ -222,7 +222,7 @@ from bg.dat's zboundary.
 THE PRESENT PATH IS NOT A GPU PIPELINE, and the codemap said it was. Checked 2026-08-06
 because a renderer design that believed it would start from the wrong place.
 
-WHAT IS ACTUALLY THERE (runtime/ddraw.c hostwin_present, runtime/win32.c):
+WHAT IS ACTUALLY THERE (runtime/video/ddraw.c hostwin_present, runtime/win32/win32.c):
 
     SDL_CreateRenderer(window, NULL)            -- SDL's 2D renderer, driver unspecified
     every frame: the composition, already flattened by the software blitter, is memcpy'd
@@ -252,7 +252,7 @@ stage exists would be built on the software blitter and thrown away.
 ### Note (2026-08-06)
 DELIVERED 2026-08-06 -- the renderer, the HD2D pass and the sprite-cast shadows are all in.
 
-  NATIVE RENDERER   runtime/render.c. The game's draws become a display list, recorded per
+  NATIVE RENDERER   runtime/video/render.c. The game's draws become a display list, recorded per
                     destination surface; the game composes off-screen and copies to the
                     primary, so the source of that copy NAMES the composition and the frame
                     boundary is found from the game's own blits with nothing hardcoded.
@@ -353,7 +353,7 @@ THREE THINGS THAT WENT WRONG IN THE BUILDING, all worth not repeating:
 INFRASTRUCTURE THIS NEEDED. SDL's default renderer order picks the OpenGL backend, which has
 no SDL_GPUDevice and therefore no SDL_GPURenderState -- no shaders at all. The renderer is now
 created as SDL_GPU_RENDERER by name, with a checked fallback. Shaders are committed SPIR-V
-(tools/build_shaders.sh; ctest shaders recompiles and compares wherever glslc exists, proven
+(tools/build/build_shaders.sh; ctest shaders recompiles and compares wherever glslc exists, proven
 to fail on a stale blob), so the build still needs only a C compiler and SDL. A backend that
 cannot take SPIR-V is told about on stderr and gets the plain composition -- deliberately no
 approximation to fall back on, since that is exactly how the fake bloom survived.
