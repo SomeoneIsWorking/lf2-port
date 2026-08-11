@@ -219,6 +219,32 @@ rectangle. It is the fallback (`LF2_RENDERER=soft`, or no SPIR-V backend) and it
 A window narrower than 794 still gets 794 and is cropped at the sides, because the HUD strip
 is 792 wide and there is nothing sensible below that.
 
+**Each fixed-794 screen is framed its own way** (issue #44), because they are not all
+composed alike and the binary says so:
+
+| Screen | Identified by | Framing |
+|---|---|---|
+| front end | its full-screen fill `0x10206c` | **left**-aligned |
+| mode menu | its full-screen fill `0x122565` | **left**-aligned |
+| loading | a whole-screen **picture** (`MENU_WAIT`), no fill of its own | centred, side bands extended from its own edge columns |
+| character selection | its full-screen fill `0x000000` | centred (unchanged) |
+
+The two menus are left-aligned because their character portrait (`MENU_BACK<n>`, the same
+sprite on both screens) is drawn at a **hard literal x = 0** and hangs on the screen's left
+edge — centring moved the anchor into the middle of the window. That is fidelity to the
+author's framing, not a preference.
+
+A screen is recognised by **what it paints**, not by a `.data` word: the two menu fill colours
+each appear exactly once in the whole binary. That choice is deliberate — the word the port
+used to treat as the mode menu's cursor is the game *mode* and reads 1/4/5 during a match
+(issue #51), which is the same disguise the pre-fight overlay wore once.
+
+The loading screen's side bands are **extrapolated** from its own edge columns, and the run
+says so in as many words (`LF2_FRAMING_DEBUG=1` prints "a declared port choice, not the
+game's"). Its backdrop is artwork, so unlike a flat colour there is nothing authored to put
+beside it — extending the edge is the port's choice and is labelled as one rather than passed
+off as the game's.
+
 **A fixed-width screen is centred, but its BACKGROUND is not** (issue #42). The front end, the
 mode menu, character selection and the pre-fight overlay are all fixed 794-wide screens, so on a
 wider composition they are centred — and the centring is applied *while composing*, to the draws

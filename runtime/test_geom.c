@@ -83,6 +83,32 @@ static void test_scale(void)
     }
 }
 
+/* ---- where a fixed-794 screen sits in a wider composition (issue #44) ---- */
+static void test_screen_align(void)
+{
+    /* CENTRED is the old behaviour and must be exactly what it was, or every screen that is
+     * not one of the two menus moves. 2542 is the composition of the reported 1710x370 window. */
+    eq("centred in 2542", geom_screen_offset_x(2542, GEOM_ALIGN_CENTRE), (2542 - 794) / 2);
+    eq("centred in 1600", geom_screen_offset_x(1600, GEOM_ALIGN_CENTRE), (1600 - 794) / 2);
+    /* LEFT is zero BY DEFINITION -- the screen's own x 0 is the composition's x 0. This is the
+     * whole of the change: the two menus' character portrait is drawn at a hard literal x = 0
+     * and hangs on the screen's left edge, so centring moved the anchor into the middle. */
+    eq("left in 2542", geom_screen_offset_x(2542, GEOM_ALIGN_LEFT), 0);
+    eq("left in 1600", geom_screen_offset_x(1600, GEOM_ALIGN_LEFT), 0);
+    /* At the game's own width there is nowhere to move, so the ALIGNMENT CANNOT MATTER. That
+     * is what keeps every byte-identity arm true at 794x550 whichever screen is up, and it is
+     * the property to check rather than to assume. */
+    eq("794 centred is 0", geom_screen_offset_x(794, GEOM_ALIGN_CENTRE), 0);
+    eq("794 left is 0",    geom_screen_offset_x(794, GEOM_ALIGN_LEFT), 0);
+    eq("narrower than the game is 0",
+       geom_screen_offset_x(700, GEOM_ALIGN_CENTRE), 0);
+    /* And the two answers only ever differ where there IS width to spare. */
+    eq("the two alignments agree at 794",
+       geom_screen_offset_x(794, GEOM_ALIGN_CENTRE) == geom_screen_offset_x(794, GEOM_ALIGN_LEFT), 1);
+    eq("the two alignments differ at 2542",
+       geom_screen_offset_x(2542, GEOM_ALIGN_CENTRE) != geom_screen_offset_x(2542, GEOM_ALIGN_LEFT), 1);
+}
+
 /* ---- the pointer maps back to exactly where the picture was drawn ---- */
 static void test_unproject(void)
 {
@@ -298,6 +324,7 @@ static void test_pan(void)
 int main(void)
 {
     test_scale();
+    test_screen_align();
     test_unproject();
     test_compose();
     test_parallax();
