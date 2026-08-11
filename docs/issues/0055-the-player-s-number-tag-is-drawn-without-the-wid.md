@@ -316,3 +316,42 @@ Eight calls in the whole function: 0041a767, 0041a79f, 0041a89d, 0041ab21, 0041a
 WHAT IS LEFT is the port itself: 636 instructions of C in the guest ABI, with the four 0x31a
 sites reading bg_view_width(), gated behind LF2_OBJ_ORIG so it can be A/B'd, and accepted only
 when the identity arm above stays green at 794.
+
+### Note (2026-08-12)
+THE PORT'S REMAINING UNKNOWNS ARE NOW ZERO. Everything below was read out of re/instructions.tsv
+rather than the decompilation, because the decompilation is wrong or silent on each of them.
+
+THE SIGNATURE. Ghidra gives __thiscall FUN_0041a5a0(this, param_2, param_3) -- TWO stack args.
+The function ends 'RET 0xc', which pops THREE. The prologue reads arg1 at [ESP+0x688] and the
+sprite call reads arg2 at [ESP+0x68c]; the third is popped and never read. So the override's
+return is R(ESP) += 4 + 12, and a port written from the decompilation alone would have
+unbalanced the guest stack on every frame.
+
+THE SHADOW DRAW (0041a716..0041a767), exact:
+
+    rec   = LD32(this + 0x7d4) + bg * 0x990          ; bg = LD32(0x0044d024)
+    w     = LD32(rec + 0x4d45dc4)                    ; shadow width
+    h     = LD32(rec + 0x4d45dc8)                    ; shadow height
+    sheet = LD32(rec + 0x4d4673c)                    ; the bitmap -- the RECEIVER
+    x     = obj[0x1c] - w/2 + obj[0x10] - camera     ; signed halves (CDQ;SUB;SAR 1)
+    y     = obj[0x18] - h/2
+    fn_0043f010(this=sheet, x, y, -1, 1, 0, arg1)
+
+THE GLYPH DRAWS all take this=LD32(0x0044faf4) and the surface LD32(0x00455608), pushed right
+to left as (x, y, ch, 1, 0, surface).
+
+THE SPRITE DRAW (0041a782..0041a79f): this=OBJ(idx), args (camera, arg1, arg2).
+
+THE STRING BUILDING, which the decompilation renders as CONCAT12/CONCAT11 soup and is simply:
+  - the multiplier label is "x" followed by obj[0x30c] in decimal (1 or 2 digits), drawn only
+    when obj[0x30c] > 1;
+  - the name is DAT_0044fcc0 + idx*0xb for idx < 10 and the literal "Com" otherwise, and when
+    idx < 10 and (&DAT_00450b4c)[idx] == -1 it is wrapped as "[" + name + <DAT_00449060>.
+
+WHAT REMAINS is transcription and verification, not investigation: 636 instructions, eight
+calls, the four 0x31a sites reading bg_view_width(), the whole thing behind LF2_OBJ_ORIG, and
+accepted only when tools/e2e.sh objects stays green at 794. The risk that keeps it from being
+started at the end of a session is unchanged and is not about information: the effects loop at
+obj+0x3c0 WRITES BACK (it advances per-effect counters and decrements obj[0x36c]), so a port
+that is subtly wrong corrupts game state rather than misplacing a pixel, and the gate compares
+PIXELS -- it would not necessarily catch a counter drifting.
