@@ -40,6 +40,7 @@ void hostwin_window_geometry(int win_w, int win_h);
 int  panel_charselect_up(void);
 int  panel_overlay_up(void);
 int  panel_hud_up(void);
+int  panel_frontend_up(void); /* the FIRST screen, from the flat colour only it paints */
 int  lf2_wide_width(void);    /* the composition's width when it is wider than 794, else 0 */
 
 /* Where the composition is drawn in the window, and how big (issue #41): the height sets the

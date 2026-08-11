@@ -24,13 +24,20 @@
  * (it is the first thing after the load, and the load is the part that moves), but it is not
  * a claim that character selection is on screen. A route that must distinguish the two
  * counts frames from here; nothing in the port asks this to tell them apart. */
-enum { SCREEN_N = 3 };
-static long screen_first[SCREEN_N] = { -1, -1, -1 };
-static const char *const SCREEN_NAME[SCREEN_N] = { "charselect", "overlay", "match" };
+/* `frontend` is the game's FIRST screen, and it is the one anchor that saves wall clock rather
+ * than accuracy: every route used to open with a press at a counted frame 900, picked to be
+ * safely past the load, and the front end is in fact taking input at frame 60. Anchoring the
+ * first press cut 840 frames of waiting off the front of every run (issue #57). Like the
+ * others it comes from what the game DRAWS -- the flat backdrop colour that appears exactly
+ * once in .text -- so it cannot be true on a build that never reached the screen. */
+enum { SCREEN_N = 4 };
+static long screen_first[SCREEN_N] = { -1, -1, -1, -1 };
+static const char *const SCREEN_NAME[SCREEN_N] = { "frontend", "charselect", "overlay", "match" };
 
 void script_observe_screens(long frame)
 {
-    const int up[SCREEN_N] = { panel_charselect_up(), panel_overlay_up(), panel_hud_up() };
+    const int up[SCREEN_N] = { panel_frontend_up(), panel_charselect_up(), panel_overlay_up(),
+                               panel_hud_up() };
     for (int i = 0; i < SCREEN_N; i++)
         if (up[i] && screen_first[i] < 0) {
             screen_first[i] = frame;

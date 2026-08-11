@@ -46,7 +46,7 @@ python3 -c "" 2>/dev/null || { echo "SKIP: no python3 to read the frame dumps"; 
 # 1900x800 -> composition 1306x550, so the centred 794-wide screen sits at x 256..1050 and
 # the band under test is x 0..255. Shrink to 1200x800 (composition 825, offset 15) and back,
 # so the band holds pixels written at a DIFFERENT offset.
-FRAME=1550
+FRAME=710
 
 # PINNED TO THE SOFTWARE COMPOSITOR, and that is not a convenience. What this test guards is a
 # property of the software present -- that its one copy covers every column of the primary --
@@ -60,12 +60,12 @@ arm() {   # arm <dir> [VAR=value ...]
     ( cd "$GAME" && \
       env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
           LF2_RENDERER=soft \
-          LF2_VIRTUAL_PAD="south:900,south:960,south:1020,south:1080" \
+          LF2_VIRTUAL_PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180" \
           LF2_WINDOW_SIZE=1900x800 \
-          LF2_WINDOW_RESIZE="1400:1200x800,1500:1900x800" \
+          LF2_WINDOW_RESIZE="560:1200x800,660:1900x800" \
           LF2_FRAME_DUMP="$FRAME" LF2_DUMP_DIR="$OUT/$dir" \
-          LF2_QUIT_AFTER=1650 "$@" \
-          timeout 200 "$BUILD/lf2" lf2.exe ) >/dev/null 2>&1 || true
+          LF2_QUIT_AFTER=810 "$@" \
+          timeout -k 5 200 "$BUILD/lf2" lf2.exe ) >/dev/null 2>&1 || true
 }
 
 echo "resize leaves no stale pixels: two runs..."
@@ -107,8 +107,12 @@ print(stray, lit, w)
 PY
 }
 
-f_clean="$OUT/clean/frame_00$FRAME.ppm"
-f_stale="$OUT/stale/frame_00$FRAME.ppm"
+# The dumper pads to six digits; building the name as frame_00$FRAME only happened to work
+# while FRAME was four digits, and silently became "never written" -- a FAILURE that reads
+# like the route regressed -- the moment the route got faster and the frame got shorter.
+FRAME_FILE=$(printf "frame_%06d.ppm" "$FRAME")
+f_clean="$OUT/clean/$FRAME_FILE"
+f_stale="$OUT/stale/$FRAME_FILE"
 fail=0
 for f in "$f_clean" "$f_stale"; do
     if [ ! -f "$f" ]; then

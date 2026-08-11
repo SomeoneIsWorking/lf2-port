@@ -36,7 +36,7 @@ fail=0
 say_ok()   { echo "  ok    $1"; }
 say_fail() { echo "  FAIL  $1"; fail=1; }
 
-PAD="south:900,south:960,south:1020,south:1080"
+PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
 PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238"
 PAD="$PAD,up@charselect+298,up@charselect+358,south@charselect+418,south@charselect+618"
 PAD="$PAD,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
@@ -44,8 +44,8 @@ PAD="$PAD,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
 run() {   # run <mode> <window>
     ( cd "$GAME" && \
       env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_WINDOW_SIZE="$2" \
-          LF2_MODE="$1" LF2_CAMERA=1 LF2_VIRTUAL_PAD="$PAD" LF2_QUIT_AFTER=3000 \
-          timeout 400 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
+          LF2_MODE="$1" LF2_CAMERA=1 LF2_VIRTUAL_PAD="$PAD" LF2_QUIT_AFTER=2160 \
+          timeout -k 5 400 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
 }
 
 # The mode hold has to have HAPPENED. Its absence means the mode menu was never reached, which

@@ -327,15 +327,33 @@ static void dump_path(char *out, size_t n, const char *fmt, ...)
  * timing -- two attempts at capturing a match landed on the menu before it -- and cannot
  * run headless at all. Frame numbers are exact, so a capture is reproducible.
  */
+/* AN ITEM MAY BE `@screen+N` TOO, and that is not a convenience -- it is the same defect the
+ * pad scripts had. A dump frame is a stopwatch aimed at a moving target: render_test asked for
+ * frame 2250 to get "a frame with fighters on it", and when the routes stopped waiting 840
+ * frames for a front end that was already up, 2250-840 landed somewhere else in the match and
+ * the arm failed for a reason that had nothing to do with the renderer. The pad scripts were
+ * given screen anchors for exactly this in issue #25; the dumps kept their stopwatches. */
 static int spec_lists(const char *spec, long frame)
 {
     if (!spec) return 0;
     for (const char *c = spec; *c; ) {
-        char *end = NULL;
-        const long v = strtol(c, &end, 10);
-        if (end == c) break;
-        if (v == frame) return 1;
-        c = end;
+        if (*c == '@') {
+            char item[64];
+            size_t n = 0;
+            while (c[n] && c[n] != ',' && c[n] != ' ' && n < sizeof item - 1) n++;
+            memcpy(item, c, n);
+            item[n] = '\0';
+            int unresolved = 0;
+            const long v = script_when(item, &unresolved);
+            if (!unresolved && v == frame) return 1;
+            c += n;
+        } else {
+            char *end = NULL;
+            const long v = strtol(c, &end, 10);
+            if (end == c) break;
+            if (v == frame) return 1;
+            c = end;
+        }
         while (*c == ',' || *c == ' ') c++;
     }
     return 0;
@@ -1092,6 +1110,7 @@ void cursor_find_note(int dl, int dt, const char *via)
 enum { PANEL_FRESH = 2 };
 static long panel_charselect_frame = -1000, panel_overlay_frame = -1000;
 static long panel_hud_frame = -1000;
+static long panel_frontend_frame = -1000;
 
 static void panel_note(int l, int t, int r, int b)
 {
@@ -1173,6 +1192,12 @@ static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
     const uint32_t c = colour & 0x00ffffffu;
     const int left = (c == FILL_FRONT_END || c == FILL_MODE_MENU);
     screen_align_left = left;
+    /* The front end's own colour is also the only DRAWN signal for "the game is up and taking
+     * input", which is what every route needs and none of them had: they pressed at a counted
+     * frame 900 chosen for safety, and 840 of those frames were the run waiting for nothing.
+     * Recorded here rather than in panel_note because the front end has no panel -- it paints
+     * a backdrop and nothing panel-shaped. See script.c's `frontend` anchor. */
+    if (c == FILL_FRONT_END) panel_frontend_frame = frames;
     if (!lf2_wide_width() || panel_hud_up()) return;
     if (left) framing_n_left++; else framing_n_centre++;
     char what[64];
@@ -1196,6 +1221,11 @@ int screen_backdrop_left(void) { return screen_align_left; }
 int panel_charselect_up(void) { return frames - panel_charselect_frame <= PANEL_FRESH; }
 int panel_overlay_up(void)    { return frames - panel_overlay_frame    <= PANEL_FRESH; }
 int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_FRESH; }
+/* The front end repaints its backdrop every frame it is up, so the same freshness window that
+ * suits the panels suits it. It is deliberately NOT the loading screen or the mode menu: those
+ * paint other colours, and a route anchored here means "the first screen, before anything has
+ * been chosen". */
+int panel_frontend_up(void)   { return frames - panel_frontend_frame   <= PANEL_FRESH; }
 
 /* ---- centring what cannot be made wide ----
  *

@@ -31,11 +31,14 @@ if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi
 if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; fi
 python3 -c "" 2>/dev/null || { echo "SKIP: no python3 to read the frame dumps"; exit 77; }
 
-# Character selection (1300) and a match (2250): a menu is flat panels and text, a match is
-# scrolling parallax layers, keyed sprites and the HUD. A renderer can be wrong on one and
-# right on the other.
-FRAMES=1300,2250
-PAD="south:900,south:960,south:1020,south:1080"
+# Character selection and a match: a menu is flat panels and text, a match is scrolling
+# parallax layers, keyed sprites and the HUD. A renderer can be wrong on one and right on the
+# other. ANCHORED, not counted: these were the frame numbers 1300 and 2250, and when the route
+# stopped waiting 840 frames for a front end that was already up, the second one landed at a
+# different point in the match and the arm failed for a reason that had nothing to do with the
+# renderer. The offsets below are the SAME two moments, expressed against the screens.
+FRAMES=@charselect+394,@match+282
+PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
 PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238"
 PAD="$PAD,up@charselect+298,up@charselect+358,south@charselect+418,south@charselect+618"
 PAD="$PAD,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
@@ -46,8 +49,8 @@ arm() {   # arm <dir> [VAR=value ...]
     ( cd "$GAME" && \
       env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
           LF2_VIRTUAL_PAD="$PAD" LF2_FRAME_DUMP="$FRAMES" LF2_DUMP_DIR="$OUT/$dir" \
-          LF2_QUIT_AFTER=2300 "$@" \
-          timeout 300 "$BUILD/lf2" lf2.exe ) >/dev/null 2>&1 || true
+          LF2_QUIT_AFTER=1460 "$@" \
+          timeout -k 5 300 "$BUILD/lf2" lf2.exe ) >/dev/null 2>&1 || true
 }
 
 # The GEOMETRY arms run with the lighting off: this comparison is about whether the renderer
@@ -151,8 +154,17 @@ for f in "$OUT/soft"/*.ppm; do
         set -- $(cmp_ppm "$OUT/gpu/$n" "$OUT/light/$n")
         if [ "$1" = "ERR" ]; then echo "  FAIL  $n: light compare: $2"; fail=1; continue; fi
         hmax=$1; hn=$2
-        case "$n" in
-        *002250*)
+        # WHICH frame this is, by its ROLE rather than by its number. This matched the
+        # filename *002250* -- the frame number the match dump happened to land on while the
+        # route waited 840 frames for a front end that was already up. The moment the dumps
+        # were anchored to the screens, the match frame arrived as 001351, fell through to the
+        # menu branch, and the route reported "the light touched 182635 px on a frame with NO
+        # fighters in it" -- an alarming FAILURE about the renderer, caused entirely by the
+        # test misidentifying its own frame. The pixel counts were identical to the passing
+        # run. FRAMES is ordered menu-then-match and the glob sorts ascending, so the position
+        # is the role; nothing here depends on where in the run they land.
+        case "$frames_done" in
+        2)
             if [ "$hmax" -gt 8 ] && [ "$hn" -gt 2000 ]; then
                 echo "  ok    $n: the light changes $hn px by up to $hmax on a frame with"
                 echo "        fighters in it, so it is running"
@@ -184,6 +196,18 @@ done
 if [ "$frames_done" -eq 0 ]; then
     echo "  FAIL  the software arm produced no frame dumps at all -- the route never reached"
     echo "        the frames under test, so NOTHING was compared. This is not a pass."
+    exit 1
+fi
+
+# EVERY frame that was ASKED for, not merely one. This said "0 dumps is a failure" and nothing
+# more, so a run that produced one of the two requested frames printed "ok (1 frame(s)
+# compared)" -- a pass whose coverage had silently halved. That is exactly how it read when an
+# anchor resolved past the end of the run.
+FRAMES_N=$(printf '%s' "$FRAMES" | tr ',' '\n' | grep -c '[^ ]')
+if [ "$frames_done" -ne "$FRAMES_N" ]; then
+    echo "  FAIL  $frames_done of the $FRAMES_N requested frame(s) were dumped ($FRAMES) --"
+    echo "        the run ended before the rest, so this is a pass over less than was asked"
+    echo "        for. Check the anchors against 'screens reached' and LF2_QUIT_AFTER."
     exit 1
 fi
 

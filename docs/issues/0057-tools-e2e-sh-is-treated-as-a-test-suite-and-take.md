@@ -5,7 +5,7 @@ status: open
 symptom: reported, repeatedly. The route scripts boot the game and each run takes 25-83 seconds before a single assertion; thirteen scripts, several making 2-5 runs each, so a full sweep is 20+ minutes. They have been run as a routine gate after every change
 tags: reported,testing,verification,workflow
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 REPORTED 2026-08-11, and this is the THIRD time the same correction has been given -- "just
@@ -98,3 +98,55 @@ Nothing here makes the sweep a suite.
 AND A NOTE ON HOW THE FIRST NUMBERS GOT INTO THIS ENTRY: they were measured back-to-back while
 other work of mine was still running, and recorded as though they were clean. A timing taken
 under unknown load is not a measurement. `uptime` before and after, or it does not count.
+
+### Note (2026-08-12)
+LEVER (b) TAKEN: A ROUTE NOW STARTS AT THE THING IT TESTS, and the approach march was mostly a
+wait for nothing at all.
+
+WHAT WAS MEASURED FIRST, because the 900 was never justified anywhere: the front end is DRAWN
+AND TAKING INPUT ON FRAME 1. The mode menu follows six frames after the first press, wherever
+that press lands -- pressing at 900 gave charselect@906, pressing at 60 gave charselect@66,
+pressing at 1 gives charselect@7. Every route opened with `south:900`, a number picked to be
+safely past a data load that does not begin until a mode is confirmed. So 840 frames of every
+single run were the game idling on its first screen.
+
+THE FIX IS AN ANCHOR, NOT A SMALLER NUMBER. `@frontend` joins charselect/overlay/match in
+runtime/app/script.c, and like them it comes from what the game DRAWS -- the flat backdrop
+colour only the front end paints (0x10206c, pushed at exactly one site in .text, already used
+for per-screen framing in issue #44). A route keyed to it cannot silently pass on a build that
+never reached the screen, which a smaller frame number could.
+
+Also fixed, because it is the SAME defect one level down: LF2_FRAME_DUMP took absolute frame
+numbers only. The pad scripts were given screen anchors in issue #25 and the dumps kept their
+stopwatches, so `LF2_FRAME_DUMP=2250` meant "a frame with fighters on it" only for as long as
+nothing upstream moved. It now accepts `@screen+N` through the same script_when.
+
+ALL TEN PAD ROUTES CONVERTED, and the sweep is green. THREE THINGS BROKE ON THE WAY, all of
+them instruments rather than the port, and all three are worth recording because each reported
+something alarming and false:
+
+  1. resize_test built its dump filename as `frame_00$FRAME.ppm`. That only ever worked while
+     FRAME was four digits; at 710 it looked for frame_00710.ppm, the dumper wrote
+     frame_000710.ppm, and the route said "the route did not reach frame 710, so NOTHING was
+     measured". Now printf "%06d".
+  2. render_test decided which frame was the MATCH one by matching the filename `*002250*` --
+     the number the match dump happened to land on. Anchored, the match frame arrived as
+     001351, fell through to the menu branch, and the route reported "the light changed 182635
+     px on a frame with NO fighters in it", which reads as a serious renderer regression. The
+     pixel counts were IDENTICAL to the passing run. It now switches on the frame's ROLE
+     (FRAMES is ordered menu-then-match and the glob sorts ascending).
+  3. Both dump routes only failed when ZERO frames were dumped, so a run that produced one of
+     two printed "ok (1 frame(s) compared)" -- a full pass over half the coverage. They now
+     require every frame that was ASKED for and print the denominator.
+
+AND ONE REAL PROPERTY OF THE GAME, which cost a route its saving: `@match` means the HUD strip
+is up, NOT that fighters are on screen. The stage load runs after the overlay's confirm with
+the HUD drawn across it, and that gap does not hold still -- controller_test saw 73 keyed blits
+at @match+691 and 71988 by @match+1131. Its LF2_QUIT_AFTER is 2200 rather than the 1760 the
+-840 arithmetic implied, and it is now covering far MORE gameplay than before (71988 keyed
+blits against 4569 on the old route). Do not tighten it back without re-running it.
+
+WHAT THIS DOES NOT DO: it does not make the sweep a suite. A route still boots the game, and
+13 of them still take minutes. The saving is real and it is per run, but lever (a) -- ctest is
+the suite, the routes are investigation tools -- is unchanged and is still the answer to the
+reporter's actual complaint. This entry stays open for that.

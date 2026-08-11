@@ -34,7 +34,7 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 # stays put. That is now deterministic, because the overlay's selection index was located
 # (0x0044d06c, see docs/running.md) and MEASURED to start at 2. Two ups reach Fight!, every
 # run.
-PAD="south:900,south:960,south:1020,south:1080"        # the front end, before any screen
+PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"        # the front end, before any screen
 PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358,south@charselect+418"
 PAD="$PAD,south@charselect+618,south@charselect+838"   # join, then open the overlay
 PAD="$PAD,up@overlay+99,up@overlay+159,south@overlay+219"    # 2 -> 1 -> 0 = Fight!
@@ -44,8 +44,8 @@ echo "driving the game from a virtual gamepad into a match..."
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
   LF2_SCREEN_HASH=1 LF2_AUDIO_DEBUG=1 LF2_CK_DEBUG=1 \
-  LF2_VIRTUAL_PAD="$PAD" LF2_QUIT_AFTER=2600 \
-  timeout 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
+  LF2_VIRTUAL_PAD="$PAD" LF2_QUIT_AFTER=2200 \
+  timeout -k 5 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 rc=$?
 
 fail=0
