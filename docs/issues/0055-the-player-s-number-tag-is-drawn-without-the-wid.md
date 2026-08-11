@@ -355,3 +355,45 @@ started at the end of a session is unchanged and is not about information: the e
 obj+0x3c0 WRITES BACK (it advances per-effect counters and decrements obj[0x36c]), so a port
 that is subtly wrong corrupts game state rather than misplacing a pixel, and the gate compares
 PIXELS -- it would not necessarily catch a counter drifting.
+
+### Note (2026-08-12)
+THE GATE NOW COVERS STATE, WHICH REMOVES THE LAST STATED REASON NOT TO START THE PORT.
+
+The objection recorded above was that the gate compared PIXELS, and fn_0041a5a0 does not only
+draw -- its effects loop advances per-effect counters and decrements obj[0x36c] -- so a subtly
+wrong port could corrupt the game while drawing a frame that still compared equal. That is now
+covered: tools/e2e.sh objects dumps .data and the guest heap at the same anchored frames and
+compares them too.
+
+    ok  frame_001351 / frame_001801   two default runs byte-identical (pixels)
+    ok  frame_001351 / frame_001801   camera skewed by 3 changes 5598 / 5702 pixels
+    ok  state vs orig data_001351/001801, heap_001351   same, 0 dwords outside the mask
+    ok  state vs alt  data_001351/001801                differ, 73 / 78 dwords
+    ok  state vs alt  heap                              differ (106818032 bytes against 106858112)
+
+WHAT HAD TO BE ESTABLISHED FIRST, and it is claim C026: the guest's state is deterministic
+across identical runs to ONE BYTE IN 106 MB. Everything that varies is the __security_cookie
+(0044eea4/eea8) or the wall-clock date string (0044fda4, 00451d58, 00458360 in .data;
+20000040 in the heap). Those are masked -- the cookie as two dwords, the date as its +/-16 byte
+buffer, because which dwords of a string differ depends on how far the clock moved between runs
+-- and everything else must match EXACTLY. One differing dword fails.
+
+FOUR THINGS WENT WRONG BUILDING IT, all of them controls that could not fire, and each was
+caught by running the arm rather than by reasoning about it:
+  1. LF2_OBJ_SKEW was going to be the negative for the state arms too. It moves where the pass
+     DRAWS and nothing else, so it can never make state differ -- a control incapable of
+     failing.
+  2. The first state negative was an extra in-match press. That changes the fighter's RECORD
+     (heap) but not the object table or EXISTS bytes (.data), so the .data negative came out
+     IDENTICAL.
+  3. Steering the character cursor instead reached .data and DERAILED the route: the alt arm
+     never got to a match and dumped nothing.
+  4. A different game MODE reaches both -- but its match starts earlier, so its anchored dumps
+     are named for different frames and comparing by NAME reported 'the alt arm produced no
+     such dump'. The comparison now pairs by position, and a size difference counts as a
+     difference rather than an error.
+
+SO THE PORT'S PREREQUISITES ARE DONE: the RE is transcribed, the ABI is resolved including the
+RET 0xc the decompilation gets wrong, and the gate covers pixels and state with negatives that
+have been seen to fire. What is left is writing 636 instructions of guest-ABI C with the four
+0x31a sites reading bg_view_width(), behind LF2_OBJ_ORIG, and running this file.
