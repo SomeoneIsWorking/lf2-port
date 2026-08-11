@@ -971,8 +971,13 @@ static void h_TextOutA(void)
 
     /* Every string the game draws, with where it drew it. This is how the leftover "Update
      * on" in the menu corner was traced back to the ad updater. */
+    /* The DESTINATION is in the line too, because the two widescreen offsets above are both
+     * decided by it -- hud_offset_x by the band the y falls in, screen_offset_x by whether
+     * the surface is wider than 794 -- and a line that prints only the final x cannot show
+     * which of them declined and why (issue #54). */
     if (getenv("LF2_TEXT_DEBUG"))
-        fprintf(stderr, "text (%d,%d) %d %s\n", x, y, len, text);
+        fprintf(stderr, "text (%d,%d) dst %08x %dx%d %d %s\n",
+                x, y, dpix, dwid, dhei, len, text);
 
 #ifdef LF2_HAVE_TTF
     if (text_draw_ttf(text, x, y, dpix, dwid, dhei, dpitch)) {

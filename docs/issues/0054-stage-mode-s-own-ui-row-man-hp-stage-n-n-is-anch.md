@@ -74,3 +74,55 @@ WHAT IS NOT YET ESTABLISHED, and it decides the fix rather than being a detail:
 DO NOT widen hud_offset_x's band until the surface is known. Moving this row by the HUD's
 offset when it is actually screen content would line it up at one window size and not another,
 which is the same class of mistake as adding a constant.
+
+### Note (2026-08-11)
+BOTH GUARDS NOW READ FROM SOURCE, and the "which surface" question in the note above is
+answered: it is the COMPOSITION, 978x550, measured. So the surface was never the issue and my
+previous note's two-way fork was the wrong fork.
+
+    text (360,110) dst 50898000 978x550  "STAGE 1-1"
+    text ( 10,110) dst 50898000 978x550  "Man:   1      HP:    7"
+    text (645,110) dst 50898000 978x550  "Man:   1      HP:   50"
+
+dwid is 978, so h_TextOutA's `if (dwid > 794)` branch IS taken. The offset is still zero,
+because BOTH functions decline for reasons that have nothing to do with the surface width --
+runtime/video/ddraw.c:
+
+    int hud_offset_x(int dst_w, int bottom)
+    {
+        if (!lf2_wide_width() || !panel_hud_up()) return 0;
+        if (dst_w <= NATIVE_W || bottom > HUD_BAND_H) return 0;   <- 126 > 118, declines
+        return (dst_w - HUD_W) / 2;
+    }
+
+    int screen_offset_x(void)
+    {
+        const int wide = lf2_wide_width();
+        if (!wide || panel_hud_up()) return 0;                    <- in a match, declines
+        ...
+    }
+
+So during a match screen_offset_x is zero BY DESIGN -- the world is placed by the camera shift
+instead, and the HUD band is placed by hud_offset_x. That is a coherent split and this row falls
+through the crack in it: at y 110 its bottom is 126, and HUD_BAND_H is 118.
+
+THE FIX IS ONE OF THESE TWO CONSTANTS, and choosing between them is the remaining work:
+  - HUD_BAND_H = 118 is described as "the in-match HUD strip and the band it owns". If the
+    stage-mode status row belongs to that band -- and it is drawn at y 110, directly under the
+    panels, and is centred with them at 794 -- then 118 is simply measured short and the band
+    is taller than whoever measured it had a stage-mode screen to see. That is the likely
+    answer and it is ONE number.
+  - If instead the row is not HUD, then it needs its own placement, and the reason it looks
+    wrong is that nothing places screen furniture during a match.
+
+WHAT MUST BE ESTABLISHED BEFORE CHANGING 118: where the row actually ends, and what else falls
+between 118 and that. HUD_BAND_H gates every GDI draw in a match, so raising it moves anything
+else in the widened band too -- the fighters' name tags are drawn in the field and are the
+obvious thing to check (issue #55, which is separately not what it looked like either).
+LF2_TEXT_DEBUG now prints the destination and its size on every string, which is enough to list
+every draw in a match and where it lands.
+
+AND A CORRECTION TO MY OWN PREVIOUS NOTE: it said "the screen_offset_x branch is skipped because
+its guard is `dwid > 794` and this destination is not". That was inference and it is WRONG --
+the destination is 978 and the branch is taken. The guard that declines is `panel_hud_up()`
+inside the function. Reading the function beat guessing at it, as it did twice earlier today.
