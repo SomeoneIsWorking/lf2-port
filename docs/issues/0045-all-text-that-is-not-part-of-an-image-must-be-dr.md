@@ -1,7 +1,7 @@
 ---
 id: 45
 title: All text that is not part of an image must be drawn from a vector font shipped in the repo
-status: open
+status: resolved
 symptom: text is rasterised at the composition's resolution and then scaled with everything else, so it is the one thing in the frame that does not get sharper as the window grows
 tags: reported,rendering,text,gdi,scaling,feature
 created: 2026-08-11
@@ -49,3 +49,6 @@ NOT ESTABLISHED: whether "SVG font" means the SVG-font format specifically (depr
 essentially unsupported by rasterisers today) or simply a vector/outline font -- TTF/OTF,
 which is what SDL3_ttf consumes. Treat it as "a scalable outline font shipped in the repo"
 unless the reporter means the literal format, and ASK if the distinction turns out to matter.
+
+### Resolution (2026-08-11)
+Both text paths -- the GDI TextOutA one and the game's own 8x16 bitmap-sheet one, which is the larger -- now draw from Liberation Sans/Mono committed in assets/fonts/ under SIL OFL 1.1 and embedded as byte arrays at configure time. The system-font search and the silent debug-font fallback are deleted and SDL3_ttf is required. Glyphs are rasterised at the window's resolution via a tile whose pixel size is separate from its placement, with size-keyed caches. Measured at 1920x1080: Sans opened at 26pt, 23 glyphs at 1.96x the cell, and the GPU title band differs from the tile-less software frame in 88.7% of pixels.
