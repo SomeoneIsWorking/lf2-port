@@ -5,7 +5,7 @@ status: open
 symptom: smoke, mouse, widescreen and pause_dropout schedule every press by bare frame number, including presses aimed at the mode menu, character select, the overlay and the match -- the exact drift issue #18 was about
 tags: testing,virtual-pad,instrument,routes
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-12
 ---
 
 OBSERVED while using the route tests as evidence for issue #22.
@@ -124,3 +124,27 @@ be screen-keyed at all until the shared module, three routes were frame-numbered
 them (smoke, pause_dropout) are now converted. What is left for the mouse route is issue #26 --
 it reaches only charselect and never a match -- and that was measured independently of any of
 this.
+
+### Note (2026-08-12)
+THE STRUCTURAL HALF IS DONE AND HAS BEEN FOR A WHILE; the routes are what was left, and one more
+is now converted.
+
+The mechanism this entry says is missing exists: runtime/win32/win32.c parses BOTH scripts through
+script_when (lines 282 and 835), the shared resolver in runtime/app/script.c, so LF2_KEY_SCRIPT and
+LF2_CLICK_SCRIPT take '@screen+n' exactly as LF2_VIRTUAL_PAD does. The entry's 'STRUCTURALLY cannot
+be screen-keyed today' is out of date.
+
+MOUSE IS NOW FULLY ANCHORED, including the two clicks this entry and the route's own comment both
+called impossible -- 'the two before any screen exists stay frame-numbered'. That was taken as a
+fact about the game and is not one: the front end paints its own backdrop colour on FRAME 1 and
+takes input there, which is what '@frontend' signals (issue #57). The launcher click at bare frame
+900 was 840 frames of waiting for a screen that was already up.
+
+    ok  reached charselect / overlay / match by mouse alone
+    ok  every scripted click fired: LF2_CLICK_SCRIPT: 7 of 7 items fired
+    LF2_QUIT_AFTER 3200 -> 2360
+
+STILL FRAME-NUMBERED: smoke_test (its launcher click and its whole LF2_KEY_SCRIPT) and
+widescreen_test's flow arm. Both are mechanical conversions of the same shape, and neither was done
+here because both routes run arms on the GPU and this session had already seen a card reset -- see
+issue #40. They are the last two, and converting them needs one GPU-capable session, not more RE.
