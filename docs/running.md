@@ -1836,10 +1836,19 @@ plain composition; there is deliberately no approximation to fall back to.
   the position **the game asked for**, before any of the port's offsets. It exists because the
   fighters' name tags go out this way — not through `TextOutA`, not through the game's string
   helper `fn_00423940`, both eliminated — so this is the only place their x can be *read*
-  rather than inferred from a screenshot. It is what showed that a tag's x is identical at 794
-  and at 1920×1080 while the sprite it names moves, which puts the draw outside the wrapper
-  that applies the widescreen camera shift (issue #55). The tags are the run at y 398 in a
-  match; the pair at y 531/532 is the stage-mode caption (issue #60).
+  rather than inferred from a screenshot. Each line also carries the **return address** of the
+  call, which is what named the tag's draw (`0041ab26`, inside `FUN_0041a5a0`), and the
+  **camera** as both the game's word (`cam=`) and what `bg_draw_camera` returns (`draw=`).
+  The tags are the run at y 398 in a match; the pair at y 531/532 is the stage-mode caption
+  (issue #60).
+
+  **Read `cam=` before concluding anything about widescreen from an x.** `bg_draw_camera`
+  clamps at zero, so on a frame where the camera has not left the stage's left edge `cam` and
+  `draw` are equal and a shifted draw is indistinguishable from an unshifted one. An x that is
+  identical at 794 and at 1920×1080 was twice written up as proof the tag misses the camera
+  shift; both runs had `cam=0` throughout, because the stage-mode route stands still after the
+  overlay confirm. Hold `right` long enough to move the camera, or the run is not evidence
+  (issue #55, instrument I012).
 
 - **`LF2_BAND_DEBUG=1`** prints every blit that is a candidate for the full-width backdrop
   stretch — anything drawn from x 0 into the composition during a match — with the rectangle it
