@@ -90,6 +90,7 @@ add_executable(lf2
     runtime/overrides/text.c
     runtime/overrides/assets.c
     runtime/overrides/background.c
+    runtime/overrides/objects.c
     runtime/overrides/audio_pan.c
     runtime/video/render.c
     runtime/video/hd2d.c
@@ -119,6 +120,7 @@ set_source_files_properties(
     runtime/overrides/text.c
     runtime/overrides/assets.c
     runtime/overrides/background.c
+    runtime/overrides/objects.c
     runtime/overrides/audio_pan.c
     runtime/video/render.c
     runtime/video/hd2d.c

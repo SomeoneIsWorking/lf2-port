@@ -278,38 +278,12 @@ void bg_camera_report(void)
                 cam_k, stage, view);
 }
 
-/* fn_0041a5a0 -- the stage's object pass: it collects every live object, depth-sorts them and
- * draws them. It reads the camera nine times and every one is a `SUB reg, camera` turning a
- * world x into a screen x; it writes the camera never, and writes no world state through it.
- * That is what makes this wrapper safe -- it changes where things are drawn and nothing else.
- *
- * The shift is applied and removed inside one call, so BG_CAMERA_X is never observed shifted
- * by anything else, and there is no way to leak a shifted camera into the next frame's ease. */
-void fn_0041a5a0(void)
-{
-    const uint32_t saved = LD32(BG_CAMERA_X);
-    int32_t cam = bg_draw_camera();
-
-    /* LF2_OBJ_SKEW=<n>: THE NEGATIVE CONTROL FOR A GATE THAT DOES NOT EXIST YET.
-     *
-     * Issue #55 needs this function hand-ported so its four 0x31a sites read the view width
-     * instead of the game's 794, and the acceptance gate for that port is byte-identity
-     * against fn_0041a5a0__orig at a 794 view -- the shape LF2_BG_ORIG already gives the layer
-     * pass. A gate is worthless without something that makes it FAIL, and this is it: every
-     * draw in this pass turns a world x into a screen x by subtracting the camera, so moving
-     * the camera by n moves every object in the pass by n and nothing else in the frame.
-     *
-     * It is deliberately NOT a port and not a fix. It exists so that when the port lands, the
-     * identity arm has already been shown to be capable of reporting a difference -- rather
-     * than being trusted because it was green the first time it ran. tools/routes/objects_test.sh
-     * is the harness; see issue #55. */
-    const char *skew = getenv("LF2_OBJ_SKEW");
-    if (skew) cam += (int32_t)strtol(skew, NULL, 10);
-
-    ST32(BG_CAMERA_X, (uint32_t)cam);
-    fn_0041a5a0__orig();
-    ST32(BG_CAMERA_X, saved);
-}
+/* fn_0041a5a0 -- the stage's object pass -- is now HAND-PORTED, in
+ * runtime/overrides/objects.c. The camera wrapper that used to sit here existed only because
+ * the body was recompiled: it wrote the shifted camera into the guest's word around the call so
+ * the lifted `SUB reg, camera` sites would draw shifted. The port reads the drawing camera
+ * directly at each of those sites, so there is nothing left to wrap (issue #55).
+ */
 
 /* The width the layers are drawn into: the game's 794, or the widescreen composition when
  * one is up. This ONE substitution is the whole of the widescreen change in this file --

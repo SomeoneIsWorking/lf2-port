@@ -1,7 +1,7 @@
 ---
 id: 55
 title: The player's number tag is drawn without the widescreen centring offset, so it lags the fighter it names
-status: open
+status: resolved
 symptom: reported with a screenshot. In a wide view the small player-number tag ('1') that should sit under a fighter is drawn to the LEFT of them, by what looks like the widescreen centring offset, and the gap appears once the fighter walks past where the 4:3 screen would have ended
 tags: reported,widescreen,rendering,hud
 created: 2026-08-11
@@ -397,3 +397,47 @@ SO THE PORT'S PREREQUISITES ARE DONE: the RE is transcribed, the ABI is resolved
 RET 0xc the decompilation gets wrong, and the gate covers pixels and state with negatives that
 have been seen to fire. What is left is writing 636 instructions of guest-ABI C with the four
 0x31a sites reading bg_view_width(), behind LF2_OBJ_ORIG, and running this file.
+
+### Resolution (2026-08-12)
+PORTED. runtime/overrides/objects.c is a hand-port of fn_0041a5a0 in the guest ABI, and its four
+0x31a sites read bg_view_width() instead of the game's 794.
+
+THE FIX, measured -- the tag now stops where the view ends instead of where 794 did:
+
+    window 1100x550   x=1091  ( view 1100 - 9 )     was 785
+    window 1920x1080  x=969   ( view  978 - 9 )     was 785
+
+ACCEPTED ON A GATE THAT WAS BUILT FIRST AND SHOWN TO FAIL FIRST. tools/e2e.sh objects runs the
+port against the RECOMPILED body (LF2_OBJ_ORIG=1) at a 794 view, where bg_view_width() is 794
+and the two must agree exactly:
+
+    ok  frame_001351 / frame_001801   the port draws exactly what the recompiled body draws
+    ok  state vs orig  data x2, heap  same, 0 dwords outside the clock/cookie mask
+    ok  skew / alt negatives          5598-5702 px, 73-78 dwords, and a heap size difference
+
+The state arms matter more than the pixels here: this pass WRITES BACK (the effects loop
+advances per-effect counters and decrements obj[0x36c]), so a port that drew correctly and
+counted wrongly would have passed a pixel-only gate. .data and the 106 MB heap are identical.
+
+A TRAP THIS ALMOST FELL INTO, recorded because it nearly shipped: the gate passed the first
+time it was run against the port -- while its  arm was still a SECOND DEFAULT RUN, i.e.
+the port compared with itself. It had been written that way deliberately, before the port
+existed, and the file said to switch it. Passing in that form proved nothing. It now runs
+LF2_OBJ_ORIG=1, and it passes for real.
+
+THE CAMERA WRAPPER IS GONE with the port. background.c used to write the shifted camera into
+the guest's word around the recompiled body so its  sites would draw shifted;
+the port reads bg_draw_camera() directly at each site, so there is nothing left to wrap. The
+draw-time value is still never written back (issue #39's easing).
+
+THREE THINGS THE DECOMPILATION GOT WRONG, all caught from re/instructions.tsv: the function
+ends RET 0xc and takes THREE stack args where Ghidra types two; every fn_0043f010 call has an
+elided __thiscall receiver ([0x0044faf4] for glyphs, [rec+0x4d4673c] for the shadow); and the
+second tag variant's string is a stack buffer holding "Com", which Ghidra rendered as a pointer
+into a bitmap resource.
+
+NOT EXERCISED BY THE GATE, and named so nobody reads the green as covering it: the bracketed
+name branch (slot mark == -1) did not occur in these runs, so its "[" + name + tail assembly is
+ported from the listing but unverified on real data. Same for the multiplier label above 9.
+
+ctest 10/10; background, stage_mode and two_human_match all green after the change.
