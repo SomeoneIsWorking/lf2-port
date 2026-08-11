@@ -1,7 +1,7 @@
 ---
 id: 41
 title: Graphics must scale with the window, per sprite -- not by upscaling the composed screen
-status: open
+status: resolved
 symptom: in a window taller than 550 the game's picture sits in a 550-row band with black above and below; it should fill the window, and it should do so by drawing every sprite larger at draw time rather than by scaling a finished 794x550 frame
 tags: reported,rendering,renderer,widescreen,scaling
 created: 2026-08-11
@@ -163,3 +163,37 @@ mouse_lparam entirely and could not catch this in either direction. `ctest geome
 round trip instead -- every corner and the middle of the composition at five window sizes,
 projected out and mapped back -- plus the old mapping's failure as a negative: window row 900
 of 1080 is game row 458, and passing it through unchanged gives 900, off a 550-row screen.
+
+### Resolution (2026-08-11)
+CLOSED 2026-08-11. The main half landed on the day this was filed; what kept it open was a
+list of three seams, and each has since been closed by its own issue rather than by argument.
+
+  GDI TEXT AT THE COMPOSITION'S RESOLUTION -- closed by issue #45. The port ships two
+  committed SIL OFL faces and rasterises each glyph at the WORLD SCALE into a tile whose
+  destination is still the game's own 8x16 cell, so the same place on screen gets more texels.
+  render_tile_begin takes the rasterised size separately from the placement for exactly that.
+
+  THE PORT'S OWN UI NOT SCALED WITH THE WORLD -- closed by issue #52, and it was worse than
+  this entry described. The controls hint and the pause menu drew onto the primary after the
+  composition had been copied to it, so the renderer had to be turned OFF for any frame
+  carrying one -- which is every screen outside a match. Measured: 0 of 901 GPU-drawn frames
+  at 1920x1080. Both are recorded into the display list now (the pause menu over a retained
+  frame, since it freezes the game and records nothing), and the menus draw at 900 of 901.
+
+  tools/e2e.sh render NEVER RUN AGAINST THIS -- run, and passing, on both its frames: the GPU
+  frame matches the software compositor to a max channel difference of 1 on the menu and 2 on
+  the match. Worth noting that this arm was WORTHLESS on the menu frame until #52 landed, for
+  the same reason: character selection has the hint up, so the "gpu" arm was dumping the
+  software buffer and comparing it with itself (instrument I010).
+
+WHAT REMAINS TRUE AND IS NOT A DEFECT: the software compositor stretches one finished buffer,
+because by the time a frame reaches it every sprite has been flattened into those pixels. It
+is the fallback (LF2_RENDERER=soft) and it looks like one. That is the whole reason the native
+renderer exists.
+
+WHAT WAS NEVER SETTLED AND HAS NOT BITTEN: whether a fractional scale is acceptable on the art
+(1080/550 = 1.963, so with NEAREST some texel rows are 2 screen pixels and some are 1). The
+frames have been looked at at 1920x1080 -- front end, character selection, a match, the pause
+menu -- and nothing about the sprites reads as wrong. It stays a judgement rather than a
+measurement, and if it ever looks wrong the choice is between a fractional scale, an
+integer-floored one, and a filter. Reopen with a frame rather than an opinion.
