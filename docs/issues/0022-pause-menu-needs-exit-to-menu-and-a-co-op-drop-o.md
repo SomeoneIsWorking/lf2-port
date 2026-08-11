@@ -226,3 +226,43 @@ not reasons to hesitate: what a finished match leaves wound that a second load d
 Named suspects, none of them measured: the music, the object registry beyond the 400 gate
 bytes, and the character-select roster. The way to establish it is a second match after an exit,
 compared against a first match in a fresh process.
+
+### Note (2026-08-11)
+OPTION (b) TRIED AND IT DOES NOT ARRIVE AT THE MODE MENU. The code was written, run, and
+REVERTED -- what survives is this finding and the two addresses in runtime/overrides/world.h.
+
+WHAT WAS DONE, exactly as the note above specified it: after the overlay's Exit is dispatched
+and the match is over (panel_hud_up() false), write
+
+    [0x0044d070] <- -100     the game mode, back to the image's initial value
+    [0x00458b00] <- 1        the top-level mode, the load branch
+
+and let fn_004246b0's own mode==1 branch do the rest. Nothing stamped a screen number.
+
+WHAT HAPPENED. The writes land -- the run reports "top mode 2 -> 1, game mode 1 -> -100" at
+frame 2290 -- and 310 frames later the game is STILL ON THE CLEARED CHARACTER-SELECT SCREEN
+(scratch/exit22g/frame_002600.ppm: the "Character Selection" panel with all eight slots reading
+"Press Attack to join!"). It is not the mode menu and it is not the launcher.
+
+WHAT THAT ELIMINATES, which is the value here. The mode word alone does not select the screen.
+The likely mechanic is that fn_004246b0's mode==1 branch runs and immediately sets mode 2 again
+-- it is the ONLY write of 2 in the binary -- so the top-level mode is back where it was within
+a frame, while whatever selects mode-menu-vs-character-select inside mode 2 was never touched.
+That is consistent with the debug output: LF2_MENU_DEBUG prints on CHANGE and printed nothing
+after the write, which is what a 2 -> 1 -> 2 round trip inside one frame looks like.
+
+SO THE SECOND RE NOTE ABOVE WAS INCOMPLETE where it mattered. It established that the game mode
+is -100 at the mode menu and 1 afterwards, and inferred that restoring it plus the load branch
+would return there. The inference is wrong: -100 is a NECESSARY condition for the mode menu,
+not a sufficient one.
+
+WHAT IS ACTUALLY LEFT, and it is what that note itself named before drawing the wrong
+conclusion: find the state inside fn_0041bc90 (28 KB, the game's main dispatcher) that selects
+mode menu vs character select vs match within mode 2. The controlled .data diff that found
+0x0044d070 and 0x00451200 is the method that works here -- but it must be run against the right
+PAIR this time: the cleared character-select screen AFTER an exit, against the mode menu, with
+a stable control. 0x00451200 was the other word that differed and it has never been followed up;
+it read 0 at the mode menu and 1 from character select onward, and unlike 0x0044d070 it has no
+known second meaning.
+
+DO NOT retry the mode-word write. It is measured, it lands, and it does not do this.
