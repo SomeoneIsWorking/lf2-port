@@ -455,21 +455,65 @@ static void h_SetTextColor(void)
  */
 /* ---- text rendering ----
  *
- * The game draws part of every frame through GDI, with the device context's default font.
- * On Windows that is a proportional system font; here it was SDL's 8x8 debug font, which
- * is legible but looks like a debug overlay rather than a game.
+ * The game draws part of every frame through GDI, with the device context's DEFAULT font --
+ * it imports no CreateFont, so there is no font of its own to reproduce. On Windows that
+ * default is a proportional system face, and the game's layouts were sized against it.
  *
- * With SDL3_ttf present a real font is used instead, anti-aliased and blended against
- * what is already on the surface. Without it the debug-font path below still runs, so
- * SDL3_ttf is optional rather than a new hard dependency for a port that otherwise needs
- * only SDL3.
+ * THE FACE IS COMPILED INTO THE BINARY (issue #45). assets/fonts/LiberationSans-Regular.ttf,
+ * unmodified, SIL OFL 1.1, embedded by CMakeLists.txt as a byte array. There is no font
+ * search and no fallback, and the removal of those is the point rather than a simplification:
+ * this used to walk nine candidate system paths and, when none matched, quietly drop to SDL's
+ * 8x8 debug font. A build on one machine and a build on another then drew different text, and
+ * nothing said so -- which makes two screenshots incomparable and a "the text looks wrong"
+ * report unanswerable. If the face cannot be opened now, the port says so and draws nothing.
  *
- * The font is a system font found at runtime. Shipping one would mean shipping its
- * licence, and this repository deliberately carries no binary assets. LF2_FONT overrides
- * the search.
+ * Liberation Sans is metrically compatible with Arial, which is what makes it the honest
+ * substitute here rather than merely an available one: the advance widths the game's layout
+ * was sized against are the ones it gets.
  */
 #ifdef LF2_HAVE_TTF
 enum { TEXT_PT = 13 };          /* close to the ~11 px Windows default at 96 dpi */
+
+extern const unsigned char lf2_font_sans[];
+extern const unsigned int  lf2_font_sans_len;
+extern const unsigned char lf2_font_mono[];
+extern const unsigned int  lf2_font_mono_len;
+
+/* Opens one of the embedded faces. SDL takes ownership of the stream and closes it with the
+ * font; the byte array is static, so nothing is copied and nothing is freed. */
+static TTF_Font *font_from_memory(const unsigned char *data, unsigned int len, float pt)
+{
+    SDL_IOStream *io = SDL_IOFromConstMem(data, len);
+    if (!io) return NULL;
+    return TTF_OpenFontIO(io, true, pt);
+}
+
+/* ONE OPEN FACE PER SIZE, and the size is part of the key. A cache that ignored it would
+ * keep handing back the glyphs rasterised for the previous window and the text would stay
+ * blurry after a resize while looking as though the feature worked -- the exact failure this
+ * cache exists to avoid. Small and fixed: a handful of window sizes in a run, and a face that
+ * does not fit is simply not cached rather than evicting anything. */
+enum { FONT_SIZES_MAX = 8 };
+static struct { int pt; TTF_Font *font; } sized_fonts[FONT_SIZES_MAX];
+static int sized_fonts_n;
+
+static TTF_Font *font_at(float pt)
+{
+    const int key = (int)(pt + 0.5f);
+    if (key < 4) return NULL;
+    for (int i = 0; i < sized_fonts_n; i++)
+        if (sized_fonts[i].pt == key) return sized_fonts[i].font;
+    if (sized_fonts_n >= FONT_SIZES_MAX) return NULL;
+    TTF_Font *f = font_from_memory(lf2_font_sans, lf2_font_sans_len, (float)key);
+    if (!f) return NULL;
+    sized_fonts[sized_fonts_n].pt = key;
+    sized_fonts[sized_fonts_n].font = f;
+    sized_fonts_n++;
+    if (getenv("LF2_GLYPH_DEBUG"))
+        fprintf(stderr, "text: opened Liberation Sans at %d pt for the window's scale "
+                        "(%d size(s) cached)\n", key, sized_fonts_n);
+    return f;
+}
 
 static TTF_Font *ui_font;
 static int ui_font_tried;
@@ -480,43 +524,18 @@ static TTF_Font *font_open(void)
     ui_font_tried = 1;
 
     if (!TTF_Init()) {
-        fprintf(stderr, "text: TTF_Init failed (%s); using the built-in font\n",
+        fprintf(stderr, "text: TTF_Init failed (%s) -- NO TEXT WILL BE DRAWN. This is not a "
+                        "cosmetic fallback; the port has no second way to draw a string.\n",
                 SDL_GetError());
         return NULL;
     }
-
-    /* Candidates, in preference order. Ordinary UI sans faces that exist by default on
-     * mainstream Linux distributions and on macOS. */
-    static const char *const CANDIDATES[] = {
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-    };
-
-    const char *override = getenv("LF2_FONT");
-    if (override && *override) {
-        ui_font = TTF_OpenFont(override, TEXT_PT);
-        if (!ui_font)
-            fprintf(stderr, "text: LF2_FONT=%s could not be opened (%s)\n",
-                    override, SDL_GetError());
-    }
-    for (unsigned i = 0; !ui_font && i < sizeof CANDIDATES / sizeof CANDIDATES[0]; i++)
-        ui_font = TTF_OpenFont(CANDIDATES[i], TEXT_PT);
-
-    /* Say which font is in use, and say it loudly when none was found -- silently falling
-     * back to the debug font would look like the new path is simply ugly. */
+    ui_font = font_from_memory(lf2_font_sans, lf2_font_sans_len, (float)TEXT_PT);
     if (!ui_font)
-        fprintf(stderr, "text: no system font found in %u candidates; using the built-in\n"
-                        "      font. Set LF2_FONT=/path/to/font.ttf to choose one.\n",
-                (unsigned)(sizeof CANDIDATES / sizeof CANDIDATES[0]));
-    else if (getenv("LF2_TEXT_DEBUG"))
-        fprintf(stderr, "text: using a TTF font at %d pt\n", TEXT_PT);
+        fprintf(stderr, "text: the embedded Liberation Sans (%u bytes) would not open (%s) -- "
+                        "NO TEXT WILL BE DRAWN.\n", lf2_font_sans_len, SDL_GetError());
+    else if (getenv("LF2_GLYPH_DEBUG"))
+        fprintf(stderr, "text: embedded Liberation Sans, %u bytes, %d pt\n",
+                lf2_font_sans_len, TEXT_PT);
     return ui_font;
 }
 
@@ -539,15 +558,44 @@ static int text_draw_ttf(const char *text, int x, int y,
     const int tg = (int)((text_colour >> 8) & 0xff);
     const int tb = (int)(text_colour & 0xff);
 
-    uint32_t *tile = render_tile_begin(dpix, x, y, rgba->w, rgba->h);
+    /* THE TILE IS RASTERISED AT THE WINDOW'S RESOLUTION, NOT THE GAME'S (issue #45).
+     *
+     * The `rgba` surface above is the string at the game's own 13 pt, and it stays that size
+     * because the software compositor below writes into a buffer at the game's resolution --
+     * that path cannot use anything finer. But the GPU path draws this tile into a
+     * destination that issue #41 scales by the window, so handing it the small raster is what
+     * made text the one thing in the frame that did not get sharper as the window grew: an
+     * 8-pixel-tall glyph magnified 1.96x is an 8-pixel-tall glyph with bigger pixels.
+     *
+     * So the string is rasterised a SECOND time at TEXT_PT * scale and handed over as more
+     * texels for the SAME destination rectangle. The outline is re-hinted at that size, which
+     * is the whole difference between a vector font and a bitmap one -- the curve is
+     * re-evaluated rather than the pixels stretched.
+     *
+     * Its destination stays the game's own w/h, so the game's layout is untouched: nothing
+     * about where the string sits or how much room it takes depends on the window. */
+    const float wscale = lf2_world_scale();
+    SDL_Surface *hi = NULL;
+    if (wscale > 1.01f) {
+        TTF_Font *big = font_at(TEXT_PT * wscale);
+        if (big) {
+            SDL_Surface *g2 = TTF_RenderText_Blended(big, text, 0, white);
+            if (g2) {
+                hi = SDL_ConvertSurface(g2, SDL_PIXELFORMAT_ARGB8888);
+                SDL_DestroySurface(g2);
+            }
+        }
+    }
+    const SDL_Surface *tsrc = hi ? hi : rgba;
+    uint32_t *tile = render_tile_begin(dpix, x, y, rgba->w, rgba->h, tsrc->w, tsrc->h);
     if (tile) {
-        for (int ty = 0; ty < rgba->h; ty++) {
-            const uint32_t *src = (const uint32_t *)((const uint8_t *)rgba->pixels
-                                                     + (size_t)ty * (size_t)rgba->pitch);
-            for (int tx = 0; tx < rgba->w; tx++) {
+        for (int ty = 0; ty < tsrc->h; ty++) {
+            const uint32_t *src = (const uint32_t *)((const uint8_t *)tsrc->pixels
+                                                     + (size_t)ty * (size_t)tsrc->pitch);
+            for (int tx = 0; tx < tsrc->w; tx++) {
                 const int a = (int)(src[tx] >> 24);
                 if (!a) continue;
-                tile[ty * rgba->w + tx] = ((uint32_t)a << 24)
+                tile[ty * tsrc->w + tx] = ((uint32_t)a << 24)
                                         | ((uint32_t)(tr * a / 255) << 16)
                                         | ((uint32_t)(tg * a / 255) << 8)
                                         | (uint32_t)(tb * a / 255);
@@ -555,6 +603,7 @@ static int text_draw_ttf(const char *text, int x, int y,
         }
         render_tile_end();
     }
+    if (hi) SDL_DestroySurface(hi);
 
     for (int ty = 0; ty < rgba->h; ty++) {
         const int dy = y + ty;
@@ -600,6 +649,7 @@ enum { GLYPH_W = 8, GLYPH_H = 16 };
 
 static TTF_Font *mono_font;
 static int mono_tried, mono_baseline;
+static int mono_pt;   /* the size measured to fit the cell; the scaled raster multiplies it */
 
 static TTF_Font *mono_open(void)
 {
@@ -607,49 +657,168 @@ static TTF_Font *mono_open(void)
     mono_tried = 1;
     if (!TTF_Init()) return NULL;
 
-    static const char *const CANDIDATES[] = {
-        "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/liberation-mono-fonts/LiberationMono-Regular.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-        "/usr/share/fonts/google-noto/NotoSansMono-Regular.ttf",
-        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-        "/System/Library/Fonts/Menlo.ttc",
-        "/System/Library/Fonts/Monaco.ttf",
-    };
-    const char *override = getenv("LF2_GAME_FONT");
-
-    /* Largest size whose advance still fits the 8-pixel cell. Measured from the font
-     * rather than assumed from the point size: the ratio differs between faces, and
-     * guessing it wrong makes every glyph overlap its neighbour. */
+    /* THE EMBEDDED MONOSPACE FACE (issue #45), for the same reason as the proportional one
+     * above: no search, no host dependency, no silent difference between two machines. It is
+     * a SECOND face and not the same one, because this text is drawn on a fixed 8-pixel cell
+     * and a proportional face put in that cell clips.
+     *
+     * The size is still MEASURED rather than assumed -- the largest whose advance fits the
+     * cell -- because that ratio is a property of the face and guessing it wrong makes every
+     * glyph overlap its neighbour. It is measured against the one face now, so it is a
+     * constant of this build rather than of whatever was installed. */
     for (int pt = 20; pt >= 8 && !mono_font; pt--) {
-        TTF_Font *f = NULL;
-        if (override && *override) f = TTF_OpenFont(override, pt);
-        for (unsigned i = 0; !f && i < sizeof CANDIDATES / sizeof CANDIDATES[0]; i++)
-            f = TTF_OpenFont(CANDIDATES[i], pt);
-        if (!f) break;                      /* no candidate exists at any size */
+        TTF_Font *f = font_from_memory(lf2_font_mono, lf2_font_mono_len, (float)pt);
+        if (!f) break;
         int adv = 0;
         if (TTF_GetGlyphMetrics(f, 'M', NULL, NULL, NULL, NULL, &adv) && adv <= GLYPH_W) {
             mono_font = f;
+            mono_pt = pt;
             mono_baseline = (GLYPH_H - TTF_GetFontHeight(f)) / 2 + TTF_GetFontAscent(f);
             if (getenv("LF2_GLYPH_DEBUG"))
-                fprintf(stderr, "glyph font: %d pt, advance %d px, baseline %d\n",
-                        pt, adv, mono_baseline);
+                fprintf(stderr, "glyph font: embedded Liberation Mono, %d pt, advance %d px, "
+                                "baseline %d\n", pt, adv, mono_baseline);
             break;
         }
         TTF_CloseFont(f);
     }
     if (!mono_font)
-        fprintf(stderr, "glyph font: no monospace font fits an %d px cell; the game's own\n"
-                        "            bitmap font is used. Set LF2_GAME_FONT to choose one.\n",
+        fprintf(stderr, "glyph font: the embedded Liberation Mono fits no size into an %d px "
+                        "cell, so the game's own bitmap font is drawn instead. That should be "
+                        "impossible with a committed face and means this build is broken.\n",
                 (int)GLYPH_W);
     return mono_font;
+}
+
+/* The fixed-cell face at `scale` times its measured size. Same size-keyed shape as the
+ * proportional face; a face that will not open simply leaves the caller on the 8x16 mask. */
+static struct { int pt; TTF_Font *font; } mono_sized[FONT_SIZES_MAX];
+static int mono_sized_n;
+
+static TTF_Font *mono_at(float scale)
+{
+    if (!mono_open() || mono_pt <= 0) return NULL;
+    const int key = (int)((float)mono_pt * scale + 0.5f);
+    for (int i = 0; i < mono_sized_n; i++)
+        if (mono_sized[i].pt == key) return mono_sized[i].font;
+    if (mono_sized_n >= FONT_SIZES_MAX) return NULL;
+    TTF_Font *f = font_from_memory(lf2_font_mono, lf2_font_mono_len, (float)key);
+    if (!f) return NULL;
+    mono_sized[mono_sized_n].pt = key;
+    mono_sized[mono_sized_n].font = f;
+    mono_sized_n++;
+    return f;
 }
 
 /* One cached 8x16 coverage mask per character. Colour is applied at blit time, so a glyph
  * drawn in two colours is still rendered once. */
 typedef struct { uint8_t cov[GLYPH_W * GLYPH_H]; int valid; } Glyph;
 static Glyph glyph_cache[128];
+
+/* ---- THE SAME GLYPH AGAIN, AT THE WINDOW'S RESOLUTION (issue #45) ----
+ *
+ * The 8x16 mask above is what the software compositor needs, because that path writes into a
+ * buffer at the game's own resolution and can use nothing finer. The GPU path draws the same
+ * glyph into a destination that issue #41 scales by the window, so it gets its own raster at
+ * cell * scale -- the outline re-hinted at that size rather than eight rows of pixels
+ * magnified. This is the larger of the port's two text paths: it carries the HUD, the name
+ * tags, "Character Selection", the pause menu and the controls hint.
+ *
+ * KEYED ON THE SCALE, and that is not bookkeeping: without it a resize would keep showing the
+ * glyphs rasterised for the old window, which looks exactly like the feature working until
+ * someone drags an edge. The whole cache is dropped when the scale changes rather than kept
+ * per size -- a run has one window at a time, and 95 glyphs are a millisecond to redo. */
+enum { HI_MAX = GLYPH_W * 8 * GLYPH_H * 8 };
+typedef struct { uint8_t *cov; int w, h; int valid; } GlyphHi;
+static GlyphHi glyph_hi[128];
+static int     glyph_hi_scale_x100 = -1;
+static long    glyph_hi_rasterised, glyph_hi_dropped;
+
+static void glyph_hi_reset(int scale_x100)
+{
+    for (int i = 0; i < 128; i++) {
+        SDL_free(glyph_hi[i].cov);
+        glyph_hi[i].cov = NULL;
+        glyph_hi[i].valid = 0;
+    }
+    if (glyph_hi_scale_x100 >= 0) glyph_hi_dropped++;
+    glyph_hi_scale_x100 = scale_x100;
+}
+
+/* The coverage for `ch` at the current world scale, or NULL when there is nothing finer to
+ * draw (scale 1, no face, or the raster failed). NULL means "use the 8x16 mask", which is
+ * always correct -- it is the old behaviour, not a blank. */
+static const GlyphHi *glyph_hi_of(int ch, float scale)
+{
+    /* Not when the GPU path is off: the finer raster exists ONLY for the display-list tile,
+     * and render_tile_begin returns NULL under LF2_RENDERER=soft. Rasterising it anyway cost
+     * the work for nothing AND made the report claim glyphs had been drawn at 1.96x in a run
+     * whose text was, necessarily, the 8x16 cell -- a true sentence that answered a question
+     * nobody asked and read as a pass. */
+    if (ch < 32 || ch > 126 || scale <= 1.01f || !render_gpu_enabled()) return NULL;
+    const int key = (int)(scale * 100.0f + 0.5f);
+    if (key != glyph_hi_scale_x100) glyph_hi_reset(key);
+
+    GlyphHi *g = &glyph_hi[ch];
+    if (g->valid) return g->cov ? g : NULL;
+    g->valid = 1;
+
+    const int cw = (int)((float)GLYPH_W * scale + 0.5f);
+    const int chh = (int)((float)GLYPH_H * scale + 0.5f);
+    if (cw <= 0 || chh <= 0 || cw * chh > HI_MAX) return NULL;
+
+    TTF_Font *font = mono_at(scale);
+    if (!font) return NULL;
+
+    const char text[2] = { (char)ch, 0 };
+    SDL_Color white = { 255, 255, 255, 255 };
+    SDL_Surface *surf = TTF_RenderText_Blended(font, text, 1, white);
+    if (!surf) return NULL;
+    SDL_Surface *rgba = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(surf);
+    if (!rgba) return NULL;
+
+    g->cov = SDL_calloc(1, (size_t)cw * (size_t)chh);
+    g->w = cw; g->h = chh;
+    if (!g->cov) { SDL_DestroySurface(rgba); return NULL; }
+
+    /* The baseline is the game's own, scaled -- the glyph must sit on the same line the 8x16
+     * mask puts it on, or scaled text drifts vertically against the art around it. */
+    const int top = (int)((float)mono_baseline * scale + 0.5f) - TTF_GetFontAscent(font);
+    for (int y = 0; y < rgba->h; y++) {
+        const int cy = y + top;
+        if (cy < 0 || cy >= chh) continue;
+        const uint32_t *row = (const uint32_t *)((const uint8_t *)rgba->pixels
+                                                 + (size_t)y * (size_t)rgba->pitch);
+        for (int x = 0; x < rgba->w && x < cw; x++)
+            g->cov[cy * cw + x] = (uint8_t)(row[x] >> 24);
+    }
+    SDL_DestroySurface(rgba);
+    glyph_hi_rasterised++;
+    return g;
+}
+
+/* LF2_GLYPH_DEBUG also answers the question this feature is judged on: was anything actually
+ * rasterised at the window's size, or did every glyph fall back to the 8x16 cell? A zero here
+ * with a scale above 1 is the feature not working, and it says so rather than printing
+ * nothing. */
+void glyph_scale_report(void)
+{
+    if (!getenv("LF2_GLYPH_DEBUG")) return;
+    const float s = lf2_world_scale();
+    if (!render_gpu_enabled())
+        fprintf(stderr, "glyph scale: the software compositor was presenting, so text is the "
+                        "game's 8x16 cell by definition -- this run says NOTHING about "
+                        "window-resolution text.\n");
+    else if (glyph_hi_scale_x100 < 0)
+        fprintf(stderr, "glyph scale: NOTHING was rasterised above the game's 8x16 cell "
+                        "(world scale %.3f). At a scale of 1 that is correct; above it, the "
+                        "text is not getting sharper and the feature is not working.\n",
+                (double)s);
+    else
+        fprintf(stderr, "glyph scale: %ld glyph(s) rasterised at %.2fx the game's cell, "
+                        "%ld cache drop(s) from the window changing size\n",
+                glyph_hi_rasterised, glyph_hi_scale_x100 / 100.0, glyph_hi_dropped);
+}
 
 static const Glyph *glyph_of(int ch)
 {
@@ -696,16 +865,23 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink,
      * same coverage is written into a display-list TILE as well, PREMULTIPLIED. The CPU
      * blend below still runs: both renderers build every frame, and the software one is the
      * reference the GPU path is diffed against. */
-    uint32_t *tile = render_tile_begin(dpix, x, y, GLYPH_W, GLYPH_H);
+    /* The GPU tile takes the WINDOW-RESOLUTION raster when there is one, into the same 8x16
+     * destination -- more texels for the same place on screen, which is what makes the glyph
+     * sharper instead of merely bigger (issue #45). At scale 1, or if the finer raster could
+     * not be made, this is the 8x16 mask and the behaviour is exactly what it was. */
+    const GlyphHi *hi = glyph_hi_of(ch, lf2_world_scale());
+    const uint8_t *cov = hi ? hi->cov : g->cov;
+    const int cw = hi ? hi->w : GLYPH_W, chh = hi ? hi->h : GLYPH_H;
+    uint32_t *tile = render_tile_begin(dpix, x, y, GLYPH_W, GLYPH_H, cw, chh);
     if (tile) {
-        for (int gy = 0; gy < GLYPH_H; gy++)
-            for (int gx = 0; gx < GLYPH_W; gx++) {
-                const int a = g->cov[gy * GLYPH_W + gx];
+        for (int gy = 0; gy < chh; gy++)
+            for (int gx = 0; gx < cw; gx++) {
+                const int a = cov[gy * cw + gx];
                 if (!a) continue;
-                tile[gy * GLYPH_W + gx] = ((uint32_t)a << 24)
-                                        | ((uint32_t)(ir * a / 255) << 16)
-                                        | ((uint32_t)(ig * a / 255) << 8)
-                                        | (uint32_t)(ib * a / 255);
+                tile[gy * cw + gx] = ((uint32_t)a << 24)
+                                   | ((uint32_t)(ir * a / 255) << 16)
+                                   | ((uint32_t)(ig * a / 255) << 8)
+                                   | (uint32_t)(ib * a / 255);
             }
         render_tile_end();
     }

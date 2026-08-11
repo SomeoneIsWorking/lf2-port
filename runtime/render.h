@@ -82,7 +82,10 @@ void render_fill(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t a
  * render_tile_begin returns NULL when the GPU path is off or the rectangle is unusable, and
  * the caller must then do what it did before. A tile that is begun must be ended.
  */
-uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h);
+/* x,y,w,h place the tile in the GAME's coordinates; tw,th are how many pixels the caller
+ * rasterised. Pass tw/th larger to draw text at the window's real resolution (issue #45);
+ * pass 0 for both to mean "the same as w,h", which is what every non-text caller wants. */
+uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h, int tw, int th);
 void      render_tile_end(void);
 
 /* ---- presenting ----

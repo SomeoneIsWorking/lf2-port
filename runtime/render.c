@@ -290,10 +290,26 @@ void render_fill(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t a
     e->argb = argb;
 }
 
-uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h)
+/* THE TILE'S PIXELS AND ITS PLACE ON SCREEN ARE TWO DIFFERENT SIZES (issue #45).
+ *
+ * `x, y, w, h` are where the tile goes, in the GAME's own coordinates -- that is the game's
+ * layout and it never changes. `tw, th` are how many pixels the caller actually rasterised.
+ * They used to be the same number, which is precisely why text did not get sharper as the
+ * window grew: a glyph rasterised into an 8x16 tile is 8x16 texels however large the
+ * destination is, and issue #41 then scaled that tile up with every other quad.
+ *
+ * Give it more texels for the same destination and the tile is drawn at the window's real
+ * resolution: draw_list scales the DESTINATION by the world scale, the texture is stretched
+ * to fit it, and a caller that rasterised at exactly destination*scale lands 1:1 on screen
+ * pixels. Nothing here has to know about the scale -- it only has to stop assuming the two
+ * sizes are equal. */
+uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h, int tw, int th)
 {
-    if (!render_gpu_enabled() || !tile_arena || w <= 0 || h <= 0) return NULL;
-    const uint32_t need = (uint32_t)w * (uint32_t)h * 4u;
+    if (tw <= 0) tw = w;
+    if (th <= 0) th = h;
+    if (!render_gpu_enabled() || !tile_arena || w <= 0 || h <= 0 || tw <= 0 || th <= 0)
+        return NULL;
+    const uint32_t need = (uint32_t)tw * (uint32_t)th * 4u;
     if (need > TILE_BYTES_MAX - tile_used) { stat_dropped++; return NULL; }
     List *l = list_for(dst_pixels);
     if (!l || l->n >= LIST_MAX) { if (l) { l->dropped++; stat_dropped++; } return NULL; }
@@ -302,7 +318,7 @@ uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h)
     e->kind = E_TILE;
     e->dst = (SDL_FRect){ (float)x, (float)y, (float)w, (float)h };
     e->tile_off = tile_used;
-    e->tw = w; e->th = h;
+    e->tw = tw; e->th = th;
     uint32_t *p = (uint32_t *)(tile_arena + tile_used);
     memset(p, 0, need);
     tile_used += need;

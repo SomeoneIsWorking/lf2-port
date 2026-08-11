@@ -77,8 +77,9 @@ void shadow_hint_set(int on);
  * helper is shared with the front end and the blit cannot tell them apart (issue #42). */
 void world_band_hint_set(int on);
 void world_band_report(void);   /* LF2_BAND_DEBUG=1 */
+void glyph_scale_report(void);  /* LF2_GLYPH_DEBUG=1 -- was text rasterised at window size? */
 void framing_report(void);      /* LF2_FRAMING_DEBUG=1 -- per-screen framing, issue #44 */
-int  screen_left_aligned(void); /* the screen up now is one of the LEFT-aligned menus */
+int  screen_backdrop_left(void); /* this screen's BACKDROP art is anchored at x=0 */
 
 /* The clip-draw override hands over the object each draw is made on; the blit path learns
  * from it which object draws the stage's shadow ellipse, and answers with shadow_object(). */

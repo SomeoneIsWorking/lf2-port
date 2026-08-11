@@ -134,16 +134,54 @@ find_package(SDL3 REQUIRED CONFIG)
 find_library(LF2_M m)
 target_link_libraries(lf2 PRIVATE SDL3::SDL3 $<$<BOOL:${LF2_M}>:${LF2_M}>)
 
-# Optional: a real font for the GDI text path. Without it the built-in debug font is used,
-# which is legible but looks like a debug overlay. Kept optional rather than required
-# because the port otherwise needs nothing but SDL3.
+# ---- the text faces, COMPILED IN (issue #45) ----
+#
+# assets/fonts/ holds two unmodified SIL OFL 1.1 faces, and they are turned into byte arrays
+# here rather than opened from disk at runtime. That is the point: there is no font search, no
+# system font, and no fallback. A port whose text silently changes with whatever the host has
+# installed is a port whose screenshots cannot be compared with each other -- and the previous
+# arrangement did exactly that, walking a list of nine candidate paths and quietly dropping to
+# SDL's 8x8 debug font when none matched.
+#
+# file(READ ... HEX) at configure time, so the build needs no extra tool -- not python, not
+# xxd. 730 KB of font becomes about 4.4 MB of C, which is why the newlines matter: one
+# 4-million-character line is legal C that some compilers take a very long time over.
+function(lf2_embed_font symbol src)
+    set(out "${CMAKE_BINARY_DIR}/gen/${symbol}.c")
+    if(NOT EXISTS "${src}")
+        message(FATAL_ERROR "font ${src} is missing -- it is committed to this repo and the "
+                            "binary cannot be built without it")
+    endif()
+    file(READ "${src}" hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," body "${hex}")
+    string(REGEX REPLACE "((0x[0-9a-f][0-9a-f],){16})" "\\1\n" body "${body}")
+    file(WRITE "${out}"
+         "/* Generated from ${src} by CMakeLists.txt -- do not edit, do not commit. */\n"
+         "const unsigned char ${symbol}[] = {\n${body}\n};\n"
+         "const unsigned int ${symbol}_len = (unsigned int)(sizeof ${symbol});\n")
+    set(LF2_FONT_SOURCES ${LF2_FONT_SOURCES} "${out}" PARENT_SCOPE)
+endfunction()
+
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/gen)
+set(LF2_FONT_SOURCES "")
+lf2_embed_font(lf2_font_sans ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationSans-Regular.ttf)
+lf2_embed_font(lf2_font_mono ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationMono-Regular.ttf)
+target_sources(lf2 PRIVATE ${LF2_FONT_SOURCES})
+
+# SDL3_ttf rasterises them. It is REQUIRED, and that is a change: it used to be optional with
+# a debug-font fallback, which meant a build could silently produce a different game. A missing
+# dependency must stop the build, not degrade the product.
 find_package(SDL3_ttf QUIET CONFIG)
 if(SDL3_ttf_FOUND)
     target_link_libraries(lf2 PRIVATE SDL3_ttf::SDL3_ttf)
     target_compile_definitions(lf2 PRIVATE LF2_HAVE_TTF)
-    message(STATUS "SDL3_ttf found: GDI text will use a system font")
+    message(STATUS "SDL3_ttf found: text is drawn from the committed Liberation faces")
 else()
-    message(STATUS "SDL3_ttf not found: GDI text will use SDL's built-in debug font")
+    message(FATAL_ERROR
+            "SDL3_ttf not found. It is required: the port draws all of its text from the "
+            "outline fonts committed in assets/fonts/, and the debug-font fallback that used "
+            "to cover this case was removed because it silently changed what the player saw "
+            "(issue #45). Install SDL3_ttf (Fedora: sdl3-ttf-devel).")
 endif()
 
 # The port's geometry, tested WITHOUT booting the game. Every claim in it used to cost a
