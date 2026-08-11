@@ -4,7 +4,7 @@ kind: claim
 status: holds
 created: 2026-08-06
 tags: rendering,re
-depends: runtime/ddraw.c
+depends: runtime/video/ddraw.c
 ---
 
 ## Claim

@@ -7,9 +7,9 @@
 #include "overrides.h"
 #include "world.h"
 
-#include "../guest_ops.h"
-#include "../guest_map.h"
-#include "../hostwin.h"
+#include "guest_ops.h"
+#include "guest_map.h"
+#include "hostwin.h"
 
 #include <stdio.h>
 #include <stdlib.h>

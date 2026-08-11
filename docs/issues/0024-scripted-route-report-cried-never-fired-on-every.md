@@ -13,7 +13,7 @@ fault rather than a route fault: the warning was on in a run where all fifteen p
 demonstrably fired (charselect@906 overlay@1746 match@1968, and the exit-to-menu chain ran
 to completion off the last three presses).
 
-CAUSE, exactly. runtime/gamepad.c had one sticky flag:
+CAUSE, exactly. runtime/input/gamepad.c had one sticky flag:
 
     if (un) { script_unresolved = 1; continue; }
 

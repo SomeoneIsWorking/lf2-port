@@ -7,7 +7,7 @@ created: 2026-08-06
 
 ## Instrument
 
-LF2_CLOCK_SITES -- every guest call site that reads the clock, with its total reads and its longest RUN of reads with no Sleep between them (runtime/imports.c)
+LF2_CLOCK_SITES -- every guest call site that reads the clock, with its total reads and its longest RUN of reads with no Sleep between them (runtime/win32/imports.c)
 
 ## Validated by
 

@@ -11,7 +11,7 @@ updated: 2026-08-11
 REPORTED 2026-08-11. Filed on receipt, not yet reproduced.
 
 WHAT THE PORT DOES TODAY, so the next session starts from the mechanism rather than the
-screenshot (runtime/render.c, runtime/hd2d.c, and claim C019):
+screenshot (runtime/video/render.c, runtime/video/hd2d.c, and claim C019):
 
   - An OBJECT is a sprite the game drew a shadow ellipse in front of. The game identifies them
     for free: fn_0041a5a0 draws each object's ellipse immediately before the object itself, so

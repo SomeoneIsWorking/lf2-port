@@ -46,7 +46,7 @@ tools/e2e.sh mouse render                      # one or more of them by name
   for as long as it existed (issue #26).
 - **A claim that can be checked offline must be.** `runtime/overrides/geom.h` holds the port's
   pure geometry — the composition width, the parallax, the camera bounds and the wide-view
-  centring, the overlay's rows, the stereo pan — and `runtime/test_geom.c` walks it in a
+  centring, the overlay's rows, the stereo pan — and `tests/test_geom.c` walks it in a
   millisecond. The overrides *include* that header, so the test is not exercising a copy. The
   audio pan moved this way: a three-run, 270-second script became 20 assertions.
 - **`tools/e2e.sh` is for what genuinely needs a running game** — whether a route reaches a
@@ -67,7 +67,8 @@ tools/e2e.sh mouse render                      # one or more of them by name
   scratch/build/gen/lf2_recomp.c        the game's own logic, machine-generated, never edited
         |  calls fn_<addr>() and the imports below
         v
-  runtime/*.c                           the platform: guest CPU/memory + Win32/DirectX on SDL3
+  runtime/{cpu,win32,video,audio,input,app}/   the platform: guest CPU/memory +
+                                              Win32/DirectX on SDL3
   runtime/overrides/*.c                 hand-written fn_<addr>() replacing recompiled functions
 ```
 
@@ -78,17 +79,26 @@ everywhere at once (the ADC/SBB carry bug in `docs/codemap.md` is the worked exa
 game's four monolithic functions (28/20/18/15 KB — main loop, character state machine) exist
 *only* as recompiled code; hand-porting them is not on the table.
 
-**2. The runtime (`runtime/`).** Guest CPU state, lazy flags, a 4 GiB lazily-committed address
-space, PE loading and import binding (`guest.c`, `guest.h`, `guest_ops.h`, `flags.c`), plus one
-file per Win32 subsystem: `ddraw.c` (DirectDraw → SDL3 GPU), `dsound.c`+`mixer.c` (DirectSound),
-`win32.c` (window, message pump, input, window modes), `gdi.c` (text), `gamepad.c`,
-`imports.c` (the CRT and the guest clock), `wsock.c` (netplay, stubbed). Arena layout for guest
-memory is declared once in `guest_map.h` with build-time overlap checks — a surface arena that
-overran the sound arena once made the game play bitmaps as audio.
+**2. The runtime (`runtime/`), grouped by what the code is about** (issue #46):
+
+| Directory | What lives there |
+|---|---|
+| `runtime/cpu/` | guest CPU state, lazy flags, the 4 GiB lazily-committed address space, PE loading and import binding — `guest.c/.h`, `guest_ops.h`, `flags.c`, `strops.c`, `rwatch.c`, and `guest_map.h`, where the arena layout is declared once with build-time overlap checks (a surface arena that overran the sound arena once made the game play bitmaps as audio) |
+| `runtime/win32/` | the Win32 shim — `win32.c` (window, message pump, input, window modes), `gdi.c` (text), `imports.c` (the CRT and the guest clock), `com.c` (the DirectDraw vtables), `dshow.c`, `wsock.c` (netplay, stubbed) |
+| `runtime/video/` | `ddraw.c` (DirectDraw → SDL3), `render.c` + `hd2d.c` (the native renderer and its lighting), `hostwin.h` |
+| `runtime/audio/` | `dsound.c` + `mixer.c` |
+| `runtime/input/` | `gamepad.c` |
+| `runtime/app/` | the port's own shell — `main.c`, `pause.c`, `script.c` (scripted input), `loadprof.c` |
+| `runtime/overrides/` | see below |
+| `tests/` | the unit tests, which are programs rather than runtime code |
+
+Every one of those directories is on the include path, so a file says `#include "guest_ops.h"`
+wherever it happens to sit. That is deliberate: relative `../` includes tie each file to its
+position in the tree and make any future regrouping an edit of every header line.
 
 Only ~130 imported symbols exist, so this is the *entire* porting surface. But note
 `DirectDrawCreate` is DDraw's only import: every other video call reaches the game through a
-COM vtable the recompiler cannot resolve statically, and `runtime/com.c` supplies those.
+COM vtable the recompiler cannot resolve statically, and `runtime/win32/com.c` supplies those.
 
 **3. The overrides (`runtime/overrides/`).** Listing a hex address in `re/overrides.txt`
 excludes it from lifting; the generated code still calls `fn_<addr>()` and the linker resolves
@@ -106,8 +116,10 @@ measured never belonged in `coop.c`.
 consequences at the Win32 boundary.** That is why the port has real drop-in coop, a pause menu
 and a live-resizing widescreen rather than a shim's approximation of them.
 
-`tools/` holds the extractor, the Ghidra scripts, the memory/trace diff tools, and every
-end-to-end route test (`*_test.sh`, each wired into ctest).
+`tools/` is grouped too: `tools/routes/` holds the scripts that boot the game (run them with
+`tools/e2e.sh`), `tools/build/` the build helpers, `tools/re/` the Ghidra scripts and the
+memory/trace diff tools. The two a new user actually runs — `extract_game.py` and
+`unpack_installer.py` — stay at the top.
 
 ## The active queue is `docs/issues/`, and it is the answer to "work on the active issues"
 

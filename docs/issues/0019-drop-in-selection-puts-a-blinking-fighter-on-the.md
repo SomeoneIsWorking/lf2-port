@@ -26,7 +26,7 @@ comes from. The evidence above is one frame pair and is consistent with either, 
 run had the gate and the join move together.
 
 THE INSTRUMENT EXISTS: LF2_BLT_FRAME=<frame> lists every blit composing a frame with both
-rectangles, the source surface and the caller, and HUD_BAND_H=118 in runtime/ddraw.c already
+rectangles, the source surface and the caller, and HUD_BAND_H=118 in runtime/video/ddraw.c already
 brackets the band. Trace a frame with the joiner gated and one with it not, and the panel's
 driver is the difference.
 

@@ -47,12 +47,12 @@
 #include "world.h"
 #include "geom.h"
 
-#include "../guest_ops.h"
+#include "guest_ops.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
-/* The falloff itself is in geom.h, so runtime/test_geom.c exercises THIS code rather than a
+/* The falloff itself is in geom.h, so tests/test_geom.c exercises THIS code rather than a
  * copy of it -- the whole span table is checked there in a millisecond, where it used to cost
  * a three-run, 270-second headless test. What stays here is the part that needs the game: the
  * guest stack, the camera, and the two slot tables. */

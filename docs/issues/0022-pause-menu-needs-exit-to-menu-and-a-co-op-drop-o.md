@@ -8,7 +8,7 @@ created: 2026-08-05
 updated: 2026-08-06
 ---
 
-REPORTED. runtime/pause.c currently has exactly two items:
+REPORTED. runtime/app/pause.c currently has exactly two items:
 
     enum { IT_RESUME, IT_QUIT, IT_N };
     static const char *const ITEMS[IT_N] = { "RESUME", "QUIT GAME" };
@@ -160,7 +160,7 @@ of a time string; the two real ones are:
   0x0044d070   -100 at the mode menu, 1 from character select onward
   0x00451200      0 at the mode menu, 1 from character select onward
 
-0x0044d070 IS THE GAME MODE, and this project has been burned by it before -- runtime/ddraw.c
+0x0044d070 IS THE GAME MODE, and this project has been burned by it before -- runtime/video/ddraw.c
 (~line 703) records an earlier session taking it for a screen word because it separates the
 screens perfectly IN STAGE MODE (-100 / 0 / 1), which is where it was both derived and
 checked. It reads 1 in VS mode whether the overlay is up or not. So the right reading of the

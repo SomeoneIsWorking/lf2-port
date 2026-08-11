@@ -109,7 +109,7 @@ enum { NOTICE_X = 725, NOTICE_Y = 5 };       /* the game's own constants for the
  * two never disagree about who they are. */
 int  keyboard_player(void);
 
-/* runtime/win32.c */
+/* runtime/win32/win32.c */
 int  hostwin_pointer(int *x, int *y);
 int  hostwin_mouse_clicked(void);      /* one-shot, per press */
 

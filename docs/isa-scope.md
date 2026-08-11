@@ -1,7 +1,7 @@
 # ISA scope — what the recompiler actually has to handle
 
 Measured, not assumed. Ghidra disassembled all of `.text` and
-`tools/ghidra/DumpInstructions.java` dumped every instruction to
+`tools/re/ghidra/DumpInstructions.java` dumped every instruction to
 `re/instructions.tsv` (address, length, mnemonic, bytes). That file is both the
 **scoping data** and the decoder's **test oracle**: our decoder must agree with Ghidra on
 the length of all 70,508 instructions.

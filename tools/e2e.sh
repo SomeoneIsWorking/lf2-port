@@ -19,7 +19,7 @@
 #                    screen, does a second pad drive its fighter, does the GPU renderer draw
 #                    what the software one draws. Nothing offline can answer those.
 #
-# A claim that COULD be checked offline belongs in geom.h and runtime/test_geom.c, not here.
+# A claim that COULD be checked offline belongs in geom.h and tests/test_geom.c, not here.
 # The audio pan is the worked example: a three-run, 270-second script became 20 assertions in
 # a millisecond, and gained a walk across every on-screen pixel the script had never done.
 #
@@ -67,7 +67,7 @@ for name in $(echo "$ALL" | awk 'NF {print $1}'); do
         for arg in "$@"; do [ "$arg" = "$name" ] && want=1; done
         [ "$want" = 1 ] || continue
     fi
-    script="tools/${name}_test.sh"
+    script="tools/routes/${name}_test.sh"
     if [ ! -f "$script" ]; then
         echo "MISSING  $name: $script does not exist"
         fail=$((fail + 1)); failed="$failed $name"

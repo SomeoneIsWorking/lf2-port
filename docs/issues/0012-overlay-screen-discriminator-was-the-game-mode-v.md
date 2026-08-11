@@ -28,7 +28,7 @@ destinations, confirmed identical in both modes from LF2_BLT_FRAME:
   character-select panel   (40,33)-(745,520)
   pre-fight overlay panel  (3,3)-(307,159)
 
-`panel_overlay_up()` / `panel_charselect_up()` in runtime/ddraw.c report whether each was
+`panel_overlay_up()` / `panel_charselect_up()` in runtime/video/ddraw.c report whether each was
 drawn in the last couple of frames. This has no mode dependence by construction -- it is the
 screen being on screen -- and it was still checked in VS mode rather than argued: hover moves
 the selection 2 -> 3 and a click on item 3 registers.

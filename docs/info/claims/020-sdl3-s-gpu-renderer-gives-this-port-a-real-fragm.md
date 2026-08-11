@@ -4,7 +4,7 @@ kind: claim
 status: holds
 created: 2026-08-06
 tags: rendering,sdl,shaders
-depends: runtime/hd2d.c, runtime/win32.c
+depends: runtime/video/hd2d.c, runtime/win32/win32.c
 ---
 
 ## Claim

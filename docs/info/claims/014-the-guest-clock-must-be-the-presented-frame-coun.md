@@ -4,7 +4,7 @@ kind: claim
 status: holds
 created: 2026-08-06
 tags: timing,determinism
-depends: runtime/imports.c#guest_ns, runtime/ddraw.c#frame_pace
+depends: runtime/win32/imports.c#guest_ns, runtime/video/ddraw.c#frame_pace
 ---
 
 ## Claim

@@ -17,7 +17,7 @@ whole reason this entry exists. It is NOT a request to build anything yet.
 
 WHY THIS IS CLOSER THAN IT LOOKS. HD2D means 2D sprite actors in a 3D-lit world, and issue #30
 has already put the port most of the way there: every draw is a QUAD in a display list
-(runtime/render.c), the colour key becomes real alpha on upload, there is a fragment-shader
+(runtime/video/render.c), the colour key becomes real alpha on upload, there is a fragment-shader
 lighting pass with a key light expressed as a DIRECTION IN THE STAGE'S OWN AXES -- x across,
 y up (LF2's jump axis, claim C018), z toward the camera -- hemisphere ambient, and sprite-cast
 shadows sheared along that same light vector. A real model dropped into that world would be

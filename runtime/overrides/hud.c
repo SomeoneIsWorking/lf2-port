@@ -41,7 +41,7 @@
 #include "overrides.h"
 #include "world.h"
 
-#include "../guest_ops.h"
+#include "guest_ops.h"
 
 #include <stdio.h>
 

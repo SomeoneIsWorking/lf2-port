@@ -7,9 +7,9 @@
 #include "overrides.h"
 #include "world.h"
 
-#include "../guest_ops.h"
-#include "../guest_map.h"
-#include "../hostwin.h"
+#include "guest_ops.h"
+#include "guest_map.h"
+#include "hostwin.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -253,7 +253,7 @@ void fn_00419a60(void)
      * joined-mask bit set is drawn by the game's OWN name plate as "5". A slot with no
      * device bound to it contributes nothing here, because `fed` stays 0 and the loop
      * writes an all-zero button set exactly as it did before -- which is what the slots
-     * beyond the first two in tools/controller_2p_test.sh have always been. */
+     * beyond the first two in tools/routes/controller_2p_test.sh have always been. */
     for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END && i < PLAYER_SLOTS; sel += 4, i++) {
         if ((int32_t)LD32(sel) <= 0) continue;         /* recording or demo: not ours */
         in_live++;
@@ -262,7 +262,7 @@ void fn_00419a60(void)
          * to the first slot; inside it, whatever claimed this player. A slot the game
          * has filled with a computer is still a live slot and its AI writes its buttons
          * after this gather, so writing here is harmless -- measured back when pads
-         * merged by slot order (see tools/controller_2p_test.sh). */
+         * merged by slot order (see tools/routes/controller_2p_test.sh). */
         unsigned char out[7] = { 0, 0, 0, 0, 0, 0, 0 };
         int fed = 0;
         for (int d = 0; d < MAX_DEV; d++) {

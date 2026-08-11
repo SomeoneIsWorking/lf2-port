@@ -17,7 +17,7 @@ plays.
 ### The flash is a GATE TOGGLE, not an alpha fade -- and that is a limit, not a preference
 
 The obvious reading of "fade in and out" is alpha. There is none available. The port's blit
-path (runtime/ddraw.c) is a colour-keyed copy of 8-bit paletted sprites: no blend anywhere
+path (runtime/video/ddraw.c) is a colour-keyed copy of 8-bit paletted sprites: no blend anywhere
 in it, and nothing in the game's own data carries an alpha channel. A true fade would mean
 inventing per-object blending in the porting layer -- identifying which blits belong to
 which object inside fn_0043f010, which draws every screen -- and that would be this port's
@@ -53,7 +53,7 @@ walked while its player chose would be acting on both readings of one press.
 
 ### VERIFIED end to end
 
-One scripted run (tools/coop_select_test.sh, and scratch/logs/select3.log):
+One scripted run (tools/routes/coop_select_test.sh, and scratch/logs/select3.log):
 
   - 23 playable characters read from the game's own registry
   - flash: gate down and up on an 8-frame period, 17 cycles before lock-in

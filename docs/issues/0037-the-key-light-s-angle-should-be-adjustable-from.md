@@ -30,7 +30,7 @@ The two angles are the single source: hd2d_light_set_angles recomputes the one d
 vector, so the shading, the shadow's direction and the shadow's LENGTH all follow together
 (issue #38).
 
-RMLUI WAS CONSIDERED AND DECLINED, and the reasoning is in runtime/pause.c beside the code.
+RMLUI WAS CONSIDERED AND DECLINED, and the reasoning is in runtime/app/pause.c beside the code.
 Dusklight uses it for its game-facing UI and is right to -- it has documents, components and a
 settings tree to build. This is two numbers on a menu that already exists, already takes all
 three devices, and is already drawn with the game's own glyphs so it looks like the game.

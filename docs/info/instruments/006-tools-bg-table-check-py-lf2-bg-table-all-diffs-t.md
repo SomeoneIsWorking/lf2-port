@@ -7,7 +7,7 @@ created: 2026-08-06
 
 ## Instrument
 
-tools/bg_table_check.py + LF2_BG_TABLE=all -- diffs the running game's background layer table (span/x/y/loop, every record in the registry) against every shipped bg.dat decrypted offline
+tools/re/bg_table_check.py + LF2_BG_TABLE=all -- diffs the running game's background layer table (span/x/y/loop, every record in the registry) against every shipped bg.dat decrypted offline
 
 ## Validated by
 

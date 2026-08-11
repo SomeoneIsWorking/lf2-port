@@ -13,7 +13,7 @@ image needs to use SVG fonts, placed in the project.
 
 WHAT THIS IS THE OTHER HALF OF. Issue #41 made the picture scale with the window by scaling
 every quad as it is drawn, so the geometry is exact and only a sprite's texels are magnified.
-Text was left behind and it was stated as the remaining half: runtime/gdi.c rasterises a
+Text was left behind and it was stated as the remaining half: runtime/win32/gdi.c rasterises a
 string at the COMPOSITION's resolution and the result is then scaled up with everything else,
 so a 1080-row window shows a magnified bitmap of a small glyph. A vector font rasterised at
 the FINAL size is what "render at a higher res" actually means for text.
@@ -22,11 +22,11 @@ WHICH TEXT THIS IS, and the distinction matters because most of what looks like 
 not: the logo, the menu labels on the front end, the fighter names on character selection and
 much of the HUD are BITMAP ART inside the game's sprite sheets. Those are images and are out
 of scope -- they scale as sprites and nothing here changes them. What IS in scope is the text
-the game draws through GDI (h_TextOutA in runtime/gdi.c and the paths around it), which is
+the game draws through GDI (h_TextOutA in runtime/win32/gdi.c and the paths around it), which is
 where the game's own dynamic strings go.
 
 FIRST TASK, before any font work: enumerate what actually goes through the GDI path in a real
-run and where. runtime/gdi.c already has a hook that logs every string with its position (see
+run and where. runtime/win32/gdi.c already has a hook that logs every string with its position (see
 the comment about the leftover "Update" string). That list decides the size of this job, and
 it may be short.
 
