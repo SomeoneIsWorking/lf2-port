@@ -69,10 +69,12 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 # from its hit-test constants, the mode-menu row from the label bands in a frame dump, the
 # portrait from the panel rectangles, and "Fight!" from where the game blits the overlay
 # highlight when the selection is pinned with LF2_OVERLAY_FORCE.
-# The two before any screen exists stay frame-numbered; everything after is keyed to the
-# post-load panel, so it lands however long the load took (issues #18, #25).
-CLICKS="403,228:900"          # launcher: game start
-CLICKS="$CLICKS;400,241:1350" # mode menu: pick a mode
+# EVERY click is screen-keyed now, the first two included (issues #18, #25). They were bare
+# frames 900 and 1350 because "before any screen exists" was taken as a fact about the game --
+# it is not: the front end paints its own backdrop colour on FRAME 1 and takes input there, and
+# `@frontend` is that signal (issue #57). 900 was 840 frames of waiting for a screen already up.
+CLICKS="403,228@frontend+0"          # launcher: game start
+CLICKS="$CLICKS;400,241@frontend+450" # mode menu: pick a mode
 # Three clicks on a portrait: join, pick, and confirm the roster. The game opens the pre-fight
 # overlay on the third, so anything scheduled after it lands on the OVERLAY -- which is how an
 # earlier version of this route spent eight clicks activating "Exit" and wondered why the
@@ -89,7 +91,7 @@ echo "driving the game from the mouse alone into a match (fast)..."
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_RENDERER=soft \
   LF2_SCREEN_HASH=1 LF2_AUDIO_DEBUG=1 LF2_CK_DEBUG=1 \
-  LF2_CLICK_SCRIPT="$CLICKS" LF2_QUIT_AFTER=3200 \
+  LF2_CLICK_SCRIPT="$CLICKS" LF2_QUIT_AFTER=2360 \
   timeout -k 5 220 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 rc=$?
 
