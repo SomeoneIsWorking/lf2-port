@@ -33,3 +33,44 @@ takes -- and if the row needs something else then the reason has to be found fir
 RELATED: issue #23 (a stage's sky layer stops at 794 and leaves black to its right), which is
 visible in the SAME screenshot and is a different defect with a different cause -- do not
 conflate them. Issue #55 (the player tag lags the fighter) is also in that screenshot.
+
+### Note (2026-08-11)
+CAUSE FOUND, measured. The row goes through GDI TextOutA, and it falls BETWEEN the two rules
+that would have moved it -- each declines it for a different reason.
+
+MEASURED, LF2_TEXT_DEBUG on a stage-mode run at 1920x1080 (view 978, so screen_offset_x() is
+(978-794)/2 = 92). The debug prints x AFTER both offsets have been applied:
+
+    text (360,110) 9  "STAGE 1-1"
+    text ( 10,110) 22 "Man:   1      HP:    7"
+    text (645,110) 22 "Man:   1      HP:   50"
+
+Ten, not 102. Neither offset was added.
+
+WHY, and both halves are in runtime/win32/gdi.c's h_TextOutA:
+
+    x += hud_offset_x(dwid, y + 16);        -- returns 0: y+16 = 126, and this row at y 110
+                                               sits just BELOW the in-match HUD band, so the
+                                               band test declines it
+    if (dwid > 794) x += screen_offset_x(); -- skipped: the destination surface is not wider
+                                               than 794, so the screen-centring branch is not
+                                               taken either
+
+The panels above it are drawn by runtime/overrides/hud.c and DO take hud_offset_x, which is
+exactly the disagreement in the screenshot: the panel strip is centred and the row under it is
+not. They are not two different bugs, they are one rule with a gap in it.
+
+WHAT IS NOT YET ESTABLISHED, and it decides the fix rather than being a detail:
+  - WHICH SURFACE this text lands in, and how wide it is. `dwid <= 794` is inferred from the
+    branch not being taken, not read. If it is an off-screen 794-wide HUD surface then the row
+    should move with the panels (the hud_offset_x band test is what needs widening); if it is
+    the composition then the screen_offset_x branch is the one at fault and its `dwid > 794`
+    guard is the wrong question to ask about a 794-wide screen inside a wider composition.
+  - WHETHER THE ROW BELONGS TO THE HUD. It reads like it does -- it is the stage's own status
+    line and sits directly under the panels -- but "looks like it belongs" is not a reason to
+    give it the HUD's offset. The game draws it at y 110 with the panels above; find what the
+    game considers that band to be.
+
+DO NOT widen hud_offset_x's band until the surface is known. Moving this row by the HUD's
+offset when it is actually screen content would line it up at one window size and not another,
+which is the same class of mistake as adding a constant.
