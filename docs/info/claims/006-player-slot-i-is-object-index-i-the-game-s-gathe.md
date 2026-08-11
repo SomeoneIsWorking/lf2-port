@@ -4,7 +4,7 @@ kind: claim
 status: holds
 created: 2026-08-05
 tags: coop,input,re
-depends: runtime/overrides.c
+depends: runtime/overrides/coop.c#coop_join
 ---
 
 ## Claim
