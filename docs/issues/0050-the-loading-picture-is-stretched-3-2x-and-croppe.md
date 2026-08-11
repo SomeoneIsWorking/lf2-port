@@ -1,7 +1,7 @@
 ---
 id: 50
 title: The loading picture is stretched 3.2x and cropped on a wide window
-status: open
+status: resolved
 symptom: at 1710x370 the loading screen's bitmap is drawn horizontally stretched to about 3.2x and cropped to its left third, instead of being drawn at its authored 794x550
 tags: reported,rendering,widescreen,frontend,loading
 created: 2026-08-11
@@ -37,3 +37,6 @@ screenshot look right.
 
 RELATED: #44 (per-screen framing, which needs this fixed first), #20 and #41 (the composition
 following the window is what exposes mismatches like this one).
+
+### Resolution (2026-08-11)
+The game's picture loader creates a surface at the BITMAP's own size and StretchBlts 1:1 into it; the port's follow-the-window rule was resizing that surface under it, so the fill covered 2542 columns while the draw sampled a fixed 794. A surface whose requested size matches the bitmap just loaded is a picture holder and keeps its size. Verified at 1710x370: the loading picture is drawn at its authored 794x550, centred.
