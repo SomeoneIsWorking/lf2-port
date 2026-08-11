@@ -721,6 +721,12 @@ static void h_TextOutA(void)
      * which left the game's own readout stranded at the left edge once the HUD was centred,
      * where it had previously been hidden behind the panel entirely. */
     x += hud_offset_x(dwid, y + 16);
+    /* And text on a fixed-width SCREEN moves with that screen, for the same reason and since
+     * issue #42 for a second one: the centring used to be applied to the whole composition on
+     * its way to the primary, which carried GDI text along with it for free. It is applied
+     * while composing now -- so that the front end's backdrop can fill the window while its
+     * content stays centred -- and a path that does not go through Blt has to ask for it. */
+    if (dwid > 794) x += screen_offset_x();
     if (len > 512) len = 512;
 
     char text[513];

@@ -54,6 +54,7 @@
 
 #include "../com.h"
 #include "../guest_ops.h"
+#include "../hostwin.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -117,7 +118,24 @@ static void fill_layer(uint32_t registry, uint32_t bg, int i, uint32_t tint)
         lf(registry, bg, BG_LAYER_HEIGHT, i),
         tint_remap(tint),
     };
+    /* THIS FILL IS A WORLD BAND, AND THIS IS THE ONLY PLACE THAT KNOWS IT (issue #42).
+     *
+     * fn_00415160 is the game's ONE colour-fill helper -- the stage's tinted layers and the
+     * front end's screen backdrop both go through it -- so by the time a fill reaches Blt
+     * nothing in it says which of the two it was. runtime/ddraw.c used to guess from the
+     * rectangle: "0 to 794 is the whole native width, so it is a full-width band, stretch it
+     * across the viewport". That test matches the FRONT END exactly, because the front end's
+     * backdrop is a fill of the whole 794-wide screen -- so a wide window painted the menu's
+     * blue across the entire composition and then the centring shift moved it right, leaving
+     * black down the left. It also could not have been right in general: a tinted layer is
+     * filled at its OWN authored span (BG_LAYER_SPAN just above), which on the shipped stages
+     * is 794 only when the stage happens to be exactly one screen wide.
+     *
+     * So the answer comes from the call structure instead of from a rectangle. The background
+     * pass is an override, so it can simply say. Same shape as shadow_hint_set. */
+    world_band_hint_set(1);
     guest_call(DRAW_FILL, args, 5);
+    world_band_hint_set(0);
     R(ESP) += 5 * 4;                     /* cdecl: fn_00415160 pops only its return address */
 }
 
