@@ -66,3 +66,31 @@ this entry can be closed as dead code rather than fixed.
 THE COUNTER IS PERMANENT, so this question is now answered by any run with LF2_CAMERA=1 rather
 than by re-deriving it. If a player ever reports a half-painted backdrop, that line is the
 first thing to read.
+
+### Note (2026-08-12)
+REACHABLE AFTER ALL, and I was one step from closing this as dead code. Recording the step that
+stopped it.
+
+The frame counts said 0 of 1464 (VS) and 0 of 2346 (stage), and the background table has THIRTEEN
+records, indices 0..12 -- so 99 is nowhere in the shipped data and looked like a sentinel for a
+path nothing takes. That reasoning was wrong, and one grep of re/instructions.tsv settles it:
+FIVE sites write 99 straight into the background index word [0x0044d024]:
+
+    0042d253 / 0042d7f6 / 0042df26   FUN_00429730   (18823 bytes -- one of the game's monoliths)
+    004339af                          FUN_00432ab0   (8140 bytes)
+    00435b48                          FUN_00434ab0   (9468 bytes)
+
+against the ordinary selections, which are the literals 1..6 at 0042cfca..0042d01f. So the built-in
+background is DELIBERATELY selected in three different places, and its 794-wide bands are a real
+defect on any wide view that reaches one of them.
+
+WHAT THIS SAYS ABOUT THE ZERO. The counter was right and its wording was right: 'this run says
+nothing about issue #58 -- it does NOT show the backdrop is unreachable, only that this route did
+not reach it.' Had it printed a bare 0, the table's 13 entries would have made 'dead code' look
+proven from two facts that are both true and together mean nothing.
+
+WHAT IS LEFT: name the three screens. FUN_00429730 is the pre-fight overlay's own function
+(tools/routes/mouse_test.sh reads its row geometry from it), which suggests these are the
+non-match screens rather than a stage -- but that is a guess and the entry has been burned once
+already. Read the three call sites before assuming; the fix itself is unchanged and small, an
+override for fn_0041a050 with its five band widths reading bg_view_width().
