@@ -182,24 +182,39 @@ picture with bigger pixels — and it happens while the game is running, on the 
 resize. This used to be `LF2_WIDESCREEN=<w>`, read once at startup, which is a developer's
 escape hatch rather than a feature (issue #20).
 
-The composition is the window's **real pixel width**, and it is drawn **1:1** — nothing is
-scaled anywhere. A 1920-wide window composes 1920 pixels of world, and because the game's own
-width words are patched to match (`wide_apply` in `runtime/overrides/menu.c`) that is more
-world at the size the artist drew it, not the same picture enlarged.
+The window drives **two** numbers, and keeping them apart is the whole of it (issue #41):
 
-This changed. It used to follow the window's *aspect* and keep the game's 550 rows — a
-1920x1080 window composed `550 * 1920/1080 = 978` and SDL scaled that up by 1.96. That is an
-upscale, and 1.96 is not an integer, so a game pixel landed as a block two **or** three screen
-pixels wide depending where it fell, and everything drawn afterwards was quantised to the
-small grid before being enlarged.
+- **SCALE** — `min(win_h/550, win_w/794)` — how many screen pixels a game pixel becomes. The
+  picture **fills the window**.
+- **COMPOSITION** — `win_w / scale`, floored at 794 — how much **world** is on screen. The
+  game's own width words are patched to it (`wide_apply` in `runtime/overrides/menu.c`), so
+  this is a real field of view: the camera and the layer loops draw more world.
 
-**The height stays at the game's 550, and that is not a shortcut — it is all the world there
-is.** LF2's vertical screen axis carries the depth (z, bounded by `bg.dat`'s `zboundary:`) and
-the jump height, both fixed by the stage's own data, and every layer's picture is 550 rows
-tall. Composing 1080 rows was tried: the game draws its world in the top 550 and the remaining
-530 are black, because there is nothing behind them to draw. So the composition keeps the rows
-that exist and the port **centres** them in the window — black bands above and below, the
-shape of a widescreen film — rather than magnifying the picture to hide it.
+**The height sets the scale, and that is not arbitrary.** LF2's vertical screen axis carries
+the depth (z, bounded by `bg.dat`'s `zboundary:`) and the jump height, both fixed by the
+stage's own data, and every layer's picture is 550 rows tall. Composing 1080 rows was tried:
+the game draws its world in the top 550 and the remaining 530 are black, because there is
+nothing behind them to draw. There is no more world *vertically* at any window size — so the
+rows that exist are scaled to the rows the window has. Horizontally there **is** more world, so
+leftover width is spent on field of view instead of magnification.
+
+At the game's own 794x550 the scale is exactly 1 and the composition is exactly 794, so
+nothing about the 4:3 game moves. Every byte-identity arm in the suite depends on that.
+
+**The scale is applied PER QUAD, not to the finished frame, and that distinction is the
+feature.** The port used to compose `550 * 1920/1080 = 978` pixels of world into a small buffer
+and let SDL blow the whole picture up by 1.96 — not an integer, so a game pixel landed as a
+block two **or** three screen pixels wide, and text and lighting were quantised to the small
+grid before being enlarged. It then swung the other way and drew everything 1:1 with 265 rows
+of black above and below a 1080p window. Now the native renderer scales each quad in the
+display list as it draws into a full-resolution target: the geometry is exact at float
+precision and only a sprite's own texels are magnified, once, `NEAREST`, from the source art.
+At 16:9 the composition width comes out at the same 978 the old aspect rule gave — the numbers
+coincide, the designs do not.
+
+The **software compositor cannot do this** and does not pretend to: by the time a frame reaches
+it every sprite has been flattened into one buffer, so it stretches that buffer to the same
+rectangle. It is the fallback (`LF2_RENDERER=soft`, or no SPIR-V backend) and it looks like one.
 
 A window narrower than 794 still gets 794 and is cropped at the sides, because the HUD strip
 is 792 wide and there is nothing sensible below that.
@@ -256,27 +271,28 @@ a three-run, 270-second script; it is arithmetic, it lives in `runtime/overrides
 alongside the code that ships it, and it now runs in a millisecond.
 **`LF2_AUDIO_PAN_RAW=1`** still turns the scaling off in a real run.
 
-| Window | Composition | On screen |
-|---|---|---|
-| 794x550 | 794x550 | fills it — widescreen off, the game's own picture |
-| 1600x550 | 1600x550 | fills it |
-| 1920x1080 | 1920x550 | 1:1, centred, 265 black rows above and below |
-| 800x900 | 800x550 | 1:1, centred; the height no longer enters the formula at all |
+| Window | Scale | World on screen | On screen |
+|---|---|---|---|
+| 794x550 | 1.000 | 794x550 | the game's own picture, untouched |
+| 1600x550 | 1.000 | 1600x550 | fills it — all the extra width is world |
+| 1920x1080 | 1.964 | 978x550 | fills it — the extra height is scale |
+| 800x900 | 1.008 | 794x550 | the **width** binds; leftover rows are black, correctly |
 
-`tools/e2e.sh widescreen` asserts exactly that table. The 794 row is the one that must NOT widen —
-without it a build that always widened would pass everything else — and the last two rows are
-the ones that flipped when the aspect term came out, so a build that kept any aspect in the
-formula fails them and nothing else.
+`tools/e2e.sh widescreen` asserts exactly that table, both columns. The 794 row is the one that
+must NOT widen or scale — without it a build that always widened would pass everything else.
+The 800x900 row is the negative for "the picture fills the window": that window is taller in
+aspect than the game, so a band is the right answer, and a build that stretched everything
+unconditionally fails there and nowhere else.
 
-**Objects are drawn at a whole-number multiple of the size the game drew them**, about their
-own base — so the world keeps its native resolution and its full field of view while the
-actors stay a sensible size. The factor is how many times the game's 550-row screen fits in
-the window, rounded to a whole number: 1x at the game's own size (exactly what it always was),
-2x in a 1080-row window. Whole, because these are nearest-neighbour pixel-art sprites and a
-fractional factor would put some of their pixels down two screen pixels wide and others three.
-Anchored at the sprite's base rather than at its ground point: the world is drawn 1:1, so only
-an actor's *size* may change, never its position — anchoring at the ground point doubled the
-height of a launched object already 314 px up and threw it off the top of the screen.
+**There is no separate object magnification any more.** There used to be: objects were scaled
+by a whole number about their own base while the stage stayed at 1:1, which put a 2x fighter on
+a 1x floor and made the frame disagree with itself about how big a pixel was. The world scale
+above subsumes it — everything in the display list gets the same number, so an actor's size and
+its position come from one place. The trap that cost a rewrite is worth keeping in mind because
+its shape is still available: anchoring a size change anywhere but the sprite's own rectangle.
+Scaling an object about its **ground marker** grew the height of its jump by the same factor it
+grew the fighter, and a launched object already 314 px up went to 628 and off the top of the
+screen. A uniform scale cannot do that, because the floor moves with it.
 
 **`LF2_MODE=<name>`** chooses which of the game's eight modes a run enters: `vs`, `stage`,
 `championship1`, `championship2`, `battle`, `demo`, `playback`, `quit`. It presses nothing — it
@@ -1677,15 +1693,16 @@ Three hooks in `runtime/ddraw.c`:
   frames at all, when entries were dropped, or when the shaders never loaded and why, because
   "0 quads" and "the renderer was never called" are different faults.
 
-The renderer draws the display list **1:1** into a target the size of the window and places it
-there — no scale, no resample, `SDL_SCALEMODE_NEAREST` throughout. Frame dumps in GPU mode are
-therefore the size of the window, not of the composition.
+The renderer draws the display list into a target the size of the window, scaling **each quad**
+by the world scale as it goes (`SDL_SCALEMODE_NEAREST` throughout, so a sprite's texels are
+resampled once, from the source art). Frame dumps in GPU mode are therefore the size of the
+window, not of the composition.
 
 **What the lighting touches, and what it does not.** One key light, given as a direction in the
 stage's own three axes (x across, y up — LF2's jump axis, claim C018 — z toward the camera).
 It **shades** only the objects standing in the stage, which the game itself identifies by
 drawing a shadow ellipse at their feet immediately before drawing them. The HUD, the text and
-the black bands are never touched at all. Two things do reach the stage, and both are
+any leftover band are never touched at all. Two things do reach the stage, and both are
 geometry rather than decoration: the **cast shadow**, which is the point of a cast shadow, and
 the **floor's orientation** below — a hue shift at locked luminance, so it cannot change how
 bright the picture is.

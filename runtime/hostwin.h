@@ -42,9 +42,14 @@ int  panel_overlay_up(void);
 int  panel_hud_up(void);
 int  lf2_wide_width(void);    /* the composition's width when it is wider than 794, else 0 */
 
-/* Where the composition sits in the window: 1:1, centred. Both present paths use it, and it
- * is what replaced SDL's logical presentation -- there is no scaling left to do. */
-void lf2_compose_placement(int comp_w, int comp_h, float *x, float *y);
+/* Where the composition is drawn in the window, and how big (issue #41): the height sets the
+ * scale, leftover width is field of view. Both present paths use the rectangle; the renderer
+ * also needs the scale on its own, to apply per quad. lf2_window_to_compose is the exact
+ * inverse, and every hit test goes through it. This is what replaced SDL's logical
+ * presentation, which cannot express "scale the geometry, not the finished frame". */
+void lf2_compose_rect(int comp_w, int comp_h, SDL_FRect *r);
+float lf2_world_scale(void);
+void lf2_window_to_compose(float wx, float wy, float *cx, float *cy);
 int  screen_offset_x(void);   /* centring offset for fixed-width screens */
 int  hud_offset_x(int dst_w, int bottom);   /* the in-match HUD's own centring */
 void hostwin_shutdown(void);

@@ -870,11 +870,18 @@ static int autokey_pressed(uint32_t vk)
 
 static uint32_t mouse_lparam(float wx, float wy)
 {
+    /* Two steps, and they are in two different spaces.
+     *
+     * FIRST, the window to the COMPOSITION: undo the placement and the scale the picture was
+     * drawn with (lf2_window_to_compose, the exact inverse of lf2_compose_rect). Without this
+     * the pointer is in screen pixels while every hit test is in the game's, so in a 1080-row
+     * window a click lands about twice as far down the screen as the player aimed.
+     *
+     * THEN the composition to the GAME'S OWN SCREEN: a fixed-width screen centred on a wider
+     * viewport has its content moved right, so the pointer moves left by the same amount.
+     * That offset is in composition pixels, which is why it can only be applied second. */
     float lx = wx, ly = wy;
-    if (hw.renderer) SDL_RenderCoordinatesFromWindow(hw.renderer, wx, wy, &lx, &ly);
-    /* Into the game's own coordinate space: when a fixed-width screen is being centred on a
-     * wider viewport its content moved right, so the pointer has to move left by the same
-     * amount or every hit test is off by the margin. */
+    lf2_window_to_compose(wx, wy, &lx, &ly);
     const int x = (int)lx - screen_offset_x(), y = (int)ly;
     host_ptr_x = x; host_ptr_y = y;
     return ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);

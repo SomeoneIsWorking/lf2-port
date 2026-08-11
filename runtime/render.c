@@ -495,12 +495,22 @@ static void draw_cast_shadow(Tex *t, const SDL_FRect *src, const SDL_FRect *spri
  * fighter comes out the same apparent size as before with the background twice as sharp and
  * twice as wide.
  */
-static float object_scale(void)
+/* HOW BIG A GAME PIXEL IS DRAWN, and it is now the same number for everything (issue #41).
+ *
+ * This used to magnify only the OBJECTS, by a whole number, leaving the stage at 1:1 -- so a
+ * 1080-row window put a 2x fighter on a 1x floor and the picture disagreed with itself about
+ * how big a pixel was. The scale is the world's, taken from the window, and every quad in the
+ * list gets it: the stage, the actors, the HUD and the text all grow together, which is the
+ * only way the frame stays one picture.
+ *
+ * It is applied HERE, per quad, and not to the finished frame. That is the distinction issue
+ * #41 turns on: the destination rectangles are floats and the target is the size of the
+ * window, so the geometry is exact and only a sprite's own texels are resampled -- once,
+ * NEAREST, from the source art. Scaling the composed frame instead is what the port used to
+ * do and it quantises everything to the small grid first. */
+static float world_scale(void)
 {
-    /* The WINDOW's height, not hostwin_height() -- that is the composition, which is pinned
-     * at the game's 550 and would make this constantly 1. The rounding itself is
-     * geom_object_scale, so runtime/test_geom.c exercises this rule and not a copy of it. */
-    return (float)geom_object_scale(hw.win_h);
+    return lf2_world_scale();
 }
 
 enum Pass { PASS_COLOUR, PASS_CHARS, PASS_SHADOW };
@@ -514,19 +524,26 @@ enum Pass { PASS_COLOUR, PASS_CHARS, PASS_SHADOW };
  * of: that is where the lighting applies and where the shadows come from, and it is why the
  * background, the HUD and the text are untouched by both.
  */
-static void draw_list(List *l, int pass, float offx, float offy)
+/* `world` is the widescreen centring offset, in the COMPOSITION's own pixels, so it is added
+ * before the scale. `ox`/`oy` place the scaled picture in the window and are in the window's
+ * pixels, so they are added after. Getting that order wrong scales the centring too and the
+ * world slides sideways as the window grows -- which is why they are separate parameters
+ * rather than one pre-summed offset. */
+static void draw_list(List *l, int pass, float world, float ox, float oy)
 {
     const int skip = render_skip();
-    const float scale = object_scale();
+    const float scale = world_scale();
     int have_ground = 0;
     SDL_FRect ground = { 0, 0, 0, 0 };
 
     for (int i = 0; i < l->n; i++) {
         if (skip > 0 && (i % skip) == 0) continue;
         Entry *e = &l->e[i];
-        SDL_FRect dst = e->dst;
-        dst.x += offx;
-        dst.y += offy;
+        SDL_FRect dst;
+        dst.x = (e->dst.x + world) * scale + ox;
+        dst.y = e->dst.y * scale + oy;
+        dst.w = e->dst.w * scale;
+        dst.h = e->dst.h * scale;
 
         if (e->kind == E_GROUND) {
             /* THE FLOOR, AS THE GAME ITSELF DRAWS IT. Every ground marker is a point a
@@ -572,27 +589,18 @@ static void draw_list(List *l, int pass, float offx, float offy)
         have_ground = 0;
         if (pass != PASS_COLOUR && !is_object) continue;
 
-        /* An object is drawn larger than the game drew it, about ITS OWN BASE: the sprite
-         * grows where it stands, and its POSITION stays exactly the game's.
+        /* THERE IS NO SEPARATE OBJECT MAGNIFICATION ANY MORE, and removing it was the point of
+         * issue #41. Objects used to be scaled here, about their own base, by a whole-number
+         * factor while the world stayed at 1:1 -- a 2x fighter standing on a 1x floor. Every
+         * quad is scaled uniformly at the top of this loop now, so an object's size and its
+         * position come from the same number and a jump lands where the stage says it does.
          *
-         * The first version anchored this at the ground marker instead, so that a jump grew
-         * by the same factor the fighter did. That is wrong, and measurably so: LF2 launches
-         * objects a long way up, and doubling the height of one already 314 px above the
-         * floor put it 628 px up and off the top of the screen. The world is drawn at 1:1
-         * here; only the actors are magnified, so only their SIZE may change. A standing
-         * object's base is its ground point anyway, which is why the two agree everywhere
-         * except in mid-air -- the one place the difference matters.
-         *
-         * Every pass uses the rectangle computed here, so the picture, the character mask and
-         * the shadow cannot disagree about where the object is or how big it is. */
-        if (is_object && scale != 1.0f) {
-            const float cx = dst.x + dst.w * 0.5f;
-            const float base = dst.y + dst.h;
-            dst.w *= scale;
-            dst.h *= scale;
-            dst.x = cx - dst.w * 0.5f;
-            dst.y = base - dst.h;
-        }
+         * The trap that cost a rewrite the first time, kept because the same shape of mistake
+         * is available in the uniform scale: anchoring a size change anywhere but the sprite's
+         * own rectangle. Scaling an object about the GROUND MARKER grew the height of its jump
+         * by the same factor it grew the fighter, and LF2 launches objects a long way up --
+         * one already 314 px above the floor went to 628 and off the top of the screen. A
+         * uniform scale of the whole frame cannot do that, because the floor moves with it. */
 
         if (e->kind == E_FILL) {
             SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
@@ -727,23 +735,24 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         }
         target_w = ow; target_h = oh;
     }
-    /* NOTHING IS SCALED. The composition is the window's width and the game's own 550 rows
-     * (runtime/ddraw.c hostwin_window_geometry says why the height cannot follow), so the
-     * quads go down at 1:1 and are placed in the window rather than stretched to fill it.
-     * The rows the game has no world for are black bands, above and below.
+    /* WHERE THE PICTURE GOES AND HOW BIG IT IS DRAWN (issue #41). The composition is `w` x `h`
+     * game pixels; geom_compose_rect says what rectangle of the window that fills, and every
+     * quad below is scaled into it as it is drawn.
      *
-     * `off` is the game's own widescreen centring, in the composition's coordinates;
-     * ox/oy place the composition in the window. They are separate because they answer
-     * different questions and a resize moves only the second. */
-    float ox = 0.0f, oy = 0.0f;
-    lf2_compose_placement(w, h, &ox, &oy);
+     * `off` is the game's own widescreen centring, in the COMPOSITION's coordinates, so it is
+     * added before the scale; place.x/y are the window's, so they are added after. They stay
+     * separate all the way down into draw_list for that reason. */
+    SDL_FRect place;
+    lf2_compose_rect(w, h, &place);
+    const float ox = place.x, oy = place.y;
+    const float scale = lf2_world_scale();
     const int run_hd2d = hd2d_ready() && rt_albedo && rt_chars && rt_shadow;
 
     /* 1. THE PICTURE, exactly as the game composed it. With the light off this is the frame,
      *    and it is what tools/render_test.sh compares against the software compositor byte
      *    for byte. */
     clear_to(run_hd2d ? rt_albedo : target, 0, 0, 0, 255);
-    draw_list(l, PASS_COLOUR, (float)off + ox, oy);
+    draw_list(l, PASS_COLOUR, (float)off, ox, oy);
 
     if (run_hd2d) {
         /* 2. WHICH PIXELS ARE A FIGHTER. Cleared to zero: everything the game drew that is
@@ -751,14 +760,14 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
          *    leaves those pixels exactly as they are. */
         clear_to(rt_chars, 0, 0, 0, 255);
         if (hd2d_chars_begin(1.0f / (float)oh)) {
-            draw_list(l, PASS_CHARS, (float)off + ox, oy);
+            draw_list(l, PASS_CHARS, (float)off, ox, oy);
             hd2d_chars_end();
         }
 
         /* 3. THE CAST SHADOWS, as a mask the light is taken away through. */
         clear_to(rt_shadow, 0, 0, 0, 255);
         if (hd2d_shadow_begin()) {
-            draw_list(l, PASS_SHADOW, (float)off + ox, oy);
+            draw_list(l, PASS_SHADOW, (float)off, ox, oy);
             hd2d_shadow_end();
         }
 
@@ -775,7 +784,7 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         int zmin = 0, zmax = 0;
         const int have_floor = panel_hud_up() && bg_z_bounds(&zmin, &zmax);
         if (hd2d_post(rt_albedo, rt_chars, rt_shadow, target, ow, oh,
-                      (float)zmin + oy, have_floor)) {
+                      (float)zmin * scale + oy, have_floor)) {
             stat_post++;
         } else {
             /* The pass could not run this frame. Show the picture rather than nothing --
@@ -797,9 +806,10 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
     stat_frames++;
     if (stat_frames == 1)
-        fprintf(stderr, "render: %dx%d of game drawn 1:1 into a %dx%d window at (%.0f,%.0f), "
-                        "lighting %s\n", w, h, ow, oh, (double)ox, (double)oy,
-                run_hd2d ? "on" : "OFF");
+        fprintf(stderr, "render: %dx%d of game scaled x%.3f per quad into a %dx%d target, "
+                        "filling %.0fx%.0f at (%.0f,%.0f), lighting %s\n",
+                w, h, (double)scale, ow, oh, (double)place.w, (double)place.h,
+                (double)ox, (double)oy, run_hd2d ? "on" : "OFF");
     return 1;
 }
 

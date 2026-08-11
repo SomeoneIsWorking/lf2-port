@@ -15,7 +15,7 @@
  * and BY runtime/test_geom.c. Not copied into the test -- included. A test carrying its own
  * copy of the implementation proves the copy works.
  *
- * WHAT BELONGS HERE: a function whose inputs are all integers the caller already has. What
+ * WHAT BELONGS HERE: a function whose inputs are all numbers the caller already has. What
  * does NOT: anything that reads the guest, the window, the clock or a file. Those stay in
  * their override and take these as helpers, so this header never needs a runtime to compile.
  */
@@ -26,15 +26,87 @@
  * the game expressed them. */
 enum { GEOM_SCREEN_W = 794, GEOM_SCREEN_H = 550 };
 
-/* ---- the composition, from the window (runtime/ddraw.c) ----
+/* ---- HOW BIG THE WORLD IS DRAWN, AND HOW MUCH OF IT (issue #41) ----
  *
- * The width is the window's REAL pixels and the height is the game's own 550, because LF2's
- * vertical axis carries z and jump height and every layer's picture is 550 rows tall -- there
- * is no more world to show. See hostwin_window_geometry for the whole argument. */
-static inline int geom_compose_width(int win_w, int wide_max)
+ * Two different questions, and the port answered only the second for a while. SCALE is how
+ * many screen pixels a game pixel becomes; FIELD OF VIEW is how much world is on screen. The
+ * height fixes the scale and the width spends what is left over on field of view:
+ *
+ *     scale = min(win_h / 550, win_w / 794)     -- the picture FILLS the window
+ *     view  = win_w / scale, floored at 794     -- whatever width is left is more world
+ *
+ * WHY THE HEIGHT FIXES THE SCALE AND NOT THE WIDTH. LF2's vertical screen axis carries z and
+ * jump height, both fixed by the stage's own data, and every background layer's picture is
+ * 550 rows tall -- so there is no more world above or below, at any window size. The rows
+ * that exist have to fill the window's rows, which is a scale. Horizontally there IS more
+ * world, so extra width is given as world rather than as magnification. The `min` is what
+ * happens when a window is proportionally NARROWER than the game: the width binds instead,
+ * the view floors at the game's own 794, and the leftover rows are black bands. There is
+ * nothing to put in them.
+ *
+ * THIS IS NOT THE SCALE THE PORT REMOVED. That one composed a small frame and let SDL blow
+ * the finished picture up, so every game pixel became a 2x2 block and text and lighting were
+ * quantised to the small grid before being enlarged. This scale is applied PER QUAD as the
+ * display list is drawn into a full-resolution target (runtime/render.c): the geometry stays
+ * exact at float precision and only a sprite's own texels are magnified. The distinction is
+ * the whole of issue #41 and it is why this is a renderer property, not a presentation one.
+ *
+ * A fractional scale is allowed and expected -- 1080/550 is 1.963. Rounding it to a whole
+ * number would leave a 1080-row window with 530 rows of black, which is the thing being fixed.
+ */
+static inline float geom_world_scale(int win_w, int win_h)
 {
-    int w = win_w < GEOM_SCREEN_W ? GEOM_SCREEN_W : win_w;
+    if (win_w <= 0 || win_h <= 0) return 1.0f;
+    const float sh = (float)win_h / (float)GEOM_SCREEN_H;
+    const float sw = (float)win_w / (float)GEOM_SCREEN_W;
+    return sh < sw ? sh : sw;
+}
+
+/* The composition's width: how much WORLD is on screen, in the game's own pixels. Floored at
+ * the game's 794 (below that the HUD strip does not fit) and capped at what the build
+ * allocated surface pitch for. */
+static inline int geom_compose_width(int win_w, int win_h, int wide_max)
+{
+    const float s = geom_world_scale(win_w, win_h);
+    int w = (int)((float)win_w / s + 0.5f);
+    if (w < GEOM_SCREEN_W) w = GEOM_SCREEN_W;
     return w > wide_max ? wide_max : w;
+}
+
+/* Where the scaled composition sits in the window, as a destination rectangle. Both present
+ * paths need it and neither can work it out alone -- one knows the composition, the other the
+ * output -- so it is one function. Centred on both axes; a leftover band is black.
+ *
+ * Negative x is correct and deliberate: a window the composition cannot be squeezed into
+ * (because the view floored at 794) shows the MIDDLE of the picture rather than a squashed
+ * whole one. */
+static inline void geom_compose_rect(int win_w, int win_h, int comp_w, int comp_h,
+                                     float *x, float *y, float *w, float *h)
+{
+    const float s = geom_world_scale(win_w, win_h);
+    const float dw = (float)comp_w * s, dh = (float)comp_h * s;
+    *w = dw; *h = dh;
+    *x = ((float)win_w - dw) * 0.5f;
+    *y = ((float)win_h - dh) * 0.5f;
+}
+
+/* A POINT ON THE WINDOW, BACK IN THE GAME'S OWN PIXELS. The exact inverse of the rectangle
+ * above, and it must stay exact: every mouse hit test in the port goes through it, and when it
+ * disagrees with the placement nothing looks wrong -- a menu just activates the wrong entry,
+ * or none. That silence is why the round trip is asserted offline rather than trusted.
+ *
+ * The old mapping subtracted a horizontal centring offset and nothing else, which was already
+ * wrong VERTICALLY in a tall window (the picture was centred with 265 rows above it at 1080
+ * and the pointer's y was never moved to match) and would have been wrong in both axes the
+ * moment a scale existed. */
+static inline void geom_window_to_compose(int win_w, int win_h, int comp_w, int comp_h,
+                                          float wx, float wy, float *cx, float *cy)
+{
+    float rx, ry, rw, rh;
+    geom_compose_rect(win_w, win_h, comp_w, comp_h, &rx, &ry, &rw, &rh);
+    const float s = geom_world_scale(win_w, win_h);
+    *cx = (wx - rx) / s;
+    *cy = (wy - ry) / s;
 }
 
 /* ---- the stage's parallax (runtime/overrides/background.c) ----
@@ -74,20 +146,6 @@ static inline int geom_draw_camera(int camera, int view)
     if (k <= 0) return camera;
     const int c = camera - k;
     return c > 0 ? c : 0;
-}
-
-/* ---- how big an object is drawn (runtime/render.c) ----
- *
- * The frame is drawn at the window's real pixels, so a fighter would be the ~40 rows the
- * artist drew. Objects are magnified by how many times the game's own screen fits in the
- * window, rounded to a WHOLE number -- whole because these are nearest-neighbour pixel-art
- * sprites and a fractional factor puts some of their pixels down two screen pixels wide and
- * others three. */
-static inline int geom_object_scale(int win_h)
-{
-    int n = (win_h + GEOM_SCREEN_H / 2) / GEOM_SCREEN_H;
-    if (n < 1) n = 1;
-    return n > 8 ? 8 : n;
 }
 
 /* ---- the pre-fight overlay's rows (runtime/overrides/screens.c) ----

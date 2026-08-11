@@ -25,18 +25,137 @@ static void eq(const char *what, long got, long want)
     printf("  FAIL  %s: got %ld, expected %ld\n", what, got, want);
 }
 
-/* ---- the composition follows the window's PIXEL width ---- */
+/* The scale is fractional by design (1080/550 = 1.963...), so its checks compare floats.
+ * The tolerance is a quarter of a screen pixel at 4K rather than an epsilon: what matters is
+ * that a window's rows are filled to within less than a pixel, and an exact-equality test on
+ * a computed float would be a test of the compiler's rounding, not of the geometry. */
+static void eqf(const char *what, float got, float want)
+{
+    checks++;
+    const float d = got - want;
+    if (d > -0.25f && d < 0.25f) return;
+    failures++;
+    printf("  FAIL  %s: got %.4f, expected %.4f\n", what, (double)got, (double)want);
+}
+
+/* ---- the world FILLS the window: scale from the height, field of view from the width ---- */
+static void test_scale(void)
+{
+    /* The game's own window is 1:1 exactly. This is the property that keeps every byte-identity
+     * arm true -- tools/e2e.sh background and tools/e2e.sh render both run at 794x550, and a
+     * scale of anything but exactly 1 there would change every pixel of both. */
+    eqf("794x550 is exactly 1:1", geom_world_scale(794, 550), 1.0f);
+    /* The height binds whenever the window is wider in aspect than the game. 1080/550. */
+    eqf("1920x1080 scales by the height", geom_world_scale(1920, 1080), 1080.0f / 550.0f);
+    eqf("1600x550 still 1:1 (only the width grew)", geom_world_scale(1600, 550), 1.0f);
+    /* And the width binds when the window is proportionally NARROWER: 800/794, not 900/550. */
+    eqf("800x900: the width binds", geom_world_scale(800, 900), 800.0f / 794.0f);
+    /* Below the game's own size it shrinks rather than cropping. */
+    eqf("a small window scales down", geom_world_scale(397, 275), 0.5f);
+
+    /* THE PICTURE FILLS THE WINDOW. This is the assertion issue #41 exists for: at every
+     * window whose aspect is at least the game's, the drawn height IS the window's height, so
+     * there are no black bands. The old design put 265 rows of black above and below a 1080p
+     * window and that is what this now forbids. */
+    const int win[][2] = { {794,550}, {1600,550}, {1920,1080}, {1280,720}, {2560,1440} };
+    for (unsigned i = 0; i < sizeof win / sizeof win[0]; i++) {
+        float x, y, w, h;
+        const int cw = geom_compose_width(win[i][0], win[i][1], 4096);
+        geom_compose_rect(win[i][0], win[i][1], cw, GEOM_SCREEN_H, &x, &y, &w, &h);
+        char what[80];
+        snprintf(what, sizeof what, "%dx%d: the drawn height fills the window",
+                 win[i][0], win[i][1]);
+        eqf(what, h, (float)win[i][1]);
+        snprintf(what, sizeof what, "%dx%d: no black band above", win[i][0], win[i][1]);
+        eqf(what, y, 0.0f);
+    }
+
+    /* The narrower-than-the-game case, which is where a band is CORRECT: the width binds, the
+     * view floors at 794, and the rows the game has no world for stay black. Stated as its own
+     * case so "fills the window" above is not read as a promise it cannot keep. */
+    {
+        float x, y, w, h;
+        const int cw = geom_compose_width(800, 900, 4096);
+        eq("800x900 floors the view at 794", cw, 794);
+        geom_compose_rect(800, 900, cw, GEOM_SCREEN_H, &x, &y, &w, &h);
+        eqf("800x900 fills the WIDTH", w, 800.0f);
+        eqf("800x900 is centred vertically with a band", y, (900.0f - 550.0f * (800.0f / 794.0f)) * 0.5f);
+    }
+}
+
+/* ---- the pointer maps back to exactly where the picture was drawn ---- */
+static void test_unproject(void)
+{
+    /* THE ROUND TRIP, at every window in the table. A game point projected into the window and
+     * mapped back must land on itself: if these two ever disagree the picture is drawn in one
+     * place and clicked in another, and NOTHING on screen says so -- the menu simply activates
+     * the wrong entry. That is why this is asserted rather than assumed.
+     *
+     * Walked over the corners and the middle of the composition, not one sample, because an
+     * error in the offset and an error in the scale look identical at the centre. */
+    const int win[][2] = { {794,550}, {1600,550}, {1920,1080}, {800,900}, {1280,720} };
+    for (unsigned i = 0; i < sizeof win / sizeof win[0]; i++) {
+        const int ww = win[i][0], wh = win[i][1];
+        const int cw = geom_compose_width(ww, wh, 4096);
+        const float s = geom_world_scale(ww, wh);
+        float rx, ry, rw, rh;
+        geom_compose_rect(ww, wh, cw, GEOM_SCREEN_H, &rx, &ry, &rw, &rh);
+        const int pts[][2] = { {0,0}, {cw,0}, {0,GEOM_SCREEN_H}, {cw,GEOM_SCREEN_H},
+                               {cw/2,GEOM_SCREEN_H/2}, {3,16} };
+        for (unsigned j = 0; j < sizeof pts / sizeof pts[0]; j++) {
+            /* project by hand, exactly as draw_list does: game point -> window pixel */
+            const float sx = (float)pts[j][0] * s + rx;
+            const float sy = (float)pts[j][1] * s + ry;
+            float bx = 0, by = 0;
+            geom_window_to_compose(ww, wh, cw, GEOM_SCREEN_H, sx, sy, &bx, &by);
+            char what[96];
+            snprintf(what, sizeof what, "%dx%d: (%d,%d) survives the round trip in x",
+                     ww, wh, pts[j][0], pts[j][1]);
+            eqf(what, bx, (float)pts[j][0]);
+            snprintf(what, sizeof what, "%dx%d: (%d,%d) survives the round trip in y",
+                     ww, wh, pts[j][0], pts[j][1]);
+            eqf(what, by, (float)pts[j][1]);
+        }
+    }
+
+    /* THE BUG THIS EXISTS FOR, as a negative. The old mapping was "subtract the horizontal
+     * centring, leave y alone" -- it passed the pointer's WINDOW row straight through as a
+     * game row. Halfway down a 1080-row window is game row 275 of 550; passing 540 through
+     * unchanged lands 265 rows lower, which is the bottom edge of the screen. A click aimed at
+     * a fighter's head would land at its feet, and nothing anywhere would report it. */
+    {
+        float bx = 0, by = 0;
+        geom_window_to_compose(1920, 1080, 978, GEOM_SCREEN_H, 100.0f, 540.0f, &bx, &by);
+        eqf("1920x1080: the middle of the window is the middle of the 550 rows", by, 275.0f);
+        eq("passing the window row through unchanged would be 265 rows out",
+           (long)(540 - 275), 265);
+        /* And it would run off the bottom for anything in the lower half of the window: row
+         * 900 of 1080 is game row 458, but passed through it is 900 -- past the screen. */
+        geom_window_to_compose(1920, 1080, 978, GEOM_SCREEN_H, 100.0f, 900.0f, &bx, &by);
+        eqf("1920x1080: window row 900 is game row 458", by, 900.0f * 550.0f / 1080.0f);
+        eq("passed through unchanged it would be off the 550-row screen", 900 > GEOM_SCREEN_H, 1);
+    }
+}
+
+/* ---- how much world is on screen ---- */
 static void test_compose(void)
 {
     enum { WIDE_MAX = 4096 };
-    eq("compose 794 -> 794",        geom_compose_width(794, WIDE_MAX), 794);
-    eq("compose 1600 -> 1600",      geom_compose_width(1600, WIDE_MAX), 1600);
-    /* The case that flipped when the aspect term came out: it used to be 550*1920/1080 = 978. */
-    eq("compose 1920 -> 1920",      geom_compose_width(1920, WIDE_MAX), 1920);
-    /* And the one that shows the height no longer enters the formula at all. */
-    eq("compose 800 -> 800",        geom_compose_width(800, WIDE_MAX), 800);
-    eq("compose 400 clamps up",     geom_compose_width(400, WIDE_MAX), 794);
-    eq("compose 9000 clamps down",  geom_compose_width(9000, WIDE_MAX), WIDE_MAX);
+    eq("compose 794x550 -> 794",   geom_compose_width(794, 550, WIDE_MAX), 794);
+    /* A window the game's own height and twice as wide is twice the WORLD at 1:1. */
+    eq("compose 1600x550 -> 1600", geom_compose_width(1600, 550, WIDE_MAX), 1600);
+    /* 1920x1080: the height scales by 1.963, so the world on screen is 1920/1.963 = 978.
+     * That is LESS world than the 1920 this returned before issue #41, and deliberately so --
+     * the extra pixels are being spent making the picture fill the window instead. */
+    eq("compose 1920x1080 -> 978", geom_compose_width(1920, 1080, WIDE_MAX), 978);
+    eq("compose 1280x720 -> 978",  geom_compose_width(1280, 720, WIDE_MAX), 978);
+    /* Same aspect, same world, whatever the monitor: that is what a scale buys. */
+    eq("compose 2560x1440 -> 978", geom_compose_width(2560, 1440, WIDE_MAX), 978);
+    /* Narrower in aspect than the game: floors at 794 rather than showing less than the HUD. */
+    eq("compose 800x900 floors",   geom_compose_width(800, 900, WIDE_MAX), 794);
+    eq("compose 400x300 floors",   geom_compose_width(400, 300, WIDE_MAX), 794);
+    /* And the build's own pitch limit still caps it. 32:9 at 550 rows asks for 1956. */
+    eq("compose 9000x550 clamps",  geom_compose_width(9000, 550, WIDE_MAX), WIDE_MAX);
 }
 
 /* ---- the stage's parallax ---- */
@@ -84,18 +203,6 @@ static void test_draw_camera(void)
     eq("camera 0 stays 0",              geom_draw_camera(0, 1920), 0);
     /* 1920 -> offset 563. */
     eq("1920 shifts by 563",            geom_draw_camera(1000, 1920), 1000 - 563);
-}
-
-/* ---- object magnification ---- */
-static void test_object_scale(void)
-{
-    eq("the game's own window is 1x", geom_object_scale(550), 1);
-    eq("1080 rows is 2x",             geom_object_scale(1080), 2);
-    eq("1600 rows is 3x",             geom_object_scale(1600), 3);
-    eq("a tiny window never goes below 1x", geom_object_scale(100), 1);
-    /* Rounded, not truncated: 800/550 is 1.45, which is nearer 1 than 2. */
-    eq("800 rounds to 1x",  geom_object_scale(800), 1);
-    eq("850 rounds to 2x",  geom_object_scale(850), 2);
 }
 
 /* ---- the pre-fight overlay's rows ---- */
@@ -190,11 +297,12 @@ static void test_pan(void)
 
 int main(void)
 {
+    test_scale();
+    test_unproject();
     test_compose();
     test_parallax();
     test_camera();
     test_draw_camera();
-    test_object_scale();
     test_overlay_rows();
     test_pan();
 
