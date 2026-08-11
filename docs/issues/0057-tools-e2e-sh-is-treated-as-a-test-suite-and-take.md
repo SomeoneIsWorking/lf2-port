@@ -58,3 +58,43 @@ WHAT IS ALREADY RIGHT AND SHOULD NOT BE UNDONE: `ctest` is 9 tests in 1.4 s and 
 boots the game. runtime/overrides/geom.h and runtime/video/framelife.h exist precisely so that
 claims that can be checked offline are, and both are included by the shipping code rather than
 copied. The audio pan, the frame lifetime and the stage-mode walk bound all moved this way.
+
+### Note (2026-08-11)
+FIRST FIX LANDED, and the numbers in the entry above were WRONG -- taken on a machine at load
+average 10-21 and not trustworthy as absolutes. Corrected, and the "lighting off is twice as
+slow" anomaly was contention, not a property of the port.
+
+WHAT A RUN ACTUALLY COSTS, measured as a slope so startup and per-frame come apart:
+
+    100 frames   1.32 s        600 frames   2.89 s
+    1200 frames  4.63 s       2400 frames   8.22 s      (software compositor)
+
+which is about 1 s of startup and 3 ms a frame. The software path runs at 95-96% CPU: it is
+CPU-bound and there is no mystery in it.
+
+THE GPU PATH WAS THREE TIMES THAT AND SPENT A THIRD OF ITS WALL CLOCK WAITING -- 23.0 s for the
+same 2400 frames at 74% CPU. The wait was ONE CALL: render_readback, run on every presented
+frame whether or not anything wanted the pixels. A readback is a full GPU-to-CPU stall (the CPU
+waits for every queued draw to retire before the copy), so paying it per frame throws away
+exactly the pipelining a GPU renderer exists for.
+
+Both of its consumers are off in an ordinary run: the screen-change detector needs
+LF2_SCREEN_HASH and the dump needs the frame to be named in LF2_FRAME_DUMP. The readback is now
+gated on one of them actually wanting THIS frame.
+
+    before   2400 frames, GPU   23.0 s   74% CPU
+    after    2400 frames, GPU   14.9 s   95% CPU
+
+A 35% cut on every GPU run in the tree, and the idle is gone -- 95% CPU means the remaining
+difference from the software path is work, not waiting. Verified that the gate does not break
+what it gates: a dump at 1920x1080 still writes the GPU frame at 1920x1080 rather than the
+978x550 composition, which is what the readback exists to make possible.
+
+WHAT IS STILL TRUE AND STILL UNANSWERED: 14.9 s is still not 10, a route makes several runs,
+and there are thirteen of them. The remaining levers are unchanged -- (a) stop treating them as
+a gate, (b) start a route at the thing it tests instead of walking 900 frames of menus first.
+Nothing here makes the sweep a suite.
+
+AND A NOTE ON HOW THE FIRST NUMBERS GOT INTO THIS ENTRY: they were measured back-to-back while
+other work of mine was still running, and recorded as though they were clean. A timing taken
+under unknown load is not a measurement. `uptime` before and after, or it does not count.

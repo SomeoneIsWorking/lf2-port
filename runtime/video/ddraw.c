@@ -481,7 +481,18 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
                     && (!pause_active() || pause_in_list)
                     && render_present(frame_src_pixels, frame_src_off, w, h);
     int shown_w = w, shown_h = h;
-    if (gpu) {
+    /* READ THE FRAME BACK ONLY IF SOMETHING WILL LOOK AT IT (issue #57). A readback is a
+     * full GPU-to-CPU stall: the CPU waits for every queued draw to finish before the pixels
+     * can be copied, so doing it per frame throws away the pipelining that makes a GPU
+     * renderer worth having. Both consumers are off in an ordinary run -- the screen-change
+     * detector needs LF2_SCREEN_HASH and the dump needs this frame to be in LF2_FRAME_DUMP --
+     * and the readback was being paid for on every frame regardless.
+     *
+     * Measured on a 2400-frame headless run: the GPU path was about three times the software
+     * one and spent roughly 30% of its wall clock waiting, while the software path ran at 96%
+     * CPU. That wait is this call. */
+    const int want_pixels = gpu && (frame_wanted(frames) || getenv("LF2_SCREEN_HASH") != NULL);
+    if (want_pixels) {
         /* The GPU frame is the size of the OUTPUT, not of the composition -- the renderer
          * draws at the window's resolution. Dumping it at the composition's size would slice
          * the top-left corner out of it and call that the frame. */
