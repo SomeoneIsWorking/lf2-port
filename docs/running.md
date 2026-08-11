@@ -1832,6 +1832,15 @@ plain composition; there is deliberately no approximation to fall back to.
   from "the dump does not contain the background at all".
 
 
+- **`LF2_GLYPH_POS=1`** prints every glyph drawn from one of the game's three font sheets with
+  the position **the game asked for**, before any of the port's offsets. It exists because the
+  fighters' name tags go out this way — not through `TextOutA`, not through the game's string
+  helper `fn_00423940`, both eliminated — so this is the only place their x can be *read*
+  rather than inferred from a screenshot. It is what showed that a tag's x is identical at 794
+  and at 1920×1080 while the sprite it names moves, which puts the draw outside the wrapper
+  that applies the widescreen camera shift (issue #55). The tags are the run at y 398 in a
+  match; the pair at y 531/532 is the stage-mode caption (issue #60).
+
 - **`LF2_BAND_DEBUG=1`** prints every blit that is a candidate for the full-width backdrop
   stretch — anything drawn from x 0 into the composition during a match — with the rectangle it
   actually arrived as. It exists because that rule tests `dr == NATIVE_W` on the assumption the
