@@ -1866,6 +1866,13 @@ plain composition; there is deliberately no approximation to fall back to.
   overlay confirm. Hold `right` long enough to move the camera, or the run is not evidence
   (issue #55, instrument I012).
 
+- **`LF2_OBJ_SKEW=<n>`** moves the camera the stage's OBJECT pass draws from by *n*, so every
+  fighter, shadow, name tag and effect it draws moves *n* pixels and nothing else in the frame
+  does. It is not a fix and not a port: it is the **negative control** for the byte-identity
+  gate issue #55's hand-port of `fn_0041a5a0` will need, built before the port so that the gate
+  has been seen to fail before it is trusted. `tools/e2e.sh objects` uses it — two default runs
+  must be byte-identical, and a skew of 3 must change thousands of pixels.
+
 - **`LF2_BAND_DEBUG=1`** prints every blit that is a candidate for the full-width backdrop
   stretch — anything drawn from x 0 into the composition during a match — with the rectangle it
   actually arrived as. It exists because that rule tests `dr == NATIVE_W` on the assumption the
