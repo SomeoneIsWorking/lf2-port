@@ -266,3 +266,52 @@ it read 0 at the mode menu and 1 from character select onward, and unlike 0x0044
 known second meaning.
 
 DO NOT retry the mode-word write. It is measured, it lands, and it does not do this.
+
+### Note (2026-08-11)
+THE .data DIFF IS DONE -- the one this entry has twice named as the next step. Candidates
+below, with denominators. Nothing has been WRITTEN yet: a diff produces suspects, and the test
+is to write one and watch, which is where the next session starts.
+
+METHOD, and it has a control on both sides rather than one. Three frames parked on the MODE
+MENU (LF2_VIRTUAL_PAD="south:900" and nothing after, so the game sits there) against three
+frames on the CLEARED CHARACTER-SELECT screen reached by the port's own exit -- match, F4,
+overlay Exit. Anything not stable across all three frames of BOTH runs is noise and is dropped
+before the comparison.
+
+    12745 dwords compared
+    12740 stable across the three mode-menu frames
+    12740 stable across the three post-exit frames
+    12740 stable in both
+       71 differ between the two screens
+
+Of those 71, most are self-evidently not a screen word: ASCII (a WMA filename, "Music: Random",
+"VS mode (Difficult)", a date), the stack canary pair at 0x0044eea4/a8, and live match values
+(the camera at 0x00450bc4, its easing at 0x00450bc8). What is left is small integers that are
+ZERO at the mode menu:
+
+    0x00450b80   0 -> 1
+    0x00450b90   0 -> 1
+    0x004511fc   0 -> 1
+    0x00451200   0 -> 1        <- the lead from the earlier note, now confirmed to differ
+    0x0045115c   0 -> 2
+    0x00451220 through 0x00451244, ten consecutive dwords, 0 -> 1
+    0x004554d0   0 -> 4
+    0x00452180   0 -> 13       0x00452194  0 -> 185     0x00452274  0 -> 32
+
+TWO READINGS TO TELL APART BEFORE WRITING ANYTHING, because they call for opposite actions:
+  - The run of ten consecutive dwords at 0x00451220..44 is the shape of a PER-SLOT array, not a
+    screen word -- eight player slots plus two. If that is the character-select roster then it
+    is a consequence of the screen rather than its cause, and zeroing it will clear the panels
+    while leaving the screen up.
+  - 0x004511fc and 0x00451200 sit immediately below it and are a PAIR. MODEMENU_SEL is already
+    known to live at 0x00451160 (screens.c), so this whole region is the post-load screen's
+    own state and the pair is the likeliest cause rather than consequence.
+
+AND ONE THING THE DIFF ALREADY SETTLES: 0x0044d06c reads 2 at the mode menu and 5 after the
+exit -- that is OVERLAY_SEL holding the Exit item the port itself just selected. It is the
+port's own fingerprint in this data, not a game state, and it must not be chased.
+
+HOW TO TEST A CANDIDATE: write 0 to it on the frame after the exit completes and see whether
+the mode menu appears. That is a one-line change in exit_reenter (reverted, see the commit) and
+about fifteen seconds a run. Do NOT write several at once -- the point of the list is that they
+can be told apart.
