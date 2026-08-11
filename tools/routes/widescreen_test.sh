@@ -59,7 +59,7 @@ say_fail() { echo "  FAIL  $1"; fail=1; }
 check() {
     ( cd "$GAME" && \
       SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
-      LF2_WINDOW_SIZE="$1" LF2_QUIT_AFTER=120 timeout 120 "$BUILD/lf2" lf2.exe ) \
+      LF2_WINDOW_SIZE="$1" LF2_QUIT_AFTER=120 timeout -k 5 120 "$BUILD/lf2" lf2.exe ) \
       > "$LOG" 2>&1 || true
 
     # The line names both sides, so a mismatch says what was asked for as well as what came
@@ -118,7 +118,7 @@ check 800x900   794  band
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
   LF2_WINDOW_SIZE=794x550 LF2_WINDOW_RESIZE=200:1600x550 \
-  LF2_QUIT_AFTER=400 timeout 180 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
+  LF2_QUIT_AFTER=400 timeout -k 5 180 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
 
 if grep -q "NEVER FIRED" "$LOG"; then
     say_fail "mid-run: the resize step never fired, so nothing about resizing was measured"
@@ -161,7 +161,7 @@ FLOG=$(mktemp)
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_RENDERER=soft \
   LF2_WINDOW_SIZE=1710x370 LF2_FRAMING_DEBUG=1 \
   LF2_CLICK_SCRIPT="403,228:900;400,241:1350;200,150@charselect+98" \
-  LF2_QUIT_AFTER=1500 timeout 200 "$BUILD/lf2" lf2.exe ) > "$FLOG" 2>&1 || true
+  LF2_QUIT_AFTER=1500 timeout -k 5 200 "$BUILD/lf2" lf2.exe ) > "$FLOG" 2>&1 || true
 
 if ! grep -q "^framing:" "$FLOG"; then
     say_fail "no framing report at all -- the run never reached a fixed-width screen, so"

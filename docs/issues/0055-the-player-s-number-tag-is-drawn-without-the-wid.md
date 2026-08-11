@@ -5,7 +5,7 @@ status: open
 symptom: reported with a screenshot. In a wide view the small player-number tag ('1') that should sit under a fighter is drawn to the LEFT of them, by what looks like the widescreen centring offset, and the gap appears once the fighter walks past where the 4:3 screen would have ended
 tags: reported,widescreen,rendering,hud
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 REPORTED 2026-08-11 with a screenshot, filed on receipt. Reporter's words: "the player tag gets
@@ -194,3 +194,37 @@ wrapper: with the function ported, the camera substitution in background.c becom
 INSTRUMENT NOTE: LF2_GLYPH_POS now prints `cam=` and `draw=` next to every glyph precisely so
 this class of vacuous comparison cannot be read as an answer again -- a tag x that does not move
 with the view means nothing while cam=0.
+
+### Note (2026-08-12)
+SCOPING THE PROPER FIX -- it is bigger than '368 lines', and here is the reason, so the next
+session does not find it out halfway through.
+
+fn_0041a5a0's draws are __thiscall. scratch/decomp/0043f010.c's signature is
+
+    void __thiscall FUN_0043f010(undefined4 *this, int x, int y, int ch, int, int, int *surface)
+
+but every call inside FUN_0041a5a0 decompiles as SIX arguments with the receiver elided --
+Ghidra types the call and hides the ECX load. The receiver is not incidental: text.c's override
+identifies a glyph BY it (font_sheet_index(R(ECX))), and the shadow hint keys off it too. So a
+port cannot be written from the decompilation alone; it needs the raw listing from
+re/instructions.tsv for the whole 2173 bytes to recover which object is in ECX at each of the
+draw sites. Same question for FUN_0040de30 (819 bytes), the sprite draw the pass delegates to.
+
+WHAT THE PORT WOULD CONTAIN, from the decompilation, so the size is not guessed: collect the
+live indices out of param_1+4 over 0..399; bubble-sort them by obj[0x18] (depth); then per
+object -- the stage shadow, the sprite via FUN_0040de30, the 'x N' multiplier label built by
+hand from obj[0x30c], the name tag in TWO variants (the ordinary one and a MENU_CLIP7 one, and
+BOTH carry the 0x31a clamp), and a trailing effects/icon loop over obj+0x3c0 with its own four
+category branches that also WRITE back through the object. That last part is the risk: the pass
+is not purely a draw, it advances per-effect counters, so a port that is subtly wrong corrupts
+state rather than just misplacing a pixel.
+
+The guest-ABI mechanics themselves are known and are not the problem -- runtime/overrides/coop.c
+calls fn_004061d0 in the game's own ABI (PUSH32 a return address, set R(ECX), call), so the
+idiom exists and is proven.
+
+NOT STARTED, and deliberately not started halfway: a partially-correct object pass would break
+every object in the game to fix one label's clamp, and the defect it fixes is one tag pinned
+184 px early in a wide view. It wants a session with the instruction listing open and a way to
+verify the pass draws identically at 794 before the clamp is touched -- that byte-identity arm
+is the acceptance gate and it does not exist yet either.

@@ -441,8 +441,13 @@ lands in the match however long the ~13 s data load took. Frame numbers are exac
 reproducible within a run, but the frame a screen *arrives* on is not: it moves with the load
 and with how busy the machine is, and every regression test's route was once a stopwatch aimed
 at a moving target (issue #18, which went red three times for that reason and never for a real
-one). Every route in `tools/` is now screen-keyed from `charselect` onward; only the front-end
-presses before any screen exists are still bare frame numbers.
+one). Every route in `tools/` is screen-keyed end to end, the opening press included.
+
+**The opening press is `@frontend`, and it is where the wall clock went.** Every route used to
+open with `south:900` — a frame number picked to be safely past a load that had not started
+yet. The front end is in fact drawn and taking input on **frame 1**, and the mode menu follows
+six frames after the first press whenever that press lands. Anchoring it cut **840 frames off
+the front of every run** (issue #57).
 
 A press whose screen never appears **never fires**, and the run says so at exit along with the
 screens that did appear — silently not pressing is how a route that missed its screen reads as
@@ -480,13 +485,24 @@ now live in `runtime/app/script.c` and are shared.
 | `LF2_VIRTUAL_PAD="<button>@<screen>[+<n>][,...]"` | the controller equivalent, keyed to a screen |
 | `LF2_VIRTUAL_PAD="<button>:<frame>[,...]"` | the same, keyed to a presented frame |
 | `LF2_WINDOW_RESIZE="<frame>:<w>x<h>[,...]"` | resize the window on that frame — a stand-in for a window manager |
+| `LF2_FRAME_DUMP="<frame>\|@<screen>[+<n>][,...]"` | dump those presented frames; **screen anchors work here too** |
 
-Screens are `charselect`, `overlay` and `match`. **`charselect` is the post-load panel, and
+Screens are `frontend`, `charselect`, `overlay` and `match`. **`frontend` is the game's first
+screen**, identified by the flat backdrop colour that only it paints (`0x10206c`, pushed at
+exactly one site in `.text`), so it cannot be true on a run that never got there. **`charselect`
+is the post-load panel, and
 that panel is also the mode menu** — the two share a blit destination, so the signal goes up
 when the mode menu appears, a little before character selection proper. It is a reliable
 reference point (it is the first thing after the load, and the load is the part that moves),
 but it does not mean character selection is on screen, and a route that needs to tell the two
 apart has to count frames from it.
+
+**`@match` means the HUD is up, NOT that fighters are on screen.** The stage load happens after
+the overlay's confirm, and the HUD strip is drawn across it, so the gap between `@match` and
+the first fighter being drawn is a load and does not hold still: on the fast routes
+`controller_test` saw 73 keyed blits at `@match+691` and 71988 by `@match+1131`. A route that
+asserts on gameplay needs margin after `@match` rather than a tight offset, and its threshold
+should be checked against the run's own counters, not assumed to scale.
 
 `LF2_WINDOW_RESIZE` exists because the headline of the widescreen work is that the field of
 view changes *while the game is running*, and no scripted run can produce that on its own: a

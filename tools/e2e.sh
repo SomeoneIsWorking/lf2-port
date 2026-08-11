@@ -23,9 +23,14 @@
 # The audio pan is the worked example: a three-run, 270-second script became 20 assertions in
 # a millisecond, and gained a walk across every on-screen pixel the script had never done.
 #
-# RUN THEM ONE AT A TIME. Each wraps its instance in a wall-clock `timeout`, and two instances
-# on one machine take long enough to trip it -- concurrency here produces failures from
-# scripts that pass individually. That is why this loops rather than backgrounding.
+# RUN THEM ONE AT A TIME. Each wraps its instance in a wall-clock `timeout -k`, and two
+# instances on one machine take long enough to trip it -- concurrency here produces failures
+# from scripts that pass individually. That is why this loops rather than backgrounding.
+#
+# THE `-k` IS LOAD-BEARING. Plain `timeout N` sends TERM and then waits forever if the child
+# does not act on it, which is not a guard at all: a run was found alive at 920 s under a
+# `timeout 400`, holding the whole sweep open with nothing to show for it. `-k 5` follows with
+# KILL, which nothing can decline.
 #
 # Unplug any physical controller first: an attached pad binds gamepad slot 0 and silently
 # stalls every scripted route at the front end.

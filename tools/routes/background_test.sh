@@ -30,14 +30,14 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 
 # Into a VS match, then walk right so the later frame has a different camera -- and so the
 # right-hand wall is actually reached, which is the case issue #28 is about.
-PAD="south:900,south:960,south:1020,south:1080"
+PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
 PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238"
 PAD="$PAD,up@charselect+298,up@charselect+358,south@charselect+418,south@charselect+618"
 PAD="$PAD,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
 i=60
 while [ "$i" -le 600 ]; do PAD="$PAD,right@match+$i"; i=$((i + 30)); done
 
-FRAMES=2250,2700
+FRAMES=@match+282,@match+732   # was 2250,2700; anchored, see render_test.sh
 
 arm() {   # arm <dir> <window> [VAR=value ...]
     dir=$1; win=$2; shift 2
@@ -46,8 +46,8 @@ arm() {   # arm <dir> <window> [VAR=value ...]
       env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
           LF2_VIRTUAL_PAD="$PAD" LF2_WINDOW_SIZE="$win" \
           LF2_FRAME_DUMP="$FRAMES" LF2_DUMP_DIR="$OUT/$dir" \
-          LF2_QUIT_AFTER=2750 "$@" \
-          timeout 300 "$BUILD/lf2" lf2.exe ) >/dev/null 2>&1 || true
+          LF2_QUIT_AFTER=1910 "$@" \
+          timeout -k 5 300 "$BUILD/lf2" lf2.exe ) >/dev/null 2>&1 || true
 }
 
 echo "background override: five runs..."
@@ -59,9 +59,14 @@ arm wide_orig   1600x550 LF2_BG_ORIG=1
 
 fail=0
 frames=$(ls "$OUT/native_port" 2>/dev/null | wc -l)
-if [ "$frames" -eq 0 ]; then
-    echo "  FAIL  the native arm produced NO frame dumps -- the route never reached a match,"
-    echo "        so nothing was compared. This is not a pass."
+# EVERY frame that was asked for. "0 is a failure" alone lets a run that dumped one of two
+# print a full pass over half the coverage, which is what happened the moment an anchor
+# resolved past the end of the run.
+FRAMES_N=$(printf '%s' "$FRAMES" | tr ',' '\n' | grep -c '[^ ]')
+if [ "$frames" -ne "$FRAMES_N" ]; then
+    echo "  FAIL  the native arm dumped $frames of the $FRAMES_N requested frame(s) ($FRAMES) --"
+    echo "        the route did not reach them all, so this is not a pass. Check the anchors"
+    echo "        against 'screens reached' and LF2_QUIT_AFTER."
     exit 1
 fi
 

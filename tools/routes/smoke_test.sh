@@ -69,7 +69,7 @@ echo "running a match headless (about 90s)..."
 0x27@match+108,0x5A@match+158" \
   LF2_QUIT_AFTER=3000 \
   ${TIMER:+$TIMER -f "%U %S %e" -o "$CPUFILE"} \
-  timeout 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
+  timeout -k 5 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 rc=$?
 
 fail=0

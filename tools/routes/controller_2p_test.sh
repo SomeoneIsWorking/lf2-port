@@ -34,7 +34,7 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 
 # Player one walks to character selection and then proceeds, which is what fills the
 # remaining slots with computers. The second pad, when present, joins before that.
-PAD1="south:900,south:960,south:1020,south:1080"        # the front end, before any screen
+PAD1="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"        # the front end, before any screen
 PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358"
 PAD1="$PAD1,south@charselect+418,south@charselect+618"
 
@@ -43,9 +43,9 @@ run() {   # run <logfile> [second-pad script]
     # single word the shell tries to EXECUTE, not to a variable assignment.
     ( cd "$GAME" && \
       export SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
-             LF2_TEXT_DEBUG=1 LF2_VIRTUAL_PAD="$PAD1" LF2_QUIT_AFTER=1900 && \
+             LF2_TEXT_DEBUG=1 LF2_VIRTUAL_PAD="$PAD1" LF2_QUIT_AFTER=1060 && \
       if [ -n "${2:-}" ]; then export LF2_VIRTUAL_PAD2="$2"; else unset LF2_VIRTUAL_PAD2; fi && \
-      timeout 120 "$BUILD/lf2" lf2.exe ) > "$1" 2>&1
+      timeout -k 5 120 "$BUILD/lf2" lf2.exe ) > "$1" 2>&1
 }
 
 fail=0
