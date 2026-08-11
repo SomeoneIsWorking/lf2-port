@@ -74,3 +74,25 @@ camera, or a draw that goes through a different scaling path than the sprite. fn
 lines around its calls at guest 0x0041ad57/0x0041adc2 pass small negative offsets (-0x1e,
 -0x33) alongside a camera subtraction, which is the shape of something drawn just below an
 object and is the first place to read.
+
+### Note (2026-08-11)
+TWO MORE PATHS ELIMINATED, so the tag is drawn by neither of the game's text routes.
+
+  NOT TextOutA. LF2_TEXT_DEBUG over a full stage-mode match lists 104 distinct (row, text)
+  draws and there is no per-fighter tag among them -- the lowest in-match row is y 115, and
+  the tag sits at the fighter's feet, far below.
+
+  NOT fn_00423940, the game's own string helper. LF2_GAMETEXT_DEBUG over the same match prints
+  exactly ONE distinct string: "Stage mode (Difficult)". Nothing else in a match goes through
+  it.
+
+So the tag is drawn as raw clips through fn_0043f010 -- the call every glyph and every sprite
+ultimately goes out as -- by something that composes its own digits rather than calling the
+string helper. That is where the next look goes, and it is a narrower target than "somewhere in
+the draw".
+
+TAKEN WITH THE CAMERA-READER ELIMINATION ABOVE, the shape of this is now quite constrained: the
+tag's position is not computed from the camera word by any unwrapped reader, and it is not
+handed to either text route. Whatever positions it is inside the object draw, which IS wrapped
+-- so a constant offset really is ruled out, and the growing gap points at the position being
+derived from something other than the drawn screen x.
