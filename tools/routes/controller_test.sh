@@ -42,7 +42,7 @@ PAD="$PAD,right@match+108,south@match+158,left@match+218,south@match+278"  # pla
 
 echo "driving the game from a virtual gamepad into a match..."
 ( cd "$GAME" && \
-  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
+  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_RENDERER=soft \
   LF2_SCREEN_HASH=1 LF2_AUDIO_DEBUG=1 LF2_CK_DEBUG=1 \
   LF2_VIRTUAL_PAD="$PAD" LF2_QUIT_AFTER=2200 \
   timeout -k 5 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1

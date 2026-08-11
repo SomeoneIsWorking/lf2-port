@@ -5,7 +5,7 @@ status: open
 symptom: reported after the machine went down. amdgpu on an RX 6700 XT logged 219 'ring gfx timeout' and 65 'GPU reset begin' with 'VRAM is lost due to GPU reset', ALL of them inside the last 75 minutes of a boot that had been up 46 hours with none before -- and that window is exactly a run of back-to-back headless Vulkan sessions of this port. The same boot then died to the OOM killer with 19 concurrent compilers alive
 tags: performance
 created: 2026-08-06
-updated: 2026-08-07
+updated: 2026-08-12
 ---
 
 ## Root cause
@@ -107,3 +107,91 @@ WHAT A VERIFICATION MUST LOOK LIKE (none of this has been done):
  4. An A/B against LF2_HD2D=off, which is the only cheap way to test whether the new shader
     path is involved.
 Until at least 1-3 are done, DO NOT run batches of headless sessions on this machine.
+
+### Note (2026-08-12)
+ANOTHER RESET-AND-REBOOT, 2026-08-11/12, AND THIS ONE NAMES THE PROCESS BY PID -- the closest
+this entry has come to attribution, though it is still association and not proof.
+
+WHAT HAPPENED: the machine rebooted at ~01:11 while a tools/e2e.sh sweep was running. The
+previous boot's kernel log holds 61 lines matching ring timeout / GPU reset begin / VRAM is
+lost, the first at 21:32 and the last at 01:04:44.
+
+THE PIDs ARE THE SMOKING GUN, such as it is:
+
+    Aug 12 00:39:09  amdgpu 0000:0b:00.0:  Process lf2 pid 414834 thread lf2 pid 414834
+    Aug 12 00:55:18  amdgpu 0000:0b:00.0:  Process lf2 pid 440252 thread lf2 pid 440252
+    Aug 12 01:01:24  lf2[446150]: segfault at 0 ... in libSDL3.so.0.4.14
+
+414834 and 440252 are the two runs I had found HUNG and killed by hand, minutes before each of
+those lines. So the two events are the same event seen from both ends.
+
+WHICH CORRECTS SOMETHING I WROTE THE SAME NIGHT. I found a run alive at 920 s under a
+`timeout 400`, concluded that plain `timeout` sends TERM and waits forever on a child that does
+not act on it, and put `timeout -k 5` on every route. The `-k` is right and stays -- a KILL gets
+through where a TERM does not. But the CAUSE of that particular hang was not a stubborn signal
+handler: it was PID 414834, wedged on a GPU that had just reset. The commit message for the -k
+change says "TERM alone waits forever on a child that does not act on it", which is true in
+general and was not what happened here. Corrected in tools/e2e.sh's comment.
+
+THE MITIGATION TAKEN, which is the part that matters: NINE OF THE THIRTEEN ROUTES DO NOT TEST
+THE RENDERER AND WERE RUNNING ON THE GPU ANYWAY. They now pin LF2_RENDERER=soft --
+controller, controller_2p, mouse, coop_select, coop_dropin, two_human_match, stage_mode,
+background (resize and one widescreen arm already did). What still uses the GPU, and should:
+
+    render_test        diffs the two renderers; that IS the test
+    pause_dropout      asserts the NATIVE renderer drew the paused frames (issue #52)
+    smoke_test         its "cpu usage < 50% of one core" assertion is calibrated on the GPU
+                       path -- the software compositor runs at 95% and would fail it
+
+That is a sweep of thirteen GPU instances reduced to three. The memory note has said "one GPU
+run at a time, never a batch, LF2_RENDERER=soft for anything that does not specifically need
+the GPU" for a while; the sweep was the batch, and nothing had ever applied that rule to it.
+
+STILL NOT ESTABLISHED, and this entry should not be read as closed: whether the port's own
+GPU use is at fault or whether it is amdgpu falling over under any sustained submission. The
+first fault of the previous boot was at 21:32, and the counter for the CURRENT boot after the
+sweep was stopped reads 0. Check `journalctl -k -b 0 | grep -icE "ring .*timeout|GPU reset
+begin|Illegal opcode|VRAM is lost"` before blaming OR absolving the port.
+
+### Note (2026-08-12)
+A SECOND REBOOT TWENTY MINUTES LATER, AND IT WAS NOT THIS PORT -- which is the first clean
+NEGATIVE this entry has ever had, and it retires an inference the entry has been leaning on.
+
+The machine rebooted again at ~01:34. That boot's kernel log:
+
+    01:25:19  Oops: invalid opcode  CPU 13  PID 13095  Comm: x2native
+              RIP: __list_add_valid_or_report+0xa6      (kernel linked-list corruption)
+              Call Trace: ttm_resource_init / ttm_sys_man_alloc / ttm_resource_alloc /
+                          ttm_bo_alloc_resource   [ttm]
+    01:25:48  watchdog: BUG: soft lockup - CPU#7 stuck for 26s!  [kwin_wayland:2504]
+    01:26:04  watchdog: BUG: soft lockup - CPU#2 stuck for 23s!  [lf2:20536]   -> 49s -> 75s
+
+    amdgpu ring timeouts / GPU resets / VRAM lost in that boot: ZERO.
+
+x2native is ANOTHER PROJECT'S process, not this port. It corrupted a kernel list inside ttm --
+the GPU memory manager the whole graphics stack sits on -- and after that everything that
+touched the stack wedged: the compositor first, then lf2. PID 20536 is the controller_test run
+I had started at 01:25, and it was on LF2_RENDERER=soft, so it was not even submitting GPU
+work of its own.
+
+THE DISCRIMINATOR, and it is the useful part: run the two boots against each other.
+
+    boot -2:  61 amdgpu ring timeouts / resets,  lf2 named,      x2native absent
+    boot -1:   0 amdgpu faults,                  lf2 soft-locked, x2native OOPSED in ttm
+
+Two different failure modes with two different first movers. So "lf2 appears in the kernel log"
+is NOT evidence that lf2 caused anything -- in boot -1 it appears purely as a victim, and an
+entry that counted those appearances would have convicted the port on this boot. Read the FIRST
+fault of a boot and who owned it, not the process names further down.
+
+WHAT THIS DOES AND DOES NOT CHANGE. It does not clear the port for boot -2, which still looks
+exactly like this entry's original pattern. It does mean the machine has at least one other
+process capable of taking the graphics stack down on its own, and that some share of the
+"followed by a reboot after lf2 runs" history may be that.
+
+ALSO, ON THE ROUTE TIMEOUTS: controller_test was killed at its 150 s budget twice tonight, and
+I nearly raised every route's budget for it. Measured on an idle machine afterwards, the same
+run takes 9.03 s at 92% CPU. The budget is not too small by a factor of sixteen -- the run was
+soft-locked in the kernel, and `timeout -k` killing it at 150 s is the guard working, not
+failing. The budgets stay. A route killed at its timeout is a reason to look at `journalctl -k
+-b 0` before touching the test.

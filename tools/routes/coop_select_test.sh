@@ -56,7 +56,7 @@ PAD2="south@match+158,right@match+258,right@match+298,left@match+338,south@match
 
 echo "coop select: a late joiner picks a character..."
 ( cd "$GAME" && \
-  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
+  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_RENDERER=soft \
   LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$PAD2" \
   LF2_QUIT_AFTER=1960 timeout -k 5 220 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 

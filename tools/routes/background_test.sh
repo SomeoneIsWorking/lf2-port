@@ -43,7 +43,7 @@ arm() {   # arm <dir> <window> [VAR=value ...]
     dir=$1; win=$2; shift 2
     mkdir -p "$OUT/$dir"
     ( cd "$GAME" && \
-      env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
+      env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_RENDERER=soft \
           LF2_VIRTUAL_PAD="$PAD" LF2_WINDOW_SIZE="$win" \
           LF2_FRAME_DUMP="$FRAMES" LF2_DUMP_DIR="$OUT/$dir" \
           LF2_QUIT_AFTER=1910 "$@" \
