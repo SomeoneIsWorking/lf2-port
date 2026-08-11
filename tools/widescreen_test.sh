@@ -167,12 +167,27 @@ if ! grep -q "^framing:" "$FLOG"; then
     say_fail "no framing report at all -- the run never reached a fixed-width screen, so"
     say_fail "      NOTHING about per-screen framing was measured. This is not a pass."
 else
-    grep -qE "^framing:.*10206c -> LEFT" "$FLOG" \
-        && say_ok "the front end is LEFT-aligned (its portrait sits on x 0)" \
-        || say_fail "the front end is not reported LEFT-aligned"
-    grep -qE "^framing:.*122565 -> LEFT" "$FLOG" \
-        && say_ok "the mode menu is LEFT-aligned" \
-        || say_fail "the mode menu is not reported LEFT-aligned"
+    # THE MENU IS CENTRED; ONLY ITS BACKDROP ART IS LEFT-ANCHORED. Both halves are asserted,
+    # because each alone passes on a build that gets the other wrong: "centred" alone passes
+    # when the portrait was centred with everything else, and "backdrop at x 0" alone passes
+    # when the whole screen was dragged to the edge, which is what the first attempt did.
+    grep -qE "^framing:.*10206c -> CENTRED, backdrop art LEFT at x 0" "$FLOG" \
+        && say_ok "the front end is centred with its backdrop art left-anchored" \
+        || say_fail "the front end is not reported centred-with-left-backdrop"
+    grep -qE "^framing:.*122565 -> CENTRED, backdrop art LEFT at x 0" "$FLOG" \
+        && say_ok "the mode menu is centred with its backdrop art left-anchored" \
+        || say_fail "the mode menu is not reported centred-with-left-backdrop"
+    # And the art must actually have been DRAWN at x 0, not merely promised: a screen can be
+    # labelled without a single draw ever matching the identification.
+    # head -1, not tail -1: the matched text is "(1800 such draw(s) kept at x 0)" and its LAST
+    # number is the 0 in "x 0", so tail took the zero and the check failed on a working build.
+    kept=$(grep -oE "\(([0-9]+) such draw\(s\) kept at x 0\)" "$FLOG" | grep -oE "[0-9]+" | head -1)
+    if [ "${kept:-0}" -gt 0 ]; then
+        say_ok "the backdrop art was kept at x 0 on $kept draw(s)"
+    else
+        say_fail "NO draw was ever kept at x 0 -- the two menus are labelled left-anchored but"
+        say_fail "      nothing matched the backdrop identification, so the picture is centred"
+    fi
     grep -qE "^framing:.*PICTURE backdrop.*-> CENTRED" "$FLOG" \
         && say_ok "the loading screen is CENTRED with its bands extended" \
         || say_fail "the loading screen is not reported CENTRED with extended bands"

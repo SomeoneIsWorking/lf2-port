@@ -490,7 +490,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     dump_heap(frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
-    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); world_band_report(); framing_report(); com_release_report(); input_report(); audio_pan_report(); bg_camera_report(); mode_force_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); world_band_report(); glyph_scale_report(); framing_report(); com_release_report(); input_report(); audio_pan_report(); bg_camera_report(); mode_force_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
     /* The read profile is reported on the same periodic boundary and reset each time, so
      * each block covers one window rather than the whole run: an array swept only during a
      * match would otherwise be averaged with the menus that came before it. */
@@ -1071,6 +1071,7 @@ static void panel_note(int l, int t, int r, int b)
  * correctly. */
 enum { FILL_FRONT_END = 0x0010206cu, FILL_MODE_MENU = 0x00122565u };
 static int screen_align_left;
+static long backdrop_art_seen;   /* counted so the framing report cannot claim a draw it never saw */
 
 /* WHAT THE FRAMING ACTUALLY DID, per screen, so a test can assert it from the run's own
  * output instead of from a screenshot somebody once looked at (LF2_FRAMING_DEBUG=1).
@@ -1089,15 +1090,21 @@ static void framing_note(const char *what, uint32_t key, int off, int left)
     if (!getenv("LF2_FRAMING_DEBUG")) return;
     fprintf(stderr, "framing: frame %ld %s -> %s, offset %d in a %d-wide composition "
                     "(the game's own screen is %d)\n",
-            frames, what, left ? "LEFT" : "CENTRED", off, hw.width, NATIVE_W);
+            frames, what, left ? "CENTRED, backdrop art LEFT at x 0" : "CENTRED",
+            off, hw.width, NATIVE_W);
 }
 
 void framing_report(void)
 {
     if (!getenv("LF2_FRAMING_DEBUG")) return;
-    fprintf(stderr, "framing: %ld left-aligned menu screen(s), %ld centred flat-backdrop "
-                    "screen(s), %ld picture-backdrop screen(s) so far%s\n",
-            framing_n_left, framing_n_centre, framing_n_picture,
+    /* The backdrop count is part of the answer and not decoration: "the menu screens were
+     * seen" and "their left-anchored picture was actually drawn without the centring" are
+     * different facts, and a report giving only the first would read as a pass on a build
+     * where the picture never matched and quietly got centred with everything else. */
+    fprintf(stderr, "framing: %ld menu screen(s) with a left-anchored backdrop (%ld such "
+                    "draw(s) kept at x 0), %ld centred flat-backdrop screen(s), %ld "
+                    "picture-backdrop screen(s) so far%s\n",
+            framing_n_left, backdrop_art_seen, framing_n_centre, framing_n_picture,
             (framing_n_left || framing_n_centre || framing_n_picture) ? ""
               : " -- NO fixed-794 screen has been framed at all, so this run measured NOTHING "
                 "about per-screen framing (not wide, or never left the world view)");
@@ -1113,14 +1120,21 @@ static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
     if (left) framing_n_left++; else framing_n_centre++;
     char what[64];
     snprintf(what, sizeof what, "screen with backdrop fill %06x", c);
-    framing_note(what, c | 0x40000000u,
-                 geom_screen_offset_x(hw.width, left ? GEOM_ALIGN_LEFT : GEOM_ALIGN_CENTRE),
-                 left);
+    /* The offset REPORTED must be the offset APPLIED. This said GEOM_ALIGN_LEFT -> 0 for the
+     * two menu screens while their content was in fact being centred by 874, because the rule
+     * narrowed (only the backdrop ART is left-anchored, not the whole screen) and the report
+     * kept the old question. A diagnostic that answers a question the code no longer asks is
+     * worse than none: it was printing 0 next to a picture that had visibly moved. */
+    framing_note(what, c | 0x40000000u, screen_offset_x(), left);
 }
 
 /* Exposed so tools/widescreen_test.sh can assert the framing of each screen from the run's
  * own output rather than from a screenshot someone looked at once. */
-int screen_left_aligned(void) { return screen_align_left; }
+/* Does the screen now up anchor its BACKDROP ART to x = 0? True for the front end and the
+ * mode menu, whose portrait (MENU_BACK<n>) the game draws at a hard literal x = 0 so that it
+ * bleeds off the screen's left edge. Nothing else about those screens is special: their menu
+ * content is centred like every other screen's. */
+int screen_backdrop_left(void) { return screen_align_left; }
 
 int panel_charselect_up(void) { return frames - panel_charselect_frame <= PANEL_FRESH; }
 int panel_overlay_up(void)    { return frames - panel_overlay_frame    <= PANEL_FRESH; }
@@ -1193,8 +1207,11 @@ int screen_offset_x(void)
 {
     const int wide = lf2_wide_width();
     if (!wide || panel_hud_up()) return 0;
-    return geom_screen_offset_x(hw.width,
-                                screen_left_aligned() ? GEOM_ALIGN_LEFT : GEOM_ALIGN_CENTRE);
+    /* CENTRED for every screen, and that includes the two menus. Their BACKDROP ART is
+     * left-anchored and is handled where it is drawn (see backdrop_left below) -- the menu
+     * itself, its logo and its list, are centred like everything else. An earlier version
+     * left-aligned the whole screen, which moved the menu with the picture behind it. */
+    return geom_screen_offset_x(hw.width, GEOM_ALIGN_CENTRE);
 }
 
 /* Issue #29: after a resize, character selection kept a ghost of itself standing to its left.
@@ -1498,7 +1515,25 @@ static void surf_Blt(uint32_t self)
      * to that screen and moves with it; one that already spans the composition is background
      * and does not. */
     const int compose_off = (!d->primary && d->w > NATIVE_W) ? screen_offset_x() : 0;
-    if (compose_off && dl >= 0 && dr <= NATIVE_W) { dl += compose_off; dr += compose_off; }
+
+    /* THE BACKDROP ART KEEPS THE EDGE IT WAS DRAWN AGAINST (issue #44).
+     *
+     * On the front end and the mode menu the game draws its character portrait -- the same
+     * sprite on both, MENU_BACK<n> -- at a hard literal x = 0, and it is 546 of the screen's
+     * 550 rows tall. It is composed against the LEFT EDGE and bleeds off it. Centring it puts
+     * that edge in the middle of a wide window, which is what the picture is not supposed to
+     * do; so this one draw keeps x = 0 while the menu in front of it is centred.
+     *
+     * Identified by both halves of what the RE found, not by one: the literal x = 0 AND the
+     * near-full height. A menu strip also starts at x 0 sometimes, and it is short -- taking
+     * only the x would drag those to the edge as well and pull the list apart. Anything that
+     * fails either half is ordinary screen content and is centred. */
+    const int backdrop_art = screen_backdrop_left() && srcobj && dl == 0
+                          && (db - dt) >= NATIVE_H - 60;
+    if (backdrop_art) backdrop_art_seen++;
+    if (compose_off && !backdrop_art && dl >= 0 && dr <= NATIVE_W) {
+        dl += compose_off; dr += compose_off;
+    }
 
     cursor_find_note(dl, dt, "Blt");
     /* LF2_SMALL_BLT=1 -- a cursor is a SMALL sprite, so list the small destinations
