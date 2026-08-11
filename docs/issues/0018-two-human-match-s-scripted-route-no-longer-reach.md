@@ -2,7 +2,7 @@
 id: 18
 title: two_human_match's scripted route no longer reaches the match on this machine -- the test fails at HEAD too
 status: resolved
-symptom: ctest two_human_match fails both arms with 'no live fighter at object index 1'; coop_dropin and coop_select on the same build pass
+symptom: tools/e2e.sh two_human_match fails both arms with 'no live fighter at object index 1'; coop_dropin and coop_select on the same build pass
 tags: test,flaky,timing,coop,two-player
 created: 2026-08-05
 updated: 2026-08-06

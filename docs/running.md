@@ -52,8 +52,8 @@ second compiler was the instrument that could see it.
 
 `tools/build_matrix.sh` builds and tests every compiler on the machine at two optimisation
 levels — evaluation order is the front end's choice and can differ with `-O` too — so this
-stays a routine check rather than something done once. Pass `-LE slow` to skip the ~65 s
-end-to-end tests, or `-R instructions` for just the differential. It warns when fewer than
+stays a routine check rather than something done once. Pass `-R instructions` for just the
+differential; the whole suite is a second and a half. It warns when fewer than
 four configurations ran, because a matrix that quietly tested one thing is not
 cross-checking anything.
 
@@ -249,9 +249,12 @@ everything past screen x 1000 had a volume of exactly zero — the right 48% of 
 silent. The constants are now scaled by `view/794`, which is a scale rather than a
 re-derivation on purpose: `view/4` would give 198 at the native width instead of the 200 that
 shipped. **`LF2_AUDIO_PAN=1`** prints the audible span against the picture's width, and
-`ctest audio_pan` asserts the speakers are at *exactly* 200 and 600 at 794, that the span
-covers a 1920 picture, and — the arm that gives the others meaning — that with
-**`LF2_AUDIO_PAN_RAW=1`** turning the scaling off, the silence comes back.
+`ctest geometry` asserts the speakers are at *exactly* 200 and 600 at 794, walks every
+on-screen x at 794 and at 1920 finding none silent, and — the arm that gives the others
+meaning — shows the unscaled constants silencing a 1920 picture from x 999. That used to be
+a three-run, 270-second script; it is arithmetic, it lives in `runtime/overrides/geom.h`
+alongside the code that ships it, and it now runs in a millisecond.
+**`LF2_AUDIO_PAN_RAW=1`** still turns the scaling off in a real run.
 
 | Window | Composition | On screen |
 |---|---|---|
@@ -260,7 +263,7 @@ covers a 1920 picture, and — the arm that gives the others meaning — that wi
 | 1920x1080 | 1920x550 | 1:1, centred, 265 black rows above and below |
 | 800x900 | 800x550 | 1:1, centred; the height no longer enters the formula at all |
 
-`ctest widescreen` asserts exactly that table. The 794 row is the one that must NOT widen —
+`tools/e2e.sh widescreen` asserts exactly that table. The 794 row is the one that must NOT widen —
 without it a build that always widened would pass everything else — and the last two rows are
 the ones that flipped when the aspect term came out, so a build that kept any aspect in the
 formula fails them and nothing else.
@@ -285,7 +288,7 @@ screen, and an unknown name is refused loudly rather than silently entering VS.
 This is what makes anything but VS mode testable. Every scripted route used to reach the game
 by pressing buttons at counted frames and take whatever the mode menu happened to be sitting
 on, so one of eight modes was exercised and seven were not — and the stage-mode camera lock
-had no way to be verified at all. `ctest stage_mode` uses it, and its report says explicitly
+had no way to be verified at all. `tools/e2e.sh stage_mode` uses it, and its report says explicitly
 when the mode menu was never reached, because a route that silently entered VS while asking
 for stage would be a green test for a mode it never visited.
 
@@ -300,6 +303,31 @@ Two things make this affordable at runtime. The surfaces that follow the window 
 exhaust the arena during a single drag. And `Lock` reports width, height and pitch fresh on
 every call, so the game picks up a changed width on its next frame while anything it cached
 stays valid.
+
+## Decompiling a function with Ghidra
+
+`re/instructions.tsv` is a disassembly: it answers *what bytes are here*, not *what does this
+function do*. When the question is a constant or a piece of layout, decompile instead — reading
+2000 bytes of x86 to find four numbers is how a wrong constant gets copied into the port.
+
+```sh
+printf '00429730\n' > scratch/decomp_targets.txt
+LF2_DECOMP_TARGETS=scratch/decomp_targets.txt \
+analyzeHeadless scratch/ghidra lf2 -process lf2.exe -noanalysis \
+  -scriptPath tools/ghidra_scripts -postScript DecompDump.py
+# -> scratch/decomp/00429730.c
+```
+
+The project lives in the gitignored `scratch/ghidra/`, so the slow auto-analysis is paid for
+once; drop `-noanalysis` (and `-import game/lf2.exe`) the first time. `DecompDump.py` prints a
+line per target **including the misses** — a VA in no function, or one the decompiler refuses,
+says so rather than leaving a gap in the output directory that reads like a file nobody opened.
+
+This is how the pre-fight overlay's row geometry was settled (claim C022). The port had a
+uniform 24-px step measured off three sampled highlight blits; the decompile shows six literal
+draw calls at y 16, 39, 64, 87, 111, 137. The three rows that had been sampled are exactly the
+three a uniform step gets nearly right, so no amount of re-measuring by that method would have
+found it.
 
 ## The pause menu
 
@@ -330,7 +358,7 @@ character-select screen is one further step that is **not** established: Escape 
 nothing, measured, and issue #22 stays open for it. The port does not fake the transition by
 resetting its own state.
 
-`ctest pause_dropout` covers the drop-out half end to end, including the negative that
+`tools/e2e.sh pause_dropout` covers the drop-out half end to end, including the negative that
 player one is still in the match afterwards.
 
 **RmlUi was considered for the Options page and declined**, and the reasoning sits beside the
@@ -1102,9 +1130,20 @@ sits at ~13%.
 ## Tests
 
 ```sh
-cd scratch/build && ctest           # everything, including the ~75 s smoke test
-cd scratch/build && ctest -LE slow  # the fast set only
+cd scratch/build && ctest      # THE suite: 8 tests, ~1.3 s, nothing in it boots the game
+tools/e2e.sh                   # the scripts that DO boot the game (seconds to minutes each)
+tools/e2e.sh mouse render      # by name
 ```
+
+There is one ctest suite and it is fast — that is deliberate, and it is a bar, not a
+description. This is a 2001 game whose logic is arithmetic over a few megabytes; anything
+here that took minutes was measuring the wrong thing in the wrong place. So what can be
+checked without a running game is checked without one: `runtime/overrides/geom.h` holds the
+port's pure geometry and `runtime/test_geom.c` walks all of it in a millisecond, and the
+overrides *include* that header rather than keeping their own copy of the arithmetic.
+
+`tools/e2e.sh` keeps the rest — the questions only a running instance can answer. It runs
+them one at a time and prints a summary that distinguishes a skip from a pass.
 
 `tools/smoke_test.sh` drives the port deep into the game headless and asserts what has
 actually broken before: colour-keyed blits, sound effects firing, a non-zero mix peak, the
@@ -1581,7 +1620,7 @@ Three hooks in `runtime/ddraw.c`:
 
 - **`LF2_PRIMARY_STALE=1`** disables the clear that stops a resize leaving the previous
   size's pixels standing beside a centred screen (issue #29). It exists to be the negative arm
-  of `ctest resize`: "the band left of the panel is black" would pass just as happily on a
+  of `tools/e2e.sh resize`: "the band left of the panel is black" would pass just as happily on a
   frame that is black everywhere, so the check is run against a build that does not clear and
   required to fail there.
 
@@ -1598,7 +1637,7 @@ Three hooks in `runtime/ddraw.c`:
 ### The native renderer, the lighting and the cast shadows
 
 - **`LF2_RENDERER=soft`** presents the software compositor instead of the GPU renderer. Both
-  build every frame; this chooses which one is shown, and it is how `ctest render` diffs them.
+  build every frame; this chooses which one is shown, and it is how `tools/e2e.sh render` diffs them.
 - **`LF2_HD2D=off`** turns off the lighting *and* the sprite-cast shadows, which restores the
   game's own dithered ellipse. The lighting is **on by default** — it is a look, not a switch;
   this exists so the renderer's *geometry* can be compared against the software path with
@@ -1620,12 +1659,16 @@ Three hooks in `runtime/ddraw.c`:
   The defaults are chosen so a flat, unshadowed, camera-facing pixel comes out at almost
   exactly the colour the game drew it: the light must be a *difference from flat*, not a
   brightness or a tint laid over the game.
+- **`LF2_OVERLAY_DEBUG=1`** prints, every frame the pre-fight overlay is up, the pointer, the
+  row it resolves to and the current selection. It is what found both halves of issue #26: that
+  an idle pointer left inside the panel band was dragging the selection to *Exit* on the frame
+  the overlay opened, and that the row geometry the hit test used was not the game's.
 - **`LF2_SHADOW_DEBUG=1`** reports which object the loaded stage draws its shadow ellipse on,
   and how often that identification fires. The object is learned per stage from `bg.dat`'s
   `shadowsize:`, not read from a fixed offset — the offset that looked right matched 0 of
   40000 draws (claim C019).
 - **`LF2_RENDER_SKIP=<n>`** drops every nth display-list entry. It is the negative arm of
-  `ctest render`: this comparison was fooled once already (the readback ran before the draw, so
+  `tools/e2e.sh render`: this comparison was fooled once already (the readback ran before the draw, so
   every dump was the previous frame — which with a scrolling camera looked like a clean
   one-pixel shift), so an arm that draws the frame *wrong* has to come out different.
 - **`LF2_RENDER_DEBUG=1`** reports what each frame was made of — quads, fills, tiles, cached
@@ -1648,7 +1691,7 @@ the **floor's orientation** below — a hue shift at locked luminance, so it can
 bright the picture is.
 
 On a frame with no stage and no fighters in it — the menu, character selection — the pass
-changes **nothing at all**, byte for byte, and `ctest render` asserts that alongside asserting
+changes **nothing at all**, byte for byte, and `tools/e2e.sh render` asserts that alongside asserting
 that the match frame *does* change. An effect that has quietly spread over the whole picture
 passes the second check and fails the first, which is exactly how the bloom-and-haze version
 of this pass would have been caught.
@@ -1694,7 +1737,7 @@ plain composition; there is deliberately no approximation to fall back to.
 
 - **`LF2_BG_ORIG=1`** hands the background layer draw back to the recompiled body instead of
   `runtime/overrides/background.c`, and **`LF2_BG_SKEW=<n>`** shifts every layer's parallax
-  offset by `n` pixels. Both exist for one purpose: `ctest background` runs the same route
+  offset by `n` pixels. Both exist for one purpose: `tools/e2e.sh background` runs the same route
   three ways and asserts the port's frames are byte-identical to the original's *and* that
   the skewed arm differs. Without the third arm, "the two agreed" would be indistinguishable
   from "the dump does not contain the background at all".

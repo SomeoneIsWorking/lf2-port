@@ -50,9 +50,9 @@ PAD1="$PAD1,up@overlay+99,up@overlay+159,south@overlay+219"   # 2 -> 1 -> 0 = Fi
 # be a pause with no drop-out in it. The gaps are the ones the frame-numbered version used.
 PAD2="south@match+158,south@match+258,start@match+458,down@match+518,south@match+578"
 
-echo "pause drop-out: a joined player leaves from the pause menu (about 2.5 min)..."
+echo "pause drop-out: a joined player leaves from the pause menu..."
 ( cd "$GAME" && \
-  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
   LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$PAD2" \
   LF2_QUIT_AFTER=3200 timeout 300 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 

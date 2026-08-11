@@ -11,6 +11,8 @@
 
 #include <stdint.h>
 
+#include "geom.h"
+
 enum { DEVSEL = 0x00450b4c, DEVSEL_END = 0x00450b6c };
 
 /* The game's player count, and it is the table's own: DEVSEL_END - DEVSEL is 32 bytes, one
@@ -196,7 +198,9 @@ enum { BG_CAMERA_X     = 0x00450bc4 };  /* the world camera, in stage coordinate
  * the section is cleared. Like everything else in this game it is expressed against the 794
  * screen, so a wider view sees straight past it (issue #36). */
 enum { BG_CAMERA_LOCK  = 0x00450bb0 };
-enum { BG_SCREEN_W     = 794 };         /* the game's screen width, literal in fn_0041a250 */
+/* The game's screen width, literal in fn_0041a250. Aliased to geom.h's rather than written
+ * twice, so the port has ONE 794 and the offline geometry test is testing the same one. */
+enum { BG_SCREEN_W     = GEOM_SCREEN_W };
 
 /* One layer field, or 0 when the index is out of range. Reads only; nothing here writes to
  * the game's own table. */

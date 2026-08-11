@@ -43,7 +43,7 @@ PAD="$PAD,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
 
 run() {   # run <mode> <window>
     ( cd "$GAME" && \
-      env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_WINDOW_SIZE="$2" \
+      env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_WINDOW_SIZE="$2" \
           LF2_MODE="$1" LF2_CAMERA=1 LF2_VIRTUAL_PAD="$PAD" LF2_QUIT_AFTER=3000 \
           timeout 400 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
 }

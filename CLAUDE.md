@@ -35,14 +35,24 @@ cd game && ../scratch/build/lf2 lf2.exe      # cwd MUST be the game tree — dat
 Build artefacts go in the gitignored `scratch/`, never `/tmp`.
 
 ```sh
-cd scratch/build && ctest              # everything; the `slow` tests are ~75-300 s each
-cd scratch/build && ctest -LE slow     # fast set only: decoder_corpus, blit, mixer, flags, instructions
-cd scratch/build && ctest -R coop_select --output-on-failure   # one test
+cd scratch/build && ctest                      # THE suite: ~1.3 s, run it after every edit
+tools/e2e.sh                                   # the scripts that boot the game (minutes)
+tools/e2e.sh mouse render                      # one or more of them by name
 ```
 
-- Every `slow` test launches a full headless game instance and is `RUN_SERIAL`. **Do not run
-  `ctest -j2` on them** — two instances on one machine trip the wall-clock timeouts and
-  produce failures that pass individually.
+- **`ctest` is one suite and it is fast.** Nothing in it boots the game, nothing in it takes
+  half a second, and the whole set is under two. That bar is the point: a suite with a
+  five-minute test in it stops being run, which is how the mouse route stayed green and broken
+  for as long as it existed (issue #26).
+- **A claim that can be checked offline must be.** `runtime/overrides/geom.h` holds the port's
+  pure geometry — the composition width, the parallax, the camera bounds and the wide-view
+  centring, the overlay's rows, the stereo pan — and `runtime/test_geom.c` walks it in a
+  millisecond. The overrides *include* that header, so the test is not exercising a copy. The
+  audio pan moved this way: a three-run, 270-second script became 20 assertions.
+- **`tools/e2e.sh` is for what genuinely needs a running game** — whether a route reaches a
+  screen, whether a second pad drives its fighter, whether the GPU renderer matches the
+  software one. It runs them one at a time; each wraps its instance in a wall-clock `timeout`
+  and two instances on one machine trip it.
 - Tests exit **77 to SKIP** (no game tree, no Ghidra dump, non-x86 host). A skip is not a pass;
   read the output.
 - `decoder_corpus` needs `re/instructions.tsv`, which is gitignored — regenerate from your own

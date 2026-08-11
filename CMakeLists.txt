@@ -14,6 +14,27 @@ target_compile_options(test_corpus PRIVATE -Wall -Wextra)
 
 enable_testing()
 
+# ---- THERE IS ONE SUITE AND IT IS FAST ----
+#
+# `ctest` finishes in about a second and a half, and no single test in it takes half a second.
+# That is the whole bar: this is a 2001 game whose entire logic is arithmetic over a few
+# megabytes, so anything here that took minutes was measuring the wrong thing in the wrong
+# place. Run it after every edit; it is what is allowed to be the reason you believe something.
+#
+# The game-booting scripts under tools/ are NOT registered here and must not be. They drive a
+# real instance through thousands of frames of menus, which answers questions nothing offline
+# can -- does a route REACH a screen, does a second pad drive its fighter, does the GPU
+# renderer draw what the software one draws -- and costs seconds to minutes each. They live
+# behind one command:
+#
+#     tools/e2e.sh              # all of them, serially
+#     tools/e2e.sh mouse render # by name
+#
+# A claim that COULD be checked offline belongs in runtime/overrides/geom.h and
+# runtime/test_geom.c rather than in a script. The audio pan is the worked example: a
+# three-run, 270-second script became 20 assertions in a millisecond, and gained a walk across
+# every on-screen pixel that the script had never done.
+
 # re/instructions.tsv is Ghidra's disassembly of the game: every instruction with its raw
 # bytes, which is enough to reconstruct .text. It is a derivative of a binary this project
 # does not distribute, so it is gitignored and supplied by whoever runs the build
@@ -125,6 +146,14 @@ else()
     message(STATUS "SDL3_ttf not found: GDI text will use SDL's built-in debug font")
 endif()
 
+# The port's geometry, tested WITHOUT booting the game. Every claim in it used to cost a
+# three-thousand-frame headless run; they are arithmetic, and runtime/overrides/geom.h is that
+# arithmetic factored out so the overrides and this test share one copy of it.
+add_executable(test_geom runtime/test_geom.c)
+target_include_directories(test_geom PRIVATE runtime runtime/overrides)
+target_compile_options(test_geom PRIVATE -Wall -Wextra)
+add_test(NAME geometry COMMAND test_geom)
+
 add_executable(test_blit runtime/test_blit.c)
 target_include_directories(test_blit PRIVATE runtime)
 target_compile_options(test_blit PRIVATE -Wall -Wextra)
@@ -186,130 +215,6 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/re/insn_vectors.bin)
     set_tests_properties(instructions_replay PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
-# End-to-end: drives the port to a running match and asserts the things that have actually
-# broken before. Slow (~75 s) and needs the extracted game tree, so it is labelled and can
-# be skipped with `ctest -LE slow`. It skips itself (exit 77) if the tree is absent.
-#
-# Every `slow` test is RUN_SERIAL. Each one launches a full game instance and wraps it in a
-# wall-clock `timeout`, and two instances on one machine take long enough to trip it -- so
-# `ctest -j2` produced FAILURES from tests that pass individually and pass serially. A
-# flaky gate is worse than a slow one: it teaches you to re-run until green, which is how a
-# real regression gets waved through. They are serialised rather than given longer
-# timeouts, because the timeout is what stops a hung run from wedging the suite.
-add_test(NAME smoke
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/smoke_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(smoke PROPERTIES
-                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# The controller path, which the mouse-driven smoke test cannot see at all. Kept separate
-# rather than folded in: it supplies no keyboard and no mouse input, so a failure names the
-# controller support rather than being one more assertion in a run that does everything.
-add_test(NAME controller
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/controller_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(controller PROPERTIES
-                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# The mouse path, for the same reason the controller has its own test: the smoke test
-# clicks once and then drives everything else from the keyboard, so every screen after the
-# launcher was proved only for keys. Mouse support on those screens could have been dead
-# and stayed green -- and part of it was.
-add_test(NAME mouse
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/mouse_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(mouse PROPERTIES
-                     LABELS slow TIMEOUT 180 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# Two controllers, two players. Separate because it needs two runs -- one as a control --
-# and because "a second pad is player two" has been got wrong in both directions already.
-add_test(NAME controller_2p
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/controller_2p_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(controller_2p PROPERTIES
-                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# Drop-in coop: a second pad joins a match that is already running and drives its fighter.
-# Two-sided -- the same join with and without a direction pressed -- because "a fighter
-# appeared" would also be satisfied by one wandering under its own AI.
-add_test(NAME coop_dropin
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/coop_dropin_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(coop_dropin PROPERTIES
-                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# A late joiner CHOOSES: the fighter flashes, left/right cycle the game's own roster and
-# attack locks in. Separate from coop_dropin because the two measure different halves --
-# coop_dropin that the pad drives the fighter it joined, this one that the player picked it.
-add_test(NAME coop_select
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/coop_select_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(coop_select PROPERTIES
-                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# A joined player leaves a match deliberately, from the pause menu on its own pad. The
-# drop-out machinery was previously reached only by unplugging a pad, which no test can do.
-add_test(NAME pause_dropout
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/pause_dropout_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(pause_dropout PROPERTIES
-                     LABELS slow TIMEOUT 320 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# The composition's width follows the WINDOW's aspect, in both directions and with the
-# native and taller-than-native cases as the negatives (issue #20).
-add_test(NAME widescreen
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/widescreen_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(widescreen PROPERTIES
-                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# The background layer draw is now an override (runtime/overrides/background.c). It is
-# verified by diffing frames against the recompiled body it replaces, with a deliberately
-# skewed parallax as the negative -- two arms agreeing proves nothing if the dump would agree
-# whatever was drawn.
-add_test(NAME background
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/background_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(background PROPERTIES
-                     LABELS slow TIMEOUT 900 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# A window resize must not leave the previous size's pixels standing (issue #29), with
-# LF2_PRIMARY_STALE as the negative -- "the band is black" would pass on a blank frame.
-add_test(NAME resize
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/resize_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(resize PROPERTIES
-                     LABELS slow TIMEOUT 600 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# The port drives itself into STAGE mode (LF2_MODE), and the stage-mode camera lock follows
-# the view (issue #36). Three arms; the VS one is the negative that makes the others mean
-# something. Before this, every route only ever reached VS mode.
-add_test(NAME stage_mode
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/stage_mode_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(stage_mode PROPERTIES
-                     LABELS slow TIMEOUT 900 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# Widescreen must not silence the right of the picture (issue #39). Three arms, the last of
-# which turns the fix OFF and requires the failure to reappear.
-add_test(NAME audio_pan
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/audio_pan_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(audio_pan PROPERTIES
-                     LABELS slow TIMEOUT 900 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
 # The SPIR-V in runtime/shaders/gen/ is committed, so the build needs no shader compiler --
 # which also means an edited shader that was never recompiled would ship the old lighting and
 # nothing would say so. This recompiles and compares wherever glslc exists, and SKIPS (77)
@@ -318,23 +223,3 @@ add_test(NAME shaders
          COMMAND sh ${CMAKE_SOURCE_DIR}/tools/build_shaders.sh --check
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(shaders PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
-
-# The native renderer draws what the software compositor draws (issue #30), with a
-# deliberately-broken arm as the negative -- this comparison was fooled once already by
-# reading the same buffer twice.
-add_test(NAME render
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/render_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(render PROPERTIES
-                     LABELS slow TIMEOUT 900 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")
-
-# Two humans in a MATCH. controller_2p proves the second pad joins at character selection
-# and stops there; this one reaches the fight and asserts pad two actually drives its
-# fighter, two-sided.
-add_test(NAME two_human_match
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/two_human_match_test.sh
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(two_human_match PROPERTIES
-                     LABELS slow TIMEOUT 300 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
-                     ENVIRONMENT "BUILD=${CMAKE_BINARY_DIR}")

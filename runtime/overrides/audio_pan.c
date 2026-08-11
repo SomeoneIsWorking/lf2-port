@@ -45,14 +45,17 @@
 
 #include "overrides.h"
 #include "world.h"
+#include "geom.h"
 
 #include "../guest_ops.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
-/* The game's own numbers, in the units it wrote them: pixels of a 794-wide screen. */
-enum { PAN_LEFT_X = 200, PAN_RIGHT_X = 600, PAN_NEAR = 200, PAN_FAR = 400, PAN_FULL = 100 };
+/* The falloff itself is in geom.h, so runtime/test_geom.c exercises THIS code rather than a
+ * copy of it -- the whole span table is checked there in a millisecond, where it used to cost
+ * a three-run, 270-second headless test. What stays here is the part that needs the game: the
+ * guest stack, the camera, and the two slot tables. */
 
 /* The two slot tables each function accumulates into, and the flag that says a slot has been
  * touched this frame. Two identical routines with two sets of tables -- the game keeps two
@@ -64,30 +67,14 @@ static long pan_calls, pan_silent;
 
 /* A screen constant, scaled to the view actually being drawn. Exact at the game's own width:
  * 200 * 794 / 794 is 200, not 199. */
-static int pan_scaled(int px)
+/* LF2_AUDIO_PAN_RAW=1 keeps the game's screen constants unscaled, which is the behaviour this
+ * file replaced. It exists so the fix has a negative arm: "the audible span covers the picture"
+ * would pass on a build whose span was simply always enormous. Never set in normal use. */
+static int pan_view(void)
 {
-    /* LF2_AUDIO_PAN_RAW=1 keeps the game's screen constants unscaled, which is the behaviour
-     * this file replaced. It is the NEGATIVE ARM of tools/audio_pan_test.sh: "the audible
-     * span covers the picture" would pass just as happily on a build where the span was
-     * always enormous, so the test also has to show that WITHOUT the scaling the span fails
-     * to cover a wide view. Never set in normal use. Read once -- this runs per sound. */
     static int raw = -1;
     if (raw < 0) raw = getenv("LF2_AUDIO_PAN_RAW") != NULL;
-    if (raw) return px;
-    const long view = bg_view_width();
-    return (int)(((long)px * view) / (long)BG_SCREEN_W);
-}
-
-static int pan_falloff(int32_t sx, int centre, int near, int far)
-{
-    int d = (int)(sx - centre);
-    if (d < 0) d = -d;
-    if (d < near) return PAN_FULL;
-    if (d >= far) return 0;
-    /* (far - d) * 100 / (far - near). At the native width that is the game's own
-     * (400 - d) * 100 / 200, including the truncation -- the numerator cannot be negative
-     * inside this branch, so there is no rounding difference to reproduce. */
-    return ((far - d) * PAN_FULL) / (far - near);
+    return raw ? GEOM_SCREEN_W : bg_view_width();
 }
 
 static void pan_apply(uint32_t seen_tab, uint32_t l_tab, uint32_t r_tab)
@@ -96,9 +83,8 @@ static void pan_apply(uint32_t seen_tab, uint32_t l_tab, uint32_t r_tab)
     const uint32_t slot   = LD32(R(ESP) + 8);
     const int32_t sx = world_x - (int32_t)LD32(BG_CAMERA_X);
 
-    const int near = pan_scaled(PAN_NEAR), far = pan_scaled(PAN_FAR);
-    const int vl = pan_falloff(sx, pan_scaled(PAN_LEFT_X),  near, far);
-    const int vr = pan_falloff(sx, pan_scaled(PAN_RIGHT_X), near, far);
+    int vl = 0, vr = 0;
+    geom_pan((int)sx, pan_view(), &vl, &vr);
 
     pan_calls++;
     if (!vl && !vr) pan_silent++;
@@ -133,11 +119,13 @@ void audio_pan_report(void)
 {
     if (!getenv("LF2_AUDIO_PAN")) return;
     const int view = bg_view_width();
-    const int far = pan_scaled(PAN_FAR);
-    const int lo = pan_scaled(PAN_LEFT_X) - far + 1;
-    const int hi = pan_scaled(PAN_RIGHT_X) + far - 1;
+    const int pv = pan_view();
+    const int far = geom_pan_scaled(GEOM_PAN_FAR, pv);
+    const int lo = geom_pan_scaled(GEOM_PAN_LEFT_X, pv) - far + 1;
+    const int hi = geom_pan_scaled(GEOM_PAN_RIGHT_X, pv) + far - 1;
     fprintf(stderr, "audio pan: view %d -- speakers at %d and %d, audible screen x %d..%d\n",
-            view, pan_scaled(PAN_LEFT_X), pan_scaled(PAN_RIGHT_X), lo, hi);
+            view, geom_pan_scaled(GEOM_PAN_LEFT_X, pv),
+            geom_pan_scaled(GEOM_PAN_RIGHT_X, pv), lo, hi);
     if (lo <= 0 && hi >= view - 1)
         fprintf(stderr, "audio pan: the audible span covers the whole %d-wide picture, so "
                         "nothing on screen is culled\n", view);

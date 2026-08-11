@@ -50,6 +50,7 @@
 
 #include "overrides.h"
 #include "world.h"
+#include "geom.h"
 
 #include "../com.h"
 #include "../guest_ops.h"
@@ -131,20 +132,20 @@ static void fill_layer(uint32_t registry, uint32_t bg, int i, uint32_t tint)
  * reproduce a latent crash. */
 static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, int32_t w)
 {
-    /* A layer with less picture than the view is wide cannot be scrolled to cover it, and
-     * the formula run past that point inverts -- (span - w) goes negative and the layer
-     * drifts RIGHT as the camera moves right. Pin it at its authored position instead. That
-     * is the honest answer to "there is no more picture", and it is issue #23: every stage's
-     * sky is non-looping and only just wider than 794, so beyond that width the band beside
-     * it is black. Filling it would mean inventing layout the stage does not have. */
-    if (stage_width <= w || span <= w) return 0;
+    /* The formula, and the pin for a layer with less picture than the view is wide, are
+     * geom_layer_offset -- checked by runtime/test_geom.c without booting the game. The
+     * pin is issue #23: every stage's sky is non-looping and only just wider than 794, so
+     * beyond that width the band beside it is black, and filling it would mean inventing
+     * layout the stage does not have. */
+    if (stage_width <= w || span <= w) return 0;      /* pinned: the skew must not move it */
+    const int32_t off = geom_layer_offset(span, stage_width, camera, w);
     /* LF2_BG_SKEW=<n> shifts every parallax offset by n. It exists so the byte-identity
      * check in tools/background_test.sh has a NEGATIVE case: a frame dump that is identical
      * whatever this function returns would be measuring nothing. Never set in normal use.
      * Read once -- this runs for every layer of every frame. */
     static int skew = -1;
     if (skew < 0) { const char *s = getenv("LF2_BG_SKEW"); skew = s ? atoi(s) : 0; }
-    return -(((span - w) * camera) / (stage_width - w)) + skew;
+    return off + skew;
 }
 
 /* ---- WHERE THE WIDE VIEW IS CENTRED (issue #39) ----
@@ -179,9 +180,12 @@ static int32_t cam_game_max, cam_draw_max, cam_k, cam_lock_max;
 int bg_draw_camera(void)
 {
     const int32_t cam = (int32_t)LD32(BG_CAMERA_X);
-    const int32_t k = (int32_t)((bg_view_width() - BG_SCREEN_W) / 2);
-    const int32_t c = (k <= 0) ? cam : (cam - k > 0 ? cam - k : 0);
-    cam_k = k;
+    const int32_t view = (int32_t)bg_view_width();
+    /* The shift is geom_draw_camera; what stays here is reading the guest's camera and the
+     * counters LF2_CAMERA reports. `k` is recomputed only to report it. */
+    const int32_t c = (int32_t)geom_draw_camera(cam, view);
+    const int32_t k = (view - BG_SCREEN_W) / 2;
+    cam_k = k > 0 ? k : 0;
     cam_frames++;
     if (c != cam) cam_shifted++;
     if (cam > cam_game_max) cam_game_max = cam;
@@ -284,7 +288,6 @@ int bg_view_width(void)
 static void camera_clamp_to_view(int32_t stage_width, int32_t view)
 {
     int32_t camera = (int32_t)LD32(BG_CAMERA_X);
-    int32_t max = stage_width - view;
 
     /* THE STAGE-MODE SECTION LOCK gets the same substitution, and for the same reason
      * (issue #36). fn_0041b5d0 bounds the camera a second time by [0x00450bb0] when that is
@@ -305,16 +308,17 @@ static void camera_clamp_to_view(int32_t stage_width, int32_t view)
      * bound above it already gets and it is a no-op at the game's own width, but nobody has
      * watched it hold a camera in a stage. */
     const int32_t lock = (int32_t)LD32(BG_CAMERA_LOCK);
+    /* Both bounds and the floor at zero are geom_camera_max, which runtime/test_geom.c checks
+     * at the game's own width and wider. What is here is the guest read and the counters. */
+    const int32_t max = (int32_t)geom_camera_max(stage_width, view, lock);
     if (lock) {
         cam_locked++;
         if (lock > cam_lock_max) cam_lock_max = lock;
-        const int32_t lock_max = lock + BG_SCREEN_W - view;
         /* Counted separately from "the lock was set": the substitution only DOES anything
          * when the lock is the binding constraint, and a run where the stage bound was
          * always tighter would exercise none of it while still reporting a lock. */
-        if (lock_max < max) { max = lock_max; cam_lock_bound++; }
+        if (lock + BG_SCREEN_W - view < stage_width - view) cam_lock_bound++;
     }
-    if (max < 0) max = 0;
     if (camera > max) camera = max;
     if (camera < 0) camera = 0;
     ST32(BG_CAMERA_X, (uint32_t)camera);

@@ -42,7 +42,7 @@ run() {   # run <logfile> [second-pad script]
     # LF2_VIRTUAL_PAD2 is exported rather than set inline: `${2:+VAR="$2"}` expands to a
     # single word the shell tries to EXECUTE, not to a variable assignment.
     ( cd "$GAME" && \
-      export SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+      export SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
              LF2_TEXT_DEBUG=1 LF2_VIRTUAL_PAD="$PAD1" LF2_QUIT_AFTER=1900 && \
       if [ -n "${2:-}" ]; then export LF2_VIRTUAL_PAD2="$2"; else unset LF2_VIRTUAL_PAD2; fi && \
       timeout 120 "$BUILD/lf2" lf2.exe ) > "$1" 2>&1
@@ -50,7 +50,7 @@ run() {   # run <logfile> [second-pad script]
 
 fail=0
 
-echo "control run: one pad, nobody joins slot 2 (about 60s)..."
+echo "control run: one pad, nobody joins slot 2..."
 run "$LOG1"
 if grep -q "^text .*Computer" "$LOG1"; then
     echo "  ok    control: player one proceeded and slot 2 became a computer"
@@ -60,7 +60,7 @@ else
     fail=1
 fi
 
-echo "two pads, the second joins before player one proceeds (about 60s)..."
+echo "two pads, the second joins before player one proceeds..."
 # The join press is keyed to the SCREEN, not to a frame number. It used to be `south:1250`,
 # and that number had already had to move once when the data load got faster -- a stopwatch
 # aimed at a screen whose arrival time is not fixed. `@charselect+168` fires 168 frames after

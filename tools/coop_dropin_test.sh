@@ -67,7 +67,7 @@ PRESS="$JOIN,right@match+238,right@match+268,right@match+298,right@match+328,rig
 
 run() {   # run <logfile> <pad2 script>
     ( cd "$GAME" && \
-      SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+      SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
       LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$2" LF2_COOP_CHAR=52 \
       LF2_QUIT_AFTER=2800 timeout 220 "$BUILD/lf2" lf2.exe ) > "$1" 2>&1
 }
@@ -79,7 +79,7 @@ right_seen() {   # right_seen <logfile>
     grep "coop spawn: .* buttons seen:" "$1" | tail -1 | sed -n 's/.* right=\([0-9]*\) .*/\1/p'
 }
 
-echo "drop-in coop: pad two joins a running match (about 3 min for both arms)..."
+echo "drop-in coop: pad two joins a running match, two arms..."
 run "$LOGP" "$PRESS"
 run "$LOGQ" "$JOIN"
 

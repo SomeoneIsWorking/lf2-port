@@ -1,11 +1,11 @@
 ---
 id: 26
 title: mouse_test says it drives the game into a match and never reaches one
-status: open
+status: resolved
 symptom: tools/mouse_test.sh passes every assertion while the run stops at the post-load panel: no overlay, no match, and the 'sound effects (a match started)' check is satisfied by menu sounds
 tags: reported,testing,verification,mouse
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-07
 ---
 
 OBSERVED while measuring route anchors for issue #25, using the new per-stream report.
@@ -81,3 +81,41 @@ does this with a run of attack presses. Frame dumps of the sequence are in scrat
 show exactly where it stops: character selection with the computers still picking. The clicks
 to drive that are not yet worked out, and the pre-fight overlay is never reached, so
 `overlay@`/`match@` cannot be asserted yet.
+
+### Resolution (2026-08-07)
+The mouse now drives the game into a match: charselect@1352 overlay@1751 match@1813, with no key
+and no pad. The assertion is the screens REACHED -- each of the three named separately -- so a
+break says which handover stopped working rather than moving a number.
+
+TWO PORT BUGS were in the way, and both were found by tracing the route rather than by reading
+the code. Neither would have been visible in a screenshot.
+
+  THE OVERLAY'S ROW GEOMETRY WAS WRONG. The port used a uniform 24-px step from y 16, measured
+  by pinning the selection and watching where the highlight blit landed. Ghidra on FUN_00429730
+  -- the only function that touches OVERLAY_SEL -- gives the six rows verbatim: 16, 39, 64, 87,
+  111, 137, with the labels staggered in x too (the list is drawn on a slant). The measurement
+  had sampled items 0, 2 and 5, which are exactly the three a uniform step gets nearly right, so
+  the method used could not have shown the error. Claim C022.
+
+  AN IDLE POINTER COUNTED AS A MOVE ON THE FRAME A SCREEN OPENED. Each handler hovers only when
+  the pointer moved, but last_x/last_y belonged to the HANDLER, not to the screen, so on the
+  opening frame they held a position from a previous screen and 'moved' read true against a
+  pointer nobody had touched. Measured: the last click on character selection leaves the pointer
+  at (200,150), inside the overlay's panel band; the overlay opened at frame 1751 with the game's
+  own selection on item 2, the idle pointer dragged it to item 5 (Exit) on 1752, and the next
+  click activated it. The overlay was gone by 1800. Each screen now seeds the handler's memory
+  with the pointer's current position on the frame it opens.
+
+AND ONE ROUTE TRAP worth writing down, because it cost several runs: the `@charselect+N` keys
+count off when charselect FIRST appeared. The overlay opens on the third portrait click, so anything
+scheduled after that lands on the OVERLAY. An earlier version of this route spent eight clicks
+activating 'Exit' and could not work out why the overlay kept closing. Three portrait clicks are
+the whole of character selection; the CPU-count click the old route carried was never needed.
+
+VALIDATED AGAINST BOTH CLASSES: route intact -> all three screens, PASSED. The 'Fight!' click
+aimed off the panel (y 600) -> charselect and overlay still ok, `never reached match` FAILED,
+every other check still passing. A precise failure, not a smear.
+
+THE OLD GAP REMAINS AND IS STILL STATED: breaking the FIRST click (the launcher's 'game start')
+does not fail this test, because the click at 1350 then lands on the launcher instead and
+everything after is screen-keyed. This test does not prove the launcher click does anything.

@@ -109,7 +109,12 @@ Both functions are now overrides with the constants scaled by view/794. A SCALE 
 re-derivation on purpose: view/4 gives 198 at the native width instead of the 200 the game
 shipped, and changing a game nobody asked to change is not a fix.
 
-VERIFIED by tools/audio_pan_test.sh, three arms: at 794 the speakers are at EXACTLY 200 and 600;
-at 1920 the audible span covers the whole picture; and with LF2_AUDIO_PAN_RAW=1 turning the
-scaling off, the same 1920 window fails to cover it. Without that third arm the second would
-pass on a build whose span was simply always enormous.
+VERIFIED by `ctest geometry` (runtime/test_geom.c), three arms: at 794 the speakers are at
+EXACTLY 200 and 600; every on-screen x at 794 and at 1920 is audible, WALKED rather than
+sampled; and the unscaled constants silence a 1920 picture from x 999. Without that third arm
+the second would pass on a build whose span was simply always enormous.
+
+This was tools/audio_pan_test.sh, three headless runs and 270 seconds. The falloff moved into
+runtime/overrides/geom.h -- which runtime/overrides/audio_pan.c includes, so the test is not
+exercising a copy -- and the same three arms now run in a millisecond, with the pixel walk the
+script never did.

@@ -46,7 +46,7 @@ arm() {   # arm <dir> [VAR=value ...]
     dir=$1; shift
     mkdir -p "$OUT/$dir"
     ( cd "$GAME" && \
-      env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+      env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
           LF2_RENDERER=soft \
           LF2_VIRTUAL_PAD="south:900,south:960,south:1020,south:1080" \
           LF2_WINDOW_SIZE=1900x800 \
@@ -56,7 +56,7 @@ arm() {   # arm <dir> [VAR=value ...]
           timeout 200 "$BUILD/lf2" lf2.exe ) >/dev/null 2>&1 || true
 }
 
-echo "resize leaves no stale pixels: two runs, about 2 minutes..."
+echo "resize leaves no stale pixels: two runs..."
 arm clean
 arm stale LF2_PRIMARY_STALE=1
 

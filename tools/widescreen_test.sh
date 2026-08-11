@@ -49,7 +49,7 @@ say_fail() { echo "  FAIL  $1"; fail=1; }
 # $1 window, $2 expected composition width
 check() {
     ( cd "$GAME" && \
-      SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+      SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
       LF2_WINDOW_SIZE="$1" LF2_QUIT_AFTER=120 timeout 120 "$BUILD/lf2" lf2.exe ) \
       > "$LOG" 2>&1 || true
 
@@ -71,7 +71,7 @@ check() {
     fi
 }
 
-echo "widescreen: the composition follows the window (about 1 min)..."
+echo "widescreen: the composition follows the window (quick)..."
 check 794x550   794
 check 1600x550  1600
 check 1920x1080 1920
@@ -87,7 +87,7 @@ check 800x900   800
 # to the new width, and it was 794 BEFORE that -- so a build that simply started wide would
 # fail the third.
 ( cd "$GAME" && \
-  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
   LF2_WINDOW_SIZE=794x550 LF2_WINDOW_RESIZE=200:1600x550 \
   LF2_QUIT_AFTER=400 timeout 180 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
 

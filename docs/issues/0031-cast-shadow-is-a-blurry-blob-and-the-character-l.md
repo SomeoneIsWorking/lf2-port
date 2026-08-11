@@ -35,5 +35,5 @@ DIFFERENCE from flat, not a brightness. The lit and shaded sides of a fighter no
 about 40% either way, and the warm key against the cool sky puts a temperature difference
 between them as well.
 
-Verified: ctest render, four arms, including the one that matters here -- the light changes
+Verified: tools/e2e.sh render, four arms, including the one that matters here -- the light changes
 184174 px on the match frame and ZERO on the character-select frame.

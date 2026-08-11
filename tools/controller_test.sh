@@ -40,9 +40,9 @@ PAD="$PAD,south@charselect+618,south@charselect+838"   # join, then open the ove
 PAD="$PAD,up@overlay+99,up@overlay+159,south@overlay+219"    # 2 -> 1 -> 0 = Fight!
 PAD="$PAD,right@match+108,south@match+158,left@match+218,south@match+278"  # play
 
-echo "driving the game from a virtual gamepad into a match (about 90s)..."
+echo "driving the game from a virtual gamepad into a match..."
 ( cd "$GAME" && \
-  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
   LF2_SCREEN_HASH=1 LF2_AUDIO_DEBUG=1 LF2_CK_DEBUG=1 \
   LF2_VIRTUAL_PAD="$PAD" LF2_QUIT_AFTER=2600 \
   timeout 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
