@@ -1,7 +1,7 @@
 ---
 id: 48
 title: Cast shadows fall on objects they should not
-status: open
+status: resolved
 symptom: a sprite-cast shadow darkens pixels of an object it should not touch -- it displays over objects rather than only on the ground behind them
 tags: reported,rendering,renderer,hd2d,shadows
 created: 2026-08-11
@@ -57,3 +57,49 @@ RELATED: issue #30 (the HD2D renderer this belongs to), issue #31 (the shadow wa
 and the character was lost in it), claim C019 (how an object is identified), issue #40 (GPU
 runs on this machine are limited to ONE at a time until Vulkan validation has been run, so
 reproducing this must not be done as a batch).
+
+### Resolution (2026-08-11)
+FIXED, and the fix is one token: the cast-shadow term is no longer applied to the CHARACTER
+branch of runtime/shaders/hd2d_light.frag.
+
+    before   vec3 character = albedo * (ambient + sun * (u_sun_dir.w * ndl * shade));
+    after    vec3 character = albedo * (ambient + sun * (u_sun_dir.w * ndl));
+
+THE CAUSE, and it is not the depth-sorting hypothesis this entry was filed with. The mask does
+lack depth and identity, but that is not what produced the reported symptom. A shadow is
+sheared from the caster's OWN silhouette starting at the caster's OWN feet, so it overlaps the
+caster's lower body every frame -- and because `shade` was multiplied into the character term,
+every object was standing in its own shadow. It needs no second object to reproduce.
+
+The shader's own header already stated the rule it was breaking: "The only thing that touches
+them is the CAST SHADOW, and that is the point of a cast shadow -- it falls on the floor, not
+on the fighter." So does the game: LF2 blits a flat ellipse on the floor UNDER a fighter and
+draws the fighter over it, so a shadow has never darkened an object's pixels in this game. The
+port kept that rule for the ground and lost it for the characters.
+
+MEASURED, run against BOTH classes rather than reasoned about. The discriminator is
+LF2_HD2D_SHADOW=0 against the default, which isolates the cast-shadow term with the rest of the
+lighting still on, and LF2_HD2D_SHOW=chars gives the character mask to test the pixels against.
+Frame 2400 of the render route, 1920x1080:
+
+    before the fix   1092 cast-shadow pixels, 379 of them on CHARACTER pixels
+    after  the fix    713 cast-shadow pixels,   0 of them on character pixels
+
+1092 - 713 = 379 exactly: the shadow on the floor is untouched and only the pixels on objects
+went. Repeated on frames 2250/2550/2700 (381/428/271 shadow pixels, all on the ground).
+
+A WRONG MEASUREMENT ON THE WAY, recorded because it looked convincing and was not. The first
+"reproduction" diffed the frame against LF2_HD2D=off and called the difference shadow. That
+switch turns off the WHOLE lighting pass, so the 1837-2245 pixels it reported were the key
+light, the bevel and the floor tint as well -- most of a fighter's body lights up under it, and
+the marked-up frame looked exactly like the reported bug. 1508 of those pixels were on
+characters and only 620 of the shadow MASK overlapped the character mask at all, which is the
+contradiction that gave it away. LF2_HD2D=off is the control for "is the pass running"; it is
+not the control for any single term in it.
+
+NOT DONE, and it is a different question from the one reported: a shadow still does not know
+about depth, so nothing here stops one object's shadow falling on ANOTHER object. It cannot
+today, because both would have to be excluded and the character mask has no identity in it.
+That case does not arise from the current geometry -- shadows are short and start at the
+caster's feet -- and no frame has shown it. If one does, it is a new issue with a frame in it,
+not a reopening of this one.

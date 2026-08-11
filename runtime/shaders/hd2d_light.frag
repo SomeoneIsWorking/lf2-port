@@ -102,7 +102,16 @@ void main(void)
     float wrap = clamp(dot(n, L) * 0.5 + 0.5, 0.0, 1.0);
     float ndl = wrap * wrap;
 
-    /* The cast-shadow mask, drawn from the fighters' own silhouettes and blurred. */
+    /* The cast-shadow mask, drawn from the fighters' own silhouettes and blurred.
+     *
+     * IT IS APPLIED TO THE GROUND ONLY, and that is the game's own model rather than a
+     * simplification of it: LF2 draws a flat ellipse on the floor UNDER a fighter and then
+     * draws the fighter over it, so a shadow has never darkened an object's pixels in this
+     * game. The port kept that rule for the ground and lost it for the characters, and the
+     * result was not subtle (issue #48): a shadow is sheared from the caster's OWN silhouette
+     * starting at the caster's OWN feet, so it lands across the caster's lower body every
+     * frame. Both fighters and the heavy object were being drawn standing in their own
+     * shadows. See the character term below, which no longer takes this. */
     float shade = 1.0 - u_bounce.w * clamp(texture(u_shadow, v_uv).r, 0.0, 1.0);
 
     /* A hemisphere ambient: what a surface sees is the sky above and the floor below, in a
@@ -111,7 +120,9 @@ void main(void)
     float up = clamp(n.y * 0.5 + 0.5 + height * u_params.w, 0.0, 1.0);
     vec3 ambient = mix(u_bounce.rgb, u_sky.rgb, up) * u_sun_color.w;
 
-    vec3 character = albedo * (ambient + u_sun_color.rgb * (u_sun_dir.w * ndl * shade));
+    /* No `shade` here -- see the cast-shadow mask above. A fighter is lit by the key light
+     * and the hemisphere ambient, and nothing else takes light away from it. */
+    vec3 character = albedo * (ambient + u_sun_color.rgb * (u_sun_dir.w * ndl));
 
     /* ---- the stage: a floor is a HORIZONTAL surface, a backdrop is a vertical one ----
      *
