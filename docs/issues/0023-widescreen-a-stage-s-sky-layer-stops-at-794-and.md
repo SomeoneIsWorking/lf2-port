@@ -5,7 +5,7 @@ status: open
 symptom: in a window wider than 794x550 the upper part of the stage background ends partway across and the rest of that band is black, while the ground and the tiling layers do fill the width
 tags: rendering
 created: 2026-08-05
-updated: 2026-08-06
+updated: 2026-08-11
 ---
 
 OBSERVED, not reported, while verifying issue #20 -- and it is PRE-EXISTING, not caused by
@@ -351,3 +351,50 @@ alternatives were weighed and each is worse HERE --
   edge-extend the columns invention too, and wrong on any sky with detail at its edge
 The right answer is a lit backdrop from a real renderer, which is issue #30, and that is
 where this should be finished rather than in the blit compositor.
+
+### Note (2026-08-11)
+THE EXACT LAYER IS IDENTIFIED, from the reporter's stage-mode screenshot and the game's own
+data. Stage 1-1 is Lion Forest, and the band that stops is ONE layer:
+
+    bg\\sys\\lf\\forests.bmp    width: 800   x: 0   y: 128   bitmap 800x70   NO loop:
+
+Its span is 800 and the view is 978. 978 - 800 = 178, which is 18% of the picture -- the black
+band in the screenshot, to the pixel.
+
+AND THE PORT IS ALREADY DOING THE RIGHT THING WITH THE PARALLAX, which is worth stating so it
+is not "fixed" again. geom_layer_offset (runtime/overrides/geom.h) already substitutes the view
+for the game's 794:
+
+    if (stage_width <= view || span <= view) return 0;
+    return -(((span - view) * camera) / (stage_width - view));
+
+For this layer span (800) <= view (978), so the offset is zero and the layer sits at x 0. That
+is correct: the game's invariant is that a layer's span is chosen to cover the SCREEN at every
+camera position exactly, with no margin, so a layer whose whole span is narrower than the view
+has no position that covers it. Scrolling it would only move the black.
+
+EVERY LAYER IN THE GAME THAT CAN DO THIS, listed rather than sampled -- spans under 978 across
+all shipped stages:
+
+    CUHK            sky1 + sky2   span 967   (a PAIR, 800 + 167, laid end to end)
+    Forbidden Tower sky           span 797
+    The Great Wall  sky           span 800
+    HK Coliseum     back1/2/22    span 794   (stage width is also 794)
+    Lion Forest     forests       span 800   <- the reported one
+    Queen's Island  qi1 and 7 more            span 800
+    Tai Hom Village 5             span 800
+
+So it is the SKY of six stages, and always the sky. That is not a coincidence to note in
+passing -- it is the layer that has no parallax left to give.
+
+THE OPEN QUESTION IS NOW SHARP, and it is not about the parallax. runtime/video/ddraw.c already
+has a rule for exactly this shape -- "a background layer drawn from x 0 across the whole native
+width is a full-width backdrop ... those are the only pieces that cannot be made wider by
+drawing more of them, so they are stretched across the viewport instead". forests.bmp is 800
+wide at x 0, which is wider than the native 794, so it should qualify and it plainly is not
+being stretched. Find out why that rule declines this blit before writing any new rule: the
+answer is either a condition that is wrong or a blit that does not look the way the rule
+expects, and both are cheap to see with LF2_DRAW_PATHS.
+
+DO NOT add a second stretch path beside the existing one. Two rules for the same shape is how
+they drift.
