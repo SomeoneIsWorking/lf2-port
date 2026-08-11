@@ -1243,6 +1243,22 @@ int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_
  * measured and abandoned is exactly the kind of thing that survives a revert. */
 enum { WIDE_MAX = 4096, HIGH_MAX = NATIVE_H };
 enum { HUD_W = 792, HUD_BAND_H = 118 };   /* the in-match HUD strip and the band it owns */
+/* THE TEXT BAND IS TALLER THAN THE BLIT BAND, and the two cannot be one number (issue #54).
+ *
+ * HUD_BAND_H stops at 118 because the WORLD's layer blits start at y 128 -- measured from a
+ * widescreen match frame -- so a blit band any taller would take the stage's own layers with
+ * the HUD and shift the world sideways.
+ *
+ * The game's own status line does not respect that boundary. In stage mode it draws
+ * "Man: n  HP: n" and "STAGE 1-1" at y 110 and "Difficult" at y 115, so their bottoms are 126
+ * and 131 -- below the blit band, above the world. Text is not a blit, and the same 128 does
+ * not apply to it: what matters is whether any WORLD text lands in the strip, and none does.
+ *
+ * MEASURED rather than assumed, LF2_TEXT_DEBUG over a stage-mode run at 1920x1080: 104
+ * distinct (row, text) draws, and between y 115 and y 219 there is NOTHING. 219 is character
+ * selection, where panel_hud_up() is false and hud_offset_x declines anyway. So 131 captures
+ * the status line exactly and reaches nothing else. */
+enum { HUD_TEXT_BAND_H = 131 };
 
 /* The in-match HUD's own centring offset, exposed because the GDI text path draws straight
  * into the surface and never goes through Blt -- so without this the game's text in the HUD
@@ -1251,7 +1267,7 @@ enum { HUD_W = 792, HUD_BAND_H = 118 };   /* the in-match HUD strip and the band
 int hud_offset_x(int dst_w, int bottom)
 {
     if (!lf2_wide_width() || !panel_hud_up()) return 0;
-    if (dst_w <= NATIVE_W || bottom > HUD_BAND_H) return 0;
+    if (dst_w <= NATIVE_W || bottom > HUD_TEXT_BAND_H) return 0;
     return (dst_w - HUD_W) / 2;
 }
 
