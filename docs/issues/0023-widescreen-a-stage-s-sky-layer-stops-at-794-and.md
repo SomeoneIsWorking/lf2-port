@@ -398,3 +398,42 @@ expects, and both are cheap to see with LF2_DRAW_PATHS.
 
 DO NOT add a second stretch path beside the existing one. Two rules for the same shape is how
 they drift.
+
+### Note (2026-08-11)
+WHY THE STRETCH RULE DECLINES, measured with LF2_BAND_DEBUG (new, gated) rather than reasoned
+about -- and the same measurement shows the rule cannot be repaired where it lives.
+
+    band: dl 0 dr 978 dt   0 db 550   dest 978 wide   (NATIVE_W 794)
+    band: dl 0 dr 800 dt 128 db 198   dest 978 wide       <- forests.bmp, the reported band
+    band: dl 0 dr 800 dt 147 db 251   dest 978 wide       <- forestm1.bmp
+    band: dl 0 dr 284 dt 170 db 254   dest 978 wide
+    ...
+
+The rule tests `dr == NATIVE_W`, i.e. 794. forests.bmp arrives as dr 800. It is not 794 because
+the game never clipped it: the port patches the game's own width words to the view, so a layer
+narrower than the view is delivered at its natural width instead of being cut to the screen.
+The rule was written when 794 was that cut, and the widescreen work moved it out from under it.
+
+BUT LOOSENING THE TEST TO `dr >= NATIVE_W` WOULD BE WRONG, and the second line above is why.
+forestm1.bmp arrives at dr 800 too, and it is NOT a full-width backdrop -- its span is 1100,
+it scrolls, and there IS more picture to draw. Two blits with identical rectangles, opposite
+correct treatments. Nothing in a Blt's geometry can tell them apart, so no condition written at
+that call site can be right.
+
+WHAT DOES TELL THEM APART is the layer's own span against the view, and the port already has
+it: runtime/overrides/background.c overrides fn_0041a250, walks the layer list, and reads
+BG_LAYER_SPAN per layer (world.h). span <= view means the layer has no position that covers the
+view and no more picture to give -- exactly the six skies listed above -- while span > view
+means it scrolls and must not be touched.
+
+SO THE FIX BELONGS IN background.c's LAYER DRAW, not in ddraw.c's blit rule. That is also the
+tidier answer to the warning in the note above about a second stretch path: the ddraw rule
+should probably LOSE this job rather than gain a companion, since it has been guessing at layer
+identity from a rectangle and only worked while the game's clip happened to make that guess
+correct.
+
+WHAT IS STILL NOT DECIDED, and it is a look rather than a measurement: whether stretching a
+70-pixel-tall treeline by 22% is better than the black. The original entry says not to stretch,
+for the reason that it makes one stage's sky a different shape from everything drawn beside it
+-- and that reason still stands even though the mechanism is now understood. The other honest
+option is to letterbox the band deliberately. One frame of each, side by side, settles it.

@@ -1560,6 +1560,13 @@ static void surf_Blt(uint32_t self)
      *
      * Gated on the world view being up, or it would also stretch the fixed 794-wide menu
      * backdrops that are deliberately being CENTRED. */
+    /* LF2_BAND_DEBUG=1: every candidate for the backdrop-stretch rule, with the rectangle it
+     * arrived as. The rule's `dr == NATIVE_W` test assumes the GAME clipped the layer to its
+     * own 794, and the port patches the game's width words to the view -- so what actually
+     * arrives is worth printing rather than reasoning about (issue #23). */
+    if (getenv("LF2_BAND_DEBUG") && lf2_wide_width() && panel_hud_up() && srcobj && dl == 0)
+        fprintf(stderr, "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n",
+                dl, dr, dt, db, d->w, NATIVE_W);
     if (lf2_wide_width() && panel_hud_up() && srcobj
         && dl == 0 && dr == NATIVE_W && d->w > NATIVE_W)
         dr = d->w;
