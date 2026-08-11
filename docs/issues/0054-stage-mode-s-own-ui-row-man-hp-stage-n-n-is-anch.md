@@ -1,7 +1,7 @@
 ---
 id: 54
 title: Stage mode's own UI row (Man / HP / STAGE n-n) is anchored to the 794 screen, not centred with the picture
-status: open
+status: resolved
 symptom: reported with a screenshot. In stage mode at a wide window the row of stage-mode text -- 'Man: 1  HP: 199' on the left, 'STAGE 1-1' in the middle, the second player's 'Man / HP' to its right -- is laid out for a 794-wide screen and sits against the left of the picture, so its centre item is well left of the window's centre while the player panels above it are centred
 tags: reported,widescreen,stage-mode,hud
 created: 2026-08-11
@@ -126,3 +126,43 @@ AND A CORRECTION TO MY OWN PREVIOUS NOTE: it said "the screen_offset_x branch is
 its guard is `dwid > 794` and this destination is not". That was inference and it is WRONG --
 the destination is 978 and the branch is taken. The guard that declines is `panel_hud_up()`
 inside the function. Reading the function beat guessing at it, as it did twice earlier today.
+
+### Resolution (2026-08-11)
+FIXED. The GDI text path gets its own band, taller than the blit path's, and the two cannot be
+one number.
+
+    enum { HUD_BAND_H = 118 };        /* blits: the world's layers start at y 128 */
+    enum { HUD_TEXT_BAND_H = 131 };   /* text: the game's status line ends at 131 */
+
+    hud_offset_x():  if (dst_w <= NATIVE_W || bottom > HUD_TEXT_BAND_H) return 0;
+
+WHY THEY DIFFER, which is the whole of it. HUD_BAND_H stops at 118 because the WORLD's layer
+blits start at y 128 -- measured, and recorded in the comment beside it -- so a blit band any
+taller would take the stage's own layers with the HUD and shift the world sideways. That
+constraint is about BLITS. The game's status line does not respect it: in stage mode it draws
+"Man: n  HP: n" and "STAGE 1-1" at y 110 and "Difficult" at y 115, bottoms 126 and 131 --
+below the blit band and above the world. Raising the shared constant would have fixed this row
+and broken the stage.
+
+THE STRIP IS EMPTY OF ANYTHING ELSE, measured rather than assumed. LF2_TEXT_DEBUG over a
+stage-mode run at 1920x1080 lists 104 distinct (row, text) draws, and between y 115 and y 219
+there is NOTHING. y 219 is character selection, where panel_hud_up() is false and hud_offset_x
+declines regardless. So 131 captures the status line exactly and reaches nothing else.
+
+VERIFIED at both widths, the game's own as the control:
+    794x550    STAGE 1-1 at x 360, Man at 10, Man at 645   -- the game's own layout, untouched
+    1920x1080  STAGE 1-1 at x 453, Man at 103, Man at 738  -- each +93
+93 is (978 - 792) / 2, which is exactly the offset the HUD panels take. The row and the panels
+now come from one number, which is what the screenshot showed them not doing. Confirmed on a
+frame: the left readout starts at the panel strip's left edge, STAGE 1-1 is centred under the
+panels, and the right readout ends at its right edge.
+
+`ctest` 9/9. At 794 the guard `dst_w <= NATIVE_W` returns 0 before anything else is consulted,
+so the 4:3 game cannot be reached by this at all.
+
+AND A CORRECTION TO TWO EARLIER NOTES IN THIS ENTRY, both of which were inference presented as
+finding: the destination is NOT a 794-wide HUD surface (it is the composition, 978x550) and the
+`dwid > 794` branch is NOT what declines (it is taken). What declined was `panel_hud_up()`
+inside screen_offset_x -- by design, because during a match the world is placed by the camera
+shift instead -- and the band test in hud_offset_x. Reading both functions is what settled it;
+each earlier guess was wrong.
