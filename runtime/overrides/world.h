@@ -168,6 +168,24 @@ void coop_debug_tick(uint32_t self);   /* every LF2_COOP_* probe, once per gathe
  * The two per-BACKGROUND fields below are addressed the same way but with no layer index.
  */
 enum { BG_REGISTRY = 0x00458b00 + 2004, BG_INDEX = 0x0044d024 };
+
+/* THE TWO WORDS THE GAME ENTERS ITSELF THROUGH (issue #22).
+ *
+ * GAME_TOP_MODE is the FIRST DWORD OF THE WORLD OBJECT -- the same object coop.c calls
+ * `this`. fn_004246b0 is called with ECX = 0x00458b00 and switches on [ECX]: 0 is the
+ * launcher, 1 loads, 2 is the game proper. Exhaustively over the lifted binary it is written
+ * in three places -- the world object's constructor (0), the launcher's start-game path (1),
+ * and fn_004246b0's own mode==1 branch (2) -- and NEVER written back.
+ *
+ * GAME_MODE_WORD is -100 until a game mode is picked and 1..n after, written in exactly three
+ * places, all inside fn_00429730, and never restored. 0xffffff9c is the image's initial
+ * value rather than something the game writes.
+ *
+ * Both were confirmed by LF2_WATCH over a full route -- launcher, load, mode menu, character
+ * select, a match, LEAVE MATCH, and a thousand frames after it -- with the boot transitions as
+ * the positive control that the watch fires and silence afterwards. That is why exiting to a
+ * menu drives the ENTRY sequence: there is no exit sequence to drive. */
+enum { GAME_TOP_MODE = 0x00458b00, GAME_MODE_WORD = 0x0044d070 };
 enum { BG_STRIDE_DW = 612, BG_MAX_LAYERS = 30 };
 enum { BG_LAYER_PIC    = 81027484,      /* -120 the picture handed to the draw call */
        BG_LAYER_SPAN   = 81027604,      /* +0   bg.dat's `width:` -- the scroll span */
