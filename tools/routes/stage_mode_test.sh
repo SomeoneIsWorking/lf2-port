@@ -102,5 +102,37 @@ if held stage; then
     fi
 fi
 
+# THE WALK BOUND FOLLOWS THE SCREEN'S RIGHT EDGE (issue #43). Asserted on the runs above
+# rather than by adding any -- the three arms already cover the three answers the port can
+# give, and each of them is a different sentence in the report:
+#
+#   VS            no section at all, so nothing to widen and nothing proved
+#   stage@794     the game's own width, where geom_walk_max returns B by construction
+#   stage@1100    a view wider than the section, where the camera clamps at 0 and the walk
+#                 bound must move out to the screen's edge or a fighter cannot reach the
+#                 stage they can see
+#
+# The 794 arm is the one that makes this a discriminator rather than a rubber stamp: a build
+# that widened unconditionally passes the 1100 arm and fails that one alone.
+walk_says() {   # walk_says <mode> <window> <grep> <what>
+    run "$1" "$2"
+    if grep -q "$3" "$LOG"; then
+        say_ok "$4"
+    else
+        say_fail "$4 -- the report said instead:"
+        grep -m2 "camera: .*walk bound\|camera: no walk bound" "$LOG" \
+            || echo "        NO walk-bound line at all, so nothing measured it"
+    fi
+}
+walk_says stage 794x550 \
+    "no walk bound was widened, and correctly so" \
+    "stage@794: the walk bound is the game's own B, untouched"
+walk_says stage 1100x550 \
+    "walk bound was widened to the screen's right edge" \
+    "stage@1100: the walk bound moved out to the screen's right edge"
+walk_says vs 1100x550 \
+    "no walk bound was widened because this run set no section lock at all" \
+    "vs@1100: no section, so no boundary was invented"
+
 [ "$fail" = 0 ] && echo "stage mode: ok" || echo "stage mode: FAILED"
 exit $fail

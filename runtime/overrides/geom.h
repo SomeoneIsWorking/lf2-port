@@ -166,6 +166,40 @@ static inline int geom_camera_max(int stage_width, int view, int lock)
     return max < 0 ? 0 : max;
 }
 
+/* ---- where a FIGHTER may walk (runtime/overrides/background.c) ----
+ *
+ * THE GAME'S OWN INVARIANT, and this is a port of it rather than a constant that makes one
+ * screenshot look right. A stage-mode section is written into two words from ONE stage-data
+ * field B (fn_00437860 at 0x00437b25/0x00437b38, claim C024):
+ *
+ *     [0x00450bb0]  the CAMERA lock, B - 794      "put the screen's LEFT edge here"
+ *     [0x00450bb4]  the WALK lock,   B            "a fighter may walk to here"
+ *
+ * Read together they say ONE thing: when the camera is at its bound, the walkable area ends
+ * exactly at the RIGHT EDGE OF THE SCREEN. That is the invariant, and the 794 in the first
+ * word is the only place the screen appears -- which is why issue #36 could substitute the
+ * view there and why the walk bound has nothing to substitute.
+ *
+ * IT BREAKS WHEN THE CAMERA CANNOT REACH ITS BOUND. B - view goes negative near a stage's
+ * start, the camera clamps at 0, and the screen's right edge lands at `view` while a fighter
+ * still stops at B. Measured in stage 1-1's first section: B = 900, view = 978, camera 0 --
+ * seventy-eight world pixels of stage visible that cannot be walked to (issue #43).
+ *
+ * So the walk bound follows the same rule the camera bound does: the screen's right edge.
+ * `camera_max + view` IS that edge, in world x.
+ *
+ * WHY THE GUARD IS NOT BELT-AND-BRACES. At view == 794 this returns the game's own B
+ * untouched, by construction rather than by arithmetic that happens to agree -- and it has to,
+ * because the game has this same situation at 4:3 whenever a section's B is under 794, and
+ * matching the game there is not optional. tools/e2e.sh background's byte-identity arm is what
+ * would catch it. */
+static inline int geom_walk_max(int walk, int camera_max, int view)
+{
+    if (view <= GEOM_SCREEN_W) return walk;     /* the game's own answer, unaltered */
+    const int edge = camera_max + view;         /* the screen's right edge, in world x */
+    return edge > walk ? edge : walk;
+}
+
 /* The camera the WORLD IS DRAWN FROM: the game's, shifted left by half the extra width so a
  * wider view is CENTRED on what the 4:3 view showed rather than extended to the right. Clamped
  * at zero because there is no world left of the stage's start. */

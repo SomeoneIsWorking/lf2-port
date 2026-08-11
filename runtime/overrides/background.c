@@ -192,7 +192,8 @@ static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, i
  * view degrades to what it did before -- the extra width on the right -- rather than opening a
  * band of nothing. At the game's own 794 the offset is exactly zero, which is why
  * tools/routes/background_test.sh's byte-identity arm still holds. */
-static long cam_frames, cam_shifted, cam_locked, cam_lock_bound;
+static long cam_frames, cam_shifted, cam_locked, cam_lock_bound, cam_walk_widened;
+static int32_t cam_walk_max;
 static int32_t cam_game_max, cam_draw_max, cam_k, cam_lock_max;
 
 int bg_draw_camera(void)
@@ -239,6 +240,26 @@ void bg_camera_report(void)
     else
         fprintf(stderr, "camera: the stage-mode section lock was NEVER set, so this run did not "
                         "enter stage mode and says nothing about issue #36\n");
+    /* The walk bound, and the negative carries its own reason. Three different runs report
+     * zero here and they mean three different things -- VS mode has no section at all, a 794
+     * view is the game's own answer by construction, and a wide view whose camera always
+     * reached its bound had nothing to widen. A bare "0" would read as the fix not working. */
+    if (!cam_locked)
+        fprintf(stderr, "camera: no walk bound was widened because this run set no section "
+                        "lock at all, which is VS mode -- it says nothing about issue #43\n");
+    else if (view <= BG_SCREEN_W)
+        fprintf(stderr, "camera: no walk bound was widened, and correctly so -- the view is "
+                        "the game's own %d, where geom_walk_max returns the game's B by "
+                        "construction\n", BG_SCREEN_W);
+    else if (cam_walk_widened)
+        fprintf(stderr, "camera: the walk bound was widened to the screen's right edge on %ld "
+                        "frame(s), reaching %d -- so a fighter can reach every part of the "
+                        "stage this %d-wide view shows (issue #43)\n",
+                cam_walk_widened, cam_walk_max, view);
+    else
+        fprintf(stderr, "camera: the view is %d and a section lock was set, but NO walk bound "
+                        "needed widening -- the camera reached its bound on every frame, so "
+                        "the screen's right edge already sat on the game's own B\n", view);
     if (cam_shifted)
         fprintf(stderr, "camera: %ld of %ld frames were re-centred, so the wide view is "
                         "centred on what the 4:3 view showed rather than extended right\n",
@@ -340,6 +361,30 @@ static void camera_clamp_to_view(int32_t stage_width, int32_t view)
     if (camera > max) camera = max;
     if (camera < 0) camera = 0;
     ST32(BG_CAMERA_X, (uint32_t)camera);
+
+    /* THE WALK BOUND FOLLOWS THE SAME EDGE (issue #43). The section's two words say one thing
+     * between them -- when the camera is at its bound the walkable area ends at the screen's
+     * right edge -- and that stops being true as soon as the camera cannot reach its bound,
+     * which is what happens near a stage's start once the view is wider than 794. Measured in
+     * stage 1-1's first section: lock 106 so B = 900, view 978, camera clamped to 0, and 78
+     * world pixels of stage on screen that no fighter could walk to.
+     *
+     * ONLY WHEN THE GAME HAS SET ONE. The clamp in fn_0041b5d0 is `if (0 < walk)`, so this
+     * word is how the game says whether a section boundary exists at all -- it is zero in VS
+     * mode. Writing a non-zero value here when the game wrote none would invent a boundary
+     * and pen every fighter behind it.
+     *
+     * SAFE TO WRITE BACK, unlike the camera. The trap issue #39 recorded is that fn_0041b5d0
+     * EASES the camera toward its target and reads the word back, so a per-frame adjustment
+     * feeds back and settles seven times too far. This word is not eased and is never read to
+     * derive itself -- the game writes it from stage data at a section change and only ever
+     * compares against it -- so writing the widened bound each frame is idempotent. */
+    const int32_t walk = (int32_t)LD32(BG_WALK_LOCK);
+    if (walk > 0) {
+        const int32_t want = (int32_t)geom_walk_max(walk, max, view);
+        if (want != walk) { ST32(BG_WALK_LOCK, (uint32_t)want); cam_walk_widened++; }
+        if (want > cam_walk_max) cam_walk_max = want;
+    }
 
     /* The game mirrors the camera into CAM_MIRROR under the same two conditions it reads it
      * back from there (0x0041bc2f / 0x0041bc6e). Keeping the mirror in step matters because

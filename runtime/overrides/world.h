@@ -198,6 +198,11 @@ enum { BG_CAMERA_X     = 0x00450bc4 };  /* the world camera, in stage coordinate
  * the section is cleared. Like everything else in this game it is expressed against the 794
  * screen, so a wider view sees straight past it (issue #36). */
 enum { BG_CAMERA_LOCK  = 0x00450bb0 };
+/* Its pair. fn_00437860 writes both from one stage-data field B: the camera lock is B-794
+ * and this is B, the world x a fighter may walk to (claim C024, issue #43). Zero in VS mode,
+ * and the game's object clamp tests `0 < walk` before applying it -- so a port that wrote a
+ * non-zero value here in VS mode would invent a boundary the game does not have. */
+enum { BG_WALK_LOCK    = 0x00450bb4 };
 /* The game's screen width, literal in fn_0041a250. Aliased to geom.h's rather than written
  * twice, so the port has ONE 794 and the offline geometry test is testing the same one. */
 enum { BG_SCREEN_W     = GEOM_SCREEN_W };

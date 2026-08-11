@@ -1,7 +1,7 @@
 ---
 id: 43
 title: Stage mode's walkable area must extend to the widescreen view, RE'd first
-status: open
+status: resolved
 symptom: in stage mode the area a fighter may walk to is the game's 4:3 bound, so a wider view shows stage the player cannot reach
 tags: reported,widescreen,stage-mode,gameplay
 created: 2026-08-11
@@ -153,3 +153,55 @@ the previous section's bound for every section of every stage, or whether sectio
 than one screen and this only bites at the narrow ones. One run per stage reading the lock
 would settle it, and until it is settled nobody should guess at how often the picture would
 narrow under (a).
+
+### Resolution (2026-08-11)
+PORTED, on the reporter's instruction: "port all the relevant logic so it performs well in
+widescreen" -- so the view is not bounded and the picture does not narrow; the walk bound
+follows the view.
+
+WHAT WAS PORTED IS THE GAME'S INVARIANT, not a constant. The section's two words are written
+from one stage-data field B (claim C024) and read together they say: WHEN THE CAMERA IS AT ITS
+BOUND, THE WALKABLE AREA ENDS AT THE SCREEN'S RIGHT EDGE. The 794 in the camera word is the
+only place the screen appears, which is why issue #36 could substitute the view there and why
+the walk word had nothing to substitute -- and the invariant still breaks, because it assumes
+the camera can REACH its bound. Near a stage's start B - view is negative, the camera clamps
+at 0, and the right edge lands at `view` while a fighter still stops at B.
+
+    geom_walk_max(walk, camera_max, view) = max(walk, camera_max + view)   for view > 794
+                                          = walk                           at 794
+
+`camera_max + view` IS the screen's right edge in world x. runtime/overrides/background.c
+writes it into [0x00450bb4] in camera_clamp_to_view, beside the camera bound it belongs with.
+
+TWO THINGS THAT WOULD HAVE BEEN BUGS, both guarded:
+  - ONLY WHEN THE GAME SET A BOUND. fn_0041b5d0's clamp is `if (0 < walk)`, so that word is
+    how the game says a section boundary exists at all, and it is ZERO in VS mode. Writing a
+    non-zero value there would invent a boundary and pen every fighter behind it.
+  - AT 794 IT RETURNS B BY CONSTRUCTION, not by arithmetic that happens to agree. The game has
+    this same situation at 4:3 whenever a section's B is under 794 -- it shows stage past the
+    boundary too -- and matching it there is not optional.
+
+WRITING IT BACK IS SAFE, unlike the camera. Issue #39's trap is that fn_0041b5d0 EASES the
+camera toward its target and reads the word back, so a per-frame adjustment settles seven
+times too far. This word is not eased and is never read to derive itself; the game writes it
+from stage data at a section change and only ever compares against it. Idempotent, and the run
+shows it: widened on 1 frame, not 273.
+
+VERIFIED:
+  - `ctest geometry`, 5791 checks. The new ones walk every view from 794 to 3840: the bound is
+    never pulled IN below the game's B, and whenever it moves it is EXACTLY camera_max + view
+    and nothing else -- so this cannot drift into a fudge factor.
+  - tools/e2e.sh stage_mode, three arms on the runs it already made, no new run:
+        stage@794   the walk bound is the game's own B, untouched
+        stage@1100  the walk bound moved out to the screen's right edge
+        vs@1100     no section, so no boundary was invented
+    The 794 arm is what makes this a discriminator: a build that widened unconditionally
+    passes the 1100 arm and fails that one alone.
+  - tools/e2e.sh background byte-identity at 794x550 still holds.
+  - Observed at 1920x1080 in stage 1-1: lock 106 so B = 900, view 978, camera 0, walk widened
+    to 978, and the fighter now walks to the right edge of the picture instead of stopping 78
+    world pixels short of it.
+
+STILL WRONG IN THAT SAME PICTURE, and each is its own entry rather than part of this one:
+#23 (the sky layer stops at 794 and leaves black), #54 (the stage-mode UI row is anchored to
+the 794 screen), #55 (the player tag lags the fighter by the centring offset).

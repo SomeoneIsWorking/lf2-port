@@ -321,8 +321,47 @@ static void test_pan(void)
     }
 }
 
+/* The stage-mode walk bound (issue #43). The section's two words say one thing between them:
+ * when the camera is at its bound, the walkable area ends at the screen's RIGHT EDGE. */
+static void walk_bound(void)
+{
+    /* THE GAME'S OWN WIDTH IS UNTOUCHED, by construction and not by arithmetic that agrees.
+     * This matters because the game has the same situation at 4:3 whenever a section's B is
+     * under 794, and matching it there is not optional. */
+    eq("at 794 the game's own B stands", geom_walk_max(900, 106, 794), 900);
+    eq("even when B is under the screen and the game "
+                                              "itself shows stage past it", geom_walk_max(500, 0, 794), 500);
+    eq("and at the end of a stage", geom_walk_max(3200, 2406, 794), 3200);
+
+    /* THE REPORTED CASE, with the numbers off the run that produced it: stage 1-1's first
+     * section locks the camera at 106, so B = 900; the view is 978; B - view is negative so
+     * the camera clamps at 0 and the screen's right edge is 978, not 900. */
+    eq("a clamped camera widens the walk bound to the "
+                                              "screen's right edge", geom_walk_max(900, 0, 978), 978);
+
+    /* WHERE THE CAMERA CAN STILL REACH ITS BOUND, nothing changes -- the edge already IS B.
+     * A build that widened unconditionally would move this one and no other. */
+    eq("a camera that reached its bound needs no "
+                                                   "widening: 1022 + 978 is exactly B", geom_walk_max(2000, 1022, 978), 2000);
+    eq("and past it, the edge wins", geom_walk_max(2000, 1100, 978), 2078);
+
+    /* IT NEVER SHRINKS. The bound is the stage's own boundary and widening is the only
+     * direction this is allowed to move it. */
+    for (int view = 794; view <= 3840; view += 7)
+        for (int cam = 0; cam <= 2000; cam += 311)
+            eq("the walk bound is never pulled in below the game's B", (geom_walk_max(900, cam, view) >= 900) ? 1 : 0, 1);
+
+    /* AND IT IS EXACTLY THE EDGE WHENEVER IT MOVES, so this cannot drift into a fudge. */
+    for (int view = 795; view <= 3840; view += 13)
+        for (int cam = 0; cam <= 2000; cam += 197) {
+            const int w = geom_walk_max(900, cam, view);
+            eq("a widened bound is the screen's right edge and nothing else", (w == 900 || w == cam + view) ? 1 : 0, 1);
+        }
+}
+
 int main(void)
 {
+    walk_bound();
     test_scale();
     test_screen_align();
     test_unproject();
