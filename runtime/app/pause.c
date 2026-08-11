@@ -17,6 +17,7 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "hd2d.h"
+#include "render.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,7 @@
 
 int  game_glyph_draw(int ch, int x, int y, uint32_t ink,
                      uint32_t dpix, int dwid, int dhei, int dpitch);
+int  game_glyph_tile(int ch, int x, int y, uint32_t ink, uint32_t dst_pixels);
 int  hostwin_pointer(int *x, int *y);
 int  hostwin_mouse_clicked(void);
 
@@ -311,11 +313,47 @@ static void dim(uint32_t pix, int pitch, int w, int h)
     }
 }
 
-static void text(const char *s, int x, int y, uint32_t ink,
-                 uint32_t pix, int w, int h, int pitch)
+/* ---- one layout, two painters ----
+ *
+ * The menu is drawn twice on a GPU frame: as PIXELS on the primary, which is what the
+ * software compositor presents, and as DISPLAY-LIST entries over the retained frame, which is
+ * what the native renderer presents (issue #52). Those are two different destinations, not
+ * two different menus, so the layout below is written once and the painter is a parameter.
+ * Duplicating the layout is how the two would quietly drift apart -- a row highlighted in one
+ * renderer and not the other, and no test that compares a paused frame to notice.
+ */
+typedef struct {
+    uint32_t list_dst;      /* non-zero: paint into this surface's display list */
+    uint32_t pix;           /* zero list_dst: paint pixels into this surface */
+    int w, h, pitch;
+} Paint;
+
+static void p_fill(const Paint *p, int x0, int y0, int x1, int y1, uint32_t colour)
 {
-    for (int i = 0; s[i]; i++)
-        game_glyph_draw(s[i], x + i * GLYPH_W, y, ink, pix, w, h, pitch);
+    if (p->list_dst) render_fill(p->list_dst, x0, y0, x1, y1, colour);
+    else             fill(p->pix, p->pitch, p->w, p->h, x0, y0, x1, y1, colour);
+}
+
+static void p_text(const Paint *p, const char *s, int x, int y, uint32_t ink)
+{
+    for (int i = 0; s[i]; i++) {
+        const int gx = x + i * GLYPH_W;
+        if (p->list_dst) game_glyph_tile(s[i], gx, y, ink, p->list_dst);
+        else             game_glyph_draw(s[i], gx, y, ink, p->pix, p->w, p->h, p->pitch);
+    }
+}
+
+/* The dim over the whole frame. On the list it is ONE 2x2 premultiplied tile stretched over
+ * the composition rather than a full-window buffer: the renderer composites a tile as
+ * `src + dst*(1-a)`, so a tile of pure zero at alpha 128 IS a halving of whatever is behind
+ * it, and it costs four texels instead of eight megabytes a frame. */
+static void p_dim(const Paint *p)
+{
+    if (!p->list_dst) { dim(p->pix, p->pitch, p->w, p->h); return; }
+    uint32_t *t = render_tile_begin(p->list_dst, 0, 0, p->w, p->h, 2, 2);
+    if (!t) return;
+    for (int i = 0; i < 4; i++) t[i] = 0x80000000u;
+    render_tile_end();
 }
 
 /* The frozen frame, kept because the menu is drawn straight onto the primary and the game
@@ -323,6 +361,50 @@ static void text(const char *s, int x, int y, uint32_t ink,
  * fades to black in about a second. */
 static uint32_t *snap;
 static int snap_w, snap_h;
+
+/* The layout. Everything below is in the destination's own pixels, and the destination is
+ * whichever the painter names. */
+static void pause_paint(const Paint *p, int w, int h)
+{
+    p_dim(p);
+
+    int px, py;
+    panel_origin(w, h, &px, &py);
+    const int ph = panel_h();
+    p_fill(p, px, py, px + PANEL_W, py + ph, 0x00203050u);
+    p_fill(p, px, py, px + PANEL_W, py + 2, 0x006080b0u);
+    p_fill(p, px, py + ph - 2, px + PANEL_W, py + ph, 0x006080b0u);
+
+    const char *title = page == PAGE_OPTIONS ? "OPTIONS" : "PAUSED";
+    p_text(p, title, px + (PANEL_W - (int)strlen(title) * GLYPH_W) / 2, py + 10, 0x00ffffffu);
+
+    for (int i = 0; i < row_n; i++) {
+        int x0, y0, x1, y1;
+        row_rect(w, h, i, &x0, &y0, &x1, &y1);
+        if (i == sel) p_fill(p, x0, y0, x1, y1, 0x004870a0u);
+        const char *label = ITEM_TEXT[rows[i]];
+        const int len = (int)strlen(label);
+        const uint32_t ink = i == sel ? 0x00ffffffu : 0x00b0c0d0u;
+        const int ty = y0 + (ROW_H - 4 - GLYPH_H) / 2;
+
+        char vbuf[16];
+        const char *value = row_value(rows[i], vbuf, sizeof vbuf);
+        if (!value) {
+            p_text(p, label, x0 + ((x1 - x0) - len * GLYPH_W) / 2, ty, ink);
+            continue;
+        }
+        /* A value row reads left-to-right: the name against the left edge, the number against
+         * the right, and arrows on the selected one so it is obvious it can be changed rather
+         * than only chosen. */
+        p_text(p, label, x0 + 4, ty, ink);
+        const int vlen = (int)strlen(value);
+        p_text(p, value, x1 - 12 - vlen * GLYPH_W, ty, ink);
+        if (i == sel) {
+            p_text(p, "<", x1 - 20 - (vlen + 1) * GLYPH_W, ty, ink);
+            p_text(p, ">", x1 - 10, ty, ink);
+        }
+    }
+}
 
 void pause_draw(uint32_t pix, int w, int h, int pitch)
 {
@@ -343,43 +425,24 @@ void pause_draw(uint32_t pix, int w, int h, int pitch)
                    snap + (size_t)y * (size_t)w, (size_t)w * sizeof *snap);
     }
 
-    dim(pix, pitch, w, h);
+    const Paint p = { 0, pix, w, h, pitch };
+    pause_paint(&p, w, h);
+}
 
-    int px, py;
-    panel_origin(w, h, &px, &py);
-    const int ph = panel_h();
-    fill(pix, pitch, w, h, px, py, px + PANEL_W, py + ph, 0x00203050u);
-    fill(pix, pitch, w, h, px, py, px + PANEL_W, py + 2, 0x006080b0u);
-    fill(pix, pitch, w, h, px, py + ph - 2, px + PANEL_W, py + ph, 0x006080b0u);
-
-    const char *title = page == PAGE_OPTIONS ? "OPTIONS" : "PAUSED";
-    text(title, px + (PANEL_W - (int)strlen(title) * GLYPH_W) / 2, py + 10,
-         0x00ffffffu, pix, w, h, pitch);
-
-    for (int i = 0; i < row_n; i++) {
-        int x0, y0, x1, y1;
-        row_rect(w, h, i, &x0, &y0, &x1, &y1);
-        if (i == sel) fill(pix, pitch, w, h, x0, y0, x1, y1, 0x004870a0u);
-        const char *label = ITEM_TEXT[rows[i]];
-        const int len = (int)strlen(label);
-        const uint32_t ink = i == sel ? 0x00ffffffu : 0x00b0c0d0u;
-        const int ty = y0 + (ROW_H - 4 - GLYPH_H) / 2;
-
-        char vbuf[16];
-        const char *value = row_value(rows[i], vbuf, sizeof vbuf);
-        if (!value) {
-            text(label, x0 + ((x1 - x0) - len * GLYPH_W) / 2, ty, ink, pix, w, h, pitch);
-            continue;
-        }
-        /* A value row reads left-to-right: the name against the left edge, the number against
-         * the right, and arrows on the selected one so it is obvious it can be changed rather
-         * than only chosen. */
-        text(label, x0 + 4, ty, ink, pix, w, h, pitch);
-        const int vlen = (int)strlen(value);
-        text(value, x1 - 12 - vlen * GLYPH_W, ty, ink, pix, w, h, pitch);
-        if (i == sel) {
-            text("<", x1 - 20 - (vlen + 1) * GLYPH_W, ty, ink, pix, w, h, pitch);
-            text(">", x1 - 10, ty, ink, pix, w, h, pitch);
-        }
-    }
+/* The same menu over the RETAINED frame, for the native renderer. The restore-from-snapshot
+ * above has no counterpart here and needs none: render_hold_begin rewinds the list to the
+ * frame the game last built, so the dim is applied to a clean picture every time rather than
+ * compounding. That is the same defect the snapshot exists to prevent, solved by the
+ * renderer's own bookkeeping instead of by a copy of the screen.
+ *
+ * Returns 1 if it drew, 0 if there was no retained frame to draw over -- in which case the
+ * caller must keep the software present, or the menu would be invisible while still
+ * swallowing input. */
+int pause_draw_list(uint32_t dst_pixels, int w, int h)
+{
+    if (!paused || !dst_pixels) return 0;
+    if (!render_hold_begin()) return 0;
+    const Paint p = { dst_pixels, 0, w, h, 0 };
+    pause_paint(&p, w, h);
+    return 1;
 }

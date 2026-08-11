@@ -1,7 +1,7 @@
 ---
 id: 52
 title: The controls hint and the pause menu switch the whole frame back to the software compositor, so every menu screen is still whole-screen-scaled
-status: open
+status: resolved
 symptom: the native renderer is never asked to draw a frame outside a match: the GPU gate in hostwin_present is turned off by hint_on, and menu.c turns the hint on for every screen that is not a match. Measured at 1920x1080: 901 presents, render frames=0. So the menus are a 978x550 buffer point-scaled to the window by SDL -- exactly the whole-screen scaling issue #41 rules out -- and none of the per-quad scale or the outline-font text reaches them
 tags: rendering,renderer,widescreen,scaling,menu
 created: 2026-08-11
@@ -122,3 +122,53 @@ of six passing, including background's byte-identity arm at 794x550.
 WHAT IS LEFT, unchanged from the entry above: the pause menu. It needs the renderer to be able
 to redraw the last list, because pause works by not calling the game's update and the list is
 empty from the second paused frame onward.
+
+### Resolution (2026-08-11)
+BOTH HALVES FIXED. The port's own UI is in the frame now rather than beside it, and neither
+piece turns the renderer off.
+
+THE CONTROLS HINT appends its glyphs to the live composition's display list (game_glyph_tile,
+the display-list half of the glyph renderer split out of game_glyph_draw). Menus went from
+0 of 901 GPU-drawn frames at 1920x1080 to 900.
+
+THE PAUSE MENU is drawn over a RETAINED frame. Pause freezes the world by declining to call
+the game's update, so no blit arrives; a frame's lists are therefore cleared by the first call
+that RECORDS over them rather than by the present that finished them, and render_hold_begin
+rewinds a held frame's overlay before the next one is recorded. Measured: 573 held frames in a
+run, the menu crisp at 1080p over a dimmed frozen picture.
+
+THREE THINGS BROKE ON THE WAY, each with its own cause, and all three are worth keeping:
+
+  THE SOFTWARE PAINTER DESTROYED THE FRAME THE LIST PAINTER WAS ABOUT TO DRAW OVER. pause_draw
+  paints the primary through the same glyph renderer the game's text uses, and that renderer
+  records a tile as a side effect -- a recording call, which is what clears a spent frame. It
+  did not fail loudly: the entries came back when the list was rewound, but the tile arena
+  underneath them had been overwritten, so the frozen frame's TEXT came out as garbage while
+  everything drawn from a cached texture looked perfect. The list is recorded first now.
+
+  THE TILE POOL FILLED AND SILENTLY DROPPED 42402 TILES. It was keyed on exact size, which
+  rests on "a tile's size repeats constantly" -- true of a glyph, one 8x16 cell scaled, and
+  false of h_TextOutA, whose tile is a whole string and so is as wide as that string. And the
+  bound is not distinct sizes at all: every tile in a frame is live at once, so the pool must
+  be at least as large as the busiest frame. Sizes are bucketed to 32 and a texture serves any
+  tile that fits in its corner; the cap is 512 against a measured peak of 121, which the
+  report prints beside it.
+
+  THE LIGHTING RE-COMPOSITED A FIGHTER ON TOP OF THE PAUSE PANEL. The character mask is built
+  from the game's own objects, and drawing the overlay before hd2d_post put those pixels back
+  over the menu at full brightness. The list now carries an overlay boundary: everything
+  before it is the game's picture and is lit, everything from it on is drawn onto the finished
+  target afterwards.
+
+VERIFIED. `ctest` 9/9 in 1.97 s -- including the new `framelife` test, which walks the
+retained-frame bookkeeping and the pool offline (issue #53). All 13 e2e routes pass, and the
+two that can see this change specifically: `render` compares GPU against software on both its
+frames (max channel diff 1 on the menu, 2 on the match) and `pause_dropout` asserts the
+renderer drew the paused frames. `background`'s byte-identity arm at 794x550 still holds.
+
+AND ONE LYING INSTRUMENT, recorded as I010: render_test dumps frame 1300, character selection,
+which has the hint up -- so its `gpu` arm was dumping the SOFTWARE buffer and "gpu matches
+software" was one buffer compared against itself for the whole life of the renderer. Its
+negative control could not catch that, because LF2_RENDER_SKIP is applied in the display-list
+recording and so changes what the software compositor composes too: the control shared a cause
+with the positive and went green with the renderer uninvolved.

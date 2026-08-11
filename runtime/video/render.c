@@ -2,6 +2,7 @@
  * runtime/video/hd2d.h for what is done with the geometry once it is here. */
 
 #include "render.h"
+#include "framelife.h"
 #include "overrides/geom.h"
 #include "hd2d.h"
 #include "guest.h"
@@ -24,7 +25,7 @@
  * silently dropped. A renderer that quietly stops drawing at entry 4096 would look like a
  * rendering bug anywhere but here.
  */
-enum { LIST_MAX = 8192, SURF_MAX = 8, TEX_MAX = 512, TILE_BYTES_MAX = 4u << 20 };
+enum { LIST_MAX = 8192, SURF_MAX = FL_LISTS_MAX, TEX_MAX = 512, TILE_BYTES_MAX = 4u << 20 };
 
 enum EntryKind { E_TEX, E_FILL, E_TILE, E_GROUND };
 
@@ -43,12 +44,15 @@ typedef struct {
     uint32_t tile_off;              /* byte offset into the frame's tile arena */
     int      tw, th;
     SDL_Texture *tile_tex;          /* made once per frame, used by every pass over the list */
+    SDL_FRect tile_src;             /* the tw x th corner of it that this tile actually is */
 } Entry;
 
+/* The Entry array and its destination. HOW MANY entries it holds, where the port's overlay
+ * starts in it, and everything else about the frame's lifetime live in FrameLife (framelife.h)
+ * so that they can be tested without a GPU -- FL.n[i] belongs to lists[i]. */
 typedef struct {
     uint32_t dst_pixels;
     Entry   *e;
-    int      n;
     long     dropped;
 } List;
 
@@ -66,26 +70,21 @@ typedef struct {
 } Tex;
 
 static SDL_Renderer *R;
+static FrameLife FL;
 static List   lists[SURF_MAX];
-static int    nlists;
 static Tex    texes[TEX_MAX];
 static int    ntexes;
 
 static uint8_t *tile_arena;
-static uint32_t tile_used;
 
 /* Tile textures are POOLED and reused across frames rather than allocated per frame; see
  * tile_texture below for the GPU reset that made that necessary. */
-enum { TILE_TEX_MAX = 128 };
-typedef struct {
-    SDL_Texture *tex;
-    int          w, h;
-    int          busy;              /* claimed by an entry in the frame being drawn */
-} TileTex;
-static TileTex tile_pool[TILE_TEX_MAX];
-static int     tile_pool_n;
-static long    stat_tile_allocs, stat_tile_exhausted;
-static List    *tile_list;          /* the list the open tile belongs to */
+/* The pool's SIZES and which are claimed live in FrameLife; this is only the textures, at the
+ * same indices. The bound is tiles per frame, not distinct sizes -- see framelife.h. */
+enum { TILE_TEX_MAX = FL_POOL_MAX };
+static SDL_Texture *tile_tex_pool[TILE_TEX_MAX];
+static long    stat_tile_allocs;
+static int      tile_list = -1;     /* the list index the open tile belongs to */
 static int      tile_index;
 
 static SDL_Texture *target;         /* the frame the player is shown */
@@ -113,6 +112,7 @@ int render_gpu_enabled(void)
 void render_init(SDL_Renderer *r)
 {
     R = r;
+    fl_init(&FL);
     if (!render_gpu_enabled()) return;
     if (!tile_arena) tile_arena = malloc(TILE_BYTES_MAX);
     hd2d_init(r);
@@ -131,34 +131,52 @@ void render_shutdown(void)
     for (int i = 0; i < ntexes; i++)
         if (texes[i].tex) { SDL_DestroyTexture(texes[i].tex); texes[i].tex = NULL; }
     ntexes = 0;
-    for (int i = 0; i < tile_pool_n; i++)
-        if (tile_pool[i].tex) { SDL_DestroyTexture(tile_pool[i].tex); tile_pool[i].tex = NULL; }
-    tile_pool_n = 0;
+    for (int i = 0; i < FL.pool_n; i++)
+        if (tile_tex_pool[i]) { SDL_DestroyTexture(tile_tex_pool[i]); tile_tex_pool[i] = NULL; }
     hd2d_shutdown();
     targets_free();
-    for (int i = 0; i < nlists; i++) { free(lists[i].e); lists[i].e = NULL; }
-    nlists = 0;
+    for (int i = 0; i < FL.nlists; i++) { free(lists[i].e); lists[i].e = NULL; }
+    fl_init(&FL);
     free(tile_arena); tile_arena = NULL;
 }
 
-static List *list_for(uint32_t dst_pixels)
+/* The list index for a destination surface, or -1. An index rather than a pointer because
+ * FrameLife holds the other half of every list at the same index. */
+static int list_index(uint32_t dst_pixels)
 {
-    for (int i = 0; i < nlists; i++)
-        if (lists[i].dst_pixels == dst_pixels) return &lists[i];
-    if (nlists >= SURF_MAX) return NULL;
-    List *l = &lists[nlists++];
-    l->dst_pixels = dst_pixels;
-    l->e = calloc(LIST_MAX, sizeof *l->e);
-    l->n = 0;
-    return l->e ? l : NULL;
+    for (int i = 0; i < FL.nlists; i++)
+        if (lists[i].dst_pixels == dst_pixels) return i;
+    const int i = fl_list_add(&FL);
+    if (i < 0) return -1;
+    lists[i].dst_pixels = dst_pixels;
+    if (!lists[i].e) lists[i].e = calloc(LIST_MAX, sizeof *lists[i].e);
+    return lists[i].e ? i : -1;
+}
+
+/* The retained frame is cleared by the first call that records over it, not by the present
+ * that finished it -- see render_frame_reset. fl_touch decides; this drops the SDL textures
+ * that went with the frame it cleared. */
+static void frame_touch(void)
+{
+    if (!FL.spent) return;
+    /* The lengths BEFORE the clear, because those entries are the ones holding pooled
+     * textures that are about to be released. */
+    int was[FL_LISTS_MAX];
+    const int nl = FL.nlists;
+    for (int i = 0; i < nl; i++) was[i] = FL.n[i];
+    fl_touch(&FL);
+    for (int i = 0; i < nl; i++)
+        for (int j = 0; j < was[i]; j++) lists[i].e[j].tile_tex = NULL;
+    tile_list = -1;
 }
 
 static Entry *entry_push(uint32_t dst_pixels)
 {
-    List *l = list_for(dst_pixels);
-    if (!l) return NULL;
-    if (l->n >= LIST_MAX) { l->dropped++; stat_dropped++; return NULL; }
-    Entry *e = &l->e[l->n++];
+    frame_touch();
+    const int li = list_index(dst_pixels);
+    if (li < 0) return NULL;
+    if (FL.n[li] >= LIST_MAX) { lists[li].dropped++; stat_dropped++; return NULL; }
+    Entry *e = &lists[li].e[FL.n[li]++];
     memset(e, 0, sizeof *e);
     return e;
 }
@@ -309,28 +327,33 @@ uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h, int
     if (th <= 0) th = h;
     if (!render_gpu_enabled() || !tile_arena || w <= 0 || h <= 0 || tw <= 0 || th <= 0)
         return NULL;
+    frame_touch();
     const uint32_t need = (uint32_t)tw * (uint32_t)th * 4u;
-    if (need > TILE_BYTES_MAX - tile_used) { stat_dropped++; return NULL; }
-    List *l = list_for(dst_pixels);
-    if (!l || l->n >= LIST_MAX) { if (l) { l->dropped++; stat_dropped++; } return NULL; }
-    Entry *e = &l->e[l->n];
+    if (need > TILE_BYTES_MAX - FL.tile_used) { stat_dropped++; return NULL; }
+    const int li = list_index(dst_pixels);
+    if (li < 0 || FL.n[li] >= LIST_MAX) {
+        if (li >= 0) lists[li].dropped++;
+        stat_dropped++;
+        return NULL;
+    }
+    Entry *e = &lists[li].e[FL.n[li]];
     memset(e, 0, sizeof *e);
     e->kind = E_TILE;
     e->dst = (SDL_FRect){ (float)x, (float)y, (float)w, (float)h };
-    e->tile_off = tile_used;
+    e->tile_off = FL.tile_used;
     e->tw = tw; e->th = th;
-    uint32_t *p = (uint32_t *)(tile_arena + tile_used);
+    uint32_t *p = (uint32_t *)(tile_arena + FL.tile_used);
     memset(p, 0, need);
-    tile_used += need;
-    tile_list = l; tile_index = l->n;
+    FL.tile_used += need;
+    tile_list = li; tile_index = FL.n[li];
     return p;
 }
 
 void render_tile_end(void)
 {
-    if (!tile_list) return;
-    tile_list->n = tile_index + 1;      /* commit the entry only now */
-    tile_list = NULL;
+    if (tile_list < 0) return;
+    FL.n[tile_list] = tile_index + 1;   /* commit the entry only now */
+    tile_list = -1;
 }
 
 /* ---- drawing ---- */
@@ -352,43 +375,54 @@ void render_tile_end(void)
  * falls back to drawing nothing for that tile AND SAYS SO -- silently losing text would look
  * like a font bug anywhere but here.
  */
+/* A POOLED TEXTURE MAY BE BIGGER THAN THE TILE IT SERVES, and the tile uses its top-left
+ * corner. That is what bounds the pool.
+ *
+ * Keying on the EXACT size, which is what this did first, rests on the premise in the comment
+ * above -- "a tile's size repeats constantly". That is true of a glyph, which is one 8x16 cell
+ * scaled, and FALSE of the other caller: h_TextOutA rasterises a whole string as one tile, so
+ * its width is the width of that string, and a run meets as many sizes as it meets distinct
+ * strings. The pool grew one entry per string width until it hit its 128 cap and then dropped
+ * tiles -- text silently missing from the frame, on a run long enough to get there.
+ *
+ * Rounding the ALLOCATION up to a 32-pixel grid, and reusing any free texture at least as
+ * large, replaces "one entry per distinct size" with "one entry per distinct bucket". The
+ * upload writes tw x th into the corner and the draw takes that corner as its source rect, so
+ * nothing outside it is ever sampled and no tile is stretched. */
 static SDL_Texture *tile_texture(Entry *e)
 {
     if (e->tile_tex) return e->tile_tex;
 
-    SDL_Texture *t = NULL;
-    for (int i = 0; i < tile_pool_n; i++) {
-        TileTex *p = &tile_pool[i];
-        if (p->busy || p->w != e->tw || p->h != e->th) continue;
-        p->busy = 1;
-        t = p->tex;
-        break;
-    }
-    if (!t) {
-        if (tile_pool_n >= TILE_TEX_MAX) {
-            stat_tile_exhausted++;
-            return NULL;
-        }
-        t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
-                              SDL_TEXTUREACCESS_STREAMING, e->tw, e->th);
-        if (!t) { stat_tile_exhausted++; return NULL; }
-        SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
+    int slot = fl_pool_claim(&FL, e->tw, e->th);
+    if (slot < 0) {
+        slot = fl_pool_add(&FL, e->tw, e->th);
+        if (slot < 0) return NULL;          /* fl_pool_add counted the exhaustion */
+        SDL_Texture *made = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
+                                              SDL_TEXTUREACCESS_STREAMING,
+                                              FL.pool_w[slot], FL.pool_h[slot]);
+        if (!made) { FL.pool_exhausted++; FL.pool_n--; return NULL; }
+        SDL_SetTextureScaleMode(made, SDL_SCALEMODE_NEAREST);
         /* PREMULTIPLIED: the writer already multiplied the colour by its coverage, so the
          * blend is src + dst*(1-a) rather than src*a + dst*(1-a). Using plain BLEND here
          * would darken every glyph edge. */
-        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
-        tile_pool[tile_pool_n++] = (TileTex){ t, e->tw, e->th, 1 };
+        SDL_SetTextureBlendMode(made, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+        tile_tex_pool[slot] = made;
         stat_tile_allocs++;
     }
+    SDL_Texture *t = tile_tex_pool[slot];
 
+    /* Only the tw x th corner is written, and only it is ever read -- see tile_src below. The
+     * rest of the texture holds whatever the last tile to use it left there. */
+    SDL_Rect corner = { 0, 0, e->tw, e->th };
     void *px = NULL; int dp = 0;
-    if (SDL_LockTexture(t, NULL, &px, &dp)) {
+    if (SDL_LockTexture(t, &corner, &px, &dp)) {
         const uint32_t *src = (const uint32_t *)(tile_arena + e->tile_off);
         for (int y = 0; y < e->th; y++)
             memcpy((uint8_t *)px + (size_t)y * (size_t)dp, src + (size_t)y * (size_t)e->tw,
                    (size_t)e->tw * 4);
         SDL_UnlockTexture(t);
     }
+    e->tile_src = (SDL_FRect){ 0.0f, 0.0f, (float)e->tw, (float)e->th };
     e->tile_tex = t;
     return t;
 }
@@ -545,14 +579,14 @@ enum Pass { PASS_COLOUR, PASS_CHARS, PASS_SHADOW };
  * pixels, so they are added after. Getting that order wrong scales the centring too and the
  * world slides sideways as the window grows -- which is why they are separate parameters
  * rather than one pre-summed offset. */
-static void draw_list(List *l, int pass, float world, float ox, float oy)
+static void draw_list(List *l, int pass, float world, float ox, float oy, int from, int to)
 {
     const int skip = render_skip();
     const float scale = world_scale();
     int have_ground = 0;
     SDL_FRect ground = { 0, 0, 0, 0 };
 
-    for (int i = 0; i < l->n; i++) {
+    for (int i = from; i < to; i++) {
         if (skip > 0 && (i % skip) == 0) continue;
         Entry *e = &l->e[i];
         SDL_FRect dst;
@@ -653,8 +687,9 @@ static void draw_list(List *l, int pass, float world, float ox, float oy)
         SDL_Texture *tt = tile_texture(e);
         if (!tt) continue;
         SDL_SetTextureBlendMode(tt, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
-        SDL_RenderTexture(R, tt, NULL, &dst);
+        SDL_RenderTexture(R, tt, &e->tile_src, &dst);
         stat_tile++;
+        fl_tile_drawn(&FL);
     }
 }
 
@@ -688,13 +723,14 @@ static void clear_to(SDL_Texture *rt, uint8_t r, uint8_t g, uint8_t b, uint8_t a
 int render_present(uint32_t src_pixels, int off, int w, int h)
 {
     if (!render_gpu_enabled() || !R) return 0;
-    List *l = NULL;
-    for (int i = 0; i < nlists; i++) if (lists[i].dst_pixels == src_pixels) l = &lists[i];
+    int li = -1;
+    for (int i = 0; i < FL.nlists; i++) if (lists[i].dst_pixels == src_pixels) li = i;
+    List *l = li >= 0 ? &lists[li] : NULL;
     /* No list for this surface means the frame was not built through the routes this
      * renderer captures. Say so once and hand the frame back to the software path rather
      * than presenting an empty screen -- a black frame is the one failure mode that looks
      * like a crash and tells nobody why. */
-    if (!l || l->n == 0) {
+    if (!l || FL.n[li] == 0) {
         static int said;
         if (!said) {
             said = 1;
@@ -767,8 +803,17 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     /* 1. THE PICTURE, exactly as the game composed it. With the light off this is the frame,
      *    and it is what tools/routes/render_test.sh compares against the software compositor byte
      *    for byte. */
+    /* WHERE THE GAME'S PICTURE ENDS AND THE PORT'S OWN UI BEGINS. The controls hint and the
+     * pause menu are recorded into this same list -- that is what lets the renderer present
+     * the frames they sit on at all (issue #52) -- but they are not part of the scene and
+     * must not be lit. Drawing them before hd2d_post put the character mask, built from the
+     * game's own objects, back over the pause panel: a fighter re-composited on top of the
+     * menu, at full brightness, on the frame that is supposed to be frozen and dimmed. */
+    const int ov = fl_overlay_at(&FL, li);
+    const int ln = FL.n[li];
+
     clear_to(run_hd2d ? rt_albedo : target, 0, 0, 0, 255);
-    draw_list(l, PASS_COLOUR, (float)off, ox, oy);
+    draw_list(l, PASS_COLOUR, (float)off, ox, oy, 0, ov);
 
     if (run_hd2d) {
         /* 2. WHICH PIXELS ARE A FIGHTER. Cleared to zero: everything the game drew that is
@@ -776,14 +821,14 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
          *    leaves those pixels exactly as they are. */
         clear_to(rt_chars, 0, 0, 0, 255);
         if (hd2d_chars_begin(1.0f / (float)oh)) {
-            draw_list(l, PASS_CHARS, (float)off, ox, oy);
+            draw_list(l, PASS_CHARS, (float)off, ox, oy, 0, ov);
             hd2d_chars_end();
         }
 
         /* 3. THE CAST SHADOWS, as a mask the light is taken away through. */
         clear_to(rt_shadow, 0, 0, 0, 255);
         if (hd2d_shadow_begin()) {
-            draw_list(l, PASS_SHADOW, (float)off, ox, oy);
+            draw_list(l, PASS_SHADOW, (float)off, ox, oy, 0, ov);
             hd2d_shadow_end();
         }
 
@@ -809,6 +854,12 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
             SDL_SetTextureBlendMode(rt_albedo, SDL_BLENDMODE_NONE);
             SDL_RenderTexture(R, rt_albedo, NULL, NULL);
         }
+    }
+
+    /* The port's UI, over the finished picture and after the light. */
+    if (ov < ln) {
+        SDL_SetRenderTarget(R, target);
+        draw_list(l, PASS_COLOUR, (float)off, ox, oy, ov, ln);
     }
 
     SDL_SetRenderTarget(R, NULL);
@@ -860,18 +911,41 @@ int render_readback(uint32_t *dst, int w, int h, int dst_pitch)
     return ok;
 }
 
-/* Reset for the next frame. Called after the present, whichever path drew it -- the lists
- * must not survive into a frame that did not build them. */
-void render_frame_reset(void)
+/* The retained frame, the overlay boundary and the pool bookkeeping all live in FrameLife
+ * (framelife.h) so they can be walked by `ctest framelife` without a window or a GPU. What
+ * stays here is only what has an SDL object attached to it. */
+
+void render_frame_reset(void) { fl_frame_reset(&FL); }
+
+/* The port is about to draw its own UI over a LIVE frame -- the controls hint on a menu the
+ * game is still updating. Same boundary as render_hold_begin sets for a frozen one. */
+void render_overlay_mark(uint32_t dst_pixels)
 {
-    for (int i = 0; i < nlists; i++) {
-        for (int j = 0; j < lists[i].n; j++) lists[i].e[j].tile_tex = NULL;
-        lists[i].n = 0;
-    }
-    /* The pooled textures are RELEASED, not destroyed -- see tile_texture. */
-    for (int i = 0; i < tile_pool_n; i++) tile_pool[i].busy = 0;
-    tile_used = 0;
-    tile_list = NULL;
+    if (!render_gpu_enabled()) return;
+    for (int i = 0; i < FL.nlists; i++)
+        if (lists[i].dst_pixels == dst_pixels) fl_overlay_mark(&FL, i);
+}
+
+/* Draw over the frame that is already there, without clearing it. Returns 0 when there is no
+ * retained frame -- the GPU path is off, or nothing has been drawn yet -- and the caller must
+ * then do whatever it does without the renderer.
+ *
+ * Called once per held frame, and it REWINDS: the previous held frame's overlay is dropped
+ * before this one's is recorded, or the pause menu would be appended to itself sixty times a
+ * second until the list filled. The tile arena and the texture pool are rewound with it,
+ * which is what stops the pool leaking a texture per frame while the game sits paused. */
+int render_hold_begin(void)
+{
+    if (!render_gpu_enabled() || !R) return 0;
+    /* The entries about to be rewound away are holding pooled textures; forget them here,
+     * because fl_hold_begin releases the pool slots underneath them. */
+    int was[FL_LISTS_MAX];
+    for (int i = 0; i < FL.nlists; i++) was[i] = FL.n[i];
+    if (!fl_hold_begin(&FL)) return 0;
+    for (int i = 0; i < FL.nlists; i++)
+        for (int j = FL.n[i]; j < was[i]; j++) lists[i].e[j].tile_tex = NULL;
+    tile_list = -1;
+    return 1;
 }
 
 /* Prints the zeros too, and says what a zero means. "0 quads" and "the renderer was never
@@ -887,14 +961,22 @@ void render_report(void)
      * A count that keeps climbing with the frame count means tiles of ever-changing sizes and
      * the GPU allocator is being churned again, which is what wedged a GPU once. */
     fprintf(stderr, "render: %ld tile draws served by %d pooled textures, %ld allocations "
-                    "(%.3f per frame -- this must be near zero once warm)%s\n",
-            stat_tile, tile_pool_n, stat_tile_allocs,
+                    "(%.3f per frame -- this must be near zero once warm); the busiest frame "
+                    "drew %d tile(s) against a pool of %d\n",
+            stat_tile, FL.pool_n, stat_tile_allocs,
             stat_frames ? (double)stat_tile_allocs / (double)stat_frames : 0.0,
-            stat_tile_exhausted ? "" : "");
-    if (stat_tile_exhausted)
+            FL.peak_tiles, TILE_TEX_MAX);
+    if (FL.pool_exhausted)
         fprintf(stderr, "render: %ld tiles were NOT DRAWN -- the %d-texture pool was full, so "
                         "text is MISSING from those frames\n",
-                stat_tile_exhausted, TILE_TEX_MAX);
+                FL.pool_exhausted, TILE_TEX_MAX);
+    /* Prints the zero and says what it means, because zero is the ordinary answer: a run
+      * that never paused SHOULD report none, and a run that paused and reports none is the
+      * pause menu having fallen back to the software compositor (issue #52). */
+    fprintf(stderr, "render: %ld frame(s) were drawn over a RETAINED list -- the game recorded "
+                    "nothing and the renderer redrew the frame it already had, which is how the "
+                    "pause menu is presented. Zero is correct for a run that never paused.\n",
+            FL.held_frames);
     fprintf(stderr, "render: the light ran on %ld frame(s); %ld cast shadows from %ld ground "
                     "markers\n", stat_post, stat_shadow, stat_ground);
     if (stat_ground)

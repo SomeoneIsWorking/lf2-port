@@ -100,10 +100,25 @@ int render_present(uint32_t src_pixels, int off, int w, int h);
  * a fresh load) so its cached texture is rebuilt. */
 void render_surface_dirty(uint32_t pixels);
 
-/* Clears the frame's lists and tile arena. Called after every present, by whichever path
- * drew it -- a list that survived into a frame that did not build it would draw the previous
- * frame's sprites on top of this one. */
+/* Marks the frame spent. Called after every present, by whichever path drew it.
+ *
+ * The lists are not emptied here but by the first call that RECORDS over them, which on an
+ * ordinary frame is the same thing. It differs for a frame during which the game records
+ * nothing -- the pause menu freezes the world by declining to call the game's update, so no
+ * blit arrives, and a renderer that had thrown its list away at the last present would have
+ * nothing to draw the menu on top of (issue #52). */
 void render_frame_reset(void);
+
+/* Draw over the frame that is already there. Returns 0 when there is no retained frame -- the
+ * GPU path is off, or nothing has been drawn yet -- and the caller must then do without the
+ * renderer. It REWINDS the previous held frame's overlay first, so a menu held up for a
+ * minute is recorded once per frame rather than appended to itself sixty times a second. */
+int render_hold_begin(void);
+
+/* Mark where the port's own UI begins in a LIVE frame's list (the controls hint on a menu the
+ * game is still updating). Everything from that point is drawn after the lighting pass and is
+ * not part of the scene. render_hold_begin does the same for a frozen frame. */
+void render_overlay_mark(uint32_t dst_pixels);
 
 /* The presented frame, read back off the GPU into an ARGB8888 buffer. This is what makes the
  * two paths diffable: without it every LF2_FRAME_DUMP would be the software compositor's

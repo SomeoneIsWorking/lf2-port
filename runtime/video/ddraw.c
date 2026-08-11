@@ -442,6 +442,9 @@ static void frame_pace(void);
 /* Declared here because both the present and the frame boundary need it, and its definition
  * sits further down with the controls hint it belongs to. */
 static int hint_on;
+/* Whether this frame's pause menu made it into the renderer's retained list. Set by
+ * present_primary just before the present, read by the gate below. */
+static int pause_in_list;
 
 /* The composition the last copy-to-primary came from, and the centring offset it was copied
  * with. Recorded at the copy and consumed at the present, because those are two different
@@ -464,15 +467,18 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     static int shot_w, shot_h;
     const uint8_t *shown = pixels;
     int shown_pitch = src_pitch;
-    /* THE PAUSE MENU IS STILL A SOFTWARE-ONLY FRAME, and the controls hint is not any more.
-     * The difference is not which of them is more important; it is that the hint is stateless
-     * text that can be appended to the composition's display list where it is drawn, while
-     * pause works by NOT CALLING the game's update -- so no blits are recorded, the list is
-     * empty from the second paused frame onward, and the renderer would have nothing to draw
-     * the menu on top of. Fixing that means giving the renderer a way to REDRAW THE LAST
-     * LIST, which is a change to the frame lifetime rather than to where a menu draws.
-     * Issue #52 carries both halves. */
-    const int gpu = hw.renderer && render_gpu_enabled() && !pause_active()
+    /* BOTH PIECES OF PORT UI ARE IN THE FRAME NOW, so neither turns the renderer off (issue
+     * #52). The controls hint appends its glyphs to the live composition list; the pause menu
+     * is recorded over the RETAINED frame, because pause freezes the game by not calling its
+     * update and no blit arrives while it is up.
+     *
+     * The pause condition is `!pause_active() || pause_in_list` and not simply "paused is
+     * fine now": if the retained frame was not there to draw over -- the very first frames of
+     * a run, or a list the renderer never built -- the menu is only on the primary, and
+     * presenting the GPU frame would show a game that ignores every key with nothing on
+     * screen to say why. */
+    const int gpu = hw.renderer && render_gpu_enabled()
+                    && (!pause_active() || pause_in_list)
                     && render_present(frame_src_pixels, frame_src_off, w, h);
     int shown_w = w, shown_h = h;
     if (gpu) {
@@ -654,6 +660,8 @@ static void controls_hint_draw(const Surface *s)
      * land at the END of the list, which is exactly where a hint drawn over the frame
      * belongs. Both surfaces are the same size and the centring is already baked into the
      * composition (frame_source_note passes off 0), so one x serves both. */
+    if (frame_src_pixels && frame_src_pixels != s->pixels)
+        render_overlay_mark(frame_src_pixels);
     for (int i = 0; TEXT[i]; i++) {
         const int x = x0 + i * 8, y = s->h - 16;
         if (frame_src_pixels && frame_src_pixels != s->pixels)
@@ -675,8 +683,21 @@ static void present_primary(void)
     LOADPROF_SCOPE(LP_PRESENT);
     Surface *s = com_host(primary_surface);
     if (hint_on) controls_hint_draw(s);
-    /* After the frame is assembled and before it is shown: the composition is frozen while
-     * paused, so the menu has to go on the primary rather than be composed with it. */
+    /* After the frame is assembled and before it is shown. The pixels go on the primary for
+     * the software compositor; the same menu is also recorded over the renderer's RETAINED
+     * frame, and whether that worked is what decides which path may present (issue #52).
+     * A GPU present with the menu missing would leave it invisible while it still swallowed
+     * input, which is worse than presenting the software frame. */
+    /* THE LIST FIRST, AND THE ORDER IS LOAD-BEARING. pause_draw paints the primary through
+     * the same glyph renderer the game's text uses, and that renderer records a tile into the
+     * PRIMARY's display list as a side effect -- which is a recording call, which is what
+     * tells the renderer the retained frame has been superseded and clears it. Painting the
+     * pixels first therefore destroyed the frame the menu was about to be drawn over, and it
+     * did not fail loudly: the entries came back when the list was rewound, but the tile
+     * arena underneath them had been overwritten, so the frozen frame's text came out as
+     * garbage while everything drawn from a cached texture looked perfect. */
+    pause_in_list = pause_active() && frame_src_pixels && frame_src_pixels != s->pixels
+                    && pause_draw_list(frame_src_pixels, s->w, s->h);
     pause_draw(s->pixels, s->w, s->h, s->pitch);
     hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
     LOADPROF_END();
