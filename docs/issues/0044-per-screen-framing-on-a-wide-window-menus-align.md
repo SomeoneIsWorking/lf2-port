@@ -1,7 +1,7 @@
 ---
 id: 44
 title: Per-screen framing on a wide window: menus align left, the loading screen fills
-status: open
+status: resolved
 symptom: on a wide composition the two menu screens should sit at the LEFT edge where their character art is, not centred; the loading screen should stay centred but have the space beside it filled rather than left black. Character selection is correct as it is
 tags: reported,rendering,widescreen,frontend,scaling
 created: 2026-08-11
@@ -73,3 +73,6 @@ A NOTE ON THE LOADING SCREEN AND "fill the rest": issue #42 established that a f
 may be extended across the composition because it invents nothing, while a backdrop that is
 ARTWORK may not. Which of the two the loading screen has decides whether "fill the rest" has a
 faithful answer or is a choice that has to be declared as one.
+
+### Resolution (2026-08-11)
+Per-screen framing: the front end and mode menu are LEFT-aligned because their character portrait is drawn at a hard literal x=0 (fidelity, not preference), the loading screen is centred with its side bands extended from its own edge columns and declared as a port choice since its backdrop is artwork, and character selection is unchanged. Screens are identified by the full-screen fill colour they paint, each menu colour appearing exactly once in the binary. Verified by 9 new offline checks and 5 e2e assertions with character selection named as the negative.
