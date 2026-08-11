@@ -198,6 +198,14 @@ target_include_directories(test_geom PRIVATE runtime runtime/overrides runtime/c
 target_compile_options(test_geom PRIVATE -Wall -Wextra)
 add_test(NAME geometry COMMAND test_geom)
 
+# The renderer's frame lifetime -- when a display list is cleared, how a frame held up under
+# the pause menu is rewound, which pooled texture serves a tile. runtime/video/render.c
+# includes the same header, so this is not a copy. No SDL, no window, no game.
+add_executable(test_framelife tests/test_framelife.c)
+target_include_directories(test_framelife PRIVATE runtime runtime/video)
+target_compile_options(test_framelife PRIVATE -Wall -Wextra)
+add_test(NAME framelife COMMAND test_framelife)
+
 add_executable(test_blit tests/test_blit.c)
 target_include_directories(test_blit PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)
 target_compile_options(test_blit PRIVATE -Wall -Wextra)

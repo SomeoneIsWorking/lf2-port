@@ -1739,7 +1739,21 @@ Three hooks in `runtime/video/ddraw.c`:
   textures, uploads, dropped entries, ground markers, cast shadows and how many frames the
   light ran on. It prints the zeros too, and says explicitly when the GPU path presented no
   frames at all, when entries were dropped, or when the shaders never loaded and why, because
-  "0 quads" and "the renderer was never called" are different faults.
+  "0 quads" and "the renderer was never called" are different faults. Two lines in it are
+  worth knowing by name:
+  - `gpu=on frames=N` — **N is the number the renderer actually drew**, and `frames=0` beside
+    `software fallbacks=0` means it was never asked rather than that nothing went wrong. Both
+    counters live inside `render_present`, so a frame the present gate skips increments
+    neither. This is how the menus were stretched by SDL for the whole life of the renderer
+    without a single test noticing (issue #52).
+  - `N frame(s) were drawn over a RETAINED list` — frames the game recorded nothing for and
+    the renderer redrew what it already had, which is how the pause menu is presented. Zero is
+    the correct answer for a run that never paused, and `tools/e2e.sh pause_dropout` asserts
+    both directions: non-zero in the run that pauses, zero in the same route without one.
+  - `the busiest frame drew N tile(s) against a pool of M` — the tile-texture pool must be at
+    least as large as the busiest frame, because every tile in a frame is live at once. When
+    N reaches M the report says how many tiles were dropped, and a dropped tile is text
+    missing from the picture.
 
 The renderer draws the display list into a target the size of the window, scaling **each quad**
 by the world scale as it goes (`SDL_SCALEMODE_NEAREST` throughout, so a sprite's texels are

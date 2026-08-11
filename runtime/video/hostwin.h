@@ -122,5 +122,8 @@ void gfx_request_frame_dump(void);
 int  pause_active(void);
 void pause_tick(void);
 void pause_draw(uint32_t pix, int w, int h, int pitch);
+/* The same menu recorded over the native renderer's retained frame; 1 if it drew.
+ * See runtime/app/pause.c and issue #52. */
+int  pause_draw_list(uint32_t dst_pixels, int w, int h);
 void present_frozen_frame(void);
 void controls_hint_enable(int on);

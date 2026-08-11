@@ -53,7 +53,7 @@ PAD2="south@match+158,south@match+258,start@match+458,down@match+518,south@match
 echo "pause drop-out: a joined player leaves from the pause menu..."
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
-  LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$PAD2" \
+  LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$PAD2" LF2_RENDER_DEBUG=1 \
   LF2_QUIT_AFTER=3200 timeout 300 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 
 fail=0
@@ -95,6 +95,32 @@ if grep -q "coop leave: slot 0 dropped out" "$LOG"; then
     say_fail "intact: player one was dropped out too, which nothing asked for"
 else
     say_ok "intact: player one was left in the match"
+fi
+
+# WHICH RENDERER DREW THE PAUSED FRAMES (issue #52). The menu freezes the game by declining
+# to call its update, so no blit is recorded and the display list would be empty; the renderer
+# redraws the list it already had, and counts those frames. A build where the menu falls back
+# to the software compositor -- which is what every build before this one did, and it looked
+# perfectly fine because the software path draws the menu too -- reports none.
+#
+# ONE ASSERTION, NO SECOND RUN. Whether this counter counts the right thing, and whether it
+# reads zero when nothing is held, is `ctest framelife` -- runtime/video/framelife.h is pure
+# bookkeeping and render.c includes it, so the negative control is offline where it belongs
+# (issue #53). What is left here is the one thing that genuinely needs a running game: that a
+# real pause, in a real match, is presented by the renderer.
+#
+# THE LAST REPORT, NOT THE FIRST. The render report is periodic (every 900 frames) and the
+# counters are cumulative, so the first one covers the menus, long before the match this route
+# pauses in -- reading it with `grep -m1` reported 0 for a run that had held 273 frames.
+held=$(grep "frame(s) were drawn over a RETAINED list" "$LOG" | tail -1 | sed 's/^render: \([0-9]*\) .*/\1/')
+if [ -z "$held" ]; then
+    say_fail "render: the run never reported a retained-frame count at all, so nothing here"
+    say_fail "        measured which renderer drew the pause menu"
+elif [ "$held" -gt 0 ] 2>/dev/null; then
+    say_ok "render: the native renderer drew $held paused frame(s) over its retained list"
+else
+    say_fail "render: the pause menu was presented by the SOFTWARE compositor on every frame"
+    say_fail "        (0 retained-frame presents in a run that definitely paused)"
 fi
 
 [ "$fail" = 0 ] && echo "pause drop-out: ok" || echo "pause drop-out: FAILED"
