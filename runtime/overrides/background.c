@@ -192,6 +192,7 @@ static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, i
  * view degrades to what it did before -- the extra width on the right -- rather than opening a
  * band of nothing. At the game's own 794 the offset is exactly zero, which is why
  * tools/routes/background_test.sh's byte-identity arm still holds. */
+static long bg_alt_frames;
 static long cam_frames, cam_shifted, cam_locked, cam_lock_bound, cam_walk_widened;
 static int32_t cam_walk_max;
 static int32_t cam_game_max, cam_draw_max, cam_k, cam_lock_max;
@@ -230,6 +231,17 @@ void bg_camera_report(void)
     /* The section lock is what stage mode uses to hold the camera until a section is cleared,
      * and it is ZERO in VS mode. Reporting it is how a route can show it reached stage mode at
      * all -- and it is the only evidence issue #36's clamp has ever run. */
+    /* Issue #58's open question, answered by every run that prints this. */
+    if (bg_alt_frames)
+        fprintf(stderr, "camera: the game's BUILT-IN background (index %d, fn_0041a050) was "
+                        "drawn on %ld of those frames -- its bands are 794 wide as literals, so "
+                        "issue #58 is REACHABLE and visible in a wide view\n",
+                BG_ALT_PASS, bg_alt_frames);
+    else
+        fprintf(stderr, "camera: the built-in background (index %d, fn_0041a050) was never "
+                        "selected in %ld frame(s), so this run says nothing about issue #58 -- "
+                        "it does NOT show the backdrop is unreachable, only that this route did "
+                        "not reach it\n", BG_ALT_PASS, cam_frames);
     if (cam_locked)
         fprintf(stderr, "camera: the stage-mode section lock was set on %ld frame(s), reaching "
                         "%d, and BOUND the camera on %ld of them -- so this run entered stage "
@@ -406,6 +418,13 @@ void fn_0041a250(void)
     /* Index 99 is a different pass entirely (fn_0041a050) and nothing here applies to it.
      * The original body is kept callable for exactly this, and for the escape below. */
     if (bg == BG_ALT_PASS) {
+        /* COUNTED, because issue #58 turns on whether anyone ever sees this. fn_0041a050 draws
+         * a fixed backdrop whose five bands are 794 wide as literals, so it would stop short in
+         * a wide view -- but the entry could not say whether any route or any player reaches
+         * it, and a fix for a screen nobody sees is worth nothing. bg_camera_report prints this
+         * with its denominator so a ZERO is readable as "never selected" rather than as
+         * silence. */
+        bg_alt_frames++;
         /* Background 99 is a different pass entirely (fn_0041a050) and reads the camera
          * itself, so it gets the same treatment as the object pass. */
         const uint32_t saved = LD32(BG_CAMERA_X);
