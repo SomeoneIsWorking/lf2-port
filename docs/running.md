@@ -1706,6 +1706,16 @@ Three hooks in `runtime/video/ddraw.c`:
   game's own dithered ellipse. The lighting is **on by default** — it is a look, not a switch;
   this exists so the renderer's *geometry* can be compared against the software path with
   nothing on top of it, and so the pass can be shown to do something.
+
+  **It is a control for "is the pass running", NOT for any single term inside it** (instrument
+  I011). Diffing a lit frame against an `LF2_HD2D=off` frame and attributing the difference to
+  one term is wrong in a way that looks right — most of a fighter's body changes under that
+  diff, so the marked-up frame reads as "the shadow is all over the fighter" whatever the
+  shadow is doing. On a match frame at 1920×1080 the whole pass moves 1837–2245 pixels and the
+  cast shadow alone moves 271–713. **The per-term control is the knob**: `LF2_HD2D_SHADOW=0`
+  against the default isolates the cast shadow with the rest of the pass still running, and
+  `LF2_HD2D_SHOW=chars` gives the character mask to test a pixel against rather than guessing
+  from a screenshot. That pair is what settled issue #48.
 - **`LF2_HD2D_SHOW=albedo|chars|shadow`** presents one buffer of the chain instead of the lit
   frame: the composition as the game drew it, the character mask with its height channel, or
   the cast-shadow mask. Every fault in the lighting looks the same from outside — a
