@@ -5,7 +5,7 @@ status: open
 symptom: the pause menu offers only RESUME and QUIT GAME: there is no way back to the front end without killing the process, and a joined player has no way to leave a match deliberately
 tags: reported,pause,menu,coop,drop-in,ux
 created: 2026-08-05
-updated: 2026-08-06
+updated: 2026-08-11
 ---
 
 REPORTED. runtime/app/pause.c currently has exactly two items:
@@ -209,3 +209,20 @@ RECOMMENDATION: (a) unless the reporter wants (b) enough to pay for establishing
 second load does to state that the first one set up. (b) is a day's work with a real chance
 of a half-wound second match, which is exactly the failure this entry warned about; it is not
 a thing to try casually and call done because the menu appeared.
+
+### Note (2026-08-11)
+DECIDED 2026-08-11 by the reporter, and the framing of the note above was wrong: "it's a design
+call" -- "no it's not". Option (b). Port the game's own entry sequence; do not close this at
+LEAVE MATCH.
+
+So the work is: game mode <- -100, world mode <- 1, and let fn_004246b0's mode==1 branch do
+what it does at startup -- it loads, sets mode 2, and the game arrives at the mode menu. Every
+step is the game's own; nothing stamps a screen number. The world object has its own reset to
+hand, fn_00419e40 ([this]=0 plus a memset of the 400 gate bytes), which is what the static
+initialiser calls.
+
+WHAT THE PREVIOUS NOTE LISTED AS RISKS STILL HAS TO BE ESTABLISHED -- they are work items now,
+not reasons to hesitate: what a finished match leaves wound that a second load does not clear.
+Named suspects, none of them measured: the music, the object registry beyond the 400 gate
+bytes, and the character-select roster. The way to establish it is a second match after an exit,
+compared against a first match in a fresh process.
