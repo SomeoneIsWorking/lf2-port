@@ -102,3 +102,54 @@ and subtracted from stage_width for the various object kinds -- are NOT readable
 STRUCTURE above is solid because it rests on integer field reads and the two literal
 constants; the exact margin values are not, and anyone who needs them must get them from the
 instruction listing rather than from this note.
+
+### Note (2026-08-11)
+MY NOTE ABOVE WAS WRONG WHERE IT MATTERED, and the reporter's screenshot is what falsified it.
+Correcting it here rather than leaving it, because it would have sent the next session away
+from a real bug.
+
+WHAT I GOT RIGHT: the derivation. The section's camera lock and walk lock ARE one stage-data
+field B (camera = B - 794, walk = B), the walk bound carries no screen term, and widening the
+walk bound would let a fighter past a boundary the stage data declares. Claim C024 stands.
+
+WHAT I GOT WRONG: I concluded from that "the screen's right edge lands on B whatever the view
+is, so the reported gap cannot survive issue #36". That is only true while B - view is still a
+position the camera can take. It is not, and the arithmetic is in my own run:
+
+    section lock reached 106   ->  B = 106 + 794 = 900
+    view                978
+    camera max = B - view = -78, and the camera clamps at 0
+
+So the camera sits at 0, the screen shows world 0..978, and the fighter stops at 900. SEVENTY
+-EIGHT world pixels of stage are visible that the player cannot walk to. That is exactly what
+was reported -- "most right I can walk to" with stage still to the right of the fighter -- and
+it is what the earlier note declared impossible.
+
+WHY THE PORT'S OWN INSTRUMENT DID NOT SHOW IT, which is worth as much as the bug: the camera
+report for that run says "the stage-mode section lock ... BOUND the camera on 273 of them --
+so this run entered stage mode and the lock's view substitution did work (issue #36)". Every
+word is true and it answers the wrong question. It reports that the substitution RAN; it
+cannot report that the result was reachable, because it never compares the view's right edge
+against the walk bound. A green line from it is not evidence about this issue.
+
+WHAT THE REAL QUESTION IS, now that the mechanism is settled. A section is 794 world pixels of
+walkable stage. A view wider than that has no more world to show inside the section, and the
+game never had to decide what to do about it. The choices are a design call and each has a
+cost that should be named rather than discovered:
+
+  (a) BOUND THE VIEW BY THE SECTION. Compose no wider than B - camera while a section lock is
+      in force, so the picture ends where the walk bound does. Truthful, and it means the
+      window's extra width shows nothing during a locked section -- the picture would narrow
+      and widen as sections are cleared, which is a visible change the reporter has not asked
+      for.
+  (b) LET THE VIEW OVERHANG AND SAY SO IN THE PICTURE. Keep the wide view and accept that a
+      strip beyond the boundary is scenery. This is what ships today; the complaint is that
+      nothing distinguishes it from walkable stage.
+  (c) WIDEN THE SECTION. Explicitly rejected -- see the derivation above and C024. It changes
+      the game.
+
+NOT YET MEASURED, and it decides how much (a) would actually cost: whether B is 794 apart from
+the previous section's bound for every section of every stage, or whether sections are wider
+than one screen and this only bites at the narrow ones. One run per stage reading the lock
+would settle it, and until it is settled nobody should guess at how often the picture would
+narrow under (a).
