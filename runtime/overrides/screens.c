@@ -332,7 +332,8 @@ enum { EXIT_KEY_HOLD = 6 };               /* frames F4 is held, matching the key
 enum { EXIT_SETTLE = 10 };                /* frames the overlay is left to appear properly */
 enum { EXIT_GIVEUP = 400 };               /* about seven seconds; then say so and stop */
 
-static int  exit_state;                   /* 0 idle, 1 F4 sent, 2 overlay seen */
+static int  exit_state;                   /* 0 idle, 1 F4 sent, 2 overlay seen, 3 probing */
+static void exit_probe(long f);
 static int  exit_dev = -1;
 static long exit_since, exit_overlay_at;
 
@@ -383,6 +384,7 @@ void exit_to_menu_tick(void)
         return;
     }
 
+    if (exit_state == 3) { exit_probe(f); return; }
     if (!overlay_open()) return;
     if (exit_state == 1) {
         exit_state = 2;
@@ -396,5 +398,47 @@ void exit_to_menu_tick(void)
     input_synth_confirm(exit_dev, 2);
     fprintf(stderr, "exit to menu: overlay selection set to Exit (item %d) and device %d's "
                     "attack issued -- the game dispatches it from here\n", OV_EXIT, exit_dev);
+    exit_state = 3;
+    exit_overlay_at = f;
+}
+
+/* ---- LF2_EXIT_PROBE: which .data word sends the game back to its mode menu (issue #22) ----
+ *
+ * A DIAGNOSTIC, and it stays one. The .data diff between the mode menu and the screen this
+ * exit reaches leaves a short list of words that read zero at the mode menu, and a diff can
+ * only ever produce suspects -- the test is to write one and watch. This writes the words
+ * named in LF2_EXIT_PROBE (comma-separated hex guest addresses) once, a few frames after the
+ * exit completes, so a candidate costs a run rather than a rebuild.
+ *
+ * It says what it wrote and what was there, because a probe that writes a word already zero
+ * proves nothing and must not read as a negative result. */
+enum { EXIT_PROBE_WAIT = 30 };
+
+static void exit_probe(long f)
+{
+    if (f - exit_overlay_at < EXIT_PROBE_WAIT) return;
     exit_state = 0;
+    const char *spec = getenv("LF2_EXIT_PROBE");
+    if (!spec) return;
+    if (panel_hud_up()) {
+        fprintf(stderr, "exit probe: the match is still up at frame %ld, so nothing was "
+                        "written -- this run tested NOTHING\n", f);
+        return;
+    }
+    int wrote = 0;
+    for (const char *p = spec; *p; ) {
+        char *end = NULL;
+        const unsigned long addr = strtoul(p, &end, 16);
+        if (end == p) break;
+        const uint32_t was = LD32((uint32_t)addr);
+        ST32((uint32_t)addr, 0u);
+        fprintf(stderr, "exit probe: [%08lx] was %u, wrote 0 at frame %ld%s\n",
+                addr, was, f, was == 0 ? "  -- IT WAS ALREADY ZERO, so this proves nothing"
+                                       : "");
+        wrote++;
+        p = (*end == ',') ? end + 1 : end;
+    }
+    if (!wrote)
+        fprintf(stderr, "exit probe: LF2_EXIT_PROBE=\"%s\" named no address I could parse, so "
+                        "NOTHING was written\n", spec);
 }
