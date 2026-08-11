@@ -1832,6 +1832,30 @@ plain composition; there is deliberately no approximation to fall back to.
   from "the dump does not contain the background at all".
 
 
+- **`LF2_BAND_DEBUG=1`** prints every blit that is a candidate for the full-width backdrop
+  stretch — anything drawn from x 0 into the composition during a match — with the rectangle it
+  actually arrived as. It exists because that rule tests `dr == NATIVE_W` on the assumption the
+  *game* clipped the layer to its own 794, and the port now patches the game's width words to
+  the view, so what arrives is worth printing rather than reasoning about. It is what showed
+  that two blits with identical rectangles (`forests.bmp` and `forestm1.bmp`, both `dr 800`)
+  need opposite treatment, and therefore that no test written at that call site can be right
+  (issue #23).
+
+- **`LF2_TEXT_DEBUG=1`** prints every string the game draws through `TextOutA`, with its
+  position **and its destination surface and size**. The destination is the point: the two
+  widescreen offsets in `h_TextOutA` are each decided by it — `hud_offset_x` by the band the y
+  falls in, `screen_offset_x` by whether the surface is wider than 794 — and a line carrying
+  only the final x cannot show which of them declined or why. That is how issue #54 was
+  settled, and it overturned two earlier guesses about which branch was at fault.
+
+- **`LF2_EXIT_PROBE=<hex>[,<hex>…]`** zeroes those guest addresses a few frames after the pause
+  menu's exit completes, and reports what each one held first — saying explicitly when a word
+  was **already zero**, so that writing nothing cannot read as a negative result. It makes
+  testing a candidate for "which word sends the game back to its menu" cost a run rather than a
+  rebuild (issue #22). Note that the discriminator downstream of it is the hard part: comparing
+  two frame dumps does **not** distinguish the mode menu from character selection, because they
+  can share a picture as well as a blit destination (issue #59).
+
 - **`LF2_BG_TABLE=1`** prints the loaded stage's layer table once, the first frame a match is
   actually on screen. **`LF2_BG_TABLE=all`** prints *every* background record the registry
   holds — all twelve — regardless of which one is loaded.
