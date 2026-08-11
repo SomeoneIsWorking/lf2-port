@@ -1,3 +1,13 @@
+---
+id: 47
+title: Startup crash: control ran off the end of a lifted function with the frame still allocated
+status: resolved
+symptom: the port crashed at startup after reading 0x6f666e69 ('info') as a pointer; a dozen hypotheses (ESP corruption, import table, flags, stack imbalance, arities, instruction semantics, merged Ghidra functions, control.txt parsing, /GS cookie, tail calls) were each ruled out by measurement
+tags: recompiler,lifter,crash,dead-end,ghidra
+created: 2026-08-11
+updated: 2026-08-11
+---
+
 # Startup crash — RESOLVED
 
 **Root cause: unreliable function-end detection.** Ghidra's declared function sizes are
