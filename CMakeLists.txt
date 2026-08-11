@@ -206,6 +206,11 @@ target_include_directories(test_framelife PRIVATE runtime runtime/video)
 target_compile_options(test_framelife PRIVATE -Wall -Wextra)
 add_test(NAME framelife COMMAND test_framelife)
 
+add_executable(test_framespec tests/test_framespec.c)
+target_include_directories(test_framespec PRIVATE runtime runtime/app)
+target_compile_options(test_framespec PRIVATE -Wall -Wextra)
+add_test(NAME framespec COMMAND test_framespec)
+
 add_executable(test_blit tests/test_blit.c)
 target_include_directories(test_blit PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)
 target_compile_options(test_blit PRIVATE -Wall -Wextra)

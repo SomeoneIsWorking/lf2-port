@@ -9,6 +9,7 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "render.h"
+#include "framespec.h"
 #include "script.h"
 
 void menu_click_report(void);   /* issue #27: the click flag as the front-end menu sees it */
@@ -332,31 +333,13 @@ static void dump_path(char *out, size_t n, const char *fmt, ...)
  * frame 2250 to get "a frame with fighters on it", and when the routes stopped waiting 840
  * frames for a front end that was already up, 2250-840 landed somewhere else in the match and
  * the arm failed for a reason that had nothing to do with the renderer. The pad scripts were
- * given screen anchors for exactly this in issue #25; the dumps kept their stopwatches. */
+ * given screen anchors for exactly this in issue #25; the dumps kept their stopwatches.
+ *
+ * The grammar lives in runtime/app/framespec.h so tests/test_framespec.c can walk it without
+ * booting the game; script_when is the resolver, because it is what knows the screens. */
 static int spec_lists(const char *spec, long frame)
 {
-    if (!spec) return 0;
-    for (const char *c = spec; *c; ) {
-        if (*c == '@') {
-            char item[64];
-            size_t n = 0;
-            while (c[n] && c[n] != ',' && c[n] != ' ' && n < sizeof item - 1) n++;
-            memcpy(item, c, n);
-            item[n] = '\0';
-            int unresolved = 0;
-            const long v = script_when(item, &unresolved);
-            if (!unresolved && v == frame) return 1;
-            c += n;
-        } else {
-            char *end = NULL;
-            const long v = strtol(c, &end, 10);
-            if (end == c) break;
-            if (v == frame) return 1;
-            c = end;
-        }
-        while (*c == ',' || *c == ' ') c++;
-    }
-    return 0;
+    return framespec_matches(spec, frame, script_when);
 }
 
 /* A capture aimed at a fixed frame number and a probe that fires off game STATE can
