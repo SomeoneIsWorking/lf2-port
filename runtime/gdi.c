@@ -265,6 +265,11 @@ static Bitmap *dib_load(uint32_t p)
 
 /* ---- entry points ---- */
 
+/* The size of the last bitmap LoadImage handed back, and how many it has handed back at all.
+ * See the comment at the write below (issue #50). */
+static int gdi_loaded_w, gdi_loaded_h;
+static long gdi_loaded_n;
+
 static void h_LoadImageA(void)
 {
     /* LoadImageA(hinst, name, type, cx, cy, fuLoad); LR_LOADFROMFILE = 0x10 */
@@ -290,8 +295,33 @@ static void h_LoadImageA(void)
         ret_stdcall(6, 0);
         return;
     }
+    /* Issue #50: the game's picture loader (FUN_0043ed10) goes LoadImage -> GetObject ->
+     * CreateSurface(the bitmap's OWN width and height) -> GetDC -> StretchBlt(the surface's
+     * width and height, read back with GetSurfaceDesc) -> ReleaseDC. So a surface it creates
+     * is a PICTURE HOLDER sized by its content, and the StretchBlt is 1:1 by construction --
+     * unless something between the two changes the surface's size, which is exactly what the
+     * port's "every surface asked for at 794x550 follows the window" rule did to MENU_WAIT,
+     * the 794x550 loading picture. This latch is how dd_CreateSurface tells the two apart:
+     * a request whose size is the size of the bitmap that was just loaded came from that
+     * loader and must keep it. It is content-derived rather than an address, and it is
+     * consumed on the first match so a later coincidence cannot revive it. */
+    gdi_loaded_w = b->w; gdi_loaded_h = b->h; gdi_loaded_n++;
     ret_stdcall(6, bitmap_handle(b));
 }
+
+/* Reported to ddraw.c. The counter is part of the answer: "no surface matched a loaded
+ * bitmap" and "no bitmap was ever loaded" are different failures and a caller that could
+ * not distinguish them would be reading a lie. */
+int gdi_last_bitmap(int *w, int *h, long *loaded_total)
+{
+    if (loaded_total) *loaded_total = gdi_loaded_n;
+    if (gdi_loaded_w <= 0) return 0;
+    if (w) *w = gdi_loaded_w;
+    if (h) *h = gdi_loaded_h;
+    return 1;
+}
+
+void gdi_last_bitmap_consume(void) { gdi_loaded_w = gdi_loaded_h = 0; }
 
 static void h_CreateCompatibleDC(void)
 {
@@ -393,7 +423,12 @@ static void h_StretchBlt(void)
         }
     }
     ddraw_surface_present(hdst);
-    { static long n; if (getenv("LF2_RSRC_DEBUG")) fprintf(stderr, "stretchblt #%ld %dx%d -> %dx%d\n", ++n, sw, sh, dw, dh); }
+    /* The caller is part of the line because a scaling StretchBlt is a BUG SIGNAL in this port
+     * (issue #50) and "which guest call site asked for it" is the first thing wanted next. */
+    { static long n; if (getenv("LF2_RSRC_DEBUG"))
+        fprintf(stderr, "stretchblt #%ld %dx%d -> %dx%d at (%d,%d) in %dx%d from guest %08x%s\n",
+                ++n, sw, sh, dw, dh, dx, dy, dwid, dhei, LD32(R(ESP)),
+                (sw == dw && sh == dh) ? "" : "  <== SCALING"); }
     LOADPROF_END();
     ret_stdcall(11, 1);
 }

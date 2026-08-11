@@ -13,6 +13,11 @@
 
 void menu_click_report(void);   /* issue #27: the click flag as the front-end menu sees it */
 
+/* runtime/gdi.c -- the picture the game just loaded, so a surface created to hold it can be
+ * told from the composition surface (issue #50). */
+int  gdi_last_bitmap(int *w, int *h, long *loaded_total);
+void gdi_last_bitmap_consume(void);
+
 #include <time.h>
 #include "loadprof.h"
 
@@ -23,6 +28,10 @@ void menu_click_report(void);   /* issue #27: the click flag as the front-end me
 #include <string.h>
 
 #define ARG(n) LD32(R(ESP) + 4 + 4 * (n))
+
+/* The composition the game asks for. Taken from geom.h rather than written again here, so
+ * there is one 794x550 in the port and runtime/test_geom.c is testing this one. */
+enum { NATIVE_W = GEOM_SCREEN_W, NATIVE_H = GEOM_SCREEN_H };
 
 /* DDSURFACEDESC field offsets */
 enum { SD_SIZE = 0, SD_FLAGS = 4, SD_HEIGHT = 8, SD_WIDTH = 12, SD_PITCH = 16,
@@ -481,7 +490,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     dump_heap(frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
-    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); world_band_report(); com_release_report(); input_report(); audio_pan_report(); bg_camera_report(); mode_force_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); world_band_report(); framing_report(); com_release_report(); input_report(); audio_pan_report(); bg_camera_report(); mode_force_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
     /* The read profile is reported on the same periodic boundary and reset each time, so
      * each block covers one window rather than the whole run: an array swept only during a
      * match would otherwise be averaged with the menus that came before it. */
@@ -848,6 +857,78 @@ static void blit(Surface *d, int dx, int dy, int dw, int dh,
     }
 }
 
+/* ---- THE SPACE BESIDE A SCREEN WHOSE BACKDROP IS A PICTURE (issue #44) ----
+ *
+ * SAY THIS FIRST: THERE IS NO FAITHFUL ANSWER HERE AND THIS IS A PORT DECISION, NOT THE
+ * GAME'S. The loading screen's background is not a colour the port can extend, it is the
+ * resource bitmap MENU_WAIT drawn whole at (0,0) -- one blit, no fill of its own -- and the
+ * game draws NOTHING beside it, because the game never has a screen wider than its picture.
+ * Anything the port puts in those columns is invented. The reporter asked for them to be
+ * filled rather than left black; this is the least-inventing fill available, and it is
+ * declared as a choice rather than shipped as fidelity.
+ *
+ * WHAT IT DOES: continues each ROW's edge colour sideways -- clamp-to-edge. It is chosen
+ * because it invents no SHAPE and no LAYOUT: every column it writes is a copy of a column the
+ * game itself drew, and the picture's own backdrop is a horizontally-uniform vertical gradient
+ * (measured: its left and right edge columns agree to within 4/255 on 405 of its 550 rows), so
+ * on those rows the extension is what a wider version of that same gradient would be. On the
+ * remaining rows the artwork itself reaches an edge and those rows smear their edge colour
+ * outwards -- that is the visible cost of the choice, and it is a colour band, never a
+ * duplicated shape.
+ *
+ * WHAT IT IS NOT, and both were rejected on the rules this port already has: STRETCHING the
+ * picture across the composition, which invents layout the game does not have (issue #42 for
+ * a menu backdrop, issue #23 for a stage's sky), and MIRRORING or TILING it, which invents a
+ * second copy of the artwork.
+ *
+ * The runs are merged so a gradient costs a few dozen display-list entries rather than one per
+ * row, and both the software composition and the recorded list get the same rectangles, so the
+ * GPU and software frames stay comparable. */
+static void band_paint(Surface *d, int x, int w, int top, int bot, uint32_t c)
+{
+    if (w <= 0 || bot <= top) return;
+    if (x < 0) { w += x; x = 0; }
+    if (x + w > d->w) w = d->w - x;
+    if (w <= 0) return;
+    render_fill(d->pixels, x, top, x + w, bot, c);
+    for (int y = top; y < bot && y < d->h; y++) {
+        if (y < 0) continue;
+        uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
+        for (int i = x; i < x + w; i++) row[i] = c;
+    }
+}
+
+static void backdrop_picture_bands(Surface *d, Surface *s,
+                                   int sl, int st_, int sr, int sb,
+                                   int dl, int dt, int dr, int db)
+{
+    if (db <= dt || sb <= st_ || sr <= sl) return;
+    if (sl < 0 || sr > s->w) return;
+
+    int have = 0, run_from = dt;
+    uint32_t run_l = 0, run_r = 0;
+    for (int y = dt; y <= db; y++) {
+        uint32_t cl = 0, cr = 0;
+        int valid = 0;
+        if (y < db && y >= 0 && y < d->h) {
+            const int sy = st_ + (int)((int64_t)(y - dt) * (sb - st_) / (db - dt));
+            if (sy >= 0 && sy < s->h) {
+                const uint32_t *row =
+                    (const uint32_t *)(g_mem + s->pixels + (size_t)sy * (size_t)s->pitch);
+                cl = row[sl] & 0x00ffffffu;
+                cr = row[sr - 1] & 0x00ffffffu;
+                valid = 1;
+            }
+        }
+        if (have && (!valid || cl != run_l || cr != run_r)) {
+            band_paint(d, 0, dl, run_from, y, run_l);
+            band_paint(d, dr, d->w - dr, run_from, y, run_r);
+            have = 0;
+        }
+        if (valid && !have) { run_from = y; run_l = cl; run_r = cr; have = 1; }
+    }
+}
+
 static void dump_surface(uint32_t obj, const char *tag)
 {
     Surface *s = com_host(obj);
@@ -965,6 +1046,82 @@ static void panel_note(int l, int t, int r, int b)
     else if (r - l == 198 && b - t == 54 && (t == 0 || t == 54)) panel_hud_frame = frames;
 }
 
+/* ---- WHICH SCREEN IS UP, FROM THE COLOUR IT PAINTS ITSELF (issue #44) ----
+ *
+ * The two screens the reporter wants LEFT-aligned are the front end and the mode menu, and
+ * they are NOT the same drawn screen: different backdrop colour, different character bitmap,
+ * different menu sheet. So per-screen framing needs to identify two screens, and the port has
+ * no signal for the second one -- the word screens.c calls MODEMENU_SEL is the GAME MODE, not
+ * a screen (issue #51), which is the same trap the pre-fight overlay already fell into once.
+ *
+ * The identifier used here is the one thing each screen does that nothing else does: it paints
+ * its whole 794x550 screen a flat colour of its own. Front end 0x10206c, mode menu 0x122565 --
+ * and each of those two literals appears EXACTLY ONCE in the whole of .text (pushed at
+ * 004270c9 and 00431d3a, both into the game's single colour-fill helper FUN_00415160). That
+ * makes them identifications rather than coincidences, and it is the same rule the port
+ * already prefers everywhere else: ask what the game DRAWS, not what a .data word holds.
+ *
+ * IT IS NOT A FRESHNESS WINDOW, unlike the panels above, and that is not a style choice: the
+ * loading screen is on screen for TWO frames, and with the panels' two-frame window it
+ * inherited the front end's LEFT alignment for the whole of its life -- measured, on the first
+ * build of this. The alignment is a property of the screen whose BACKDROP was drawn most
+ * recently, so every whole-screen backdrop sets it: a fill in one of the two menu colours says
+ * LEFT, any other whole-screen fill and a whole-screen picture say CENTRED. Every screen paints
+ * its own backdrop before its art, so within a frame the art that follows is already placed
+ * correctly. */
+enum { FILL_FRONT_END = 0x0010206cu, FILL_MODE_MENU = 0x00122565u };
+static int screen_align_left;
+
+/* WHAT THE FRAMING ACTUALLY DID, per screen, so a test can assert it from the run's own
+ * output instead of from a screenshot somebody once looked at (LF2_FRAMING_DEBUG=1).
+ *
+ * Every fixed-794 screen reports, not only the two that moved: character selection is the
+ * control for issue #44 and a log that only printed the screens that changed could not show
+ * that it did not. The tally at the end names each screen it never saw, so a run that reached
+ * none of them says so loudly rather than printing nothing and reading as a pass. */
+static long framing_n_left, framing_n_centre, framing_n_picture;
+static uint32_t framing_last = 0xfffffffful;
+
+static void framing_note(const char *what, uint32_t key, int off, int left)
+{
+    if (key == framing_last) return;
+    framing_last = key;
+    if (!getenv("LF2_FRAMING_DEBUG")) return;
+    fprintf(stderr, "framing: frame %ld %s -> %s, offset %d in a %d-wide composition "
+                    "(the game's own screen is %d)\n",
+            frames, what, left ? "LEFT" : "CENTRED", off, hw.width, NATIVE_W);
+}
+
+void framing_report(void)
+{
+    if (!getenv("LF2_FRAMING_DEBUG")) return;
+    fprintf(stderr, "framing: %ld left-aligned menu screen(s), %ld centred flat-backdrop "
+                    "screen(s), %ld picture-backdrop screen(s) so far%s\n",
+            framing_n_left, framing_n_centre, framing_n_picture,
+            (framing_n_left || framing_n_centre || framing_n_picture) ? ""
+              : " -- NO fixed-794 screen has been framed at all, so this run measured NOTHING "
+                "about per-screen framing (not wide, or never left the world view)");
+}
+
+static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
+{
+    if (l != 0 || t != 0 || r != NATIVE_W || b != NATIVE_H) return;
+    const uint32_t c = colour & 0x00ffffffu;
+    const int left = (c == FILL_FRONT_END || c == FILL_MODE_MENU);
+    screen_align_left = left;
+    if (!lf2_wide_width() || panel_hud_up()) return;
+    if (left) framing_n_left++; else framing_n_centre++;
+    char what[64];
+    snprintf(what, sizeof what, "screen with backdrop fill %06x", c);
+    framing_note(what, c | 0x40000000u,
+                 geom_screen_offset_x(hw.width, left ? GEOM_ALIGN_LEFT : GEOM_ALIGN_CENTRE),
+                 left);
+}
+
+/* Exposed so tools/widescreen_test.sh can assert the framing of each screen from the run's
+ * own output rather than from a screenshot someone looked at once. */
+int screen_left_aligned(void) { return screen_align_left; }
+
 int panel_charselect_up(void) { return frames - panel_charselect_frame <= PANEL_FRESH; }
 int panel_overlay_up(void)    { return frames - panel_overlay_frame    <= PANEL_FRESH; }
 int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_FRESH; }
@@ -991,9 +1148,6 @@ int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_
  * `off` columns, which held whatever was there when the geometry last changed -- issue #29,
  * covered by a clear. Composing centred instead makes the copy 1:1, so every column of the
  * primary is written every frame and the ghost has nowhere to live. */
-/* The composition the game asks for. Taken from geom.h rather than written again here, so
- * there is one 794x550 in the port and runtime/test_geom.c is testing this one. */
-enum { NATIVE_W = GEOM_SCREEN_W, NATIVE_H = GEOM_SCREEN_H };
 
 /* The widest composition this port will hand the game, and the width every resizable
  * surface's PITCH is fixed at. It is not a taste: vram_alloc is a bump allocator with no
@@ -1030,12 +1184,17 @@ int hud_offset_x(int dst_w, int bottom)
     return (dst_w - HUD_W) / 2;
 }
 
+/* PER SCREEN since issue #44, and it stays ONE function on purpose: it has four consumers --
+ * composing (below), the controls hint drawn onto the primary, the GDI text path which never
+ * goes through Blt, and mouse_lparam's inverse mapping -- and if any of them got a different
+ * answer the pointer would stop matching the picture. That failure is silent: a menu activates
+ * the wrong entry, or none, and a screenshot looks perfect (issue #41's second bug). */
 int screen_offset_x(void)
 {
     const int wide = lf2_wide_width();
     if (!wide || panel_hud_up()) return 0;
-    const int off = (hw.width - NATIVE_W) / 2;
-    return off > 0 ? off : 0;
+    return geom_screen_offset_x(hw.width,
+                                screen_left_aligned() ? GEOM_ALIGN_LEFT : GEOM_ALIGN_CENTRE);
 }
 
 /* Issue #29: after a resize, character selection kept a ghost of itself standing to its left.
@@ -1178,8 +1337,13 @@ static void surf_Blt(uint32_t self)
      * Not applied here, but AFTER panel_note below: the screen detector recognises screens by
      * their destination rectangles, in the game's own coordinates, and it is what decides
      * screen_offset_x() in the first place. Shifting before it would feed the offset back into
-     * the thing that computes it. */
-    const int compose_off = (!d->primary && d->w > NATIVE_W) ? screen_offset_x() : 0;
+     * the thing that computes it.
+     *
+     * ASKED FOR at each of the two places it is applied, and NOT computed once at the top of
+     * the function, because issue #44 made the answer depend on WHICH SCREEN is up and the
+     * thing that says which screen is up is this very draw. The loading screen is the case
+     * that proves it: it is two frames long, and a value read before its backdrop was
+     * recognised placed it with the alignment of the front end that preceded it. */
 
     blt_frame_log(dl, dt, dr, db, srcobj, srect, flags);
 
@@ -1204,17 +1368,30 @@ static void surf_Blt(uint32_t self)
          * non-looping layer with no more picture. What the hint adds is that the fill came
          * from the stage at all. */
         if (world_band_hint) world_band_fills++;
+        /* Before anything rewrites the rectangle: a screen paints itself in the game's own
+         * coordinates, and the widening below turns dr into the composition width. */
+        if (!world_band_hint) screen_fill_note(fill, dl, dt, dr, db);
+        const int compose_off = (!d->primary && d->w > NATIVE_W) ? screen_offset_x() : 0;
         int spans_screen = (dl == 0 && dr == NATIVE_W && d->w > NATIVE_W && lf2_wide_width());
         if (world_band_hint && spans_screen) {
             dr = d->w;
             world_band_widened++;
-        } else if (spans_screen && compose_off) {
-            /* THE FRONT END'S BACKDROP, and this is what the reporter asked for: a fill of the
-             * game's whole screen on a screen that is being centred is the BACKGROUND, so it
-             * covers the composition and starts at the left edge rather than being centred
-             * with the content. Nothing is invented -- it is the same flat colour the game
-             * chose for its screen, over more of the window. The art on top of it (the logo,
-             * the character, the menu) is a set of smaller draws and IS centred, below. */
+        } else if (spans_screen && !panel_hud_up()) {
+            /* THE SCREEN'S OWN BACKDROP, and this is what the reporter asked for: a fill of
+             * the game's whole screen on a screen that is not the world view is the
+             * BACKGROUND, so it covers the composition and starts at the left edge rather than
+             * moving with the content. Nothing is invented -- it is the same flat colour the
+             * game chose for its screen, over more of the window. The art on top of it (the
+             * logo, the character, the menu) is a set of smaller draws and IS placed, below.
+             *
+             * THE GATE USED TO BE `compose_off`, i.e. the offset being non-zero, and issue #44
+             * is what makes that wrong: a left-aligned screen HAS no offset, so widening its
+             * backdrop would have stopped the moment the screen moved to the left edge, and
+             * the front end would have gone back to 794 columns of blue with black beside it --
+             * issue #42's symptom, reintroduced by the fix for #44. What the test means is
+             * "this is a fixed-794 screen rather than the world view", so that is what it now
+             * says. It is the same set of frames as before: compose_off is zero during a match
+             * exactly because panel_hud_up() is true. */
             dr = d->w;
         } else if (compose_off && dl >= 0 && dr <= NATIVE_W) {
             dl += compose_off; dr += compose_off;
@@ -1299,10 +1476,28 @@ static void surf_Blt(uint32_t self)
 
     panel_note(dl, dt, dr, db);
 
-    /* Centred now that the screen detector has seen the game's own coordinates -- see the long
-     * comment at compose_off above. A draw that fits inside the game's 794-wide screen belongs
+    /* A PICTURE THAT COVERS THE WHOLE OF THE GAME'S SCREEN IS THAT SCREEN'S BACKGROUND, and
+     * the only one in the game is the loading screen's MENU_WAIT (issue #44). It is decided
+     * here, on the game's own coordinates, for the same reason panel_note is: after the shift
+     * below there is no whole-screen rectangle left to recognise. The bands themselves are
+     * painted after the picture lands -- see backdrop_picture_bands, which says at length that
+     * what goes in them is a declared choice and not the game's.
+     *
+     * Gated off the world view: during a match the rule above has already widened a full-width
+     * stage layer, and a stage layer is not a screen's backdrop. */
+    const int backdrop_picture = srcobj && !d->primary && lf2_wide_width() && !panel_hud_up()
+                              && d->w > NATIVE_W
+                              && dl == 0 && dt == 0 && dr == NATIVE_W && db == NATIVE_H;
+    /* A screen whose backdrop is a picture is one of the CENTRED ones, and it says so here
+     * rather than by not saying anything: the alignment is whatever the last screen to draw a
+     * backdrop asked for, so a screen that stayed silent would keep the previous screen's. */
+    if (backdrop_picture) screen_align_left = 0;
+
+    /* Placed now that the screen detector has seen the game's own coordinates -- see the long
+     * comment at the top of Blt. A draw that fits inside the game's 794-wide screen belongs
      * to that screen and moves with it; one that already spans the composition is background
      * and does not. */
+    const int compose_off = (!d->primary && d->w > NATIVE_W) ? screen_offset_x() : 0;
     if (compose_off && dl >= 0 && dr <= NATIVE_W) { dl += compose_off; dr += compose_off; }
 
     cursor_find_note(dl, dt, "Blt");
@@ -1430,6 +1625,13 @@ static void surf_Blt(uint32_t self)
             }
             blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
                  keyed, s->key_lo, s->key_hi);
+            if (backdrop_picture) {
+                backdrop_picture_bands(d, s, sl, st_, sr, sb, dl, dt, dr, db);
+                framing_n_picture++;
+                framing_note("screen with a PICTURE backdrop, side bands extended from its "
+                             "edge columns (a declared port choice, not the game's)",
+                             0x80000000u, dl, 0);
+            }
         }
     }
     /* There used to be a widescreen "finish a tiling series the game stopped at 794" hook
@@ -1821,8 +2023,32 @@ static void dd_CreateSurface(uint32_t self)
      *
      * Both this and the primary FOLLOW THE WINDOW from here on, so they are allocated at
      * WIDE_MAX and start at whatever the window's aspect asks for now. */
+    /* ISSUE #50: A SURFACE ASKED FOR AT THE SIZE OF THE PICTURE ABOUT TO BE PUT IN IT IS NOT
+     * THE COMPOSITION.
+     *
+     * "Created at exactly 794x550" was the whole of the test, and it is not a discriminator:
+     * the game's picture loader (FUN_0043ed10) creates every sprite surface at its bitmap's
+     * own size, and one of those bitmaps -- MENU_WAIT, the loading screen -- happens to be
+     * exactly screen-sized. Widening it broke the loader's own invariant, because the loader
+     * then reads the surface back with GetSurfaceDesc and StretchBlts the bitmap to whatever
+     * width it finds (measured: the ONE non-1:1 StretchBlt in a wide run, 794x550 -> 2542x550
+     * from guest 004014a1). The picture came out stretched 3.2x and cropped to its left third,
+     * because the draw that puts it on screen takes the authored 794-wide source rect.
+     *
+     * So the test is now what the game just did: LoadImage handed back a bitmap of exactly
+     * this size, which is the loader saying "this surface is a holder for that picture". The
+     * composition surface is created at startup from the game's own screen constants, before
+     * any bitmap exists, so it is unaffected. The latch is consumed on the first match.
+     *
+     * NOT fixed by clamping the StretchBlt's destination to 794: that would leave a correct
+     * picture inside a surface whose other 1748 columns are undefined, and would hide the same
+     * mismatch for any other screen-sized content surface. */
     const int primary = (caps & DDSCAPS_PRIMARYSURFACE) != 0;
-    const int follows = primary || (w == NATIVE_W && h == NATIVE_H);
+    int picture_w = 0, picture_h = 0; long bitmaps_loaded = 0;
+    const int picture = !primary && gdi_last_bitmap(&picture_w, &picture_h, &bitmaps_loaded)
+                        && picture_w == w && picture_h == h;
+    if (picture) gdi_last_bitmap_consume();
+    const int follows = primary || (!picture && w == NATIVE_W && h == NATIVE_H);
     if (follows) { w = hw.width; h = hw.height; }
     if (w <= 0) w = 1;
     if (h <= 0) h = 1;
@@ -1831,6 +2057,24 @@ static void dd_CreateSurface(uint32_t self)
                                       follows ? HIGH_MAX : h);
     if (primary) primary_surface = obj;
     if (follows) follow_add(obj);
+    /* LF2_SURF_DEBUG=1 -- every CreateSurface, not only the ones that follow, and the guest
+     * call site of each. The interesting question is always which of the screen-sized
+     * surfaces got widened and which did not, and a log that printed only the widened ones
+     * could not answer it. Every line carries the verdict, so "no surface followed" and "no
+     * surface was created" are different outputs. */
+    if (getenv("LF2_SURF_DEBUG")) {
+        static int n;
+        fprintf(stderr, "createsurface #%d asked %dx%d caps=%08x from guest %08x -> %dx%d %s\n",
+                ++n, (flags & DDSD_WIDTH) ? (int)LD32(desc + SD_WIDTH) : -1,
+                (flags & DDSD_HEIGHT) ? (int)LD32(desc + SD_HEIGHT) : -1,
+                caps, LD32(R(ESP)), w, h,
+                primary ? "PRIMARY (follows)" : follows ? "FOLLOWS THE WINDOW"
+                        : picture ? "fixed: holds the picture just loaded (issue #50)"
+                        : "fixed");
+        if (n == 1)
+            fprintf(stderr, "createsurface: %ld bitmaps had been loaded before the first "
+                            "surface existed\n", bitmaps_loaded);
+    }
     ST32(out, obj);
     com_ret(4, DD_OK);
 }

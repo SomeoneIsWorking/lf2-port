@@ -138,5 +138,62 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# PER-SCREEN FRAMING (issue #44). The composition width above says how much world is on
+# screen; it says nothing about WHERE a fixed-794 screen sits inside it, and three screens now
+# want three different answers:
+#
+#   the front end        LEFT    -- its character portrait is drawn at a hard literal x = 0
+#   the mode menu        LEFT    -- the same portrait sprite, the same literal
+#   the loading screen   CENTRED, with its side bands extended from its own edge columns,
+#                        because its backdrop is a PICTURE and the game has nothing authored
+#                        to put beside it. That extension is a declared port choice and the
+#                        run says so in as many words.
+#   character selection  CENTRED and UNCHANGED. The reporter said it was already right, so it
+#                        is the NEGATIVE: a change that left-aligned everything would satisfy
+#                        the three checks above and fail this one alone.
+#
+# Read out of the run's own framing report rather than recomputed here, so this checks the
+# port and not a copy of its arithmetic.
+echo "widescreen: each screen is framed its own way (issue #44)..."
+FLOG=$(mktemp)
+( cd "$GAME" && \
+  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_RENDERER=soft \
+  LF2_WINDOW_SIZE=1710x370 LF2_FRAMING_DEBUG=1 \
+  LF2_CLICK_SCRIPT="403,228:900;400,241:1350;200,150@charselect+98" \
+  LF2_QUIT_AFTER=1500 timeout 200 "$BUILD/lf2" lf2.exe ) > "$FLOG" 2>&1 || true
+
+if ! grep -q "^framing:" "$FLOG"; then
+    say_fail "no framing report at all -- the run never reached a fixed-width screen, so"
+    say_fail "      NOTHING about per-screen framing was measured. This is not a pass."
+else
+    grep -qE "^framing:.*10206c -> LEFT" "$FLOG" \
+        && say_ok "the front end is LEFT-aligned (its portrait sits on x 0)" \
+        || say_fail "the front end is not reported LEFT-aligned"
+    grep -qE "^framing:.*122565 -> LEFT" "$FLOG" \
+        && say_ok "the mode menu is LEFT-aligned" \
+        || say_fail "the mode menu is not reported LEFT-aligned"
+    grep -qE "^framing:.*PICTURE backdrop.*-> CENTRED" "$FLOG" \
+        && say_ok "the loading screen is CENTRED with its bands extended" \
+        || say_fail "the loading screen is not reported CENTRED with extended bands"
+    # THE NEGATIVE, and it names CHARACTER SELECTION specifically -- fill 000000 -- rather
+    # than accepting any centred screen. "some screen was centred at 874" is satisfied by the
+    # LOADING screen, which is centred too, so it would pass on a build that left-aligned
+    # character selection: the one thing the reporter said must not move. Naming the screen is
+    # the difference between a control and a check that looks like one.
+    grep -qE "^framing:.*fill 000000 -> CENTRED, offset 874" "$FLOG" \
+        && say_ok "character selection is still CENTRED at the full 874 offset (unchanged)" \
+        || say_fail "character selection was not reported centred at offset 874 -- issue #44
+      says it is already correct and must not move"
+    # An extrapolation the game does not have must announce itself, or it reads as fidelity.
+    grep -qE "not the game's" "$FLOG" \
+        && say_ok "the loading screen's band extension is declared a port choice" \
+        || say_fail "the band extension does not declare itself as the port's choice"
+    if grep -q "^framing:" "$FLOG"; then
+        echo "        (report: $(grep -c '^framing:' "$FLOG") lines)"
+    fi
+fi
+rm -f "$FLOG"
+
 [ "$fail" = 0 ] && echo "widescreen: ok" || echo "widescreen: FAILED"
 exit "$fail"

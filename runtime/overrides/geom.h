@@ -109,6 +109,33 @@ static inline void geom_window_to_compose(int win_w, int win_h, int comp_w, int 
     *cy = (wy - ry) / s;
 }
 
+/* ---- WHERE A FIXED-794 SCREEN SITS IN A WIDER COMPOSITION (issue #44) ----
+ *
+ * The front end, the mode menu, the loading screen, character selection and the pre-fight
+ * overlay are all authored 794 wide and cannot be made wider: there is no more of them. On a
+ * wider composition each one therefore needs a horizontal placement, and the port had exactly
+ * ONE answer for all of them -- centre.
+ *
+ * That is wrong for two of them, and the binary says so rather than a preference: on the front
+ * end and the mode menu the character portrait (MENU_BACK<n>, 257-409 px wide) is drawn at a
+ * hard literal x = 0, hanging on the screen's LEFT EDGE. Centring a screen whose art is
+ * anchored to an edge moves the anchor into the middle of the window. So those two are
+ * LEFT-aligned, which puts the portrait back on the edge it was composed against, and the
+ * rest -- whose art is centred within the 794 -- stay CENTRED.
+ *
+ * The alignment is a property of the SCREEN, and which screen is up is decided in ddraw.c from
+ * what the game draws (its own full-screen fill colour). This is only the arithmetic, so that
+ * the four consumers of the offset share one definition of it and runtime/test_geom.c can walk
+ * it without booting the game. */
+enum { GEOM_ALIGN_CENTRE = 0, GEOM_ALIGN_LEFT = 1 };
+
+static inline int geom_screen_offset_x(int comp_w, int align)
+{
+    if (comp_w <= GEOM_SCREEN_W) return 0;      /* nothing spare: there is nowhere to move */
+    if (align == GEOM_ALIGN_LEFT) return 0;
+    return (comp_w - GEOM_SCREEN_W) / 2;
+}
+
 /* ---- the stage's parallax (runtime/overrides/background.c) ----
  *
  * The game's own order of operations: the product first, then the divide, then the negate.
