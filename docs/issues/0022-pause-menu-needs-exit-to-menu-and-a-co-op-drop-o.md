@@ -315,3 +315,44 @@ HOW TO TEST A CANDIDATE: write 0 to it on the frame after the exit completes and
 the mode menu appears. That is a one-line change in exit_reenter (reverted, see the commit) and
 about fifteen seconds a run. Do NOT write several at once -- the point of the list is that they
 can be told apart.
+
+### Note (2026-08-11)
+STOP -- THE DIFF ABOVE IS MISLABELLED AND THE SIX CANDIDATES WERE TESTED AGAINST A BROKEN
+DISCRIMINATOR. Neither result should be believed. Correcting both in place, because the note
+above reads like progress and would send the next session down a dead end.
+
+WHAT WENT WRONG. The run I called "parked on the MODE MENU" -- LF2_VIRTUAL_PAD="south:900",
+frames 1400/1500/1600 -- is NOT on the mode menu. Its frame 1500 dumped to a picture, and the
+picture is the CHARACTER SELECTION panel with all eight slots on "Press Attack to join!". It is
+pixel-for-pixel the same screen as the post-exit side: the positive control I ran afterwards
+says 0.0% of pixels differ between them.
+
+So the diff was character-select-with-game-mode--100 against character-select-after-an-exit. It
+is a real pair and its 71 differences are real, but it is not the pair the note claims and it
+cannot isolate a screen word, because BOTH SIDES ARE THE SAME SCREEN.
+
+THE SIX CANDIDATE TESTS INHERIT THAT. 0x00451200, 0x004511fc, 0x0045115c, 0x00450b80,
+0x00450b90 and 0x004554d0 were each zeroed after the exit (all six held a non-zero value first,
+so all six were real writes -- the probe reports that) and all six left the screen 0.2%
+different from the cleared character-select frame. I read that as six negatives. It is not: a
+comparison whose positive control reads 0.0% cannot report a screen change in either direction.
+Those six are NOT eliminated. They are untested.
+
+WHAT THIS DOES ESTABLISH, and it is worth having: at frames 1400-1600 of a run that pressed
+attack once at frame 900, the game mode word reads -100 -- no mode chosen -- while the screen
+being DRAWN is the character-select panel. docs/running.md already says the post-load panel and
+the mode menu share a blit destination; this shows they can share a PICTURE too, at least in
+the state that run was in. Which means "which screen is up" cannot be read off a frame dump by
+comparing it with another dump, and every method in this entry that depends on telling those
+two apart needs a signal that is not the picture.
+
+WHAT THE NEXT SESSION MUST DO FIRST, before any more diffing or probing: get a frame that is
+DEMONSTRABLY the mode menu -- the VS / Stage / Championship list -- and know what drove the
+game there. Until that exists there is no positive control, and without one every result here
+is the same shape as the two above: a measurement that cannot fail.
+
+The probe itself is kept and is sound: LF2_EXIT_PROBE=<hex>[,<hex>...] zeroes those guest
+addresses a few frames after the exit completes and reports what each held first, saying
+explicitly when a word was ALREADY zero so that writing nothing cannot read as a negative. It
+costs a run per candidate rather than a rebuild. It is the discriminator downstream of it that
+was missing.
