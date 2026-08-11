@@ -73,6 +73,11 @@ void glyph_hint_clear(void);
  * identified by the object it is drawn on -- learned per stage, see runtime/ddraw.c. */
 void shadow_hint_set(int on);
 
+/* The background override marks the stage's own colour-fill bands, because the game's fill
+ * helper is shared with the front end and the blit cannot tell them apart (issue #42). */
+void world_band_hint_set(int on);
+void world_band_report(void);   /* LF2_BAND_DEBUG=1 */
+
 /* The clip-draw override hands over the object each draw is made on; the blit path learns
  * from it which object draws the stage's shadow ellipse, and answers with shadow_object(). */
 void     clip_obj_note(uint32_t obj);

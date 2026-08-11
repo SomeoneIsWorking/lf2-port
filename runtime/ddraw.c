@@ -117,6 +117,14 @@ void glyph_hint_set(int ch) { glyph_hint = ch; }
 static int shadow_hint;
 void shadow_hint_set(int on) { shadow_hint = on; }
 
+/* Set by runtime/overrides/background.c around the stage's tinted-layer fills, because the
+ * game's colour-fill helper is shared with the front end and the blit cannot tell them apart.
+ * See the comment at that call site -- and issue #42, which is what a rectangle-shaped guess
+ * cost. Counted so the widening cannot become a rule nobody has ever seen fire. */
+static int  world_band_hint;
+static long world_band_fills, world_band_widened;
+void world_band_hint_set(int on) { world_band_hint = on; }
+
 void glyph_hint_clear(void) { glyph_hint = -1; }
 
 /* ---- learning which object draws the stage's shadow ----
@@ -186,6 +194,26 @@ static uint32_t glyph_ink(const Surface *s, int sl, int st, int sr, int sb)
         }
     }
     return best;
+}
+
+/* Whether the stage's full-width bands were widened, and if not, WHY not -- because "0
+ * widened" has two very different causes and a silent zero would read as a broken feature.
+ * Printed only when the run actually reached a stage, so the front end cannot report on a
+ * mechanism it never had any business exercising. LF2_BAND_DEBUG=1. */
+void world_band_report(void)
+{
+    if (!getenv("LF2_BAND_DEBUG")) return;
+    if (!world_band_fills) {
+        fprintf(stderr, "bands: the stage's fill path drew NOTHING this run -- either no "
+                        "match was reached, or no loaded stage has a tinted layer. This says "
+                        "nothing about whether widening works.\n");
+        return;
+    }
+    fprintf(stderr, "bands: %ld stage fill(s), %ld widened to the viewport (view %d, the "
+                    "game's own screen %d)%s\n",
+            world_band_fills, world_band_widened, hw.width, GEOM_SCREEN_W,
+            world_band_widened ? ""
+                : " -- none spanned the whole 794 at x 0, so none is a full-width band");
 }
 
 void vram_report(void)
@@ -453,7 +481,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     dump_heap(frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
-    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); com_release_report(); input_report(); audio_pan_report(); bg_camera_report(); mode_force_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); world_band_report(); com_release_report(); input_report(); audio_pan_report(); bg_camera_report(); mode_force_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
     /* The read profile is reported on the same periodic boundary and reset each time, so
      * each block covers one window rather than the whole run: an array swept only during a
      * match would otherwise be averaged with the menus that came before it. */
@@ -949,14 +977,20 @@ int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_
  * compositions, and on a wider viewport they simply sat against the left edge with a black
  * band down the right.
  *
- * So they are centred instead. One offset, applied to every blit destination in the frames
- * where the world is not on screen, and subtracted again from the pointer so the game's own
- * hit tests and the ported menus still line up with what the player sees.
+ * So they are centred instead. One offset, applied WHILE COMPOSING to every draw that fits
+ * inside the game's own 794-wide screen, and subtracted again from the pointer so the game's
+ * own hit tests and the ported menus still line up with what the player sees.
  *
- * The band either side is NOT covered by the game's own full-screen clear, which is what this
- * comment used to claim: that clear goes to the compose surface, and the offset then shifts
- * it off the primary's left band. Nothing writes that band, so it holds whatever was there
- * when the geometry last changed -- issue #29. primary_clear_on_move() is what covers it. */
+ * A screen's own full-screen colour fill is the exception and is NOT centred: it is the
+ * background, so it spans the composition and starts at the left edge, and the screen's art
+ * is centred on top of it. That is why the front end fills a wide window instead of sitting
+ * in the middle of one (issue #42).
+ *
+ * The offset used to be applied on the way out, to the single copy from the compose surface
+ * to the primary. That copy then hung off the right and never wrote the primary's leftmost
+ * `off` columns, which held whatever was there when the geometry last changed -- issue #29,
+ * covered by a clear. Composing centred instead makes the copy 1:1, so every column of the
+ * primary is written every frame and the ghost has nowhere to live. */
 /* The composition the game asks for. Taken from geom.h rather than written again here, so
  * there is one 794x550 in the port and runtime/test_geom.c is testing this one. */
 enum { NATIVE_W = GEOM_SCREEN_W, NATIVE_H = GEOM_SCREEN_H };
@@ -1025,23 +1059,30 @@ int screen_offset_x(void)
  * So the fix is not a per-frame clear of the primary; the band is stale only when the
  * geometry MOVES. Clear it when the offset or the surface size changes, which is the moment
  * the previously-written region stops matching the one about to be written. */
-static void primary_clear_on_move(Surface *d, int off)
+/* LF2_PRIMARY_STALE=1 -- a TEST-ONLY DEFECT INJECTOR: leave the leftmost columns of the
+ * primary unwritten by the composition copy, so they keep whatever was there before.
+ *
+ * IT USED TO BE SOMETHING ELSE, and the change is worth recording. The copy to the primary
+ * carried the centring offset, so it hung off the right and never wrote the first `off`
+ * columns; after a resize those held a ghost of the previous, differently-centred screen
+ * (issue #29), and primary_clear_on_move() blacked them out when the geometry moved. This
+ * flag disabled that clear.
+ *
+ * Issue #42 moved the centring into the composition, so the copy is 1:1 and covers every
+ * column of the primary. The ghost cannot happen any more -- not because something clears it
+ * but because nothing is left unwritten -- and the clear, and the flag that disabled it, were
+ * both dead. A flag whose negative arm can no longer fail is worse than no flag: it makes a
+ * test that cannot fail look like a test that passes, which is what tools/resize_test.sh said
+ * when it went red rather than reporting a pass it could not justify.
+ *
+ * So the flag now injects the failure directly. The invariant it guards is the new one --
+ * every pixel of the primary is written every frame -- and a run with it set must show the
+ * previous size's pixels standing in that band. Never set in normal use. */
+static int primary_stale_injected(void)
 {
-    /* LF2_PRIMARY_STALE=1 disables the clear, restoring the bug. It is the negative arm of
-     * tools/resize_test.sh: a test that asserts "the band left of the panel is black" would
-     * pass just as happily on a frame that is black everywhere, so the check has to be shown
-     * failing on a build that does not clear. Never set in normal use. */
-    static int disabled = -1;
-    if (disabled < 0) disabled = getenv("LF2_PRIMARY_STALE") != NULL;
-    if (disabled) return;
-
-    static int last_off = -1, last_w = -1, last_h = -1;
-    if (off == last_off && d->w == last_w && d->h == last_h) return;
-    last_off = off; last_w = d->w; last_h = d->h;
-    for (int y = 0; y < d->h; y++) {
-        uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
-        for (int x = 0; x < d->w; x++) row[x] = 0;
-    }
+    static int on = -1;
+    if (on < 0) on = getenv("LF2_PRIMARY_STALE") != NULL;
+    return on;
 }
 
 /* LF2_BLT_FRAME=<frame>[,...] -- every blit that composes those presented frames, with both
@@ -1115,26 +1156,69 @@ static void surf_Blt(uint32_t self)
 
     int dl, dt, dr, db;
     read_rect(drect, &dl, &dt, &dr, &db, d->w, d->h);
-    /* Only on the way OUT, never while composing. The game builds its frame in an
-     * off-screen surface and copies that to the primary in one blit, so shifting just that
-     * copy centres the whole composition once. Offsetting during composition as well moved
-     * everything twice -- a 132 px margin came out at 264. */
-    if (d->primary) {
-        const int off = screen_offset_x();
-        primary_clear_on_move(d, off);
-        dl += off; dr += off;
-    }
+    /* WHERE A FIXED-WIDTH SCREEN IS CENTRED, and it moved (issue #42).
+     *
+     * It used to be done on the way OUT: the game composes off-screen and copies that surface
+     * to the primary in one blit, so shifting only that copy centred the whole composition at
+     * a stroke. That is why it was done there -- and it is why the front end's backdrop could
+     * not be made to fill a wide window. The backdrop is a fill of the game's whole 794-wide
+     * screen; widening it to the composition and then shifting the composition right by the
+     * centring offset put the blue at `off..width` and left the first `off` columns of the
+     * primary written by nobody. Black down the left, picture against the right.
+     *
+     * So the centring is applied while COMPOSING, to the draws that belong to the game's own
+     * 794-wide screen, and the copy to the primary is left alone. The rule is one line and it
+     * says what it means: a draw that fits inside the game's screen is centred; a draw that
+     * already spans the composition is the background, and stays where it is.
+     *
+     * The old comment warned that offsetting during composition "moved everything twice -- a
+     * 132 px margin came out at 264". That was true while BOTH were done; the copy no longer
+     * shifts, so there is one offset and it is applied once.
+     *
+     * Not applied here, but AFTER panel_note below: the screen detector recognises screens by
+     * their destination rectangles, in the game's own coordinates, and it is what decides
+     * screen_offset_x() in the first place. Shifting before it would feed the offset back into
+     * the thing that computes it. */
+    const int compose_off = (!d->primary && d->w > NATIVE_W) ? screen_offset_x() : 0;
 
     blt_frame_log(dl, dt, dr, db, srcobj, srect, flags);
 
     if (flags & DDBLT_COLORFILL) {
         const uint32_t fill = ARG(5) ? LD32(ARG(5) + DDBLTFX_FILLCOLOR) : 0;
-        /* Widescreen: a fill that spans the whole native width is a full-width band -- the
-         * sky, the ground, the road -- so it should span the whole viewport. The width is
-         * an immediate in the game rather than one of the viewport variables, which is why
-         * these did not follow the layers: without this the ground simply stopped at 794
-         * and the rest of the stage floor was black. */
-        if (lf2_wide_width() && dl == 0 && dr == NATIVE_W && d->w > NATIVE_W) dr = d->w;
+        /* Widescreen: a STAGE's full-width band -- the sky, the ground, the road -- has to
+         * span the whole viewport, because the game gives its width as an immediate rather
+         * than from a viewport variable and so it does not follow the layers. Without it the
+         * ground stopped at 794 and the rest of the stage floor was black.
+         *
+         * WHICH FILLS THOSE ARE comes from the background pass saying so (world_band_hint,
+         * set in runtime/overrides/background.c), NOT from the rectangle. It used to be
+         * `dl == 0 && dr == NATIVE_W`, and that is the front end's backdrop to the pixel --
+         * the front end fills its whole 794-wide screen, so a wide window got the menu's blue
+         * stretched across the entire composition and the centring shift then moved it right,
+         * leaving black down the left (issue #42). The sibling stretch for full-width backdrop
+         * BLITS below already knew this trap and gated itself; this one did not. */
+        /* The `dl == 0 && dr == NATIVE_W` half is KEPT, and narrowed rather than replaced: it
+         * is the game saying this band covers the screen. A tinted layer whose authored span
+         * is narrower than the screen covers only what it covers, and stretching that would be
+         * inventing layout the stage does not have -- the same answer issue #23 gives for a
+         * non-looping layer with no more picture. What the hint adds is that the fill came
+         * from the stage at all. */
+        if (world_band_hint) world_band_fills++;
+        int spans_screen = (dl == 0 && dr == NATIVE_W && d->w > NATIVE_W && lf2_wide_width());
+        if (world_band_hint && spans_screen) {
+            dr = d->w;
+            world_band_widened++;
+        } else if (spans_screen && compose_off) {
+            /* THE FRONT END'S BACKDROP, and this is what the reporter asked for: a fill of the
+             * game's whole screen on a screen that is being centred is the BACKGROUND, so it
+             * covers the composition and starts at the left edge rather than being centred
+             * with the content. Nothing is invented -- it is the same flat colour the game
+             * chose for its screen, over more of the window. The art on top of it (the logo,
+             * the character, the menu) is a set of smaller draws and IS centred, below. */
+            dr = d->w;
+        } else if (compose_off && dl >= 0 && dr <= NATIVE_W) {
+            dl += compose_off; dr += compose_off;
+        }
         if (!d->primary) render_fill(d->pixels, dl, dt, dr, db, fill);
         for (int y = dt; y < db && y < d->h; y++) {
             if (y < 0) continue;
@@ -1214,6 +1298,13 @@ static void surf_Blt(uint32_t self)
         dr = d->w;
 
     panel_note(dl, dt, dr, db);
+
+    /* Centred now that the screen detector has seen the game's own coordinates -- see the long
+     * comment at compose_off above. A draw that fits inside the game's 794-wide screen belongs
+     * to that screen and moves with it; one that already spans the composition is background
+     * and does not. */
+    if (compose_off && dl >= 0 && dr <= NATIVE_W) { dl += compose_off; dr += compose_off; }
+
     cursor_find_note(dl, dt, "Blt");
     /* LF2_SMALL_BLT=1 -- a cursor is a SMALL sprite, so list the small destinations
      * distinctly. The correlation hook asks "does this track the pointer" and answers no
@@ -1323,6 +1414,20 @@ static void surf_Blt(uint32_t self)
                                 s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb,
                                 keyed, s->key_lo, s->key_hi);
             }
+            /* The injector, and it is deliberately applied to the SOFTWARE copy only --
+             * see primary_stale_injected(). Advancing the source with the destination keeps
+             * the picture aligned, so the band is left holding the previous frame's pixels
+             * rather than a shifted copy of this one. */
+            if (d->primary && primary_stale_injected()) {
+                /* Exactly the old defect, not an approximation of it: skip the columns the
+                 * centred copy used to miss, which is the centring offset itself. Skipping an
+                 * arbitrary 64 was not enough -- the leftmost columns are black in every frame
+                 * at any one size, so the injected run and the clean run agreed and the arm
+                 * still could not fail. The ghost only appears where a DIFFERENTLY centred
+                 * screen used to have picture, and that is this many columns wide. */
+                const int skip = (d->w - NATIVE_W) / 2;
+                if (skip > 0 && dr - dl > skip) { dl += skip; sl += skip; }
+            }
             blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
                  keyed, s->key_lo, s->key_hi);
         }
@@ -1349,7 +1454,10 @@ static void surf_Blt(uint32_t self)
      * primary always holds the software frame and a frame dump can be taken of either. */
     if (d->primary && srcobj) {
         Surface *cs = com_host(srcobj);
-        if (cs) frame_source_note(cs->pixels, screen_offset_x());
+        /* Zero, not screen_offset_x(): the centring now happens while composing (see
+             * compose_off above), so the display list the renderer replays already carries it
+             * and adding it again at present time would centre twice. */
+            if (cs) frame_source_note(cs->pixels, 0);
     }
 
     if (d->primary) {

@@ -1,24 +1,37 @@
 #!/bin/sh
 # A window resize must not leave the previous size's pixels standing (issue #29).
 #
-# The composition is copied to the primary in ONE blit whose source is the whole compose
-# surface, with the centring offset added to its destination -- so the copy hangs off the
-# right and never writes the leftmost `offset` columns. At a steady size those columns are
-# black because the primary started black; after a resize they hold a ghost of the previous,
-# differently-centred screen. runtime/ddraw.c clears the primary when that geometry moves.
+# WHAT GUARANTEES THAT CHANGED, and the test with it. The composition used to be copied to the
+# primary with the centring offset added to its DESTINATION, so the copy hung off the right and
+# never wrote the leftmost `offset` columns. At a steady size those were black because the
+# primary started black; after a resize they held a ghost of the previous, differently-centred
+# screen, and runtime/ddraw.c cleared the primary whenever that geometry moved.
 #
-# THE CHECK is that the band to the left of the centred screen is entirely black in a frame
-# taken after a resize. On its own that assertion is nearly worthless -- a frame that is black
-# EVERYWHERE would pass it -- so the test also requires:
+# Issue #42 moved the centring into the composition -- draws that fit inside the game's own
+# 794-wide screen are shifted as they are composed -- so the copy to the primary is 1:1 and
+# covers every column of it. The ghost is gone by CONSTRUCTION: nothing is left unwritten.
+# The clear, and the flag that used to disable it, were both dead, and this test went red
+# saying its negative arm could no longer fail. That is the third arm doing its job.
+#
+# THE CHECK is still that the band to the left of the centred screen is entirely black in a
+# frame taken after a resize. On its own that assertion is nearly worthless -- a frame that is
+# black EVERYWHERE would pass it -- so the test also requires:
 #
 #   a) the frame is not blank: the centred screen itself must have plenty of non-black pixels
-#   b) LF2_PRIMARY_STALE=1, which disables the clear, must FAIL the band check
+#   b) LF2_PRIMARY_STALE=1 must FAIL the band check. It is now a DEFECT INJECTOR rather than
+#      the disabling of a fix: it leaves the leftmost 64 columns of the primary unwritten by
+#      the copy, which is precisely the shape of the old bug, and those columns then hold the
+#      previous size's picture.
 #
-# Without (b) this would still pass on a build where the clear was deleted, because the ghost
-# only appears when the size actually changed and a broken test never notices.
+# Without (b) this would still pass on a build where the copy stopped covering the primary,
+# because the ghost only appears when the size actually changed and a broken test never
+# notices.
 #
 # The route shrinks the window and grows it again while character selection is up, which is
-# the case that was reported with a screenshot.
+# the case that was reported with a screenshot. Character selection has no full-screen colour
+# fill of its own -- unlike the front end, whose background now spans the whole composition by
+# design (issue #42) -- so the band beside it is genuinely black and the check still means
+# what it says.
 set -eu
 
 BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
@@ -35,13 +48,12 @@ python3 -c "" 2>/dev/null || { echo "SKIP: no python3 to read the frame dumps"; 
 # so the band holds pixels written at a DIFFERENT offset.
 FRAME=1550
 
-# PINNED TO THE SOFTWARE COMPOSITOR, and that is not a convenience. What this test guards is
-# primary_clear_on_move(), which belongs to the software present: the centring offset is added
-# to a full-width copy INTO THE PRIMARY, so the leftmost `offset` columns are never written and
-# keep the previous size's pixels. The native renderer cannot have that bug -- it draws into a
-# render target that is cleared every frame -- so under it the LF2_PRIMARY_STALE arm comes out
-# clean and the test loses its negative. It said so and failed rather than reporting a pass it
-# could not justify, which is exactly what the third arm is for.
+# PINNED TO THE SOFTWARE COMPOSITOR, and that is not a convenience. What this test guards is a
+# property of the software present -- that its one copy covers every column of the primary --
+# and the injector that gives it a negative acts on that copy. The native renderer cannot have
+# the bug at all: it draws into a render target that is cleared every frame. Under it the
+# LF2_PRIMARY_STALE arm comes out clean and the test loses its negative, which it reports as a
+# failure rather than as a pass it could not justify.
 arm() {   # arm <dir> [VAR=value ...]
     dir=$1; shift
     mkdir -p "$OUT/$dir"
@@ -128,7 +140,7 @@ else
 fi
 
 if [ "$stale_stray" -gt 0 ]; then
-    echo "  ok    with the clear disabled the band holds $stale_stray stray pixels, so the"
+    echo "  ok    with the copy leaving that band unwritten it holds $stale_stray stray pixels, so the"
     echo "        check above can fail"
 else
     echo "  FAIL  with LF2_PRIMARY_STALE=1 the band came out clean too, so this test cannot"

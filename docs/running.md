@@ -219,6 +219,23 @@ rectangle. It is the fallback (`LF2_RENDERER=soft`, or no SPIR-V backend) and it
 A window narrower than 794 still gets 794 and is cropped at the sides, because the HUD strip
 is 792 wide and there is nothing sensible below that.
 
+**A fixed-width screen is centred, but its BACKGROUND is not** (issue #42). The front end, the
+mode menu, character selection and the pre-fight overlay are all fixed 794-wide screens, so on a
+wider composition they are centred — and the centring is applied *while composing*, to the draws
+that fit inside the game's own 794-wide screen, not to the single copy that carries the
+composition to the primary. That distinction is what lets a screen's own full-screen colour fill
+be treated as the **background**: it spans the composition and starts at the left edge, with the
+screen's artwork centred on top of it. A very wide, short window used to show the front end
+jammed against the right with black down the left, because the backdrop was widened and then the
+whole composition was shifted right over it.
+
+Only a flat *colour* fill is extended this way. Character selection and the overlay have artwork
+for a backdrop, and stretching a picture sideways invents layout the game does not have — the
+same answer issue #23 gives for a stage's sky — so those still have black beside them.
+
+Because the copy to the primary is now 1:1, every column of it is written every frame, which
+removes issue #29's ghost by construction rather than by clearing it.
+
 **The wider view is CENTRED on what the 4:3 view showed**, not extended to the right. The game
 puts the players' centroid in the middle of a 794-wide window and says so in one instruction
 (`SUB ESI,0x18d` at `0x0041bb7d`, where 0x18d is 794/2), so a wider view left the centroid 397
@@ -1634,11 +1651,16 @@ Three hooks in `runtime/ddraw.c`:
   destination and prints everything that looks like a `.text` address. It is a rough
   backtrace, not an exact one, but it is enough to **diff two chains**.
 
-- **`LF2_PRIMARY_STALE=1`** disables the clear that stops a resize leaving the previous
-  size's pixels standing beside a centred screen (issue #29). It exists to be the negative arm
-  of `tools/e2e.sh resize`: "the band left of the panel is black" would pass just as happily on a
-  frame that is black everywhere, so the check is run against a build that does not clear and
-  required to fail there.
+- **`LF2_PRIMARY_STALE=1`** injects the defect that issue #29 was about: the copy from the
+  composition to the primary skips `(composition - 794) / 2` columns on the left, so they keep
+  the previous size's pixels. It is the negative arm of `tools/e2e.sh resize` -- "the band left
+  of the panel is black" would pass just as happily on a frame that is black everywhere, so the
+  check has to be shown failing. It used to *disable a clear*; issue #42 made the copy 1:1, so
+  every column of the primary is written every frame, the ghost has nowhere to live and there
+  is no clear left to disable. The number of columns matters and is not a round figure: the
+  leftmost columns are black in every frame at any one size, so skipping an arbitrary 64 left
+  the injected and clean runs agreeing and the arm unable to fail. The ghost only exists where
+  a *differently* centred screen had picture.
 
 - **`LF2_DRAW_PATHS=1`** counts every route that can carry pixels — `Blt`, `BltFast`, and the
   game writing into a surface between `Lock` and `Unlock` — and reports them together every
