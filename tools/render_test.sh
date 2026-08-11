@@ -44,7 +44,7 @@ arm() {   # arm <dir> [VAR=value ...]
     dir=$1; shift
     mkdir -p "$OUT/$dir"
     ( cd "$GAME" && \
-      env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+      env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
           LF2_VIRTUAL_PAD="$PAD" LF2_FRAME_DUMP="$FRAMES" LF2_DUMP_DIR="$OUT/$dir" \
           LF2_QUIT_AFTER=2300 "$@" \
           timeout 300 "$BUILD/lf2" lf2.exe ) >/dev/null 2>&1 || true
@@ -54,7 +54,7 @@ arm() {   # arm <dir> [VAR=value ...]
 # draws the same picture. The light gets its own arm below, which has to change the MATCH
 # frame and must NOT change the menu frame -- see the assertion for why that pair is the whole
 # point.
-echo "native renderer vs the software compositor: four runs, about 8 minutes..."
+echo "native renderer vs the software compositor: four runs..."
 arm soft LF2_RENDERER=soft
 arm gpu  LF2_HD2D=off
 arm skip LF2_HD2D=off LF2_RENDER_SKIP=7

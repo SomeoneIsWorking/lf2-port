@@ -335,7 +335,7 @@ runtime/ddraw.c's contiguity continuation is DELETED. It was the source of the w
 on Brokeback Clif at 1600x550 it repeated the middle cliff across the widened band with hard
 seams at 1026 and 1487. Before/after: scratch/wide23/frame_2250.png vs fixed_2250.png.
 
-VERIFIED, three ways, by tools/background_test.sh (ctest background):
+VERIFIED, three ways, by tools/background_test.sh (tools/e2e.sh background):
   794x550   byte-identical to the recompiled body at two camera positions
   control   LF2_BG_SKEW=3 differs, so the identity above is not a blind pass
   1600x550  differs from the unwidened body, so the view width really does reach the pass

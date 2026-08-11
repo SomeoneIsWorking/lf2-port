@@ -5,6 +5,7 @@
  */
 
 #include "overrides.h"
+#include "geom.h"
 
 #include "../guest_ops.h"
 #include "../guest_map.h"
@@ -133,6 +134,34 @@ void charselect_mouse(void)
     }
 }
 
+/* ---- AN IDLE POINTER MUST NOT COUNT AS A MOVE WHEN A SCREEN OPENS ----
+ *
+ * Each handler below hovers only when the pointer actually moved, so an idle mouse never
+ * fights the keyboard or a pad. That guard was defeated on the FIRST frame of every screen:
+ * `last_x/last_y` belong to the handler, not to the screen, so on the frame a screen opened
+ * they still held wherever the pointer had been on the previous one -- or -1 -- and `moved`
+ * read true against a pointer nobody had touched.
+ *
+ * It is not cosmetic. Measured on the pre-fight overlay: the mouse route's last click on
+ * character selection leaves the pointer at (200,150), which is inside the overlay's panel
+ * band. The overlay opened at frame 1751 with the game's own selection on item 2, the idle
+ * pointer was read as a move on 1752 and dragged it to item 5 -- Exit -- and the next click
+ * activated it. The overlay was gone by frame 1800 and the run never reached a match.
+ *
+ * So each screen seeds the handler's memory with the pointer's CURRENT position on the frame
+ * it opens. A player who then moves the mouse gets hover; one who does not, does not.
+ */
+static int screen_edge_seed(int *open_last, int open_now, int *last_x, int *last_y,
+                            int mx, int my)
+{
+    const int rising = open_now && !*open_last;
+    *open_last = open_now;
+    if (rising) { *last_x = mx; *last_y = my; return 0; }
+    const int moved = (mx != *last_x || my != *last_y);
+    *last_x = mx; *last_y = my;
+    return moved;
+}
+
 /* ---------------------------------------------------------------------------
  * The post-load mode menu -- VS mode / Stage mode / the two championships / Battle mode /
  * Demo / Playback Recording / Quit. This is the screen the front-end launcher hands over
@@ -163,19 +192,20 @@ static int modemenu_item_at(int x, int y)
     return (i >= 0 && i < MODEMENU_ITEMS) ? i : -1;
 }
 
+static int modemenu_was_open;
+
 void modemenu_mouse(void)
 {
-    if (game_top_mode() != MODE_IN_GAME) return;
+    if (game_top_mode() != MODE_IN_GAME) { modemenu_was_open = 0; return; }
 
     int mx, my;
     if (!hostwin_pointer(&mx, &my)) return;
 
     const uint32_t cur = LD32(MODEMENU_SEL);
-    if (cur >= MODEMENU_ITEMS) return;      /* not holding a menu index: not this screen */
+    if (cur >= MODEMENU_ITEMS) { modemenu_was_open = 0; return; }   /* not this screen */
 
     static int last_x = -1, last_y = -1;
-    const int moved = (mx != last_x || my != last_y);
-    last_x = mx; last_y = my;
+    const int moved = screen_edge_seed(&modemenu_was_open, 1, &last_x, &last_y, mx, my);
 
     const int item = modemenu_item_at(mx, my);
     if (item < 0) return;
@@ -205,14 +235,36 @@ void modemenu_mouse(void)
  * draws (panel_overlay_up()), not from a .data flag -- the first attempt used one, and it
  * was the game mode wearing a convincing disguise.
  *
- * The row geometry comes from the game's own highlight blit, not from measuring a
- * screenshot: LF2_OVERLAY_FORCE pins the selection and LF2_BLT_FRAME prints where the
- * highlight lands. Item 0 -> y 16, item 2 -> y 64, item 5 -> y 137, i.e. 24 per row from
- * 16, with the last row a pixel low in the sheet. The panel is blitted at (3,3)-(307,169),
- * which is the x band.
+ * THE ROW GEOMETRY IS THE GAME'S OWN, DECOMPILED. Ghidra on FUN_00429730 -- the only
+ * function that touches OVERLAY_SEL, 21 times -- gives the highlight draw verbatim:
+ *
+ *     if (sel == 0) draw_clip(0x5c, 0x10, 9,  ...)     //  92, 16
+ *     if (sel == 1) draw_clip(0x40, 0x27, 10, ...)     //  64, 39
+ *     if (sel == 2) draw_clip(0x28, 0x40, 0xb, ...)    //  40, 64
+ *     if (sel == 3) draw_clip(0x0f, 0x57, 0xc, ...)    //  15, 87
+ *     if (sel == 4) draw_clip(0x25, 0x6f, 0xd, ...)    //  37, 111
+ *     if (sel == 5) draw_clip(0x65, 0x89, 0xe, ...)    // 101, 137
+ *
+ * So the rows are at 16, 39, 64, 87, 111, 137 -- NOT the uniform 24 from 16 this used to
+ * assume, and the labels are staggered in x as well (the list is drawn on a slant). The old
+ * formula `(y - 16) / 24` gives 16, 40, 64, 88, 112, 136: right at the ends and up to a row
+ * out in the middle, which is a click landing on the wrong item and no way to notice by
+ * looking at it.
+ *
+ * That is the difference between measuring where a highlight landed and reading the code
+ * that put it there. The blit measurement was not wrong about the three rows it sampled --
+ * it sampled 0, 2 and 5, which happen to be the three the uniform step gets nearly right.
+ *
+ * The x band stays the whole panel (blitted at (3,3)-(307,169)) rather than each label's own
+ * left edge: a player aiming at a slanted list should not have to hit the glyphs, and the y
+ * alone identifies the row unambiguously.
  * ------------------------------------------------------------------------ */
-enum { OVERLAY_ITEMS = 6 };
-enum { OV_X0 = 3, OV_X1 = 307, OV_Y0 = 16, OV_STEP = 24 };
+enum { OVERLAY_ITEMS = GEOM_OVERLAY_ITEMS };
+
+/* The overlay's edge memory, cleared when it is not up so the next opening is a rising edge
+ * again. Separate from the handler so the early return can reach it. */
+static int overlay_was_open;
+static void overlay_mouse_closed(void) { overlay_was_open = 0; }
 
 int overlay_open(void)
 {
@@ -220,27 +272,20 @@ int overlay_open(void)
         && LD32(OVERLAY_SEL) < OVERLAY_ITEMS;
 }
 
-static int overlay_item_at(int x, int y)
-{
-    if (x < OV_X0 || x > OV_X1) return -1;
-    const int rel = y - OV_Y0;
-    if (rel < 0) return -1;
-    const int i = rel / OV_STEP;
-    return i < OVERLAY_ITEMS ? i : -1;
-}
-
 void overlay_mouse(void)
 {
-    if (!overlay_open()) return;
+    if (!overlay_open()) { overlay_mouse_closed(); return; }
 
     int mx, my;
     if (!hostwin_pointer(&mx, &my)) return;
 
     static int last_x = -1, last_y = -1;
-    const int moved = (mx != last_x || my != last_y);
-    last_x = mx; last_y = my;
+    const int moved = screen_edge_seed(&overlay_was_open, 1, &last_x, &last_y, mx, my);
 
-    const int item = overlay_item_at(mx, my);
+    const int item = geom_overlay_item_at(mx, my);
+    if (getenv("LF2_OVERLAY_DEBUG"))
+        fprintf(stderr, "overlay: frame %ld pointer (%d,%d) -> item %d, selection %u\n",
+                hostwin_frames(), mx, my, item, LD32(OVERLAY_SEL));
     if (item < 0) return;
 
     const uint32_t cur = LD32(OVERLAY_SEL);

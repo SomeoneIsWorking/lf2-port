@@ -4,6 +4,7 @@
  * address and the GDI text path can scribble into the same buffer. Everything is 8-bit
  * indexed, which is what the game's BMPs are. */
 #include "com.h"
+#include "overrides/geom.h"
 #include "guest_map.h"
 #include "guest_ops.h"
 #include "hostwin.h"
@@ -518,9 +519,41 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
  * thirty a second; pacing it would put ten seconds back into a load this port spent real
  * effort taking out. The anchor is re-taken when the debt passes a quarter second, so a load
  * or a stall cannot leave the game sprinting through the following minute to catch up. */
+/* LF2_UNPACED=1 runs frames as fast as the machine will do them.
+ *
+ * The pacer exists so the game runs at the speed a player experiences: the guest clock IS the
+ * frame counter, so the game never sleeps of its own accord and every frame would otherwise
+ * arrive as fast as the CPU could make it. That is exactly what a scripted test wants. Route
+ * tests are frame-numbered end to end -- LF2_QUIT_AFTER, LF2_FRAME_DUMP and every `@screen+N`
+ * key are counts, not clocks -- so removing the sleep changes which frames happen not at all,
+ * only how long it takes to get to them. A 3000-frame route spent 100 seconds of its 100
+ * seconds asleep.
+ *
+ * IT IS AN EXPLICIT SWITCH AND NOT DERIVED FROM THE VIDEO DRIVER, which was the first idea:
+ * "nobody can watch an offscreen surface, so do not pace it". That would silently break the
+ * one test that must stay paced. tools/smoke_test.sh asserts CPU usage under 50% of a core --
+ * the busy-wait guard, which separates a run that honours Sleep (~13%) from one that spins
+ * (~96%) -- and that check is only meaningful while the pacer is doing its job. Two headless
+ * runs need opposite behaviour and nothing about the environment tells them apart, so the
+ * caller says which it wants. */
+static int frame_unpaced(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = getenv("LF2_UNPACED") != NULL;
+        if (on)
+            fprintf(stderr, "pacing: LF2_UNPACED -- frames run as fast as the machine allows. "
+                            "Every route key is a frame count, so this changes how long the "
+                            "run takes and nothing about what happens in it.\n");
+    }
+    return on;
+}
+
 static void frame_pace(void)
 {
     static uint64_t anchor_wall, anchor_frame;
+
+    if (frame_unpaced()) return;
 
     /* The anchor is DROPPED while loading, not merely unused. Frames keep being counted
      * through the load and the wall does not follow them, so an anchor taken before it
@@ -920,7 +953,9 @@ int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_
  * comment used to claim: that clear goes to the compose surface, and the offset then shifts
  * it off the primary's left band. Nothing writes that band, so it holds whatever was there
  * when the geometry last changed -- issue #29. primary_clear_on_move() is what covers it. */
-enum { NATIVE_W = 794, NATIVE_H = 550 };   /* the composition the game asks for */
+/* The composition the game asks for. Taken from geom.h rather than written again here, so
+ * there is one 794x550 in the port and runtime/test_geom.c is testing this one. */
+enum { NATIVE_W = GEOM_SCREEN_W, NATIVE_H = GEOM_SCREEN_H };
 
 /* The widest composition this port will hand the game, and the width every resizable
  * surface's PITCH is fixed at. It is not a taste: vram_alloc is a bump allocator with no
@@ -1556,17 +1591,18 @@ void hostwin_window_geometry(int win_w, int win_h)
     hw.win_w = win_w;
     hw.win_h = win_h;
 
-    long w = win_w;
-    if (w < NATIVE_W) w = NATIVE_W;
-    if (w > WIDE_MAX) {
+    /* The rule itself is geom_compose_width, which runtime/test_geom.c walks; what stays here
+     * is the part that needs the window -- the diagnostic for a window past what this build
+     * allocated pitch for, which the arithmetic has no way to say. */
+    const long w = geom_compose_width(win_w, WIDE_MAX);
+    if (win_w > WIDE_MAX) {
         static int said;
         if (!said) {
             said = 1;
-            fprintf(stderr, "widescreen: a %dx%d window asks for a %ld-wide composition, past "
+            fprintf(stderr, "widescreen: a %dx%d window asks for a %d-wide composition, past "
                             "the %d this build allocates for; clamped, so the picture is "
-                            "cropped at the sides from here on\n", win_w, win_h, w, WIDE_MAX);
+                            "cropped at the sides from here on\n", win_w, win_h, win_w, WIDE_MAX);
         }
-        w = WIDE_MAX;
     }
 
     if ((int)w == hw.width && hw.height == NATIVE_H) return;

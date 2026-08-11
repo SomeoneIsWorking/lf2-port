@@ -20,7 +20,8 @@
 # They only handle the syntactic cases. A clean warning sweep is NOT evidence here, which
 # is why the matrix is a matrix and not a compiler flag.
 #
-# Usage: tools/build_matrix.sh [ctest args...]      e.g. -LE slow, to skip the ~130 s pair
+# Usage: tools/build_matrix.sh [ctest args...]      e.g. -R instructions, for the differential
+#        alone. The whole suite is ~1.3 s per configuration, so there is nothing to skip.
 set -eu
 
 fail=0

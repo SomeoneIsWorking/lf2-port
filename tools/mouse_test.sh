@@ -16,37 +16,42 @@
 #   character select  click a portrait to join, click again to pick   (charselect_mouse)
 #   pre-fight overlay click "Fight!"            (overlay_mouse)
 #
-# WHAT THIS PROVES, and it is less than it used to claim: the mouse alone gets through the
-# launcher, the mode menu and into CHARACTER SELECTION, joins a player and answers the
-# game's "How many Computer Players?" dialog. It does NOT reach a match, and it no longer
-# says it does -- see issue #26.
+# WHAT THIS PROVES: the mouse alone gets through the launcher and the mode menu, joins a
+# player on character selection, and clicks "Fight!" on the pre-fight overlay to START A
+# MATCH. The assertion is the screens the run actually REACHED, which is not a threshold
+# anybody can drift under.
 #
-# The old version asserted "sound effects (a match started) >= 2" and passed with four menu
-# sounds while the run sat on the character-select screen the whole time. Nothing in the run
-# reported which screens it had reached, so a test that never got near a match was green for
-# as long as it existed. The assertion below is the screens the run actually reached, which
-# is not a threshold anybody can drift under: if the mouse stops driving the launcher or the
-# mode menu, `charselect@` never appears and this fails.
+# It did not always. The first version asserted "sound effects (a match started) >= 2" and
+# passed with four menu sounds while the run sat on the character-select screen the whole
+# time; nothing in the run reported which screens it had reached, so a test that never got
+# near a match was green for as long as it existed (issue #26). In that broken state "keyed
+# blits" measured 13489 against 6744 in a working run -- the count it leaned on reads HIGHER
+# when the route breaks, so no threshold on it could have discriminated in either direction.
 #
-# VALIDATED AGAINST BOTH CLASSES, run rather than reasoned about:
-#   route intact                 -> charselect@1352, 5 of 5 clicks fired, PASSED
-#   the click at 1350 broken     -> "screens reached -- NONE", three clicks named as never
-#                                   fired, FAILED
-# In that failing run "keyed blits" measured 13489 against 6744 in the passing one, so the
-# blit threshold this test used to lean on is not merely weak -- it reads HIGHER when the
-# route breaks. That is why the assertion is the screens reached and not a count.
+# TWO PORT BUGS had to be fixed before the mouse could finish the job, and both were found by
+# tracing this route rather than by reading the code:
+#
+#   THE OVERLAY'S ROW GEOMETRY was a uniform 24 px step from y 16, measured off three sampled
+#   highlight blits. Ghidra on FUN_00429730 -- the only function that touches OVERLAY_SEL --
+#   gives the rows verbatim as 16, 39, 64, 87, 111, 137, which is not uniform. The three rows
+#   the blit measurement happened to sample are the three the uniform step gets nearly right.
+#
+#   AN IDLE POINTER COUNTED AS A MOVE on the frame a screen opened, because each handler's
+#   last-position memory belonged to the handler and not to the screen. The last click on
+#   character selection leaves the pointer at (200,150), inside the overlay's panel band: the
+#   overlay opened with the game's selection on item 2, the idle pointer was read as a move
+#   and dragged it to item 5 -- Exit -- and the next click activated it. The overlay was gone
+#   50 frames later and no match ever started.
 #
 # A GAP, stated because the negative control found it: breaking the FIRST click (the
-# launcher's "game start") does not fail this test. The run still reaches character
-# selection, because the click at 1350 lands on the launcher instead and the screen-keyed
-# clicks after it follow the game rather than the clock. So this test does not prove the
-# launcher click does anything, and nothing here should be read as proving it.
+# launcher's "game start") does not fail this test. The run still reaches character selection,
+# because the click at 1350 lands on the launcher instead and the screen-keyed clicks after it
+# follow the game rather than the clock. So this test does not prove the launcher click does
+# anything, and nothing here should be read as proving it.
 #
-# What it does NOT assert: that the mode-menu click chose Stage mode specifically. The
-# "STAGE 1-1" banner is drawn pixels, not a log line, so there is nothing to grep; a run
-# that fell into VS mode instead would pass every check here. (A frame dump says it lands on
-# VS mode, so that comment is aspirational -- the row geometry wants re-measuring.) Verify
-# from a frame dump when the mode-menu geometry changes.
+# What it does NOT assert: which mode the mode-menu click chose. A run that fell into VS mode
+# instead of Stage would pass every check here. `tools/e2e.sh stage_mode` is what pins a mode, using
+# LF2_MODE.
 set -eu
 
 BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
@@ -68,16 +73,24 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 # post-load panel, so it lands however long the load took (issues #18, #25).
 CLICKS="403,228:900"          # launcher: game start
 CLICKS="$CLICKS;400,241:1350" # mode menu: pick a mode
-CLICKS="$CLICKS;200,150@charselect+98"   # character select: click a portrait to join
-CLICKS="$CLICKS;200,150@charselect+248"  # and again to pick that fighter
-CLICKS="$CLICKS;320,293@charselect+398"  # "How many Computer Players?": the digit 1
+# Three clicks on a portrait: join, pick, and confirm the roster. The game opens the pre-fight
+# overlay on the third, so anything scheduled after it lands on the OVERLAY -- which is how an
+# earlier version of this route spent eight clicks activating "Exit" and wondered why the
+# overlay kept closing. Screen-keyed, so they land however long the load took (issues #18, #25).
+CLICKS="$CLICKS;200,150@charselect+98"
+CLICKS="$CLICKS;200,150@charselect+248"
+CLICKS="$CLICKS;200,150@charselect+398"
+# The overlay: move onto "Fight!" (row 0, y 16..38 from the decompile) and click it. Two, so a
+# frame lost to the transition does not cost the run.
+CLICKS="$CLICKS;150,25@overlay+60"
+CLICKS="$CLICKS;150,25@overlay+120"
 
-echo "driving the game from the mouse alone to character selection (about 90s)..."
+echo "driving the game from the mouse alone into a match (fast)..."
 ( cd "$GAME" && \
-  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
   LF2_SCREEN_HASH=1 LF2_AUDIO_DEBUG=1 LF2_CK_DEBUG=1 \
-  LF2_CLICK_SCRIPT="$CLICKS" LF2_QUIT_AFTER=2800 \
-  timeout 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
+  LF2_CLICK_SCRIPT="$CLICKS" LF2_QUIT_AFTER=3200 \
+  timeout 220 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 rc=$?
 
 fail=0
@@ -97,13 +110,24 @@ kv() { echo "${1:-}" | grep -oE "(^|[[:space:]])$2=[0-9]+" | head -1 | cut -d= -
 # The discriminating assertion: which screens the run actually reached. A threshold on
 # sound effects or blit counts is satisfied by the menus, which is how this test spent its
 # whole life green without ever leaving character selection.
+# The screens the run REACHED, in order, each named. Not a threshold: if the mouse stops
+# driving any one of these screens, its marker never appears and this fails for the reason it
+# is named after.
 screens=$(grep -m1 "^scripted input: screens reached" "$LOG" || true)
-if echo "$screens" | grep -q "charselect@"; then
-    echo "  ok    reached character selection by mouse alone: $screens"
-else
-    echo "  FAIL  never reached character selection -- $screens"
-    fail=1
-fi
+for want in charselect overlay match; do
+    if echo "$screens" | grep -q "$want@"; then
+        echo "  ok    reached $want by mouse alone"
+    else
+        echo "  FAIL  never reached $want -- $screens"
+        case "$want" in
+        overlay) echo "        (character selection did not hand over: the roster clicks are"
+                 echo "         not confirming, or the overlay opened and was dismissed)" ;;
+        match)   echo "        (the overlay is up but 'Fight!' is not being clicked -- check the"
+                 echo "         row geometry against FUN_00429730's highlight draw)" ;;
+        esac
+        fail=1
+    fi
+done
 
 # Every click has to land. One aimed at a screen the run never reached is reported by the
 # run itself, and it means the assertions above are about inputs that did not happen.

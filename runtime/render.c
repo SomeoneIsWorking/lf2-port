@@ -2,6 +2,7 @@
  * runtime/hd2d.h for what is done with the geometry once it is here. */
 
 #include "render.h"
+#include "overrides/geom.h"
 #include "hd2d.h"
 #include "guest.h"
 #include "hostwin.h"
@@ -497,12 +498,9 @@ static void draw_cast_shadow(Tex *t, const SDL_FRect *src, const SDL_FRect *spri
 static float object_scale(void)
 {
     /* The WINDOW's height, not hostwin_height() -- that is the composition, which is pinned
-     * at the game's 550 and would make this constantly 1. */
-    const int wh = hw.win_h;
-    int n = (wh + 275) / 550;                        /* rounded, not truncated */
-    if (n < 1) n = 1;
-    if (n > 8) n = 8;
-    return (float)n;
+     * at the game's 550 and would make this constantly 1. The rounding itself is
+     * geom_object_scale, so runtime/test_geom.c exercises this rule and not a copy of it. */
+    return (float)geom_object_scale(hw.win_h);
 }
 
 enum Pass { PASS_COLOUR, PASS_CHARS, PASS_SHADOW };

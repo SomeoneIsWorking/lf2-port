@@ -34,13 +34,13 @@ PRESS="$JOIN,right@match+108,right@match+138,right@match+168,right@match+198,rig
 
 run() {   # run <logfile> <pad2 script>
     ( cd "$GAME" && \
-      SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+      SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
       LF2_VIRTUAL_PAD="$PAD1" LF2_VIRTUAL_PAD2="$2" \
       LF2_COOP_TABLE=live+60 LF2_COOP_TRACK=1 \
       LF2_QUIT_AFTER=2450 timeout 200 "$BUILD/lf2" lf2.exe ) > "$1" 2>&1
 }
 
-echo "two humans in a match: pad two joins at character selection (about 3 min for both)..."
+echo "two humans in a match: pad two joins at character selection, two arms..."
 run "$LOGP" "$PRESS"
 run "$LOGQ" "$JOIN"
 

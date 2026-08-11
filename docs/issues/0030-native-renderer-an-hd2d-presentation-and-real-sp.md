@@ -281,7 +281,7 @@ the wrong answer that came first -- a pointer at record offset -1128 that looks 
 handle and matched 0 of 40000 clip draws, because the records are contiguous and it belongs to
 the previous background.
 
-VERIFIED, ctest render, four arms: with the effect off the GPU frame matches the software
+VERIFIED, tools/e2e.sh render, four arms: with the effect off the GPU frame matches the software
 compositor to a MAX of 1-2 levels of 255 (antialiased glyph edges only); dropping every 7th
 draw changes 134928 px, so the match can fail; the HD2D arm differs. 2778 ground markers
 produced 2778 cast shadows in one run -- every marker consumed.
@@ -358,7 +358,7 @@ to fail on a stale blob), so the build still needs only a C compiler and SDL. A 
 cannot take SPIR-V is told about on stderr and gets the plain composition -- deliberately no
 approximation to fall back on, since that is exactly how the fake bloom survived.
 
-VERIFIED, ctest render, four arms: the GPU frame matches the software compositor to max 1-2
+VERIFIED, tools/e2e.sh render, four arms: the GPU frame matches the software compositor to max 1-2
 levels of 255 on antialiased glyph edges only; dropping every 7th draw changes 134928 px, so
 the match can fail; the light changes 8613 px on the MATCH frame; and the light changes ZERO
 pixels on the character-select frame. That last arm is the one worth having -- "the effect

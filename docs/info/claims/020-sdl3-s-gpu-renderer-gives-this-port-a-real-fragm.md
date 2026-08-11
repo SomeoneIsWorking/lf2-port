@@ -13,7 +13,7 @@ SDL3's GPU renderer gives this port a real fragment-shader path, and it works he
 
 ## Evidence
 
-standalone probe ($CLAUDE_JOB_DIR/tmp/spike.c) against SDL 3.4.12: a fragment shader reading two samplers and one uniform rendered ff802280 -- red 0x80 from sampler 0, green 0x22 from sampler 1, blue 0x80 from the uniform -- while the SAME draw with no render state set rendered ff804020, the plain texture. Both classes run, so the positive is not a shader that happened to pass the texture through. Confirmed in the port: 'hd2d: vulkan backend, SPIR-V shaders loaded' and ctest render's light arm changes 8613 px.
+standalone probe ($CLAUDE_JOB_DIR/tmp/spike.c) against SDL 3.4.12: a fragment shader reading two samplers and one uniform rendered ff802280 -- red 0x80 from sampler 0, green 0x22 from sampler 1, blue 0x80 from the uniform -- while the SAME draw with no render state set rendered ff804020, the plain texture. Both classes run, so the positive is not a shader that happened to pass the texture through. Confirmed in the port: 'hd2d: vulkan backend, SPIR-V shaders loaded' and tools/e2e.sh render's light arm changes 8613 px.
 
 ## What would falsify it
 
