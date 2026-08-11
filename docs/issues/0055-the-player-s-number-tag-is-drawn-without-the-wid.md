@@ -96,3 +96,41 @@ tag's position is not computed from the camera word by any unwrapped reader, and
 handed to either text route. Whatever positions it is inside the object draw, which IS wrapped
 -- so a constant offset really is ruled out, and the growing gap points at the position being
 derived from something other than the drawn screen x.
+
+### Note (2026-08-11)
+MEASURED AT LAST, AND MY "IT IS A SCALE, NOT AN OFFSET" NOTE WAS WRONG. The entry's ORIGINAL
+hypothesis was right. Correcting it here so nobody acts on the retraction.
+
+The tag IS a sheet glyph -- my earlier "not fn_00423940, so it is composed as raw clips" was
+right about the route and my filter for finding it was broken, which is why two passes reported
+nothing. LF2_GLYPH_POS=1 (new) prints every sheet glyph with the position the GAME asked for,
+and the tag is the run at y 398:
+
+    794x550     y=398  x=102     (524 draws)
+    1920x1080   y=398  x=102     (524 draws)
+
+IDENTICAL. Stage mode is deterministic, so this is the same game state at both widths, and the
+tag's x does not move when the view does.
+
+WHICH MEANS the tag is drawn OUTSIDE the wrapper on fn_0041a5a0. Issue #39 applies the
+widescreen re-centring by shifting the camera WORD around that call, so anything drawn inside
+it comes out shifted; the tag comes out at the same x whatever the view, so it is not inside.
+The sprite it names is. That is exactly the mechanism this entry was filed on.
+
+WHY THE SCREENSHOTS LOOKED LIKE A GROWING GAP, which is what misled me. The shift is
+k = (view - 794) / 2 = 92 at 1920x1080, but bg_draw_camera CLAMPS AT ZERO -- near a stage's
+start the camera has not travelled past k, the shift is 0, and there is no divergence at all.
+In the VS frame I compared, the camera was still at 0 and the tags sat correctly under their
+fighters. In the stage frame the fighter had walked right, the camera was past the clamp, and
+the full 92 was in force. Zero-then-92 read as "grows with distance" and I inferred a scale
+from two samples that were really two sides of a clamp.
+
+SO THE FIX IS THE ONE THE ENTRY ORIGINALLY NAMED, and the caution I added against it should be
+ignored: the tag needs the same draw-time camera shift the world gets. What still has to be
+found is WHERE it is drawn, since it is outside fn_0041a5a0 -- and the glyph route is now known,
+so a call-ring print on the y-398 draw (the same trick that located the layer table for issue
+#23) names it in one run.
+
+DO NOT add screen_offset_x(). That is the composition-space centring and is a different number
+from the camera shift; during a match it is zero by design. The one wanted here is
+bg_draw_camera's k.

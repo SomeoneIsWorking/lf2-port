@@ -86,6 +86,14 @@ void fn_0043f010(void)
 
     const int sheet = font_sheet_index(R(ECX));
     if (sheet >= 0) {
+        /* LF2_GLYPH_POS=1: every sheet glyph with the position the GAME asked for, before any
+         * of the port's offsets. The fighters' name tags are drawn this way -- not through
+         * TextOutA and not through fn_00423940, both eliminated -- so this is the only place
+         * their x can be read rather than inferred from a screenshot (issue #55). */
+        if (getenv("LF2_GLYPH_POS"))
+            fprintf(stderr, "glyph sheet=%d x=%d y=%d ch=%d\n", sheet,
+                    (int32_t)LD32(R(ESP) + 4), (int32_t)LD32(R(ESP) + 8),
+                    (int32_t)LD32(R(ESP) + 12));
         glyph_hint_set((int32_t)LD32(R(ESP) + 12));
         fn_0043f010__orig();
         glyph_hint_clear();
