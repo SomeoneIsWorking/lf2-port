@@ -437,3 +437,40 @@ WHAT IS STILL NOT DECIDED, and it is a look rather than a measurement: whether s
 for the reason that it makes one stage's sky a different shape from everything drawn beside it
 -- and that reason still stands even though the mechanism is now understood. The other honest
 option is to letterbox the band deliberately. One frame of each, side by side, settles it.
+
+### Note (2026-08-11)
+CORRECTING THE NOTE ABOVE ON ONE POINT, before anyone acts on it: the fix cannot be done
+*inside* background.c's layer draw either, and the reason is worth knowing.
+
+A non-looping layer is drawn by one call:
+
+    draw_layer(obj, off + lx, y, pic, arg0);
+
+which hands the game's own draw a PICTURE and a POSITION. There is no width in it. The
+destination rectangle is decided downstream, by the blit, from the picture's natural size --
+so background.c can decide THAT a layer is a full-width backdrop but cannot itself stretch one.
+
+WHICH SETTLES THE DESIGN, and the port already has the pattern for it. background.c knows the
+layer's span and therefore knows the answer; ddraw.c owns the rectangle and therefore has the
+only place the answer can be applied. So background.c must HAND THE FACT ACROSS, exactly as
+world_band_hint_set already does for the world band -- a hint set immediately before the draw
+and consumed by the next blit:
+
+    span <= view  ->  "the next layer blit has no more picture; stretch it to the view"
+    span >  view  ->  say nothing, and the blit is left alone
+
+and ddraw.c's existing `dl == 0 && dr == NATIVE_W` test is then DELETED rather than loosened.
+It was inferring layer identity from a rectangle, it only ever worked while the game's clip
+made that inference true, and the measurement above shows two blits with identical rectangles
+needing opposite treatment. A hint from the code that knows is not a workaround for that test;
+it is the thing the test was approximating.
+
+SO THE REMAINING WORK IS: one hint setter beside world_band_hint_set, one call in the
+non-looping arm of background.c's layer loop, and the deletion of the rectangle test. The 794
+arm stays byte-identical by construction, because at view 794 no layer has span <= view except
+HK Coliseum's, whose stage is 794 wide and whose blit already fills the screen.
+
+AND THE OPEN QUESTION IS UNCHANGED and still belongs to whoever looks at it: whether stretching
+a 70-pixel treeline by 22% beats the black band. Everything above is how to do it, not whether
+to. If the answer is "letterbox instead", the same hint is what a deliberate letterbox would be
+driven from -- the port would still need to know which layers have no more picture.
