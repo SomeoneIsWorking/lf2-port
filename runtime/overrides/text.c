@@ -90,10 +90,19 @@ void fn_0043f010(void)
          * of the port's offsets. The fighters' name tags are drawn this way -- not through
          * TextOutA and not through fn_00423940, both eliminated -- so this is the only place
          * their x can be read rather than inferred from a screenshot (issue #55). */
+        /* The camera goes on the SAME line on purpose. A tag x that does not change with the
+         * view proves nothing unless the camera actually left the stage's left edge that
+         * frame: below the clamp the shifted and unshifted cameras are equal, so a run whose
+         * fighter never walks cannot tell the two hypotheses apart -- which is exactly how an
+         * earlier "identical at both widths" reading was taken for an answer. cam is the
+         * game's own camera, draw is what bg_draw_camera returns; they differ only when the
+         * widescreen shift is actually biting. */
         if (getenv("LF2_GLYPH_POS"))
-            fprintf(stderr, "glyph sheet=%d x=%d y=%d ch=%d\n", sheet,
+            fprintf(stderr, "glyph sheet=%d x=%d y=%d ch=%d ret=%08x cam=%d draw=%d\n", sheet,
                     (int32_t)LD32(R(ESP) + 4), (int32_t)LD32(R(ESP) + 8),
-                    (int32_t)LD32(R(ESP) + 12));
+                    (int32_t)LD32(R(ESP) + 12), LD32(R(ESP)),
+                    (int32_t)LD32(BG_CAMERA_X),
+                    geom_draw_camera((int32_t)LD32(BG_CAMERA_X), bg_view_width()));
         glyph_hint_set((int32_t)LD32(R(ESP) + 12));
         fn_0043f010__orig();
         glyph_hint_clear();

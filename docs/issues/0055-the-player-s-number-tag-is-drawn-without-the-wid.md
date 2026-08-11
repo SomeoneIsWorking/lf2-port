@@ -134,3 +134,63 @@ so a call-ring print on the y-398 draw (the same trick that located the layer ta
 DO NOT add screen_offset_x(). That is the composition-space centring and is a different number
 from the camera shift; during a match it is zero by design. The one wanted here is
 bg_draw_camera's k.
+
+### Note (2026-08-11)
+FOUND, IN THE GAME'S OWN CODE -- and the note above it is ALSO wrong, for the third time on
+this entry, in the same way both earlier notes were: a comparison run against two sides of a
+clamp. Read this note and not the two before it.
+
+WHY "IDENTICAL AT BOTH WIDTHS" PROVED NOTHING. That reading concluded the tag is drawn outside
+fn_0041a5a0 because x was 102 at 794 and at 1920. The glyph probe now prints the camera on the
+SAME line, and over the whole run:
+
+    cam=0
+
+The camera never left the stage's left edge in either run -- the pad script did not walk. Below
+the clamp bg_draw_camera returns the camera unchanged, so the shifted and unshifted hypotheses
+predict the SAME x and the measurement cannot separate them. Repeating it with a walking script
+(right held for 680 frames) gave 785 at both widths -- also cam=0, also vacuous.
+
+WHERE IT IS DRAWN, from the return address the probe now prints: all 524 tag glyphs come from
+guest 0x0041ab26, and re/functions.tsv puts that inside FUN_0041a5a0 (0x0041a5a0 + 2173). So
+the tag IS inside the wrapped object pass, it DOES get the shifted camera, and the entry's
+original hypothesis -- a missing centring offset -- is dead. So is the "scale" note. The fix
+this entry twice pointed at (give the tag bg_draw_camera's k) would have double-shifted it.
+
+THE ACTUAL CAUSE, from the walking run: the tag's x tracks the fighter (609, 619, ... 782) and
+then STOPS at 785 and stays there for 869 frames while the fighter keeps walking into the width
+the widened bound of issue #43 opened. That is the reporter's "the player tag gets left behind
+after you walk to where the stage would go offscreen in 4:3", exactly.
+
+785 is not an accident. scratch/decomp/0041a5a0.c, the tag draw:
+
+    x = (obj[0x1c] - (len*9)/2 + obj[0x10]) - DAT_00450bc4;   /* world x, centred, minus camera */
+    if (x < 0) x = 0;                                          /* left clamp  */
+    if (0x31a - len*9 < x) x = 0x31a - len*9;                  /* RIGHT clamp: 0x31a == 794 */
+
+A one-character tag gives 794 - 9 = 785. The game clamps the tag into its own 794-wide screen
+so a name never runs off the edge; in a 978-wide view that clamp bites 184 px early and pins
+the tag while the fighter walks on. Both clamps are wrong in a wide view -- the right one wants
+the view width, and the left one is only correct because the shifted camera keeps screen x >= 0.
+
+WHY THIS IS NOT A ONE-LINE FIX, and what NOT to do. 0x31a is an IMMEDIATE in the recompiled
+code, not a data word, so no ST32 can reach it -- unlike the walk lock (issue #43) and the
+camera word (issue #39), which are memory and are why those fixes were small. The wrapper in
+background.c is a camera substitution around fn_0041a5a0__orig, not a hand-port, so there is
+nothing there to edit either.
+
+  DO NOT special-case the clamped value at the glyph call (x == 794 - 9*len => add view-794).
+  It is unrecoverable-by-construction -- once clamped, a tag genuinely at 785 and one clamped
+  from 900 are the same number -- and len is only knowable by counting consecutive glyph calls,
+  i.e. pattern-matching the output. That is the bandaid this port exists to not ship.
+
+THE PROPER FIX is to hand-port fn_0041a5a0 into runtime/overrides/ and make its two clamps read
+bg_view_width() the way bg_view_width() already replaced the game's 794 elsewhere. It is 2173
+bytes / 368 decompiled lines -- an object-collection, depth-sort and draw pass -- so it is a
+real piece of work rather than an edit, and it is not started. It would also subsume the
+wrapper: with the function ported, the camera substitution in background.c becomes a plain
+`- bg_draw_camera()` at each of the nine subtraction sites.
+
+INSTRUMENT NOTE: LF2_GLYPH_POS now prints `cam=` and `draw=` next to every glyph precisely so
+this class of vacuous comparison cannot be read as an answer again -- a tag x that does not move
+with the view means nothing while cam=0.
