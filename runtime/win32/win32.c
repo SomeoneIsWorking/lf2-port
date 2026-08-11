@@ -156,8 +156,22 @@ static void h_CreateWindowExA(void)
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         abort();
     }
+    /* HIGH_PIXEL_DENSITY, or the panel is never reached (issue #56). SDL sizes a window in
+     * POINTS and draws it in PIXELS, and without this flag it creates a LOW-DPI window: the
+     * two are equal, the drawable really is the point size, and the display server scales the
+     * finished frame up to the panel. On a 4K screen at 200% that is a 1080p frame stretched
+     * to 2160 rows -- which is exactly the whole-screen upscale issue #41 removed, reappearing
+     * one layer further out where nothing in this port could see it.
+     *
+     * Everything downstream is already in pixels and has been since issue #20: the resize
+     * hook takes PIXEL_SIZE_CHANGED rather than RESIZED, the surfaces and the composition are
+     * sized from it, and render_present draws into a target the size of the render output. So
+     * this flag is the one thing that was missing, and with it the composition follows the
+     * panel: at 200% a 794x550-point window is a 1588x1100 drawable, which is a world scale of
+     * 2 and the game's own 794 columns of world -- the picture the player asked for, drawn at
+     * twice the resolution rather than blown up to it. */
     hw.window = SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h,
-                                 SDL_WINDOW_RESIZABLE);
+                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!hw.window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); abort(); }
     /* THE GPU RENDERER BY NAME, not whichever SDL picks. SDL's default order puts the
      * OpenGL backend first, and that one has no SDL_GPUDevice -- so SDL_GPURenderState, and
@@ -179,7 +193,22 @@ static void h_CreateWindowExA(void)
     render_init(hw.renderer);
     /* Before apply_window_mode: going fullscreen changes the size, and the geometry has to
      * exist before anything can follow a change to it. */
-    hostwin_window_geometry(hw.win_w, hw.win_h);
+    /* SEEDED FROM THE PIXELS, not from the points the window was asked for. Those differ on a
+     * scaled display, and PIXEL_SIZE_CHANGED does not necessarily arrive before the first
+     * frame -- so taking hw.win_w/h here would compose the opening frames at the point size
+     * and then jump. It says both numbers because a run on a scaled display is the only place
+     * they differ, and that is precisely the run nobody here can make (issue #56). */
+    {
+        int pw = hw.win_w, ph = hw.win_h;
+        SDL_GetWindowSizeInPixels(hw.window, &pw, &ph);
+        if (pw <= 0 || ph <= 0) { pw = hw.win_w; ph = hw.win_h; }
+        fprintf(stderr, "window: %dx%d points -> %dx%d pixels (display scale %.2f)%s\n",
+                hw.win_w, hw.win_h, pw, ph, (double)SDL_GetWindowPixelDensity(hw.window),
+                (pw == hw.win_w && ph == hw.win_h)
+                    ? " -- unscaled, so this run says nothing about HiDPI"
+                    : " -- a SCALED display: the frame is composed at the pixel size");
+        hostwin_window_geometry(pw, ph);
+    }
     apply_window_mode();
     hw.hwnd = 0x00010000;
     queue_startup_messages();
@@ -880,8 +909,15 @@ static uint32_t mouse_lparam(float wx, float wy)
      * THEN the composition to the GAME'S OWN SCREEN: a fixed-width screen centred on a wider
      * viewport has its content moved right, so the pointer moves left by the same amount.
      * That offset is in composition pixels, which is why it can only be applied second. */
-    float lx = wx, ly = wy;
-    lf2_window_to_compose(wx, wy, &lx, &ly);
+    /* SDL DELIVERS THE POINTER IN POINTS AND THE PICTURE IS PLACED IN PIXELS. They are the
+     * same number on an unscaled display and differ by the density on a scaled one, so
+     * without this every hit test on a 4K screen is out by that factor -- and silently, since
+     * a menu that activates the wrong entry looks like nothing at all in a screenshot. The
+     * density is 1.0 wherever this does not apply, so the multiply is a no-op there rather
+     * than a special case (issue #56). */
+    const float density = hw.window ? SDL_GetWindowPixelDensity(hw.window) : 1.0f;
+    float lx = wx * density, ly = wy * density;
+    lf2_window_to_compose(lx, ly, &lx, &ly);
     const int x = (int)lx - screen_offset_x(), y = (int)ly;
     host_ptr_x = x; host_ptr_y = y;
     return ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
