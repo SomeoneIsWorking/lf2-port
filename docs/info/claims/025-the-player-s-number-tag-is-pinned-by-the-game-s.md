@@ -5,6 +5,8 @@ status: holds
 created: 2026-08-12
 tags: widescreen,hud,stage-mode
 depends: runtime/overrides/background.c#fn_0041a5a0
+reconfirmed: 2026-08-12
+verified_at: 2026-08-12 02:17:28
 ---
 
 ## Claim
@@ -38,3 +40,12 @@ WHY THIS IS RECORDED SEPARATELY FROM THE EARLIER #55 NOTES: three of them were w
 ## What would falsify it
 
 a run at a view width W whose tag freezes at W-9 instead of 785 -- that would mean the bound follows the view and the clamp is not what pins it. Also falsified if a hand-port of fn_0041a5a0 whose two 0x31a sites read bg_view_width() leaves the tag frozen at 785.
+
+## Re-confirmed 2026-08-12
+
+STILL HOLDS OF THE GAME, and the port now overrides it. The falsifier this claim named -- 'a hand-port of fn_0041a5a0 whose two 0x31a sites read bg_view_width() leaves the tag frozen at 785' -- was run, and the tag MOVED:
+
+    window 1100x550   tag stops at x=1091   ( = view 1100 - 9 )
+    window 1920x1080  tag stops at x=969    ( = view  978 - 9 )
+
+against 785 at both widths before. The bound now follows the view, which is what a 794-based clamp replaced by a view-based one predicts and what the old behaviour could not produce. runtime/overrides/objects.c is the port; tools/e2e.sh objects accepts it byte-identically against the recompiled body at 794 in pixels AND state.

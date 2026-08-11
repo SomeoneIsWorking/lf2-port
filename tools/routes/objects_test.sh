@@ -16,10 +16,11 @@
 #
 # FOUR ARMS, and the ones that must DIFFER are the point:
 #
-#   determinism   two default runs, same frames, byte-identical. The identity arm the port
-#                 will use depends entirely on this being true, and it has never been asserted
-#                 anywhere -- the byte-identity in background_test compares two DIFFERENT code
-#                 paths and would not notice a pass that simply varied run to run.
+#   identity      the hand-ported fn_0041a5a0 against the RECOMPILED body (LF2_OBJ_ORIG=1), at
+#                 a 794 view where bg_view_width() is 794 and the port must therefore agree with
+#                 it exactly. This is the arm the port is accepted on. It began life as a second
+#                 DEFAULT run -- a determinism check -- and passing it in that form proved
+#                 nothing about the port, because it compared the port with itself.
 #   skew          LF2_OBJ_SKEW=3 moves the pass's camera by 3, so every object it draws moves
 #                 3 px and nothing else in the frame does. This MUST differ. It is what proves
 #                 the comparison above can report a difference at all.
@@ -32,9 +33,9 @@
 #                 would be a control that cannot fire. A run given one extra input diverges in
 #                 the game's own state, and that is the honest negative.
 #
-# WHEN THE PORT LANDS: change the `orig` arm below from a second default run to
-# LF2_OBJ_ORIG=1, and this becomes the real gate. Until then the first arm is a determinism
-# check and says so rather than claiming to have compared the port with anything.
+# THE PORT HAS LANDED, and the `orig` arm now runs the recompiled body. Anyone tempted to turn
+# it back into a second default run should note that it passes either way -- and only one of
+# those two is a test.
 #
 # Software renderer throughout: this is about what the GAME's pass draws, not about how the
 # frame is presented, and issue #40 is why nothing runs on the GPU that does not have to.
@@ -81,7 +82,7 @@ arm() {   # arm <dir> [VAR=value ...]
 
 echo "the stage's object pass: four runs..."
 arm port
-arm orig
+arm orig LF2_OBJ_ORIG=1
 arm skew LF2_OBJ_SKEW=3
 
 # THE STATE ARMS' NEGATIVE, and it has to be a different one. LF2_OBJ_SKEW moves where the
@@ -141,13 +142,11 @@ for f in "$OUT/port"/*.ppm; do
         echo "  FAIL  $nm: the orig arm produced no such frame"; fail=1; continue
     fi
     if cmp -s "$f" "$OUT/orig/$nm"; then
-        echo "  ok    $nm: two default runs are byte-identical, so the pass is deterministic"
-        echo "        and an identity comparison against it means something"
+        echo "  ok    $nm: the port draws exactly what the recompiled body draws"
     else
         d=$(diff_px "$f" "$OUT/orig/$nm")
-        echo "  FAIL  $nm: two DEFAULT runs differ on $d pixel(s). The pass is not"
-        echo "        reproducible frame for frame, so no byte-identity gate can be built on"
-        echo "        it -- fix that before porting anything (issue #55)"
+        echo "  FAIL  $nm: the port differs from the recompiled body on $d pixel(s) at a"
+        echo "        794 view, where bg_view_width() is 794 and they must agree exactly"
         fail=1
     fi
 
@@ -285,7 +284,7 @@ PY
 }
 
 state_cmp "state vs orig" orig same \
-    "two runs of the SAME route left the game in different states, so the pass is not state-deterministic and no state gate can rest on it"
+    "the port left the game in a different state from the recompiled body -- it is not only drawing differently, it is CORRUPTING state"
 state_cmp "state vs alt"  alt  differ \
     "a run in a DIFFERENT game mode produced identical state, so this comparison cannot report a difference and the arm above is vacuous"
 
