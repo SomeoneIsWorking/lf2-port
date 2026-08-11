@@ -183,6 +183,9 @@ static void shadow_learn(const Surface *s)
 
 int game_glyph_draw(int ch, int x, int y, uint32_t ink,
                     uint32_t dpix, int dwid, int dhei, int dpitch);
+/* The display-list half of the same glyph, for text the port draws over a frame it did not
+ * compose -- see controls_hint_draw. */
+int game_glyph_tile(int ch, int x, int y, uint32_t ink, uint32_t dst_pixels);
 
 /* The ink colour comes from the sheet's own glyph, so each of the three sheets keeps its
  * colour without the port having to know what they are. Taken as the brightest non-keyed
@@ -461,7 +464,15 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     static int shot_w, shot_h;
     const uint8_t *shown = pixels;
     int shown_pitch = src_pitch;
-    const int gpu = hw.renderer && render_gpu_enabled() && !pause_active() && !hint_on
+    /* THE PAUSE MENU IS STILL A SOFTWARE-ONLY FRAME, and the controls hint is not any more.
+     * The difference is not which of them is more important; it is that the hint is stateless
+     * text that can be appended to the composition's display list where it is drawn, while
+     * pause works by NOT CALLING the game's update -- so no blits are recorded, the list is
+     * empty from the second paused frame onward, and the renderer would have nothing to draw
+     * the menu on top of. Fixing that means giving the renderer a way to REDRAW THE LAST
+     * LIST, which is a change to the frame lifetime rather than to where a menu draws.
+     * Issue #52 carries both halves. */
+    const int gpu = hw.renderer && render_gpu_enabled() && !pause_active()
                     && render_present(frame_src_pixels, frame_src_off, w, h);
     int shown_w = w, shown_h = h;
     if (gpu) {
@@ -632,9 +643,23 @@ static void controls_hint_draw(const Surface *s)
      * not inside the black band beside it, or the line starts in the margin and crosses
      * the edge halfway through a word. */
     const int x0 = 8 + screen_offset_x();
-    for (int i = 0; TEXT[i]; i++)
-        game_glyph_draw(TEXT[i], x0 + i * 8, s->h - 16,
-                        0xffffffu, s->pixels, s->w, s->h, s->pitch);
+    /* TWO DESTINATIONS, ONE LINE, and the split is issue #52's fix. The pixels go on the
+     * PRIMARY, which is what the software compositor presents. The display-list tiles go on
+     * the COMPOSITION -- the surface the native renderer builds its frame from -- because a
+     * frame it cannot see the hint in is a frame it is not allowed to present, and that gate
+     * is what kept the renderer off every menu screen in the game.
+     *
+     * The composition's list is still intact here: this runs after the copy-to-primary and
+     * before hostwin_present, and render_frame_reset happens after the present. The tiles
+     * land at the END of the list, which is exactly where a hint drawn over the frame
+     * belongs. Both surfaces are the same size and the centring is already baked into the
+     * composition (frame_source_note passes off 0), so one x serves both. */
+    for (int i = 0; TEXT[i]; i++) {
+        const int x = x0 + i * 8, y = s->h - 16;
+        if (frame_src_pixels && frame_src_pixels != s->pixels)
+            game_glyph_tile(TEXT[i], x, y, 0xffffffu, frame_src_pixels);
+        game_glyph_draw(TEXT[i], x, y, 0xffffffu, s->pixels, s->w, s->h, s->pitch);
+    }
 }
 
 /* The pause menu needs the frame to keep being shown while the game's update is not

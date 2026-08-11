@@ -851,6 +851,44 @@ static const Glyph *glyph_of(int ch)
     return g;
 }
 
+/* The GPU half on its own, so that a caller which is NOT writing the software frame can still
+ * put text in the display list (issue #52: the controls hint has to be a tile on the game's
+ * composition rather than pixels on the primary, or the renderer cannot present the frame it
+ * sits on). game_glyph_draw is this plus the CPU blend.
+ *
+ * The tile is appended to `dst_pixels`'s list, in that surface's own coordinates, and takes
+ * the WINDOW-RESOLUTION raster when there is one -- more texels for the same place on screen,
+ * which is what makes the glyph sharper rather than merely bigger (issue #45). At scale 1, or
+ * if the finer raster could not be made, this is the 8x16 mask.
+ *
+ * Returns 1 if a tile was written. A 0 is NOT an error: the GPU path may be off, and the
+ * caller that also draws pixels does not care either way. */
+int game_glyph_tile(int ch, int x, int y, uint32_t ink, uint32_t dst_pixels)
+{
+    const Glyph *g = glyph_of(ch);
+    if (!g) return 0;
+
+    const int ir = (int)((ink >> 16) & 0xff), ig = (int)((ink >> 8) & 0xff);
+    const int ib = (int)(ink & 0xff);
+
+    const GlyphHi *hi = glyph_hi_of(ch, lf2_world_scale());
+    const uint8_t *cov = hi ? hi->cov : g->cov;
+    const int cw = hi ? hi->w : GLYPH_W, chh = hi ? hi->h : GLYPH_H;
+    uint32_t *tile = render_tile_begin(dst_pixels, x, y, GLYPH_W, GLYPH_H, cw, chh);
+    if (!tile) return 0;
+    for (int gy = 0; gy < chh; gy++)
+        for (int gx = 0; gx < cw; gx++) {
+            const int a = cov[gy * cw + gx];
+            if (!a) continue;
+            tile[gy * cw + gx] = ((uint32_t)a << 24)
+                               | ((uint32_t)(ir * a / 255) << 16)
+                               | ((uint32_t)(ig * a / 255) << 8)
+                               | (uint32_t)(ib * a / 255);
+        }
+    render_tile_end();
+    return 1;
+}
+
 /* Returns 1 if it drew the glyph, 0 to let the game's bitmap copy proceed. */
 int game_glyph_draw(int ch, int x, int y, uint32_t ink,
                     uint32_t dpix, int dwid, int dhei, int dpitch)
@@ -865,26 +903,7 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink,
      * same coverage is written into a display-list TILE as well, PREMULTIPLIED. The CPU
      * blend below still runs: both renderers build every frame, and the software one is the
      * reference the GPU path is diffed against. */
-    /* The GPU tile takes the WINDOW-RESOLUTION raster when there is one, into the same 8x16
-     * destination -- more texels for the same place on screen, which is what makes the glyph
-     * sharper instead of merely bigger (issue #45). At scale 1, or if the finer raster could
-     * not be made, this is the 8x16 mask and the behaviour is exactly what it was. */
-    const GlyphHi *hi = glyph_hi_of(ch, lf2_world_scale());
-    const uint8_t *cov = hi ? hi->cov : g->cov;
-    const int cw = hi ? hi->w : GLYPH_W, chh = hi ? hi->h : GLYPH_H;
-    uint32_t *tile = render_tile_begin(dpix, x, y, GLYPH_W, GLYPH_H, cw, chh);
-    if (tile) {
-        for (int gy = 0; gy < chh; gy++)
-            for (int gx = 0; gx < cw; gx++) {
-                const int a = cov[gy * cw + gx];
-                if (!a) continue;
-                tile[gy * cw + gx] = ((uint32_t)a << 24)
-                                   | ((uint32_t)(ir * a / 255) << 16)
-                                   | ((uint32_t)(ig * a / 255) << 8)
-                                   | (uint32_t)(ib * a / 255);
-            }
-        render_tile_end();
-    }
+    game_glyph_tile(ch, x, y, ink, dpix);
 
     for (int gy = 0; gy < GLYPH_H; gy++) {
         const int dy = y + gy;
@@ -906,6 +925,12 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink,
     return 1;
 }
 #else
+int game_glyph_tile(int ch, int x, int y, uint32_t ink, uint32_t dst_pixels)
+{
+    (void)ch; (void)x; (void)y; (void)ink; (void)dst_pixels;
+    return 0;
+}
+
 int game_glyph_draw(int ch, int x, int y, uint32_t ink,
                     uint32_t dpix, int dwid, int dhei, int dpitch)
 {
