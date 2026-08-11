@@ -4,7 +4,9 @@ kind: claim
 status: holds
 created: 2026-08-05
 tags: widescreen,rendering
-depends: runtime/ddraw.c#hostwin_window_geometry, runtime/ddraw.c#surfaces_follow_window
+depends: runtime/ddraw.c#hostwin_window_geometry, runtime/overrides/geom.h
+reconfirmed: 2026-08-11
+verified_at: 2026-08-11 13:37:05
 ---
 
 ## Claim
@@ -18,3 +20,7 @@ A 1920x1080 window at pixel width would ask the game to compose 1920x550 and pre
 ## What would falsify it
 
 a window whose aspect the composition does not follow within a pixel, or a long drag that exhausts the vram arena -- either would mean the width is not derived from the aspect or the surfaces are not allocated once
+
+## Re-confirmed 2026-08-11
+
+RE-CONFIRMED 2026-08-11, and the record needs a correction: this claim read 'holds' throughout the period when the code did NOT do what it says. Issue #20's work replaced the aspect rule with the window's PIXEL WIDTH (1920x1080 -> 1920x550, letterboxed), and this claim -- including the very assertion list in its evidence -- was left standing against it. Nobody noticed because the claim's own falsifier was never run. Issue #41 has now made the aspect true again, by a different mechanism: the rule is a world SCALE of min(win_h/550, win_w/794) with the composition as win_w/scale, and the composition following the window's aspect is a CONSEQUENCE of that, not the rule itself. Verified today by tools/e2e.sh widescreen, which asserts all four windows and now also asserts, from the run's own output, whether the drawn rectangle fills the window: 794x550->794 fill, 1600x550->1600 fill, 1920x1080->978 fill, 800x900->794 band. Plus a single 1920x1080 GPU run dumping frame 2250: the frame is 1920x1080 with 0 fully-black rows at the top and 0 black columns either side, where the pixel-width design put 265 black rows above and below. The allocate-once half is unchanged and untested today.

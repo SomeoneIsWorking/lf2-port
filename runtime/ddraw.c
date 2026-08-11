@@ -491,11 +491,15 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
         }
         SDL_UnlockTexture(hw.texture);
     }
-    /* 1:1 and centred, never stretched to fill. The composition is the window's width and
-     * the game's own 550 rows; the rows that do not exist are black bands, not an upscale. */
+    /* THE SOFTWARE PATH STRETCHES ONE FINISHED BUFFER, and there is nothing better it can do:
+     * by the time a frame reaches here every sprite has been flattened into these pixels, so
+     * the only scale available is a scale of the whole picture. That is exactly what issue #41
+     * says not to ship as the feature -- and it is not the feature; the native renderer scales
+     * per quad at full resolution and this is the fallback for when it is off or unavailable.
+     * Presenting it 1:1 in the middle of a large window instead would leave the fallback
+     * showing a small picture in a black field, which is worse and no more honest. */
     SDL_FRect place;
-    lf2_compose_placement(w, h, &place.x, &place.y);
-    place.w = (float)w; place.h = (float)h;
+    lf2_compose_rect(w, h, &place);
     SDL_SetRenderDrawColor(hw.renderer, 0, 0, 0, 255);
     SDL_RenderClear(hw.renderer);
     SDL_RenderTexture(hw.renderer, hw.texture, NULL, &place);
@@ -1562,29 +1566,34 @@ static void surfaces_follow_window(int w, int h)
     }
 }
 
-/* The window changed size. THE COMPOSITION IS THE WINDOW'S REAL PIXELS, and the renderer
- * draws it 1:1 -- nothing is scaled, anywhere.
+/* The window changed size. THE COMPOSITION IS HOW MUCH WORLD IS ON SCREEN; how BIG that world
+ * is drawn is a separate number, and the two together are what make the picture fill the
+ * window (issue #41). geom_world_scale / geom_compose_width hold the rule and state it.
  *
- * It used to follow the window's ASPECT: a 1920x1080 window composed 978x550 and SDL scaled
- * that up by 1.96. That is an upscale, and 1.96 is not an integer, so a game pixel became a
- * block two OR three screen pixels wide depending where it landed. Everything drawn
- * afterwards -- text, the lighting -- was quantised to the small grid before being enlarged.
+ * THE HEIGHT SETS THE SCALE. LF2's vertical screen axis carries the depth (z, bounded by
+ * bg.dat's zboundary) and the jump height, both fixed by the stage's own data, and every
+ * background layer's picture is 550 rows tall. Composing 1080 rows was tried and does what
+ * that sentence predicts: the game draws its world in the top 550 and the remaining 530 are
+ * black, because there is nothing behind them to draw. So the rows that EXIST are scaled to
+ * the rows the window HAS.
  *
- * THE WIDTH IS THE WINDOW'S WIDTH, in pixels. That is a real gain and not just sharpness:
- * the game's own width words are patched to it (menu.c wide_apply), so a wider window is a
- * wider FIELD OF VIEW -- more world, at the size the artist drew it.
+ * THE WIDTH IS SPENT ON FIELD OF VIEW. Whatever width is left after the scale becomes world:
+ * the game's own width words are patched to the composition (menu.c wide_apply), so the
+ * camera and the layer loops draw MORE WORLD rather than a stretched picture. At the game's
+ * own 794x550 the scale is exactly 1 and the composition is exactly 794, so nothing about the
+ * 4:3 game moves -- which is what every byte-identity arm in the suite depends on.
  *
- * THE HEIGHT IS THE GAME'S 550, AND THAT IS NOT A SHORTCUT -- IT IS ALL THE WORLD THERE IS.
- * LF2's vertical screen axis carries the depth (z, bounded by bg.dat's zboundary) and the
- * jump height, both fixed by the stage's own data, and every layer's picture is 550 rows
- * tall. Composing 1080 rows was tried and does exactly what that sentence predicts: the
- * game draws its world in the top 550 and the remaining 530 are black, because there is
- * nothing behind them to draw. So the composition keeps the rows that exist and the port
- * CENTRES them in the window -- black above and below, the same shape as a widescreen film,
- * rather than a picture magnified to hide the fact or shoved against the top edge.
+ * THIS IS NOT THE UPSCALE THE PORT REMOVED, and the difference is the whole of issue #41.
+ * That one composed 978x550 into a small buffer and let SDL blow the finished frame up by
+ * 1.96, so a game pixel became a block two OR three screen pixels wide and text and lighting
+ * were quantised to the small grid before being enlarged. The scale here is applied PER QUAD
+ * by the native renderer as the display list is drawn into a full-resolution target: the
+ * geometry is exact at float precision and only a sprite's own texels are magnified. Between
+ * those two the composition width happens to come out the same at 16:9; nothing else does.
  *
- * A window narrower than 794 still gets 794 and is cropped: below that the HUD strip does
- * not fit, and squashing the world is the one thing worse than scaling it. */
+ * A window proportionally NARROWER than the game floors the composition at 794 and the width
+ * binds the scale instead, leaving black rows: below 794 the HUD strip does not fit, and
+ * squashing the world is the one thing worse than scaling it. */
 void hostwin_window_geometry(int win_w, int win_h)
 {
     if (win_w <= 0 || win_h <= 0) return;
@@ -1594,8 +1603,8 @@ void hostwin_window_geometry(int win_w, int win_h)
     /* The rule itself is geom_compose_width, which runtime/test_geom.c walks; what stays here
      * is the part that needs the window -- the diagnostic for a window past what this build
      * allocated pitch for, which the arithmetic has no way to say. */
-    const long w = geom_compose_width(win_w, WIDE_MAX);
-    if (win_w > WIDE_MAX) {
+    const long w = geom_compose_width(win_w, win_h, WIDE_MAX);
+    if (w >= WIDE_MAX && win_w > WIDE_MAX) {
         static int said;
         if (!said) {
             said = 1;
@@ -1606,10 +1615,22 @@ void hostwin_window_geometry(int win_w, int win_h)
     }
 
     if ((int)w == hw.width && hw.height == NATIVE_H) return;
-    fprintf(stderr, "widescreen: window %dx%d -> composition %ldx%d drawn 1:1 (was %dx%d)\n",
-            win_w, win_h, w, NATIVE_H, hw.width, hw.height);
-    hw.width = (int)w;
-    hw.height = NATIVE_H;
+    /* Both numbers, and the rectangle they land in, because either alone reads as the whole
+     * answer and is not: the composition says how much WORLD is on screen and the scale says
+     * how big it is drawn. The rectangle is what says whether the picture fills the window --
+     * a claim no width on its own can make, and the one issue #41 is about. */
+    {
+        SDL_FRect r;
+        hw.width = (int)w;                       /* set first: lf2_compose_rect reads the window */
+        hw.height = NATIVE_H;
+        lf2_compose_rect((int)w, NATIVE_H, &r);
+        fprintf(stderr, "widescreen: window %dx%d -> composition %ldx%d at scale %.3f, drawn "
+                        "into %.0fx%.0f at (%.0f,%.0f)%s\n",
+                win_w, win_h, w, NATIVE_H, (double)lf2_world_scale(),
+                (double)r.w, (double)r.h, (double)r.x, (double)r.y,
+                (r.h >= (float)win_h - 1.0f && r.w >= (float)win_w - 1.0f)
+                    ? " -- fills the window" : " -- with a band");
+    }
 
     surfaces_follow_window(hw.width, hw.height);
     /* Logical presentation is what used to do the scaling, and there is none to do now. The
@@ -1622,18 +1643,47 @@ void hostwin_window_geometry(int win_w, int win_h)
     if (hw.texture) { SDL_DestroyTexture(hw.texture); hw.texture = NULL; }
 }
 
-/* WHERE THE COMPOSITION SITS IN THE WINDOW: 1:1, centred, both axes.
+/* WHERE THE COMPOSITION SITS IN THE WINDOW, and how big it is drawn (issue #41).
  *
  * Both present paths need this and neither can work it out alone -- the software compositor
  * knows the composition and the renderer knows the output -- so it is computed once here off
- * the window geometry this file already owns. Negative is correct and deliberate: a window
- * narrower than the 794 the composition floors at gets the middle of the picture rather than
- * a squashed whole one.
+ * the window geometry this file already owns, and the rule itself is geom_compose_rect, which
+ * `ctest geometry` walks.
+ *
+ * The two paths use the same rectangle but do NOT get the same picture out of it, and that is
+ * the point of issue #41. The renderer applies the scale PER QUAD as it draws, so the geometry
+ * is exact and only a sprite's own texels are magnified. The software compositor has already
+ * flattened everything into one buffer by the time it gets here and can only stretch that
+ * buffer -- it is the fallback, and it looks like one.
  */
-void lf2_compose_placement(int comp_w, int comp_h, float *x, float *y)
+void lf2_compose_rect(int comp_w, int comp_h, SDL_FRect *r)
 {
-    *x = (float)((hw.win_w - comp_w) / 2);
-    *y = (float)((hw.win_h - comp_h) / 2);
+    geom_compose_rect(hw.win_w, hw.win_h, comp_w, comp_h, &r->x, &r->y, &r->w, &r->h);
+}
+
+/* How many screen pixels a game pixel becomes. The renderer needs it on its own to scale the
+ * quads, and hd2d needs it to put the stage's floor in the rows it is actually drawn in. */
+float lf2_world_scale(void)
+{
+    return geom_world_scale(hw.win_w, hw.win_h);
+}
+
+/* A POINT ON THE WINDOW, IN THE GAME'S OWN PIXELS -- the inverse of the rectangle above, and
+ * the thing every hit test needs.
+ *
+ * It has to be the exact inverse or the pointer and the picture disagree, and the failure is
+ * silent: a menu simply activates the wrong entry, or nothing, and a screenshot looks fine.
+ * The old code subtracted a horizontal centring offset and nothing else, which was right only
+ * while the composition was drawn 1:1 at the top of the window. It was already wrong
+ * VERTICALLY in a tall window -- the picture was centred with 265 rows above it at 1080 and
+ * the pointer's y was never moved to match -- and a scale would have made it wrong in both
+ * axes at once (issue #41).
+ *
+ * SDL_RenderCoordinatesFromWindow cannot do this job: it undoes SDL's own logical
+ * presentation, which this port turns OFF precisely because it does its placement itself. */
+void lf2_window_to_compose(float wx, float wy, float *cx, float *cy)
+{
+    geom_window_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, wx, wy, cx, cy);
 }
 
 /* Widescreen is ON whenever the window is wider in aspect than the game's own picture, and

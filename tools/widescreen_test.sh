@@ -1,30 +1,36 @@
 #!/bin/sh
 # The game's wideness follows the WINDOW, and nothing else (issue #20).
 #
-# THE RULE CHANGED, and this file is the record of it. The composition used to follow the
-# window's ASPECT and keep the game's own 550 rows -- a 1920x1080 window composed 978x550 and
-# SDL scaled that up by 1.96. That is an upscale, and 1.96 is not an integer, so a game pixel
-# landed as a block two OR three screen pixels wide. The composition is now the window's real
-# pixel WIDTH and the game's own 550 rows, drawn 1:1 and centred, with black bands for the
-# rows the game has no world to fill (its floor, its z boundary and every layer's picture are
-# authored against 550, so there is nothing to put there).
+# THE RULE CHANGED TWICE, and this file is the record of both. It first followed the window's
+# ASPECT and kept the game's own 550 rows, letting SDL scale the finished frame up. Then it
+# became the window's real pixel WIDTH at 550 rows drawn 1:1, with black bands for the rows
+# the game has no world to fill. Now (issue #41) it is BOTH numbers, kept apart:
+#
+#   SCALE      = min(win_h/550, win_w/794)   -- the picture FILLS the window
+#   COMPOSITION = win_w / scale, floored at 794, i.e. how much WORLD is on screen
+#
+# The composition width is what this test reads, because it is what the game is told. At 16:9
+# it comes out at the same 978 the ASPECT rule gave -- and that similarity is a trap worth
+# naming, because the two are not the same design. The old one composed 978x550 into a small
+# buffer and had SDL blow the whole picture up, quantising text and lighting to the small grid
+# first. The new one hands 978x550 of world to the game and the native renderer scales EVERY
+# QUAD as it draws into a full-resolution target. This test cannot tell those apart; the check
+# that can is tools/render_test.sh, and the frame dumps under it.
 #
 # Four windows, four expected compositions, and the set is chosen so that no single wrong
 # implementation satisfies all of them:
 #
-#   794x550    the game's own picture. Widescreen must be OFF -- a build that simply always
-#              widened would pass every other case here.
-#   1600x550   wider than the game's own. Composition 1600 wide. This is the case the old
-#              LF2_WIDESCREEN=<w> also produced, so it is the one that shows the change is
-#              not a behaviour change.
-#   1920x1080  the case that separates PIXEL WIDTH from ASPECT, and it is the one that
-#              flipped: the answer is 1920, not the 550*1920/1080 = 978 the aspect rule gave.
-#              A build still following the aspect says 978 and fails here alone.
-#   800x900    NARROWER than the game's own 794? No -- 800 is wider, but only just, and the
-#              window is TALL. The composition is 800: the height no longer enters into it at
-#              all, which is exactly what this case is here to pin. Under the aspect rule it
-#              was 550*800/900 = 489, clamped up to 794, so this case also flipped and a
-#              build that kept any aspect term in the formula fails it.
+#   794x550    the game's own picture, and the scale must be EXACTLY 1. Composition 794.
+#              A build that always widened, or always scaled, fails here alone -- and every
+#              byte-identity arm in the suite depends on this case being untouched.
+#   1600x550   the game's own HEIGHT and twice the width. The scale is still 1, so all 1600
+#              pixels are world: composition 1600. This is the case that shows extra width
+#              becomes FIELD OF VIEW rather than magnification.
+#   1920x1080  the scale is 1080/550 = 1.963, so the world on screen is 1920/1.963 = 978.
+#              A build that kept the pixel-width rule says 1920 and fails here alone.
+#   800x900    the window is TALL and barely wider than the game, so the WIDTH binds the
+#              scale (800/794) and the composition floors at 794. A build that took the
+#              height unconditionally would scale by 900/550 and ask for 489 here.
 #
 # Each run only has to reach the point where the window exists, so they are short.
 #
@@ -46,7 +52,10 @@ fail=0
 say_ok()   { echo "  ok    $1"; }
 say_fail() { echo "  FAIL  $1"; fail=1; }
 
-# $1 window, $2 expected composition width
+# $1 window, $2 expected composition width, $3 fill|band -- whether the drawn picture is
+# expected to cover the whole window. That second assertion is the one issue #41 added: a
+# composition width alone cannot say whether the player sees black bands, and for the whole
+# life of the pixel-width rule a 1080-row window had 530 rows of them while this test passed.
 check() {
     ( cd "$GAME" && \
       SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
@@ -64,18 +73,38 @@ check() {
     fi
     got=$(echo "$line" | sed 's/.*composition \([0-9]*\)x.*/\1/')
     if [ "$got" = "$2" ]; then
-        say_ok "$1 window -> ${got}x550 composition"
+        say_ok "$1 window -> ${got}x550 of world"
     else
         say_fail "$1 window -> ${got}x550, expected ${2}x550"
+        say_fail "      ($line)"
+    fi
+
+    # The same line says what rectangle the picture is drawn into, and whether that covers the
+    # window. Read from the run rather than recomputed here, so this is not the port's
+    # arithmetic checking itself.
+    case "$line" in
+    *"fills the window"*) got_fill=fill ;;
+    *"with a band"*)      got_fill=band ;;
+    *)                    got_fill=unreported ;;
+    esac
+    if [ "$got_fill" = "$3" ]; then
+        [ "$3" = fill ] && say_ok "$1: the picture fills the window" \
+                        || say_ok "$1: a band, correctly -- the window is narrower than the game"
+    else
+        say_fail "$1: expected '$3', got '$got_fill'"
         say_fail "      ($line)"
     fi
 }
 
 echo "widescreen: the composition follows the window (quick)..."
-check 794x550   794
-check 1600x550  1600
-check 1920x1080 1920
-check 800x900   800
+check 794x550   794  fill
+check 1600x550  1600 fill
+check 1920x1080 978  fill
+# The one window here whose picture CANNOT fill: it is taller in aspect than the game, so the
+# width binds and the leftover rows have no world to put in them. Present as the negative --
+# "fills the window" would otherwise pass on a build that stretched everything unconditionally,
+# which is exactly the whole-screen scaling issue #41 rules out.
+check 800x900   794  band
 
 # MID-RUN, which is the actual headline: the field of view changes while the game is running,
 # not only at startup. No scripted run can drag a window edge -- offscreen SDL has no window
