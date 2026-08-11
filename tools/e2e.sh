@@ -69,6 +69,7 @@ widescreen        the composition follows the window, both directions, natives a
 resize            a resize leaves no stale pixels standing (issue #29)
 background        the background override draws what the recompiled body drew, byte for byte
 stage_mode        the port reaches STAGE mode and the section lock holds the camera (issue #36)
+objects           the stage's OBJECT pass is deterministic, with a skewed camera as the negative (issue #55)
 render            the GPU renderer draws what the software compositor draws (issue #30)
 "
 

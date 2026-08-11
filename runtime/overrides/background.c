@@ -288,7 +288,25 @@ void bg_camera_report(void)
 void fn_0041a5a0(void)
 {
     const uint32_t saved = LD32(BG_CAMERA_X);
-    ST32(BG_CAMERA_X, (uint32_t)bg_draw_camera());
+    int32_t cam = bg_draw_camera();
+
+    /* LF2_OBJ_SKEW=<n>: THE NEGATIVE CONTROL FOR A GATE THAT DOES NOT EXIST YET.
+     *
+     * Issue #55 needs this function hand-ported so its four 0x31a sites read the view width
+     * instead of the game's 794, and the acceptance gate for that port is byte-identity
+     * against fn_0041a5a0__orig at a 794 view -- the shape LF2_BG_ORIG already gives the layer
+     * pass. A gate is worthless without something that makes it FAIL, and this is it: every
+     * draw in this pass turns a world x into a screen x by subtracting the camera, so moving
+     * the camera by n moves every object in the pass by n and nothing else in the frame.
+     *
+     * It is deliberately NOT a port and not a fix. It exists so that when the port lands, the
+     * identity arm has already been shown to be capable of reporting a difference -- rather
+     * than being trusted because it was green the first time it ran. tools/routes/objects_test.sh
+     * is the harness; see issue #55. */
+    const char *skew = getenv("LF2_OBJ_SKEW");
+    if (skew) cam += (int32_t)strtol(skew, NULL, 10);
+
+    ST32(BG_CAMERA_X, (uint32_t)cam);
     fn_0041a5a0__orig();
     ST32(BG_CAMERA_X, saved);
 }

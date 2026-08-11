@@ -276,3 +276,43 @@ of work, and starting them half-way is worse than not starting.
 DO NOT, when that port is written, "fix" this by widening only the high clamp. The low clamp at
 0 is correct only because the shifted camera keeps screen x >= 0; check it against the shift
 rather than assuming it.
+
+### Note (2026-08-12)
+THE ACCEPTANCE GATE THE PORT NEEDS NOW EXISTS, built before the port rather than after it.
+
+tools/routes/objects_test.sh (tools/e2e.sh objects), at a 794 view, software renderer:
+
+    ok  frame_001351  two default runs are byte-identical, so the pass is deterministic
+    ok  frame_001351  moving the pass's camera by 3 changes 5598 pixel(s)
+    ok  frame_001801  two default runs are byte-identical
+    ok  frame_001801  moving the pass's camera by 3 changes 5702 pixel(s)
+
+WHY IT IS BUILT THIS WAY. A gate written after the change it is meant to catch is a gate nobody
+has ever seen fail, and this project has shipped two of those tonight already (render_test
+classified its frames by a hardcoded filename; both dump routes passed on half their coverage).
+So the negative came first: LF2_OBJ_SKEW=<n> moves the camera this pass draws from, which moves
+every object it draws and nothing else in the frame, and the 5598/5702 numbers are the proof
+that the identity comparison can report a difference.
+
+The determinism arm is also not decoration. The identity gate the port will use rests entirely
+on this pass drawing the same frame twice, and NOTHING asserted that anywhere -- background_
+test's byte-identity compares two different code paths and would not notice a pass that simply
+varied run to run.
+
+WHEN THE PORT LANDS: change the  arm from a second default run to LF2_OBJ_ORIG=1 and this
+becomes the real gate. Until then the first arm is a determinism check and the file says so
+rather than claiming to have compared a port with anything.
+
+THE ABI IS ALSO RESOLVED NOW, so nothing about the port is research any more:
+
+    fn_0043f010(this=ECX, x, y, ch, 1, 0, surface)   -- args pushed right to left
+    receiver for every glyph draw:  ECX = [0x0044faf4]   (0041a896, 0041ab15, ...)
+    receiver for the shadow draw:   ECX = [ECX + 0x4d4673c] at 0041a748
+    fn_0040de30(this=object, camera, EDI, EAX)       -- the sprite draw, 0041a79f
+
+Eight calls in the whole function: 0041a767, 0041a79f, 0041a89d, 0041ab21, 0041ac5c, 0041ad1d,
+0041ad79, 0041add0 -- seven glyph draws and one sprite draw. 636 instructions.
+
+WHAT IS LEFT is the port itself: 636 instructions of C in the guest ABI, with the four 0x31a
+sites reading bg_view_width(), gated behind LF2_OBJ_ORIG so it can be A/B'd, and accepted only
+when the identity arm above stays green at 794.
