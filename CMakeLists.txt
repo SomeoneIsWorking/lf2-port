@@ -94,6 +94,7 @@ add_executable(lf2
     runtime/overrides/audio_pan.c
     runtime/video/render.c
     runtime/video/hd2d.c
+    runtime/video/mesh.c
     runtime/app/main.c)
 # EVERY subsystem directory is on the include path, which is what lets a file say
 # #include "guest_ops.h" wherever it happens to live. The alternative -- relative "../"
@@ -124,6 +125,7 @@ set_source_files_properties(
     runtime/overrides/audio_pan.c
     runtime/video/render.c
     runtime/video/hd2d.c
+    runtime/video/mesh.c
     runtime/app/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
