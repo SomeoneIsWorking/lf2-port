@@ -98,3 +98,68 @@ and prove the format while the renderer work proceeds separately.
 
 WHAT IS STILL UNDECIDED: the format, and whether the art is authored per stage by hand from the
 start or a first stage is done end to end to find out what the format needs.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the renderer half has a shape, and it is additive
+
+Issue #49's dependency was recorded as "the first commit is a depth buffer, and that is a
+renderer change of the same size as issue #30's original work". Reading SDL 3.4's headers
+narrows it a great deal, and #49 now carries the detail. In short:
+
+  - `SDL_render.h` has no depth attachment at all -- that part was right.
+  - But it exposes `SDL_GetGPURendererDevice()`, and the port already asks for the `gpu`
+    backend by name. So a hand-rolled SDL_GPU pass can share the SAME device: it renders the
+    woven geometry into its own colour target with its own depth attachment, and hands the
+    finished texture to the existing display list as an ordinary quad.
+
+Nothing in `render.c` is rewritten, the software compositor is untouched, and a stage with no
+authored geometry submits no pass -- which is what keeps `tools/e2e.sh background` byte-exact.
+
+WHY A SET DOES NOT NEED A SHARED DEPTH BUFFER WITH THE SPRITES: the levels are BEHIND every
+fighter. Mesh-against-mesh interpenetration is the case that genuinely needs depth, and it is
+entirely inside the offscreen pass; LF2's own painter order keeps placing the sprites. That
+distinction is what makes the first commit small rather than the whole renderer.
+
+SO THE TWO HALVES OF THIS ENTRY CAN PROCEED INDEPENDENTLY:
+  1. the per-stage authored-data substrate -- a file in the repo, loaded beside bg.dat, drawn
+     by background.c. Its first consumer is issue #23's flat backdrop extension, which needs no
+     depth at all.
+  2. the offscreen SDL_GPU mesh pass, which needs no authored data to be built and tested
+     (a cube in the middle of a stage is a sufficient first target).
+
+Neither blocks the other, and (1) is what tells (2) what the format has to carry.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the work order is a TOOL now, and it corrects the note above
+
+tools/re/stage_gaps.py replaces the hand-run measurement in the note above and in issue #23. It
+reads every bg.dat with tools/re/decrypt_dat.py, takes each layer's real picture width from its
+BMP header (bg.dat never states it -- `width:` is the SPAN, i.e. the scroll range), walks the
+backmost RUN of layers laid end to end, and prints the columns left over at a given view.
+
+At a 978-wide view (a 1920x1080 window):
+
+    Brokeback_Clif   backmost bc1+bc2+bc3 reaches 1379 -- covers the view
+    CUHK             backmost floor1+floor1 reaches 1594 -- covers the view
+    Stanley_Prison   backmost layer LOOPS -- nothing to author
+    Forbidden_Tower  sky.bmp        reaches  797 ->  181 columns (18%)
+    The_Great_Wall   sky.bmp        reaches  800 ->  178 columns (18%)
+    HK_Coliseum      back1.bmp      reaches  794 ->  184 columns (18%)
+    Lion_Forest      forests.bmp    reaches  800 ->  178 columns (18%)
+    Queen's_Island   qi1.bmp        reaches  800 ->  178 columns (18%)
+    Tai_Hom_Village  5.bmp          reaches  800 ->  178 columns (18%)
+    Template1/2/3    pic1+pic2      reaches  967 ->   11 columns (1%)
+
+9 of 12 short. At 2542 (an ultrawide window) it is 11 of 12, the worst being 1745 columns.
+
+The multi-piece backdrops are the reason this is a tool rather than a table: Brokeback Clif's
+three cliff sections, CUHK's doubled floor and the Templates' pic1+pic2 pair all COVER a 978
+view and would have been listed as needing work by any per-layer rule. The earlier note's
+"6 of 12" counted only the single-picture stages and missed the Templates' 11-column shortfall
+entirely.
+
+Negatives it can print, which is what makes the positives mean something: an empty or missing
+game tree exits 2 saying it searched NOTHING; a stage whose backmost layer loops is named as
+needing nothing rather than omitted; and `--all` prints the WRONG predicate (every non-looping
+layer narrower than the view) beside the explanation of why it is wrong, so the prop trap
+cannot be rediscovered as a finding.

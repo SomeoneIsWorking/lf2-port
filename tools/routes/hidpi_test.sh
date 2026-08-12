@@ -54,12 +54,19 @@ kscreen-doctor output.1.scale.2 >/dev/null 2>&1 || echo "hidpi: kscreen-doctor c
 sleep 2
 cd "$GAME" || exit 1
 SDL_VIDEODRIVER=wayland SDL_AUDIODRIVER=dummy LF2_RENDERER=soft LF2_UNPACED=1 \\
-  LF2_WINDOW_SIZE=794x550 LF2_QUIT_AFTER=180 "$BUILD/lf2" lf2.exe 2>&1
+  LF2_WINDOW_SIZE=794x550 LF2_QUIT_AFTER=90 "$BUILD/lf2" lf2.exe 2>&1
 EOF
 chmod +x "$LOG.sh"
 
 # LF2_RENDERER=soft: this route is about GEOMETRY, and a nested compositor is not where to find
 # out what the GPU path does (issue #40). -k because a wedged client declines TERM.
+#
+# THIS ONE IS SLOW AND THAT IS NOT THE GAME. Ninety frames take a couple of minutes here because
+# the virtual output's frame callbacks are what SDL's present waits on, and a headless output is
+# in no hurry to send them -- LF2_UNPACED=1 does not help, since the stall is below the port. The
+# two lines this asserts are both printed during startup, so the frame count is only "enough to
+# be sure the window settled"; do not raise it looking for more evidence, there is none after
+# the first present.
 echo "hidpi: the port on a simulated 4K display at 200%..."
 timeout -k 5 200 kwin_wayland --virtual --width 3840 --height 2160 \
     -s wayland-lf2-hidpi -- "$LOG.sh" > "$LOG" 2>&1 || true

@@ -183,8 +183,15 @@ enum { BG_REGISTRY = 0x00458b00 + 2004, BG_INDEX = 0x0044d024 };
  *
  * Both were confirmed by LF2_WATCH over a full route -- launcher, load, mode menu, character
  * select, a match, LEAVE MATCH, and a thousand frames after it -- with the boot transitions as
- * the positive control that the watch fires and silence afterwards. That is why exiting to a
- * menu drives the ENTRY sequence: there is no exit sequence to drive. */
+ * the positive control that the watch fires and silence afterwards.
+ *
+ * WHAT THAT DOES NOT MEAN, because this comment used to say it did: "so there is no exit
+ * sequence to drive". There is. These two words are the OUTER layer -- which program the
+ * process is running -- and the game never leaves the game proper once it is in it. Leaving a
+ * MATCH is a different layer entirely, SCREEN_WORD below, and the game drives it itself: the
+ * post-match overlay's Exit item takes it to screen 10, the front-end menu. The port's exit
+ * uses exactly that (runtime/overrides/screens.c), and issue #22 is what happens when the two
+ * layers are confused for each other. */
 enum { GAME_TOP_MODE = 0x00458b00, GAME_MODE_WORD = 0x0044d070 };
 
 /* SCREEN_WORD is the game's own screen selector, read from the decompilation of fn_0041bc90

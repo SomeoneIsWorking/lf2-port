@@ -1088,6 +1088,20 @@ before searching it.
   may be followed by several y pairs (one menu, several entries).
 - `tools/re/find_path.py` — greedily extends a click path, keeping any candidate that yields
   one more screen transition.
+- `tools/re/stage_gaps.py` — which columns of a widescreen view each stage has NO picture
+  for, which is the work order for hand-weaving them (issues #23, #62). It reads every
+  `bg.dat` through `decrypt_dat.py` and takes each layer's real picture width from its BMP
+  header, because `bg.dat` never states one: `width:` is the layer's SPAN — how far it
+  scrolls — and a layer whose span equals its picture width does not move at all. Only the
+  BACKMOST run of layers matters, since everything else has that run behind it; `--all`
+  prints the tempting wrong predicate (every non-looping layer narrower than the view) next
+  to why it is wrong, because it catches CUHK's 180-pixel patch of grass and Queen's Island's
+  127-pixel lamp post, which are props. A missing game tree exits **2** rather than
+  reporting no gaps.
+
+      tools/re/stage_gaps.py                # every stage at a 978 view (a 1080p window)
+      tools/re/stage_gaps.py --view 2542    # an ultrawide window
+      tools/re/stage_gaps.py --all          # the prop trap, and why it is not the answer
 - `LF2_SCREEN_HASH=1` — reports a screen change when a large fraction of a subsampled
   framebuffer signature differs, so menu animation does not register. This is the only
   usable "did anything happen" signal, since the key array reads the same on most screens.

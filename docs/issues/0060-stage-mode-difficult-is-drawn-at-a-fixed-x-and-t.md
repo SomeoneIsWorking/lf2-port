@@ -1,7 +1,7 @@
 ---
 id: 60
 title: "Stage mode (Difficult)" is drawn at a fixed x and takes no widescreen offset
-status: open
+status: resolved
 symptom: measured. The stage-mode caption at the bottom of the screen is drawn at x 613 identically at 794 and at 1920x1080, so on a wider view it sits where 613 falls in a 978-wide composition instead of where it falls in the game's 794 -- the same left-anchoring issue #54 fixed for the status row, on a different draw path
 tags: widescreen,stage-mode,hud
 created: 2026-08-11
@@ -123,3 +123,49 @@ WHAT IS LEFT, honestly, and none of it is free:
 
 This entry is no longer 'find the constant'. It is 'decide whether a static label is worth a
 data-word hunt inside a 20 KB function', and that is a judgement call, not a measurement.
+
+### Note (2026-08-12)
+### RESOLVED (2026-08-12) -- the monolith conclusion was wrong, and the fix is the usual one
+
+The note above concluded "the caption's position comes from FUN_004246b0" -- a monolith, so
+"the substitution that fixed issues #55 and #58 is NOT available here" -- and reduced the entry
+to "decide whether a static label is worth a data-word hunt inside a 20 KB function". Both
+halves were wrong, and both were wrong because the search was for a LITERAL rather than a read
+of the code (issue #61).
+
+WHAT THE CODE SAYS. fn_0041b130, 598 bytes, not a monolith:
+
+    FUN_00423a70(&caption, strlen(caption) * -8 + 0x316, 0x213, 0x40, 4, 0, 0)
+
+  - The constant is 0x316 = 790, not the 0x31a/0x319 the previous note searched for. 790 is
+    794 less a four-pixel right margin.
+  - The x is not a literal at all. It is the standard right-anchor -- the string's own length
+    decides where it starts -- so scanning call sites for a pushed constant could never have
+    found it, and the one call to the outline wrapper that IS inside fn_004246b0 pushes
+    x = 0xd5 for a different string entirely.
+
+The same function assembles the caption: five mode strings by game mode, a Survival special
+case when the stage kind divides to 5, and one of four difficulty suffixes.
+
+THE FIX is the same substitution as #55 and #58 after all -- own the function, and make its 794
+the view. runtime/overrides/text.c now has fn_0041b130, which reads the game's strings FROM
+THEIR GUEST ADDRESSES rather than transcribing them into the repo (they are the shipped
+binary's text, and reading them is also what makes this exact rather than a re-typing).
+
+THE COLLISION THE ENTRY FLAGGED IS NOT ONE. The port's controls hint is LEFT-anchored on the
+same bottom edge (`8 + screen_offset_x()`). Right-anchoring the caption to the view moves it
+FURTHER from the hint, not closer; they converge only as the view narrows, and the view floors
+at 794 where this is byte-identical anyway.
+
+VERIFIED, tools/e2e.sh caption (new), four arms:
+
+    identity  794, port:  gametext x=613 y=532 cols=64 rows=4 font=0 "Stage mode (Difficult)"
+              794, orig:  identical, character for character -- LF2_CAPTION_ORIG=1 runs the
+                          recompiled body, so this is a real A/B and not the port compared
+                          with itself
+    follows   1600, port: x 613 -> 1419, exactly the view's right edge
+    control   1600, orig: x stays 613 -- which is the bug, and is what makes the line above
+                          attributable to the port rather than to the wider run
+
+### Resolution (2026-08-12)
+fn_0041b130 (598 bytes, NOT a monolith) lays the caption out as strlen*-8 + 0x316, right-anchored to 794 less a 4px margin. The previous note searched the call sites for the literals 0x31a/0x319, found none, and wrongly concluded the constant lived in fn_004246b0 -- the constant is 0x316 and the x is computed from the string's length, so no literal search could have found it. The function is now a hand-port in runtime/overrides/text.c anchoring to bg_view_width() instead, with the game's own strings read from their guest addresses. tools/e2e.sh caption asserts byte-identity with the recompiled body at 794 and the move to the view's edge at 1600, with the recompiled body at 1600 as the control.
