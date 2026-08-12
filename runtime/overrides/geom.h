@@ -154,6 +154,66 @@ static inline float geom_layer_depth(int span, int stage_width)
     return 1.0f / r;
 }
 
+/* ---- WHERE A POINT IN THE STAGE LANDS ON THE SCREEN (issues #49, #62) ----
+ *
+ * The projection the hand-woven geometry is drawn with, and it is the GAME'S, derived rather
+ * than chosen. Three facts settle it, all of them already recorded:
+ *
+ *   C031  a layer at parallax depth d shifts by camera/d -- so the horizontal is a 1/z
+ *         translation.
+ *   C018  a fighter's z (+0x18) is used DIRECTLY as a screen row: runtime/overrides/objects.c
+ *         draws its shadow at [o+0x18] - h/2 and its tags at [o+0x18] + 3. So the depth axis
+ *         projects down the screen at slope exactly 1, and that slope IS the camera's tilt.
+ *         Jump height (+0x14) subtracts from it.
+ *   ----  and every object shifts by the camera FLAT, whatever its z. The game gives a fighter
+ *         at the near zboundary and one at the far the same parallax rate.
+ *
+ * The last of those is why this is not a perspective camera and cannot be made into one: a
+ * perspective camera must give those two fighters different rates, and the game does not. The
+ * projection magnifies by exactly 1 at every depth -- LF2 draws every layer's picture at its
+ * authored size no matter how far away it is.
+ *
+ * WHICH IS WHY IT IS NOT A 4x4 MATRIX EITHER, and that is worth stating because the instinct is
+ * to write one. screen_x = X - camera/d is not a linear function of (X, d, 1): a matrix with a
+ * perspective divide gives X/d, and this needs X - c/d. So the depth is carried PER VERTEX and
+ * the division happens per vertex. runtime/shaders/mesh.vert is a transcription of the two
+ * lines below and says so; this is the copy under test.
+ *
+ * FOUR NUMBERS, NOT THREE. x, jump height, floor row and parallax depth are independent in LF2
+ * because the game never unified them -- see issue #62. A caller that collapses `row` and
+ * `depth` into one axis is authoring against a camera the game does not have.
+ *
+ * A depth of 0 means UNKNOWN (geom_layer_depth's answer for a stage that cannot pan, and for a
+ * layer that never moves). It is treated as infinitely far -- no camera shift at all -- which
+ * is what a layer that never moves does. Reading it as "at the fighters' plane" would make
+ * every stage's sky pan with the fight.
+ */
+static inline void geom_stage_project(int camera, float x, float jump, float row, float depth,
+                                      float *sx, float *sy)
+{
+    *sx = x - ((depth > 0.0f) ? (float)camera / depth : 0.0f);
+    *sy = row - jump;
+}
+
+/* The same point in clip space, which is what the vertex shader needs. The view is the
+ * composition's width and the game's own 550 rows; z is the depth mapped monotonically into
+ * [0,1] so the depth test orders by it, nearer being smaller.
+ *
+ * depth/(depth+1) rather than a near/far plane: the shipped stages run from 0.89 (The Great
+ * Wall's road3, in FRONT of the fighters) to 535 (Forbidden Tower's sky), which no fixed pair
+ * of planes covers without wasting most of the buffer's precision on emptiness. This puts the
+ * fighters' plane at exactly 0.5 and keeps resolution where the geometry actually is. */
+static inline void geom_stage_clip(int camera, int view_w, int view_h,
+                                   float x, float jump, float row, float depth,
+                                   float *cx, float *cy, float *cz)
+{
+    float sx = 0, sy = 0;
+    geom_stage_project(camera, x, jump, row, depth, &sx, &sy);
+    *cx = (view_w > 0) ? (2.0f * sx / (float)view_w - 1.0f) : 0.0f;
+    *cy = (view_h > 0) ? (1.0f - 2.0f * sy / (float)view_h) : 0.0f;
+    *cz = (depth > 0.0f) ? depth / (depth + 1.0f) : 1.0f;   /* unknown depth: the far plane */
+}
+
 /* ---- A SCALED DISPLAY, AND THE POINTER ON ONE (issue #56) ----
  *
  * SDL sizes a window in POINTS and draws it in PIXELS, and on a HiDPI display those differ by

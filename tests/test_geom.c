@@ -363,6 +363,117 @@ static void test_layer_depth(void)
        geom_layer_depth(967, 1600) > geom_layer_depth(1600, 1600), 1);
 }
 
+/* ---- THE STAGE PROJECTION AGREES WITH THE GAME'S OWN LAYER PLACEMENT (issues #49, #62) ----
+ *
+ * This is the assertion the whole 3D pass rests on. A quad placed at a layer's derived depth
+ * must land where geom_layer_offset puts that layer's picture -- at every camera position and
+ * every view width -- or the woven geometry and the painted layers drift apart as the camera
+ * pans, which looks like the set sliding off the stage.
+ *
+ * The two are computed from DIFFERENT expressions on purpose: geom_layer_offset is the game's
+ * own -(span-view)*camera/(stage-view), and geom_stage_project is -camera/depth with depth from
+ * geom_layer_depth. That they agree is the check; deriving one from the other would not be one.
+ */
+static void test_stage_projection(void)
+{
+    /* Real stages, real layers. span, stage_width -- see tools/re/stage_gaps.py --depth. */
+    const int layer[][2] = {
+        { 800, 2400 },   /* The Great Wall sky      -- barely moves */
+        { 1204, 2400 },  /* The Great Wall hill1 */
+        { 2330, 2400 },  /* The Great Wall road1    -- just behind the fighters */
+        { 2400, 2400 },  /* The Great Wall road2    -- the fighters' own plane */
+        { 2600, 2400 },  /* The Great Wall road3    -- IN FRONT of them */
+        { 967, 1600 },   /* CUHK sky */
+        { 1379, 1500 },  /* Brokeback Clif cliffs */
+    };
+    const int cams[] = { 0, 1, 137, 706, 1606 };
+
+    for (unsigned i = 0; i < sizeof layer / sizeof layer[0]; i++) {
+        const int span = layer[i][0], stage = layer[i][1];
+        const float depth = geom_layer_depth(span, stage);
+        for (unsigned c = 0; c < sizeof cams / sizeof cams[0]; c++) {
+            const int cam = cams[c];
+            /* The game's own placement of the layer's picture, at the game's own 794 view. */
+            const int want = geom_layer_offset(span, stage, cam, GEOM_SCREEN_W);
+            /* The same layer as geometry: its authored x is 0, so its screen x IS the shift. */
+            float sx = 0, sy = 0;
+            geom_stage_project(cam, 0.0f, 0.0f, 0.0f, depth, &sx, &sy);
+            char what[128];
+            snprintf(what, sizeof what,
+                     "span %d on a %d stage at camera %d: the quad lands where the layer does",
+                     span, stage, cam);
+            /* Within a pixel: geom_layer_offset truncates an integer divide and this does not,
+             * which is a real disagreement of up to one pixel and not worth removing -- the
+             * game's own layer is placed on the integer grid and a quad is not. */
+            eqf1(what, sx, (float)want);
+        }
+    }
+
+    /* THE VERTICAL, which is the half the fork was blocked on. A fighter's z IS its screen row
+     * (C018) and jump height subtracts from it, so the projection must pass the row through
+     * untouched and take the jump off it. Brokeback Clif's zboundary is 300..510. */
+    {
+        float sx = 0, sy = 0;
+        geom_stage_project(0, 0.0f, 0.0f, 300.0f, 1.0f, &sx, &sy);
+        eqf("a fighter at the near zboundary is drawn on row 300", sy, 300.0f);
+        geom_stage_project(0, 0.0f, 0.0f, 510.0f, 1.0f, &sx, &sy);
+        eqf("one at the far zboundary is drawn on row 510", sy, 510.0f);
+        geom_stage_project(0, 0.0f, 40.0f, 510.0f, 1.0f, &sx, &sy);
+        eqf("jumping 40 lifts it 40 rows and nothing else", sy, 470.0f);
+    }
+
+    /* AND THE PROPERTY THAT MAKES IT NOT A PERSPECTIVE CAMERA, asserted rather than described:
+     * two points at the SAME depth and different rows shift horizontally by the same amount,
+     * because the game gives a fighter at the near zboundary and one at the far the same
+     * parallax rate. A perspective camera cannot do this, which is why one is not used. */
+    {
+        float ax = 0, ay = 0, bx = 0, by = 0;
+        geom_stage_project(500, 100.0f, 0.0f, 300.0f, 1.0f, &ax, &ay);
+        geom_stage_project(500, 100.0f, 0.0f, 510.0f, 1.0f, &bx, &by);
+        eqf("near and far in the walkable band shift by the SAME amount", ax, bx);
+        eq("...and only their rows differ", ay != by, 1);
+    }
+
+    /* CLIP SPACE: the depth ordering the depth test needs. Nearer must be SMALLER, monotonically,
+     * across the whole range the shipped stages actually use -- 0.89 to 535. */
+    {
+        const float depths[] = { 0.89f, 1.0f, 1.21f, 2.14f, 4.66f, 17.5f, 267.7f, 535.3f };
+        float prev = -1.0f;
+        for (unsigned i = 0; i < sizeof depths / sizeof depths[0]; i++) {
+            float cx = 0, cy = 0, cz = 0;
+            geom_stage_clip(0, 978, GEOM_SCREEN_H, 0, 0, 0, depths[i], &cx, &cy, &cz);
+            char what[96];
+            snprintf(what, sizeof what, "depth %.2f is further in clip z than the one before it",
+                     (double)depths[i]);
+            eq(what, cz > prev, 1);
+            prev = cz;
+            snprintf(what, sizeof what, "depth %.2f stays inside [0,1]", (double)depths[i]);
+            eq(what, cz >= 0.0f && cz <= 1.0f, 1);
+        }
+        float cx = 0, cy = 0, cz = 0;
+        geom_stage_clip(0, 978, GEOM_SCREEN_H, 0, 0, 0, 1.0f, &cx, &cy, &cz);
+        eqf("the fighters' plane sits at exactly half the depth range", cz, 0.5f);
+        /* UNKNOWN depth goes to the FAR plane, not to the fighters'. A caller that read 0 as
+         * "at the fighters' plane" would pan every stage's sky with the fight. */
+        geom_stage_clip(500, 978, GEOM_SCREEN_H, 0, 0, 0, 0.0f, &cx, &cy, &cz);
+        eqf("an unknown depth is the far plane", cz, 1.0f);
+        float sx = 0, sy = 0;
+        geom_stage_project(500, 0.0f, 0.0f, 0.0f, 0.0f, &sx, &sy);
+        eqf("and it does not move with the camera at all", sx, 0.0f);
+    }
+
+    /* THE CORNERS OF THE VIEW, so the NDC mapping is pinned and not merely monotone. */
+    {
+        float cx = 0, cy = 0, cz = 0;
+        geom_stage_clip(0, 978, GEOM_SCREEN_H, 0.0f, 0.0f, 0.0f, 1.0f, &cx, &cy, &cz);
+        eqf("the view's left edge is clip x -1", cx, -1.0f);
+        eqf("the view's top row is clip y +1", cy, 1.0f);
+        geom_stage_clip(0, 978, GEOM_SCREEN_H, 978.0f, 0.0f, 550.0f, 1.0f, &cx, &cy, &cz);
+        eqf("the right edge is +1", cx, 1.0f);
+        eqf("the bottom row is -1", cy, -1.0f);
+    }
+}
+
 /* ---- how much world is on screen ---- */
 static void test_compose(void)
 {
@@ -567,6 +678,7 @@ int main(void)
     test_unproject();
     test_density();
     test_layer_depth();
+    test_stage_projection();
     test_compose();
     test_parallax();
     test_camera();
