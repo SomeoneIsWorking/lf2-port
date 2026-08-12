@@ -102,7 +102,9 @@ void main(void)
     float wrap = clamp(dot(n, L) * 0.5 + 0.5, 0.0, 1.0);
     float ndl = wrap * wrap;
 
-    /* The cast-shadow mask, drawn from the fighters' own silhouettes and blurred.
+    /* The cast-shadow mask, drawn from the fighters' own silhouettes. It is CRISP: the
+     * half-res Gaussian that used to soften it is deleted, because a 32-px sprite halved and
+     * blurred is a shapeless smear with none of the fighter left in it (hd2d.c chain_build).
      *
      * IT IS APPLIED TO THE GROUND ONLY, and that is the game's own model rather than a
      * simplification of it: LF2 draws a flat ellipse on the floor UNDER a fighter and then

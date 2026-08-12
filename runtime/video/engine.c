@@ -774,7 +774,12 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
     dti.texture = tex_depth;
     dti.clear_depth = 1.0f;
     dti.load_op = SDL_GPU_LOADOP_CLEAR;
-    dti.store_op = SDL_GPU_STOREOP_STORE;      /* STORED -- the lighting step reads it */
+    /* STORED, and honestly labelled: nothing reads it yet. `:522` creates it with usage
+     * DEPTH_STENCIL_TARGET only -- no SAMPLER -- and SDL declares no pixel format for depth,
+     * so it cannot even be wrapped as an SDL_Texture. A sampled pass would need that usage bit
+     * added first. It is stored rather than discarded because a later pass in the SAME frame
+     * can depth-test against it, which is what the geometry submitted between layers does. */
+    dti.store_op = SDL_GPU_STOREOP_STORE;
     dti.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
     dti.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
 

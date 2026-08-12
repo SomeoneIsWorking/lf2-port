@@ -24,8 +24,18 @@ set -eu
 
 BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
 GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
-OUT=$(mktemp -d)
-trap 'rm -rf "$OUT"' EXIT
+# NOT mktemp -d, and the frames are NOT deleted on the way out. Two separate reasons, both
+# learned the hard way:
+#   /tmp here is a RAM-backed tmpfs with a per-user quota, and these dumps are ~1.3 MB a frame
+#   per arm -- the project's rule is that run artefacts go to the gitignored scratch/, which is
+#   on the real disk.
+#   And a route that deletes its evidence on EXIT makes a failure unexaminable: the one thing
+#   anybody wants after "FAIL: the defocus changed 0 px" is the two frames it compared. They are
+#   cleared at the START of the next run instead, so the last run's frames are always there.
+OUT=${LF2_SCRATCH:-scratch}/render_test
+rm -rf "$OUT"
+mkdir -p "$OUT"
+OUT=$(cd "$OUT" && pwd)          # absolute: each arm runs with cwd inside the game tree
 
 if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi
 if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; fi
@@ -117,7 +127,10 @@ for f in "$OUT/soft"/*.ppm; do
     [ -e "$f" ] || continue
     n=$(basename "$f")
     frames_done=$((frames_done + 1))
-    for arm_dir in gpu skip engine engineskip dof; do
+    # EVERY arm that is later compared, including `light` -- the comparisons below are
+    # guarded by a bare `[ -f ]`, so an arm whose run died produced no frame, the guard
+    # skipped its assertion, and the route stayed green having tested nothing.
+    for arm_dir in gpu skip engine engineskip dof light; do
         if [ ! -f "$OUT/$arm_dir/$n" ]; then
             echo "  FAIL  $n: the $arm_dir arm produced no such frame"; fail=1
         fi
@@ -189,8 +202,24 @@ for f in "$OUT/soft"/*.ppm; do
         set -- $(cmp_ppm "$OUT/engine/$n" "$OUT/dof/$n")
         if [ "$1" = "ERR" ]; then echo "  FAIL  $n: dof compare: $2"; fail=1; else
             dmax=$1; dn=$2
-            case "$n" in
-            *000401*)
+            # SELECTED BY WHICH FRAME THIS IS, not by its filename. The frame numbers are an
+            # OUTPUT of the route -- they move whenever the pad script or the machine's speed
+            # moves -- so `*000401*` silently matched nothing the moment they did, and a case
+            # that matches nothing falls to the other arm and asserts the OPPOSITE thing. That
+            # is the mistake the light arm below was fixed away from; this one still had it.
+            case "$frames_done" in
+            2)
+                # The match: the stage's layers carry real distances, so the defocus must bite.
+                if [ "$dmax" -gt 0 ] && [ "$dn" -gt 1000 ]; then
+                    echo "  ok    $n: the defocus changes $dn px by up to $dmax on a frame with a"
+                    echo "        stage in it, so it is running"
+                else
+                    echo "  FAIL  $n: the defocus changed $dn px by up to $dmax in a MATCH, where"
+                    echo "        the layers carry real distances -- it is not running, or the"
+                    echo "        G-buffer reached it empty"
+                    fail=1
+                fi ;;
+            *)
                 # Character selection: no stage, so no layer carries a distance and every pixel
                 # takes the untouched branch. A single changed pixel here is an effect that has
                 # escaped the depth it is supposed to be a function of.
@@ -203,17 +232,6 @@ for f in "$OUT/soft"/*.ppm; do
                     echo "        NO stage in it. Every pixel there has no distance and must take"
                     echo "        the untouched branch -- this is the effect spreading over the"
                     echo "        whole picture, which is why the last one was deleted."
-                    fail=1
-                fi ;;
-            *)
-                # In a match the stage's layers carry real distances, so the defocus must bite.
-                if [ "$dmax" -gt 0 ] && [ "$dn" -gt 1000 ]; then
-                    echo "  ok    $n: the defocus changes $dn px by up to $dmax on a frame with a"
-                    echo "        stage in it, so it is running"
-                else
-                    echo "  FAIL  $n: the defocus changed $dn px by up to $dmax in a MATCH, where"
-                    echo "        the layers carry real distances -- it is not running, or the"
-                    echo "        G-buffer reached it empty"
                     fail=1
                 fi ;;
             esac

@@ -525,7 +525,7 @@ static int render_skip(void)
  *
  * It is drawn into a MASK, not black over the picture. That is what lets the lighting pass
  * treat it as an absence of light -- so a shadow keeps the sky's colour in it instead of
- * being a hole -- and it is what lets the mask be blurred into a soft edge. The mask carries
+ * being a hole. The mask carries
  * the sprite's COVERAGE, which takes a shader (hd2d_shadow.frag): the fixed-function blender
  * can only give `sprite.rgb * a`, and a mask made of the fighter's own colours makes a shadow
  * that is darker under the bright parts of them.
@@ -704,7 +704,7 @@ static void draw_list(List *l, int pass, float world, float ox, float oy, int fr
         int is_object = have_ground && e->kind == E_TEX;
         if (is_object && (dst.x >= ground.x + ground.w || dst.x + dst.w <= ground.x)) {
             is_object = 0;
-            stat_ground_orphan++;
+            if (pass == PASS_COLOUR) stat_ground_orphan++;
         }
         have_ground = 0;
         if (pass != PASS_COLOUR && !is_object) continue;
@@ -873,9 +873,22 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
             ground.x = (e->dst.x + world) * scale + ox;
             ground.w = e->dst.w * scale;
             have_ground = 1;
+            /* COUNTED HERE TOO, and that is not bookkeeping. This function REPLACES the
+             * PASS_COLOUR walk, which is where draw_list counts markers -- so with the engine
+             * selected the counters stayed at zero while shadows were being drawn, and
+             * render_report then printed "NO ground markers were seen, so no shadow was
+             * replaced". That is a diagnostic asserting a negative its own method could not
+             * have contradicted, on the path this port is moving to. */
+            stat_ground++;
             continue;
         }
         if (e->kind == E_MESH) {
+            /* The marker binds to the next SPRITE, so a mesh between the two must not consume
+             * it. draw_list clears `have_ground` for every kind at one place; here the two
+             * early returns meant this one did not. Unreachable today -- geometry is submitted
+             * per layer gap, never between a marker and its object -- and it is one rule
+             * written in two places, which is how the two drift. */
+            have_ground = 0;
             /* INTO THE SAME PASS, at this point in the painter order -- not composited back as
              * a texture. `at` is the quad index it precedes, so the engine can give it the
              * sliver of depth between this quad and the last. Recording where it goes is all
@@ -917,6 +930,8 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
             const float qx = (e->dst.x + world) * scale + ox, qw = e->dst.w * scale;
             if (qx < ground.x + ground.w && qx + qw > ground.x)
                 q->world_depth = 1.0f;      /* an object, standing in the fighters' plane */
+            else
+                stat_ground_orphan++;       /* the same failed pairing draw_list counts */
         }
 
         if (e->kind == E_FILL) {

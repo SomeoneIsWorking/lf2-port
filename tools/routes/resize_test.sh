@@ -36,8 +36,18 @@ set -eu
 
 BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
 GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
-OUT=$(mktemp -d)
-trap 'rm -rf "$OUT"' EXIT
+# NOT mktemp -d, and the frames are NOT deleted on the way out. Two separate reasons, both
+# learned the hard way:
+#   /tmp here is a RAM-backed tmpfs with a per-user quota, and these dumps are ~1.3 MB a frame
+#   per arm -- the project's rule is that run artefacts go to the gitignored scratch/, which is
+#   on the real disk.
+#   And a route that deletes its evidence on EXIT makes a failure unexaminable: the one thing
+#   anybody wants after "FAIL: the defocus changed 0 px" is the two frames it compared. They are
+#   cleared at the START of the next run instead, so the last run's frames are always there.
+OUT=${LF2_SCRATCH:-scratch}/resize_test
+rm -rf "$OUT"
+mkdir -p "$OUT"
+OUT=$(cd "$OUT" && pwd)          # absolute: each arm runs with cwd inside the game tree
 
 if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi
 if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; fi

@@ -10,8 +10,10 @@
  *
  * ALPHA-TESTED rather than blended: overlapping quads then overwrite instead of accumulating,
  * so two fighters standing together do not throw a shadow twice as dark as either. The hard
- * edge this leaves is softened afterwards by the blur, which is where a shadow's softness
- * should come from anyway.
+ * edge this leaves is the shadow's FINAL edge. It is not softened afterwards: the half-res
+ * Gaussian that used to follow this pass is deleted, because a 32-pixel sprite's silhouette
+ * halved and then blurred is a shapeless dark smear with none of the fighter left in it. See
+ * `chain_build` in runtime/video/hd2d.c, which is where the two scratch targets went with it.
  */
 #version 450
 
