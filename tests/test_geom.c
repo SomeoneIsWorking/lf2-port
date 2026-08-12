@@ -163,6 +163,130 @@ static void test_unproject(void)
     }
 }
 
+/* One composition pixel, for the cross-density comparisons below. The drawable is a whole
+ * number of pixels, so a density of 1.25 on a 794-point window rounds 992.5 to 992 and the
+ * aspect it implies is very slightly not the point window's -- at the far corner that is a
+ * third of a game pixel. Asserting a quarter-pixel there would be asserting something the
+ * pixel grid cannot deliver; asserting a whole one still catches the reported bug by a factor
+ * of two, which is what it is worth having. */
+static void eqf1(const char *what, float got, float want)
+{
+    checks++;
+    const float d = got - want;
+    if (d > -1.0f && d < 1.0f) return;
+    failures++;
+    printf("  FAIL  %s: got %.4f, expected %.4f\n", what, (double)got, (double)want);
+}
+
+/* ---- A SCALED DISPLAY CHANGES THE RESOLUTION AND NOTHING ELSE (issue #56) ----
+ *
+ * The report is "on a 4K panel the picture looks like a 1080p frame scaled up". The port's
+ * answer is that the composition is seeded from the window's PIXEL size, so a 1920x1080-point
+ * window at density 2 composes from 3840x2160 -- the same amount of world, drawn at four times
+ * the pixels. That is a claim about arithmetic and it is asserted here, at five densities,
+ * because the machine this is developed on has no scaled display and no compositor available
+ * on it will report one: SDL's X11 backend reports points == pixels by construction, and a
+ * nested kwin at --scale 2 hands its clients a density of 1.00. So the run that would exercise
+ * this end to end cannot be made here, and pretending otherwise by reading a density out of an
+ * env var would be testing the env var.
+ *
+ * WHY THE ROUND TRIP ABOVE IS NOT ENOUGH, and this is the whole point of stating the invariant
+ * ACROSS densities: a port that composed from the POINT size while drawing into the PIXEL size
+ * -- exactly the bug reported -- has a perfectly self-consistent round trip at every density.
+ * It is only wrong when compared with a different density, where it gives a different answer
+ * for the same fraction of the same window. */
+static void test_density(void)
+{
+    enum { WIDE_MAX = 4096 };
+    /* Point sizes a player might have, and the densities a desktop actually offers: 100%,
+     * 125%, 150%, 175% (fractional, and the one that catches integer-only arithmetic) and
+     * 200%. */
+    const int pts[][2] = { {794,550}, {1280,720}, {1920,1080}, {1600,900} };
+    const float dens[] = { 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
+
+    for (unsigned i = 0; i < sizeof pts / sizeof pts[0]; i++) {
+        const int pw = pts[i][0], ph = pts[i][1];
+        const int base_cw = geom_compose_width(pw, ph, WIDE_MAX);
+
+        for (unsigned k = 0; k < sizeof dens / sizeof dens[0]; k++) {
+            const float d = dens[k];
+            const int xw = (int)((float)pw * d + 0.5f);   /* the drawable SDL gives us */
+            const int xh = (int)((float)ph * d + 0.5f);
+            const int cw = geom_compose_width(xw, xh, WIDE_MAX);
+            char what[128];
+
+            /* THE FIELD OF VIEW IS THE SAME. If this moved, a HiDPI player would see more or
+             * less of the stage than everyone else, which is a gameplay difference. */
+            snprintf(what, sizeof what,
+                     "%dx%d points at density %.2f composes %d wide, as at density 1",
+                     pw, ph, (double)d, base_cw);
+            eq(what, cw, base_cw);
+
+            /* THE WORLD SCALE IS THE DENSITY TIMES THE UNSCALED ONE. This is the assertion
+             * that the extra pixels became resolution: the same world row is drawn `d` times
+             * as tall, which is what "drawn at the panel's resolution" means. */
+            snprintf(what, sizeof what, "%dx%d at density %.2f scales the world by %.2fx",
+                     pw, ph, (double)d, (double)d);
+            eqf(what, geom_world_scale(xw, xh), geom_world_scale(pw, ph) * d);
+
+            /* AND A CLICK LANDS IN THE SAME PLACE. The pointer arrives in POINTS at every
+             * density, so the SAME point must give the SAME composition pixel. Walked over
+             * the corners and the middle, because an offset error and a scale error agree at
+             * the centre. */
+            const int probe[][2] = { {0,0}, {pw,0}, {0,ph}, {pw,ph},
+                                     {pw/2,ph/2}, {17,ph-3}, {pw-3,11} };
+            for (unsigned j = 0; j < sizeof probe / sizeof probe[0]; j++) {
+                float bx = 0, by = 0, rx = 0, ry = 0;
+                geom_pointer_to_compose(xw, xh, cw, GEOM_SCREEN_H, d,
+                                        (float)probe[j][0], (float)probe[j][1], &bx, &by);
+                geom_pointer_to_compose(pw, ph, base_cw, GEOM_SCREEN_H, 1.0f,
+                                        (float)probe[j][0], (float)probe[j][1], &rx, &ry);
+                snprintf(what, sizeof what, "%dx%d density %.2f: point (%d,%d) lands where it "
+                         "does unscaled, in x", pw, ph, (double)d, probe[j][0], probe[j][1]);
+                eqf1(what, bx, rx);
+                snprintf(what, sizeof what, "%dx%d density %.2f: point (%d,%d) lands where it "
+                         "does unscaled, in y", pw, ph, (double)d, probe[j][0], probe[j][1]);
+                eqf1(what, by, ry);
+            }
+        }
+    }
+
+    /* THE REPORTED BUG, AS A NEGATIVE, so a passing run above means something. Composing from
+     * the POINT size on a 4K panel gives a 1920-wide picture drawn into a 3840-wide target:
+     * the destination rectangle is half the drawable and every game pixel becomes a 2x2 block.
+     * Nothing in the port does this now -- the check is that the two are genuinely different
+     * numbers, so the assertions above are not both trivially satisfied. */
+    {
+        float px, py, pwid, phgt, xx, xy, xw, xh;
+        geom_compose_rect(1920, 1080, geom_compose_width(1920, 1080, 4096), GEOM_SCREEN_H,
+                          &px, &py, &pwid, &phgt);
+        geom_compose_rect(3840, 2160, geom_compose_width(3840, 2160, 4096), GEOM_SCREEN_H,
+                          &xx, &xy, &xw, &xh);
+        /* The two fill their own drawable -- that is test_scale's property, restated here only
+         * so the ratio below is not being taken between two numbers that could both be wrong. */
+        eqf1("composed from 1920 the picture is 1920 wide", pwid, 1920.0f);
+        eqf1("composed from 3840 the picture is 3840 wide", xw,   3840.0f);
+        /* THE BUG: composing from the point size on a 4K panel would draw the FIRST of these
+         * into a target the size of the SECOND, so every game pixel becomes a 2x2 block. The
+         * numbers have to differ by exactly the density for that to be the failure it is. */
+        eqf1("and the two differ by the density, which is what an upscale would have hidden",
+             xw / pwid * 1000.0f, 2000.0f);
+        eq("the field of view is identical either way",
+           geom_compose_width(3840, 2160, 4096), geom_compose_width(1920, 1080, 4096));
+    }
+
+    /* A density of zero or a negative one is a broken SDL answer, not a reason to divide by
+     * it: it reads as unscaled. Asserted because the alternative is a pointer at infinity and
+     * a silent one. */
+    {
+        float bx = 0, by = 0, rx = 0, ry = 0;
+        geom_pointer_to_compose(1920, 1080, 978, GEOM_SCREEN_H, 0.0f, 400.0f, 300.0f, &bx, &by);
+        geom_pointer_to_compose(1920, 1080, 978, GEOM_SCREEN_H, 1.0f, 400.0f, 300.0f, &rx, &ry);
+        eqf("a density of 0 reads as unscaled, in x", bx, rx);
+        eqf("a density of 0 reads as unscaled, in y", by, ry);
+    }
+}
+
 /* ---- how much world is on screen ---- */
 static void test_compose(void)
 {
@@ -365,6 +489,7 @@ int main(void)
     test_scale();
     test_screen_align();
     test_unproject();
+    test_density();
     test_compose();
     test_parallax();
     test_camera();

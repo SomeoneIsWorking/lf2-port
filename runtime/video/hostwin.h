@@ -52,6 +52,9 @@ int  lf2_wide_width(void);    /* the composition's width when it is wider than 7
 void lf2_compose_rect(int comp_w, int comp_h, SDL_FRect *r);
 float lf2_world_scale(void);
 void lf2_window_to_compose(float wx, float wy, float *cx, float *cy);
+/* The pointer's own path: SDL delivers it in POINTS, the composition is placed in PIXELS, and
+ * the density between them is the whole of issue #56 as far as hit tests are concerned. */
+void lf2_pointer_to_compose(float px, float py, float density, float *cx, float *cy);
 int  screen_offset_x(void);   /* centring offset for fixed-width screens */
 int  hud_offset_x(int dst_w, int bottom);   /* the in-match HUD's own centring */
 void hostwin_shutdown(void);

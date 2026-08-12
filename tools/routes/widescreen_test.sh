@@ -105,6 +105,20 @@ check 1920x1080 978  fill
 # "fills the window" would otherwise pass on a build that stretched everything unconditionally,
 # which is exactly the whole-screen scaling issue #41 rules out.
 check 800x900   794  band
+# 4K, WHICH IS HALF OF ISSUE #56 AND SAYS SO. A HiDPI panel gives the port a 3840x2160
+# DRAWABLE for a 1920x1080-point window, and the whole complaint is that the picture then looks
+# like a 1080p frame stretched to it. What the port must do is compose the SAME field of view
+# -- 978 columns of world, identical to the 1920x1080 line above -- and draw it into 3840x2160,
+# so the extra pixels become resolution rather than magnification. This arm drives exactly that
+# drawable and asserts exactly that number.
+#
+# WHAT IT DOES NOT COVER, so the pass is not overread: whether SDL actually hands the port a
+# scaled drawable in the first place. That is SDL_WINDOW_HIGH_PIXEL_DENSITY's job and it cannot
+# be exercised on this machine -- SDL's X11 backend reports points == pixels by construction,
+# and a nested kwin_wayland at --scale 2 hands its clients a pixel density of 1.00 (measured).
+# The port's own arithmetic across densities is `ctest geometry`'s test_density, which walks
+# five of them offline; this arm is the resolution half, end to end, in a running game.
+check 3840x2160 978  fill
 
 # MID-RUN, which is the actual headline: the field of view changes while the game is running,
 # not only at startup. No scripted run can drag a window edge -- offscreen SDL has no window

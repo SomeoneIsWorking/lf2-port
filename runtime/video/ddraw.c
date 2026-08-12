@@ -2130,6 +2130,14 @@ void lf2_window_to_compose(float wx, float wy, float *cx, float *cy)
     geom_window_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, wx, wy, cx, cy);
 }
 
+/* The same mapping for a pointer, which SDL delivers in POINTS while hw.win_w/h are PIXELS
+ * (issue #56). The density enters the geometry here and nowhere else, and it is in geom.h so
+ * tests/test_geom.c can walk it across densities without a scaled display to run on. */
+void lf2_pointer_to_compose(float px, float py, float density, float *cx, float *cy)
+{
+    geom_pointer_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, density, px, py, cx, cy);
+}
+
 /* Widescreen is ON whenever the window is wider in aspect than the game's own picture, and
  * OFF when it is not. There is no switch: an env var read once at startup was a developer's
  * escape hatch rather than a feature (issue #20). The guest half -- the game's own viewport
