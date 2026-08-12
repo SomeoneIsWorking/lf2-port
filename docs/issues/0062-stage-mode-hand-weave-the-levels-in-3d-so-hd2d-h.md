@@ -416,3 +416,28 @@ the change to the vertex format.
 WHAT IS LEFT before a stage can be woven: the pass has no TEXTURE support (vertex colour only),
 so the existing bg.dat layers cannot yet be submitted as quads; and the authored-data format
 does not exist. Neither is blocked on anything now.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the texture half is de-risked too: the pass can share the display list's
+
+Before writing texture support into mesh.c, the same question C029/C030 answered for targets was
+asked for SOURCES, and measured against both classes (claim C032):
+
+    gpu       renderer=gpu ordinary-texture GPU handle=READABLE
+    software  renderer=software ordinary-texture GPU handle=absent
+
+SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER is readable on an ORDINARY SDL_Texture -- one made with
+plain SDL_CreateTexture and filled with SDL_UpdateTexture, which is exactly what render.c
+already does for every sprite and layer the display list draws. That is the reverse of C030,
+which covers a texture wrapped around a GPU texture the caller made.
+
+SO THE STAGE'S ART EXISTS ONCE. The mesh pass binds the handle behind the texture render.c
+already uploaded and samples it; there is no second copy of any bitmap on the GPU and no second
+upload path to keep in step with the colour-key-to-alpha conversion.
+
+ONE HAZARD, recorded in the claim's falsifier rather than discovered later: SDL may reallocate
+the storage on an update or a format change, so the handle must be READ AT BIND TIME and never
+cached across frames. The spike read it once and did not re-read after a second update, so
+"stale handle" is unmeasured and is the first thing to check when texture support is written.
+
+That leaves the authored-data format as the only piece of #62 with nothing measured under it.
