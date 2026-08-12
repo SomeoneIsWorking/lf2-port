@@ -157,3 +157,60 @@ shadow-receiving floor is a distant layer, and the fix is to move the defocus af
 which needs the lit frame as the shader's source rather than the engine's own target.
 
 STILL OPEN: the BLOOM half of this entry.
+
+### Note (2026-08-12)
+## The DOF is in and verified. THE LUMINANCE BLOOM IS REJECTED, by measurement.
+
+The depth of field ships: `runtime/shaders/dof.frag`, driven by the G-buffer's distance
+channel, focus at the fighters' plane (1.0), asserted opposite ways on two frames by
+`tools/e2e.sh render` -- 0 px changed on a frame with no stage in it, 84,395 px in a match.
+
+A bloom was written to the same shape (threshold + world gate) and **it glowed nothing at all**.
+The cause is not a bug in it, and this is the part worth keeping:
+
+**What was measured, frame side** (`LF2_ENGINE_GBUF=1`, extended to read the colour target back
+BESIDE the G-buffer so the conjunction can be counted rather than inferred):
+
+    over 0.75 luminance: 766 px, of which 0 carry a distance and 766 do not
+    world luminance >= 0.50 : 1581 px (0.501% of the world)   <- and nothing above it
+
+Every bright pixel in a match frame is HUD, text or a sprite. The threshold and the gate were
+each measured alone and each looked fine; their INTERSECTION was empty. That is why the
+instrument now reports the conjunction -- two histograms that agree with themselves can hide
+this indefinitely.
+
+**What was measured, art side** (`tools/re/stage_lum.py`, all 133 shipped layers, offline, black
+key excluded):
+
+    bc  (Brokeback Clif)   0.000% >= 0.75,  max luminance 0.541
+    gw  (Great Wall)      22.602% >= 0.75,  max luminance 1.000
+
+Both extremes are in the shipped art. No absolute threshold behaves as a bloom on both: at or
+above 0.55 it selects literally nothing on bc, and at 0.75 it glows a quarter of gw. **A
+relative threshold does not rescue it either** -- gw's top-1% percentile is 1.000, because more
+than one percent of its art is exactly white (its sky is near-white art, verified: no shipped
+layer keys on white; gw/sky.bmp is 3.91% pure white and it is a sky, not a cut-out).
+
+## The conclusion, and it is a decision rather than an open question
+
+**A luminance-thresholded bloom does not ship.** Luminance is not a measured quantity here, it
+is a chosen one, and the choice behaves oppositely on two shipped stages. That is exactly the
+defect issue #30 cut the first bloom for. The DOF cleared the bar because distance comes from
+bg.dat; this does not clear it, and shipping it with a number tuned until one stage looked right
+would be the bandaid.
+
+The code was removed rather than left switched off (it was never committed): `bloom.frag`, the
+bloom target and render state in `engine.c`, `engine_bloom_enabled`, `LF2_BLOOM`, and the route
+arm. What was KEPT is the evidence -- the joint readback and `stage_lum.py`.
+
+## What a bloom would have to be instead
+
+An EMITTER, authored. The stage art contains real light sources (`cuhk/lamp1.bmp`,
+`lamp2.bmp`), and "this surface emits" is a statement the artist makes, checkable, and per
+stage -- the same standing distance has. That belongs in the port's own `.stage` files beside
+the geometry (issue #62), not in a screen-space threshold. Shape: an emissive flag on a solid,
+a second draw of only the emissive geometry into the half-res target, blurred and added. No
+threshold, no gate, nothing to tune. Until a stage authors an emitter there is no glow, and
+that is correct rather than a missing feature.
+
+Blocked on #62 having any authored content at all -- `stages/` currently holds a README.

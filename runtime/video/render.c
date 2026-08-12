@@ -855,12 +855,26 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
 
     const int skip = render_skip();
     int n = 0, ng = 0;
+    /* THE GROUND PAIRING, exactly as draw_list does it (C019): the game draws an object's shadow
+     * ellipse immediately before the object, so a sprite preceded by a marker is an object
+     * STANDING IN THE STAGE rather than a HUD element or a piece of text.
+     *
+     * The engine needs it for a different reason than the lighting does. An object is part of the
+     * WORLD, and it stands at the fighters' plane -- parallax depth 1.0, which is not a guess but
+     * the definition of that plane (C018/C031: every object shifts with the camera at rate 1).
+     * Writing that into the G-buffer is what lets a later effect ask "is this pixel part of the
+     * scene" and get a truthful answer for a fighter as well as for a layer. */
+    int have_ground = 0;
+    SDL_FRect ground = { 0, 0, 0, 0 };
     for (int i = 0; i < ov; i++) {
         if (skip > 0 && (i % skip) == 0) continue;   /* the negative arm, honoured identically */
         Entry *e = &l->e[i];
-        /* A ground marker draws nothing -- it is the game telling the port where an object's
-         * feet are (C019). draw_list consumes it the same way in the colour pass. */
-        if (e->kind == E_GROUND) continue;
+        if (e->kind == E_GROUND) {
+            ground.x = (e->dst.x + world) * scale + ox;
+            ground.w = e->dst.w * scale;
+            have_ground = 1;
+            continue;
+        }
         if (e->kind == E_MESH) {
             /* INTO THE SAME PASS, at this point in the painter order -- not composited back as
              * a texture. `at` is the quad index it precedes, so the engine can give it the
@@ -883,6 +897,14 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
             continue;
         }
 
+        /* The marker binds to the NEXT sprite, and the pairing is CHECKED rather than assumed:
+         * a sprite clipped entirely off the composition never enters the list, and the marker
+         * would then bind to the next object's sprite instead -- measured once at a thousand
+         * pixels away. The test is the game's own geometry: the ellipse is at the object's feet,
+         * so the sprite must overlap it horizontally. */
+        const int was_ground = have_ground;
+        have_ground = 0;
+
         EngineQuad *q = &out[n];
         memset(q, 0, sizeof *q);
         q->x = (e->dst.x + world) * scale + ox;
@@ -891,6 +913,11 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
         q->h = e->dst.h * scale;
         q->r = q->g = q->b = q->a = 1.0f;
         q->world_depth = e->world_depth;
+        if (was_ground && e->kind == E_TEX) {
+            const float qx = (e->dst.x + world) * scale + ox, qw = e->dst.w * scale;
+            if (qx < ground.x + ground.w && qx + qw > ground.x)
+                q->world_depth = 1.0f;      /* an object, standing in the fighters' plane */
+        }
 
         if (e->kind == E_FILL) {
             q->r = (float)((e->argb >> 16) & 0xff) / 255.0f;
