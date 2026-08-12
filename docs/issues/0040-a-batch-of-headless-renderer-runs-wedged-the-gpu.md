@@ -1,7 +1,7 @@
 ---
 id: 40
 title: A batch of headless renderer runs wedged the GPU: 219 ring timeouts and 65 full resets
-status: open
+status: resolved
 symptom: reported after the machine went down. amdgpu on an RX 6700 XT logged 219 'ring gfx timeout' and 65 'GPU reset begin' with 'VRAM is lost due to GPU reset', ALL of them inside the last 75 minutes of a boot that had been up 46 hours with none before -- and that window is exactly a run of back-to-back headless Vulkan sessions of this port. The same boot then died to the OOM killer with 19 concurrent compilers alive
 tags: performance
 created: 2026-08-06
@@ -195,3 +195,56 @@ run takes 9.03 s at 92% CPU. The budget is not too small by a factor of sixteen 
 soft-locked in the kernel, and `timeout -k` killing it at 150 s is the guard working, not
 failing. The budgets stay. A route killed at its timeout is a reason to look at `journalctl -k
 -b 0` before touching the test.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the workload was REPEATED deliberately, and the card did not care
+
+The entry's two fixed causes (the per-frame GPU texture churn and the abandoned 2304-row
+allocation) were fixed on reasoning plus one-sided evidence, never on a repeat. This is the
+repeat, run deliberately and bounded so that a fault would stop it rather than being run
+through -- which is the actual mistake this entry records.
+
+METHOD. `tools/e2e.sh render` is the heaviest GPU route in the tree: four full instances per
+run, each booting the game, reaching a match and comparing the GPU frame against the software
+compositor. It was run three times back to back, with
+
+    journalctl -k -b 0 | grep -icE "ring .*timeout|GPU reset begin|Illegal opcode|VRAM is lost|soft lockup"
+
+counted before the first and after EVERY iteration, and the script exiting on the first
+increase rather than continuing.
+
+RESULT:
+
+    before any run:                 0
+    after iteration 1 (4 instances) 0
+    after iteration 2 (8 instances) 0
+    after iteration 3 (12 instances) 0
+
+Twelve back-to-back GPU instances, zero. gpuguard reported VRAM back to 1.84 GiB afterwards,
+i.e. no leak, and its latch stayed clear throughout.
+
+WIDER CONTEXT FOR THE SAME BOOT, because 12 instances on their own is a smaller batch than the
+one that caused the original event: this boot is 12 hours old and has additionally carried a
+full 17-route sweep (three more GPU routes in it), the mesh route several times, the mesh
+pass's own self-test with a GPU readback, and two standalone SDL_GPU spikes. Zero amdgpu lines
+of any kind, zero soft lockups, for the whole boot.
+
+WHAT THIS DOES AND DOES NOT ESTABLISH, stated because the entry's history is a series of
+one-sided readings in both directions:
+  - It does NOT prove either fixed cause was THE cause. A negative cannot.
+  - It DOES mean the workload that produced 219 timeouts and 65 resets in 75 minutes no longer
+    produces one in a comparable pattern on the same card, with the port's texture allocation
+    now flat and its surfaces at the game's own 550 rows.
+  - The machine still has at least one OTHER process able to take the graphics stack down --
+    the x2native ttm oops in the previous note -- so a future reboot after an lf2 run is not
+    evidence against this. Read the FIRST fault of the boot and who owned it.
+
+THE DURABLE MITIGATION IS NOT IN THIS REPO. `gpuguard` (~/.claude/tools/gpuguard/) is a
+machine-wide interlock: a PreToolUse hook denies GPU launches while it is latched, and a user
+service trips that latch from `journalctl -kf` mid-run and kills the named non-desktop process.
+Every GPU run in this session went through it. That is what makes "run the batch again" a
+reasonable thing to do at all, and it is why this entry can close on a measurement rather than
+on a promise to be careful.
+
+### Resolution (2026-08-12)
+Two causes were found and fixed in the port's own code -- per-frame GPU texture churn (~2400 allocations and frees per second, now pooled to a flat steady state) and an abandoned 2304-row surface allocation costing 302 MB per instance instead of 72. The workload was then REPEATED deliberately and bounded: tools/e2e.sh render three times back to back, 12 GPU instances, counting the kernel's ring-timeout/reset/lockup lines before and after every iteration and stopping on the first increase. It stayed at 0, on a 12-hour boot that also carried a full 17-route sweep and two SDL_GPU spikes with 0 amdgpu lines of any kind. A negative cannot prove which fix mattered, but the pattern that produced 219 timeouts and 65 resets in 75 minutes no longer reproduces. The durable mitigation is gpuguard, the machine-wide interlock every GPU run in this session went through.
