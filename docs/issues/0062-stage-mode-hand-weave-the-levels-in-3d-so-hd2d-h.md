@@ -632,3 +632,51 @@ self-test still passes. GPU: gpuguard latch clear before and after, 0 kernel tro
 WHAT IS LEFT IS THE ART, and only the art. No engineering piece is outstanding. `stages/` is in
 the repo with a README and nothing in it, and that emptiness is honest: the port loads what is
 there and a stage with no file draws exactly as it always has.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the set was lit from a direction no shadow in the picture came from
+
+Found by checking a comment instead of believing it. mesh.c's header said of its key light
+"These are the same numbers" as hd2d.c's. They were not:
+
+    mesh.c   { -0.45, 0.80, 0.40 }
+    hd2d.c   { -0.25, 0.94, 0.22 }
+
+about fifteen degrees apart. So a hand-woven set would have been shaded from one direction while
+every fighter and every cast shadow in the same frame came from another -- which is precisely the
+contradiction the comment claims the arrangement exists to prevent.
+
+WORSE THAN A STALE CONSTANT: hd2d.c's is not a constant at all. The pause menu's Options screen
+sets it from two angles (issue #37), so a player moving the light moved the fighters and their
+shadows and left the set behind. A copy could never have been right.
+
+NOTHING COULD HAVE CAUGHT IT. The light lived inside a file that needs a GPU to run, so the only
+available instrument was a screenshot -- and a set lit fifteen degrees wrong looks like a set.
+That is the actual defect; the wrong numbers are a symptom of the light having no home where
+anything could assert about it.
+
+THE FIX is structural, not a corrected constant. The arithmetic moved to
+runtime/video/stagelight.h -- a pure header, the same shape as geom.h -- and the shipping code
+INCLUDES it. hd2d.c's angle clamp, azimuth wrap, angles-to-vector conversion and shadow shear
+are all the header's now. mesh.c reads hd2d_light_vector() per draw and keeps nothing.
+
+A SECOND COPY WAS FOUND WHILE DOING IT. hd2d.c's initialiser held { -0.25, 0.94, 0.22 } beside
+default angles of (-48.7, 70), which produce (-0.2569, 0.9397, 0.2257) -- a ROUNDED copy of its
+own derivation, which is the worst kind: near enough that nobody would look twice, and with
+nothing anywhere that would notice if the angles moved and it did not. The default is now the
+angles and the vector is derived lazily (every reader goes through light_ensure(), including the
+lighting pass, which reads LIGHT directly and would otherwise have got (0,0,0) if it ran first).
+
+ctest stagelight: 46 checks, and they are relations rather than numbers copied out of a run --
+the shadow length is asserted as cot(elevation) across the range, not as 0.3639 at one angle.
+Two mutants, 2 failing checks each: flipping the sign of the shadow's across term fails both
+azimuth-direction assertions, and removing the elevation clamp fails both above-the-floor ones.
+
+ONE COMMENT WAS WRONG AND THE TEST CAUGHT IT, the other way round from usual: the header claimed
+the azimuth wrapped into the half-open (-180, 180], and it is the closed [-180, 180] -- -540
+comes back as -180, not +180. Both name the same direction, so nothing downstream can tell them
+apart. The comment was corrected rather than the code, and the test now asserts both the real
+behaviour and that the two ends are the same light, so nobody "fixes" what was never wrong.
+
+Instrument I015. tools/e2e.sh render still passes, including the arm that asserts the light
+changes NOTHING on a frame with no fighters in it.

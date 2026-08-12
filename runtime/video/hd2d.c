@@ -1,6 +1,7 @@
 /* Isometric lighting and sprite-cast shadows -- see runtime/video/hd2d.h for the scope. */
 
 #include "hd2d.h"
+#include "stagelight.h"
 
 #include <SDL3/SDL.h>
 
@@ -28,31 +29,40 @@
  * and hd2d_shadow_project projects it onto the ground for the cast shadows, so the two
  * cannot drift apart.
  */
-static float LIGHT[3] = { -0.25f, 0.94f, 0.22f };
+/* DERIVED from the default angles rather than written out, because a vector default is a
+ * second spelling of the same fact and the two had already drifted (see stagelight.h). Filled
+ * lazily because mesh_init may ask for the light before hd2d has been initialised. */
+static float LIGHT[3];
+static int   light_ready;
 
 /* The same direction as the two angles a player sets it with. Kept beside the vector rather
  * than derived back out of it, because going back is ambiguous at the poles and the menu
  * would jitter as it rounded. */
-static float light_az = -48.7f, light_el = 70.0f;
+static float light_az = STAGELIGHT_AZ_DEFAULT, light_el = STAGELIGHT_EL_DEFAULT;
+
+static void light_ensure(void)
+{
+    if (light_ready) return;
+    light_ready = 1;
+    stagelight_vector(light_az, light_el, LIGHT);
+}
 
 void hd2d_light_angles(float *az, float *el) { *az = light_az; *el = light_el; }
+void hd2d_light_vector(float out[3])
+{
+    light_ensure();
+    out[0] = LIGHT[0]; out[1] = LIGHT[1]; out[2] = LIGHT[2];
+}
 
 void hd2d_light_set_angles(float az, float el)
 {
-    /* Elevation is clamped well clear of the horizon: cot(elevation) is what stretches a
-     * shadow, and at 0 degrees it is infinite -- a shadow the length of the stage, which is
-     * not a look anyone would choose and would read as a bug. */
-    if (el < 12.0f) el = 12.0f;
-    if (el > 89.0f) el = 89.0f;
-    while (az < -180.0f) az += 360.0f;
-    while (az >  180.0f) az -= 360.0f;
-    light_az = az;
-    light_el = el;
-
-    const float a = az * 3.14159265f / 180.0f, e = el * 3.14159265f / 180.0f;
-    LIGHT[0] = cosf(e) * sinf(a);
-    LIGHT[1] = sinf(e);
-    LIGHT[2] = cosf(e) * cosf(a);
+    /* The clamp, the wrap and the conversion are all stagelight.h's, INCLUDED rather than
+     * copied -- ctest stagelight walks them offline, which is the only way anything about this
+     * light could be asserted without booting the game and looking at a picture. */
+    light_az = stagelight_wrap_azimuth(az);
+    light_el = stagelight_clamp_elevation(el);
+    stagelight_vector(light_az, light_el, LIGHT);
+    light_ready = 1;
 }
 
 /* The shadow projection -- see hd2d.h. A point at height h above the ground casts to
@@ -62,9 +72,8 @@ void hd2d_light_set_angles(float az, float el)
  * relationship the shading has, from the same vector. */
 void hd2d_shadow_project(float *across, float *up)
 {
-    const float y = LIGHT[1] < 0.05f ? 0.05f : LIGHT[1];
-    *across = -LIGHT[0] / y;
-    *up     =  LIGHT[2] / y;
+    light_ensure();
+    stagelight_shadow(LIGHT, across, up);
 }
 
 /* ---- state ---- */
@@ -388,6 +397,10 @@ int hd2d_post(SDL_Texture *albedo, SDL_Texture *chars, SDL_Texture *shadow, SDL_
     if (show_is("shadow")) return show_stage(shadow, out);
 
     struct { Vec4 sun_dir, sun_color, sky, bounce, params, floor; } u;
+    /* The lazy fill, and this is the site that made it necessary to be careful: LIGHT is no
+     * longer a literal initialiser, so a pass that read it before anything had filled it would
+     * get (0,0,0) and light every fighter from nowhere. Every reader goes through this. */
+    light_ensure();
     u.sun_dir   = (Vec4){ LIGHT[0], LIGHT[1], LIGHT[2], knob("LF2_HD2D_KEY", 1.48f) };
     /* A warm key against a cool sky is what puts a temperature difference between the lit
      * side and the shaded side of a fighter, which is what makes flat art read as having a

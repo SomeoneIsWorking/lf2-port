@@ -229,6 +229,14 @@ add_test(NAME geometry COMMAND test_geom)
 # The hand-woven stage geometry loader (issue #62). It takes no game data -- the caller resolves
 # a layer name to a span -- so it needs no guest and no GPU, only SDL's headers for MeshVertex.
 # Run from tests/ so the fixtures resolve by a relative path that is the same everywhere.
+# The stage light is PURE ARITHMETIC in a header, so it needs no SDL and no GPU -- which is the
+# whole point: it used to live inside hd2d.c, where the only instrument was a screenshot.
+add_executable(test_stagelight tests/test_stagelight.c)
+target_include_directories(test_stagelight PRIVATE runtime)
+target_compile_options(test_stagelight PRIVATE -Wall -Wextra)
+target_link_libraries(test_stagelight PRIVATE m)
+add_test(NAME stagelight COMMAND test_stagelight)
+
 add_executable(test_stagegeom tests/test_stagegeom.c runtime/video/stagegeom.c)
 target_include_directories(test_stagegeom PRIVATE runtime runtime/overrides runtime/video)
 target_link_libraries(test_stagegeom PRIVATE SDL3::SDL3)
