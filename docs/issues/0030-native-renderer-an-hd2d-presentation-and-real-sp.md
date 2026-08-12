@@ -416,3 +416,42 @@ fighters, the same numbers as before the port.
 WHAT REMAINS OPEN ON THIS ENTRY IS UNCHANGED and is feature work the reporter framed as a
 direction rather than a defect: the stage is still flat painted layers. Nothing here has been
 built uninvited.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- TWO ITEMS ON THE "STILL OPEN" LIST WERE ALREADY DONE
+
+Both notes above end with a "still open" list, and two of its entries are stale. They are
+corrected here rather than left, because a list that names finished work as outstanding is the
+same failure as one that claims unfinished work is done -- the next session builds it twice.
+
+  "GDI text is still rendered at the composition's resolution and scaled up with everything
+   else."  NOT TRUE. runtime/win32/gdi.c rasterises a second glyph set at the live world scale
+   (glyph_hi_of / glyph_hi_reset) and the display-list tile draws from it, falling back to the
+   8x16 cell only at scale 1 or when the GPU path is off. Measured this session at 1920x1080
+   on the GPU:
+
+       widescreen: window 1920x1080 -> composition 978x550 at scale 1.964
+       glyph scale: 23 glyph(s) rasterised at 1.96x the game's cell, 0 cache drop(s)
+
+   The report is deliberately able to say the negative -- it prints "NOTHING was rasterised
+   above the game's 8x16 cell" when the count is zero, and refuses to claim anything at all
+   under LF2_RENDERER=soft, where the text is the 8x16 cell by definition.
+
+  "the pause menu and the controls hint still present through the software compositor, because
+   they draw straight onto the primary and are in no display list."  NOT TRUE, and this is what
+   issue #52 fixed. The hint appends glyph tiles to the live composition (render_overlay_mark)
+   and the pause menu is drawn over a RETAINED frame (pause_draw_list), because pausing freezes
+   the game by declining to call its update and no blit arrives while the menu is up.
+   tools/e2e.sh pause_dropout asserts it on a real pause in a real match and reported 120
+   frames drawn over the retained list in this session's sweep.
+
+WHAT IS GENUINELY STILL OPEN on this entry, so the corrected list is not read as "nothing left":
+  - DEPTH-SORTED LIGHTING. The shadows are still placed from the game's own ellipse rather than
+    from z. The depth is available (C018, object+0x18) and, since issue #55, fn_0041a5a0 is the
+    port's own code -- so latching z at the draw is now a small change rather than a mapping
+    exercise. This is the next buildable piece on this entry.
+  - TILT-SHIFT / DEPTH OF FIELD, the other half of the look.
+  - THE FLOOR IS LIT AS A BILLBOARD rather than as a ground plane, which needs the floor layers
+    identified.
+  - THE STAGE IS FLAT PAINTED LAYERS. That is now issue #62 rather than this entry, and #62 has
+    the depth-tested pass and the per-layer depths already.
