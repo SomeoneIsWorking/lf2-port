@@ -1,11 +1,11 @@
 ---
 id: 59
 title: The post-load mode menu (VS / Stage / Championship) may never be drawn at all -- every run goes launcher to character selection
-status: open
+status: resolved
 symptom: found while trying to produce a positive control for issue #22. No run this port makes has ever been shown to draw the mode menu. With no input the game sits on the launcher indefinitely; with one attack press it is on the CHARACTER SELECTION panel twenty frames later and stays there, with the game-mode word still reading -100 (no mode chosen)
 tags: widescreen,menu,screens,re
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 FOUND 2026-08-11 while trying to get a frame that is demonstrably the mode menu, which issue
@@ -48,3 +48,29 @@ HOW TO SETTLE IT, cheaply and first: run the game on a real display and look at 
 after the load. That is one manual run and it decides between the three without any more
 scripted archaeology. Do not build another .data diff before it -- issue #22 has now produced
 two confident results from controls that were never run, and both had to be retracted.
+
+### Resolution (2026-08-12)
+ANSWERED: THE MODE MENU IS DRAWN, in every run, and the entry's premise is false.
+
+LF2_FRAMING_DEBUG=1 over an ordinary VS route at 1920x1080 lists the screens in order by the
+full-screen colour each paints -- and the mode menu's own 0x122565 is there:
+
+    frame 0   backdrop fill 10206c   the front end
+    frame 3   a PICTURE backdrop     the loading screen
+    frame 5   backdrop fill 122565   THE MODE MENU
+    frame 6   backdrop fill 000000   character selection
+
+So the sequence is not 'launcher to character selection'. The mode menu is drawn between them;
+it is simply very brief, because the route's presses go straight through it -- four screens in
+seven frames.
+
+WHY IT LOOKED ABSENT, and it is the same mistake twice over. This entry was filed after a .data
+diff was mislabelled -- the side called 'the mode menu' was actually character selection, which
+is recorded in issue #22's history. And the signal that settles it did not exist until issue #51
+was fixed earlier today: panel_modemenu_up(), off the fill colour that appears exactly once in
+the binary. Before that the port had no honest way to say the mode menu was on screen, which is
+precisely why the question stayed open.
+
+WHAT THIS UNBLOCKS: issue #22 was waiting on this -- its option (b) needed a positive control
+that the mode menu is a real, reachable screen. It is, and both the framing report and
+panel_modemenu_up() can now serve as that control.
