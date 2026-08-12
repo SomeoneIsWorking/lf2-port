@@ -1873,6 +1873,13 @@ plain composition; there is deliberately no approximation to fall back to.
   has been seen to fail before it is trusted. `tools/e2e.sh objects` uses it — two default runs
   must be byte-identical, and a skew of 3 must change thousands of pixels.
 
+- **`LF2_ALTBG_FORCE=1`** draws the game's **built-in background** (index 99) instead of the
+  loaded stage's layers, and **`LF2_ALTBG_ORIG=1`** runs the recompiled body of it rather than
+  the port. Together they are the A/B for issue #58. The force writes the game's own background
+  index word — the same word `0042d7f6` writes 99 into when the stage chooser lands there — so
+  it takes the branch the game takes rather than faking a screen. Without it that backdrop is
+  unreachable from any scripted route, because every route takes the default background.
+
 - **`LF2_BAND_DEBUG=1`** prints every blit that is a candidate for the full-width backdrop
   stretch — anything drawn from x 0 into the composition during a match — with the rectangle it
   actually arrived as. It exists because that rule tests `dr == NATIVE_W` on the assumption the

@@ -1,7 +1,7 @@
 ---
 id: 58
 title: The game's built-in background (fn_0041a050) draws its fills 794 wide, so it stops short in a wide view
-status: open
+status: resolved
 symptom: found while tracing issue #55, not reported and not yet seen on screen. fn_0041a050 draws a fixed backdrop with five full-width fills whose width is the literal 0x31a (794), so on any view wider than the game's own screen those bands stop at 794 and leave the rest unpainted
 tags: widescreen,rendering,background
 created: 2026-08-11
@@ -150,3 +150,33 @@ and lets the route's confirm dispatch it rather than faking the screen. The back
 
 UNTIL THEN, treat this override as UNPROVEN. It cannot affect normal play -- nothing selects 99
 without a player choosing it -- but that is an argument about blast radius, not about correctness.
+
+### Resolution (2026-08-12)
+FIXED AND VERIFIED. fn_0041a050 is an override in runtime/overrides/background.c with every
+0x31a reading bg_view_width() (and the fence loop's 0x319 one less than it, as the game wrote
+the pair).
+
+THE A/B, port against the recompiled body, at two widths:
+
+    794x550     composition 794:      0 differing px
+    1920x1080   composition 978:  32857 differing px, x 794..977
+
+Both halves are needed and each says something the other cannot. At 794 bg_view_width() IS 794,
+so the port must be byte-identical to the body it replaces -- and is. At 978 it must differ, and
+the differing pixels lie ENTIRELY in x 794..977: exactly the band the game left unpainted, and
+nothing before it. That range is the result. A bare 'they differ' would not have distinguished
+'the backdrop now fills the view' from 'the port draws something else'.
+
+LF2_ALTBG_FORCE=1 is what made it reachable -- no route selects background 99, since every route
+takes the default. It writes the game's OWN index word, the same one 0042d7f6 writes 99 into when
+the chooser lands there, so it takes the game's branch rather than faking a screen.
+
+AND THE FIRST VERSION OF THAT FORCE WAS VACUOUS, which is worth recording because it produced a
+clean-looking pass. It set only the override's LOCAL copy of the index; the alt branch hands off
+to fn_0041a250__orig, which reads the index out of 0x0044d024 itself. So both arms drew the
+ordinary stage and came out identical at 794 AND at 1920 -- and the 794 identity was reported as
+'the port matches the body it replaces' when neither arm had ever called the ported function. The
+tell was the 1920 arm: it was supposed to DIFFER and did not. A one-sided check would have shipped
+it.
+
+ctest 10/10; background and objects green.
