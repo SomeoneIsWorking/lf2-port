@@ -68,8 +68,15 @@ arm light
 # two reasons at once and could not be told apart from a broken one. So it has to match, and
 # `engskip` is its own negative: the engine honours LF2_RENDER_SKIP, so an engine frame with
 # every 7th entry dropped must differ, or the two engine dumps are not the engine.
-arm engine     LF2_HD2D=off LF2_ENGINE=1
-arm engineskip LF2_HD2D=off LF2_ENGINE=1 LF2_RENDER_SKIP=7
+arm engine     LF2_HD2D=off LF2_ENGINE=1 LF2_DOF=off
+arm engineskip LF2_HD2D=off LF2_ENGINE=1 LF2_DOF=off LF2_RENDER_SKIP=7
+# THE DEFOCUS (issue #63), against the same engine frame with it switched off. Its two halves are
+# opposite on the two frames and that pair IS the test: a depth of field must change a frame with
+# a stage in it and change NOTHING on a frame without one. The second half is what catches an
+# effect that has spread over the whole picture, which is why the previous bloom/DOF/haze/vignette
+# cut was removed -- and it holds by construction here, because a pixel with no distance in the
+# G-buffer takes an untouched branch and a menu frame has no layers at all.
+arm dof        LF2_HD2D=off LF2_ENGINE=1
 
 # "<maxdiff> <differing> <total>" for two PPMs, or "ERR ..." -- never silence.
 cmp_ppm() {
@@ -110,7 +117,7 @@ for f in "$OUT/soft"/*.ppm; do
     [ -e "$f" ] || continue
     n=$(basename "$f")
     frames_done=$((frames_done + 1))
-    for arm_dir in gpu skip engine engineskip; do
+    for arm_dir in gpu skip engine engineskip dof; do
         if [ ! -f "$OUT/$arm_dir/$n" ]; then
             echo "  FAIL  $n: the $arm_dir arm produced no such frame"; fail=1
         fi
@@ -174,6 +181,42 @@ for f in "$OUT/soft"/*.ppm; do
                     fail=1
                 fi
             fi
+        fi
+    fi
+
+    # ---- THE DEFOCUS, asserted the way the light arm is: opposite on the two frames ----
+    if [ -f "$OUT/dof/$n" ] && [ -f "$OUT/engine/$n" ]; then
+        set -- $(cmp_ppm "$OUT/engine/$n" "$OUT/dof/$n")
+        if [ "$1" = "ERR" ]; then echo "  FAIL  $n: dof compare: $2"; fail=1; else
+            dmax=$1; dn=$2
+            case "$n" in
+            *000401*)
+                # Character selection: no stage, so no layer carries a distance and every pixel
+                # takes the untouched branch. A single changed pixel here is an effect that has
+                # escaped the depth it is supposed to be a function of.
+                if [ "$dmax" = 0 ]; then
+                    say_ok_dof="  ok    $n: the defocus changes NOTHING on a frame with no stage"
+                    echo "$say_ok_dof"
+                    echo "        in it, so it is a function of distance and not of the screen"
+                else
+                    echo "  FAIL  $n: the defocus changed $dn px by up to $dmax on a frame with"
+                    echo "        NO stage in it. Every pixel there has no distance and must take"
+                    echo "        the untouched branch -- this is the effect spreading over the"
+                    echo "        whole picture, which is why the last one was deleted."
+                    fail=1
+                fi ;;
+            *)
+                # In a match the stage's layers carry real distances, so the defocus must bite.
+                if [ "$dmax" -gt 0 ] && [ "$dn" -gt 1000 ]; then
+                    echo "  ok    $n: the defocus changes $dn px by up to $dmax on a frame with a"
+                    echo "        stage in it, so it is running"
+                else
+                    echo "  FAIL  $n: the defocus changed $dn px by up to $dmax in a MATCH, where"
+                    echo "        the layers carry real distances -- it is not running, or the"
+                    echo "        G-buffer reached it empty"
+                    fail=1
+                fi ;;
+            esac
         fi
     fi
 

@@ -117,6 +117,13 @@ struct SDL_Texture *engine_draw(const EngineQuad *q, int n,
  * path for the case the port already knows about. */
 void engine_surface_dirty(uint32_t pixels);
 
+/* Present the engine's finished frame onto `dst` through the DEFOCUS (issue #63), which is a
+ * function of the G-buffer's distance channel and of nothing else. Returns 0 when the caller
+ * should do a plain copy instead -- no shader, no G-buffer, or the control arm turned it off.
+ * `max_radius` is the blur at full circle of confusion, in texels of the output. */
+int  engine_present(struct SDL_Texture *dst, float max_radius);
+int  engine_dof_enabled(void);
+
 void engine_report(void);       /* LF2_ENGINE_DEBUG=1: what the engine actually drew */
 void engine_shutdown(void);
 
