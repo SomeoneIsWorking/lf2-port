@@ -360,6 +360,9 @@ enum { EXIT_GIVEUP = 400 };               /* about seven seconds; then say so an
 
 static int  exit_state;                   /* 0 idle, 1 F4 sent, 2 overlay seen, 3 probing */
 static void exit_probe(long f);
+void exit_probe_tick(long f);
+static long exit_probe_watch_from = -1;
+static int  exit_probe_saw_menu;
 static int  exit_dev = -1;
 static long exit_since, exit_overlay_at;
 
@@ -411,6 +414,7 @@ void exit_to_menu_tick(void)
     }
 
     if (exit_state == 3) { exit_probe(f); return; }
+    exit_probe_tick(f);
     if (!overlay_open()) return;
     if (exit_state == 1) {
         exit_state = 2;
@@ -467,4 +471,32 @@ static void exit_probe(long f)
     if (!wrote)
         fprintf(stderr, "exit probe: LF2_EXIT_PROBE=\"%s\" named no address I could parse, so "
                         "NOTHING was written\n", spec);
+    if (wrote) exit_probe_watch_from = f;
+}
+
+/* THE VERDICT, which this probe never had. Judging it used to mean diffing the frame after the
+ * write against a frame of the mode menu -- and issue #22 records how that went: the two screens
+ * share a blit destination and the "mode menu" side of the comparison was character selection,
+ * so the positive control read 0.0% and six candidates were written up as negatives when they
+ * were untested.
+ *
+ * panel_modemenu_up() (issue #51) removes the diffing entirely: the mode menu is identified by
+ * the full-screen colour only it paints. So the probe can simply ASK whether the screen it is
+ * trying to reach came up, for a while after the write, and say so. */
+enum { EXIT_PROBE_WATCH = 240 };
+
+void exit_probe_tick(long f)
+{
+    if (exit_probe_watch_from < 0) return;
+    if (panel_modemenu_up()) exit_probe_saw_menu = 1;
+    if (f - exit_probe_watch_from == EXIT_PROBE_WATCH) {
+        if (exit_probe_saw_menu)
+            fprintf(stderr, "exit probe: THE MODE MENU CAME UP within %d frame(s) of the write "
+                            "-- this candidate reaches it\n", EXIT_PROBE_WATCH);
+        else
+            fprintf(stderr, "exit probe: the mode menu did NOT appear in the %d frame(s) after "
+                            "the write. That is a real negative for this candidate ONLY if the "
+                            "write happened -- read the line above, which says so when the word "
+                            "was already zero\n", EXIT_PROBE_WATCH);
+    }
 }
