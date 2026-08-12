@@ -81,8 +81,43 @@ else
        say_fail "      too, so the line above cannot be trusted without this one" ;;
     esac
     case "$verdict" in
-    *PASS) say_ok "verdict: the pass's own self-test says PASS" ;;
+    *PASS) say_ok "verdict: the depth arm's self-test says PASS" ;;
     *)     say_fail "verdict: $verdict" ;;
+    esac
+fi
+
+# ---- the TEXTURE arm, which the depth arm does not touch --------------------------------------
+#
+# Sampling fails silently in its own ways: an unbound sampler draws the clear value and reads as
+# "the geometry is not there", a wrong UV draws one texel across the quad and reads as flat
+# shading. So the source has two differently coloured halves and both must arrive in their own
+# half.
+#
+# THE UNTEXTURED CONTROL IS ASSERTED TOO, and it is not ceremony. The first cut of this test came
+# back rgba(0,0,0,0), which is the same answer for "the sample failed" and "the quad never
+# rasterised" -- the control separated them in one run, and it is what found that sampling SDL's
+# own texture through its GPU handle gives zeros (claim C032, falsified).
+ctl=$(grep -m1 "^mesh selftest: untextured control" "$LOG" || true)
+tex=$(grep -m1 "^mesh selftest: textured quad" "$LOG" || true)
+tv=$(grep -m1 "^mesh selftest: TEXTURE \(PASS\|FAIL\)" "$LOG" || true)
+
+if [ -z "$ctl" ] || [ -z "$tex" ] || [ -z "$tv" ]; then
+    say_fail "texture: the texture arm did not report all three of its lines, so sampling was"
+    say_fail "         NOT measured in this run"
+else
+    case "$ctl" in
+    *"rasterises, so anything blank below is the SAMPLE"*)
+        say_ok "control: $ctl" ;;
+    *) say_fail "control: $ctl"
+       say_fail "         with the quad not rasterising, the texture line below says nothing" ;;
+    esac
+    case "$tex" in
+    *"arrived in the right places"*) say_ok "texture: $tex" ;;
+    *) say_fail "texture: $tex" ;;
+    esac
+    case "$tv" in
+    *PASS) say_ok "verdict: the texture arm's self-test says PASS" ;;
+    *)     say_fail "verdict: $tv" ;;
     esac
 fi
 

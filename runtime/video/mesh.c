@@ -35,14 +35,19 @@ static long stat_passes, stat_tris;
  * fighter's shading and their shadow can never disagree. A set lit from somewhere else would
  * put the whole scene into that contradiction one step larger. These are the same numbers;
  * when hd2d.c's become configurable, this reads them rather than keeping a second copy. */
-typedef struct { float dir[4], sky[4], ground[4]; } LightUniform;
+typedef struct { float dir[4], sky[4], ground[4], tint[4]; } LightUniform;
 static const LightUniform LIGHT = {
     { -0.45f, 0.80f, 0.40f, 0.85f },      /* toward the light, and its strength */
     {  0.34f, 0.36f, 0.42f, 0.0f },       /* sky ambient -- cool, from above */
     {  0.20f, 0.18f, 0.16f, 0.0f },       /* ground ambient -- warm, from below */
+    {  0.0f,  0.0f,  0.0f,  0.0f },       /* tint.x set per draw: 1 with a texture, 0 without */
 };
 
+static SDL_GPUSampler *SMP;
+
+
 static void selftest(void);
+static void selftest_texture(void);
 
 int mesh_ready(void) { return init_ok; }
 
@@ -57,6 +62,10 @@ static SDL_GPUShader *shader_make(const unsigned char *spv, size_t len,
     info.entrypoint = "main";
     info.stage = stage;
     info.num_uniform_buffers = 1;
+    /* The fragment stage takes the source texture. Declared even when a draw binds none: the
+     * shader multiplies by u_tint.x, so the untextured case is a multiply by white rather than
+     * a second pipeline to keep in step with this one. */
+    info.num_samplers = (stage == SDL_GPU_SHADERSTAGE_FRAGMENT) ? 1u : 0u;
     SDL_GPUShader *s = SDL_CreateGPUShader(DEV, &info);
     if (!s)
         fprintf(stderr, "mesh: the %s shader could not be created: %s\n", name, SDL_GetError());
@@ -115,7 +124,7 @@ int mesh_init(SDL_Renderer *r)
     vbd.pitch = sizeof(MeshVertex);
     vbd.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
-    SDL_GPUVertexAttribute attrs[3];
+    SDL_GPUVertexAttribute attrs[4];
     SDL_zero(attrs);
     /* FOUR floats: x, jump, row, depth. See MeshVertex in mesh.h for why row and depth are
      * separate channels and must stay that way. */
@@ -123,11 +132,14 @@ int mesh_init(SDL_Renderer *r)
     attrs[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
     attrs[0].offset = (Uint32)offsetof(MeshVertex, x);
     attrs[1].location = 1; attrs[1].buffer_slot = 0;
-    attrs[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-    attrs[1].offset = (Uint32)offsetof(MeshVertex, nx);
+    attrs[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
+    attrs[1].offset = (Uint32)offsetof(MeshVertex, u);
     attrs[2].location = 2; attrs[2].buffer_slot = 0;
-    attrs[2].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
-    attrs[2].offset = (Uint32)offsetof(MeshVertex, r);
+    attrs[2].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+    attrs[2].offset = (Uint32)offsetof(MeshVertex, nx);
+    attrs[3].location = 3; attrs[3].buffer_slot = 0;
+    attrs[3].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+    attrs[3].offset = (Uint32)offsetof(MeshVertex, r);
 
     SDL_GPUColorTargetDescription ctd;
     SDL_zero(ctd);
@@ -140,7 +152,7 @@ int mesh_init(SDL_Renderer *r)
     pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
     pi.vertex_input_state.num_vertex_buffers = 1;
     pi.vertex_input_state.vertex_buffer_descriptions = &vbd;
-    pi.vertex_input_state.num_vertex_attributes = 3;
+    pi.vertex_input_state.num_vertex_attributes = 4;
     pi.vertex_input_state.vertex_attributes = attrs;
     pi.target_info.num_color_targets = 1;
     pi.target_info.color_target_descriptions = &ctd;
@@ -166,6 +178,23 @@ int mesh_init(SDL_Renderer *r)
         init_why = "the graphics pipeline could not be created";
         fprintf(stderr, "mesh: the depth-tested pipeline could not be created: %s\n",
                 SDL_GetError());
+        return 0;
+    }
+
+    /* NEAREST, like everything else the port draws (issue #41): the art is pixel art and a
+     * linear filter on a magnified texel is the blur that scaling was removed to avoid. */
+    SDL_GPUSamplerCreateInfo si;
+    SDL_zero(si);
+    si.min_filter = SDL_GPU_FILTER_NEAREST;
+    si.mag_filter = SDL_GPU_FILTER_NEAREST;
+    si.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+    si.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    si.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    si.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    SMP = SDL_CreateGPUSampler(DEV, &si);
+    if (!SMP) {
+        init_why = "the sampler could not be created";
+        fprintf(stderr, "mesh: the sampler could not be created: %s\n", SDL_GetError());
         return 0;
     }
 
@@ -272,8 +301,68 @@ static int vbuf_reserve(int n)
     return 1;
 }
 
+struct MeshTexture { SDL_GPUTexture *tex; int w, h; };
+
+/* The pass's own upload. See mesh.h for why the art is on the GPU twice: reaching into the
+ * texture render.c already uploaded was measured and does not work. */
+MeshTexture *mesh_upload(const void *rgba, int w, int h)
+{
+    if (!init_ok || !rgba || w <= 0 || h <= 0) return NULL;
+
+    SDL_GPUTextureCreateInfo ci;
+    SDL_zero(ci);
+    ci.type = SDL_GPU_TEXTURETYPE_2D;
+    ci.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    ci.width = (Uint32)w; ci.height = (Uint32)h;
+    ci.layer_count_or_depth = 1; ci.num_levels = 1;
+    ci.sample_count = SDL_GPU_SAMPLECOUNT_1;
+    ci.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    SDL_GPUTexture *tex = SDL_CreateGPUTexture(DEV, &ci);
+
+    SDL_GPUTransferBufferCreateInfo ti;
+    SDL_zero(ti);
+    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    ti.size = (Uint32)(w * h * 4);
+    SDL_GPUTransferBuffer *tb = tex ? SDL_CreateGPUTransferBuffer(DEV, &ti) : NULL;
+    void *map = tb ? SDL_MapGPUTransferBuffer(DEV, tb, false) : NULL;
+    if (!map) {
+        fprintf(stderr, "mesh: a %dx%d texture upload failed: %s\n", w, h, SDL_GetError());
+        if (tb) SDL_ReleaseGPUTransferBuffer(DEV, tb);
+        if (tex) SDL_ReleaseGPUTexture(DEV, tex);
+        return NULL;
+    }
+    memcpy(map, rgba, (size_t)w * (size_t)h * 4u);
+    SDL_UnmapGPUTransferBuffer(DEV, tb);
+
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
+    SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureTransferInfo src = { tb, 0, (Uint32)w, (Uint32)h };
+    SDL_GPUTextureRegion dst;
+    SDL_zero(dst);
+    dst.texture = tex; dst.w = (Uint32)w; dst.h = (Uint32)h; dst.d = 1;
+    SDL_UploadToGPUTexture(copy, &src, &dst, false);
+    SDL_EndGPUCopyPass(copy);
+    /* Waited on: the very next thing a caller does is draw with it, and an upload still in
+     * flight samples as the zeros this whole redesign came from. */
+    SDL_GPUFence *f = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    if (f) { SDL_WaitForGPUFences(DEV, true, &f, 1); SDL_ReleaseGPUFence(DEV, f); }
+    SDL_ReleaseGPUTransferBuffer(DEV, tb);
+
+    MeshTexture *m = (MeshTexture *)SDL_calloc(1, sizeof *m);
+    if (!m) { SDL_ReleaseGPUTexture(DEV, tex); return NULL; }
+    m->tex = tex; m->w = w; m->h = h;
+    return m;
+}
+
+void mesh_texture_free(MeshTexture *t)
+{
+    if (!t) return;
+    if (t->tex && DEV) SDL_ReleaseGPUTexture(DEV, t->tex);
+    SDL_free(t);
+}
+
 SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
-                       int camera, int view_w, int view_h)
+                       int camera, int view_w, int view_h, const MeshTexture *art)
 {
     if (!init_ok || n <= 0 || w <= 0 || h <= 0) return NULL;
     if (!targets_make(w, h) || !vbuf_reserve(n)) return NULL;
@@ -294,9 +383,9 @@ SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
     }
 
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
-    SDL_GPUTransferBufferLocation src = { vxfer, 0 };
+    SDL_GPUTransferBufferLocation from = { vxfer, 0 };
     SDL_GPUBufferRegion dst = { vbuf, 0, (Uint32)(n * (int)sizeof(MeshVertex)) };
-    SDL_UploadToGPUBuffer(copy, &src, &dst, false);
+    SDL_UploadToGPUBuffer(copy, &from, &dst, false);
     SDL_EndGPUCopyPass(copy);
 
     SDL_GPUColorTargetInfo cti;
@@ -327,11 +416,22 @@ SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
     SDL_BindGPUGraphicsPipeline(pass, PIPE);
     SDL_GPUBufferBinding vb = { vbuf, 0 };
     SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+
+    /* The pass's OWN texture. Claim C032 said this could be SDL's, and it is falsified: the
+     * handle reads back fine and a sample through it comes out rgba(0,0,0,0). See mesh.h.
+     *
+     * A sampler must be bound whether or not there is art: the fragment shader declares one,
+     * and leaving it unbound is undefined rather than "the branch is not taken". The colour
+     * target stands in when there is nothing to sample -- u_tint.x is 0, so nothing reads it. */
+    LightUniform lu = LIGHT;
+    if (art && art->tex) lu.tint[0] = 1.0f;
+    SDL_GPUTextureSamplerBinding tsb = { (art && art->tex) ? art->tex : tex_color, SMP };
+    SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
     /* The camera and the view, which is all the projection needs -- there is no matrix,
      * because screen_x = X - camera/depth is not linear in (X, depth, 1). See geom.h. */
     const float camv[4] = { (float)camera, (float)view_w, (float)view_h, 0.0f };
     SDL_PushGPUVertexUniformData(cmd, 0, camv, sizeof camv);
-    SDL_PushGPUFragmentUniformData(cmd, 0, &LIGHT, sizeof LIGHT);
+    SDL_PushGPUFragmentUniformData(cmd, 0, &lu, sizeof lu);
     SDL_DrawGPUPrimitives(pass, (Uint32)n, 1, 0, 0);
     SDL_EndGPURenderPass(pass);
     SDL_SubmitGPUCommandBuffer(cmd);
@@ -370,21 +470,21 @@ static void selftest(void)
      * FAR is depth 9.0 and covers the WHOLE quad, submitted SECOND -- so a pass with no depth
      * test paints it over the near one. */
     const MeshVertex tri[] = {
-        {  0.0f, 0.0f,  0.0f, 1.0f,  0,1,0,  1,0,0,1 },
-        { 32.0f, 0.0f,  0.0f, 1.0f,  0,1,0,  1,0,0,1 },
-        {  0.0f, 0.0f, 64.0f, 1.0f,  0,1,0,  1,0,0,1 },
-        { 32.0f, 0.0f,  0.0f, 1.0f,  0,1,0,  1,0,0,1 },
-        { 32.0f, 0.0f, 64.0f, 1.0f,  0,1,0,  1,0,0,1 },
-        {  0.0f, 0.0f, 64.0f, 1.0f,  0,1,0,  1,0,0,1 },
+        {  0.0f, 0.0f,  0.0f, 1.0f,  0,0,  0,1,0,  1,0,0,1 },
+        { 32.0f, 0.0f,  0.0f, 1.0f,  0,0,  0,1,0,  1,0,0,1 },
+        {  0.0f, 0.0f, 64.0f, 1.0f,  0,0,  0,1,0,  1,0,0,1 },
+        { 32.0f, 0.0f,  0.0f, 1.0f,  0,0,  0,1,0,  1,0,0,1 },
+        { 32.0f, 0.0f, 64.0f, 1.0f,  0,0,  0,1,0,  1,0,0,1 },
+        {  0.0f, 0.0f, 64.0f, 1.0f,  0,0,  0,1,0,  1,0,0,1 },
 
-        {  0.0f, 0.0f,  0.0f, 9.0f,  0,1,0,  0,0,1,1 },
-        { 64.0f, 0.0f,  0.0f, 9.0f,  0,1,0,  0,0,1,1 },
-        {  0.0f, 0.0f, 64.0f, 9.0f,  0,1,0,  0,0,1,1 },
-        { 64.0f, 0.0f,  0.0f, 9.0f,  0,1,0,  0,0,1,1 },
-        { 64.0f, 0.0f, 64.0f, 9.0f,  0,1,0,  0,0,1,1 },
-        {  0.0f, 0.0f, 64.0f, 9.0f,  0,1,0,  0,0,1,1 },
+        {  0.0f, 0.0f,  0.0f, 9.0f,  0,0,  0,1,0,  0,0,1,1 },
+        { 64.0f, 0.0f,  0.0f, 9.0f,  0,0,  0,1,0,  0,0,1,1 },
+        {  0.0f, 0.0f, 64.0f, 9.0f,  0,0,  0,1,0,  0,0,1,1 },
+        { 64.0f, 0.0f,  0.0f, 9.0f,  0,0,  0,1,0,  0,0,1,1 },
+        { 64.0f, 0.0f, 64.0f, 9.0f,  0,0,  0,1,0,  0,0,1,1 },
+        {  0.0f, 0.0f, 64.0f, 9.0f,  0,0,  0,1,0,  0,0,1,1 },
     };
-    if (!mesh_draw(tri, (int)(sizeof tri / sizeof tri[0]), W, H, 0, VIEW_W, VIEW_H)) {
+    if (!mesh_draw(tri, (int)(sizeof tri / sizeof tri[0]), W, H, 0, VIEW_W, VIEW_H, NULL)) {
         fprintf(stderr, "mesh selftest: the pass produced no texture, so NOTHING was tested\n");
         return;
     }
@@ -440,6 +540,132 @@ static void selftest(void)
 
     SDL_UnmapGPUTransferBuffer(DEV, dl);
     SDL_ReleaseGPUTransferBuffer(DEV, dl);
+
+    selftest_texture();
+}
+
+/* A pixel out of the finished colour target. Diagnostic only -- the shipping path never reads
+ * back -- and it returns 0 rather than a colour when it could not, so a failure to read cannot
+ * be mistaken for a black pixel. */
+static int readback_px(int w, int h, int x, int y, unsigned char out[4])
+{
+    SDL_GPUTransferBufferCreateInfo ti;
+    SDL_zero(ti);
+    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    ti.size = (Uint32)(w * h * 4);
+    SDL_GPUTransferBuffer *dl = SDL_CreateGPUTransferBuffer(DEV, &ti);
+    if (!dl) return 0;
+
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
+    SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureRegion reg;
+    SDL_zero(reg);
+    reg.texture = tex_color; reg.w = (Uint32)w; reg.h = (Uint32)h; reg.d = 1;
+    SDL_GPUTextureTransferInfo tti;
+    SDL_zero(tti);
+    tti.transfer_buffer = dl; tti.pixels_per_row = (Uint32)w; tti.rows_per_layer = (Uint32)h;
+    SDL_DownloadFromGPUTexture(copy, &reg, &tti);
+    SDL_EndGPUCopyPass(copy);
+    SDL_GPUFence *f = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    if (f) { SDL_WaitForGPUFences(DEV, true, &f, 1); SDL_ReleaseGPUFence(DEV, f); }
+
+    const unsigned char *px = SDL_MapGPUTransferBuffer(DEV, dl, false);
+    int ok = 0;
+    if (px) {
+        const unsigned char *p = px + ((size_t)y * (size_t)w + (size_t)x) * 4u;
+        out[0] = p[0]; out[1] = p[1]; out[2] = p[2]; out[3] = p[3];
+        ok = 1;
+        SDL_UnmapGPUTransferBuffer(DEV, dl);
+    }
+    SDL_ReleaseGPUTransferBuffer(DEV, dl);
+    return ok;
+}
+
+/* ---- and the TEXTURE path, which the depth test above does not touch ------------------------
+ *
+ * Untested sampling fails in ways that look like something else: an unbound sampler draws
+ * black and reads as "the geometry is not there", a wrong UV draws one texel across the whole
+ * quad and reads as flat shading. Neither announces itself.
+ *
+ * This draws a quad whose source has two differently coloured halves and reads a pixel in each.
+ * Both must come back their own colour: the same colour in both means the UVs are not reaching
+ * the sampler, and the clear value in both means nothing was sampled.
+ *
+ * AND THE UNTEXTURED CONTROL IS NOT OPTIONAL. It earned its place: the first cut of this test
+ * came back rgba(0,0,0,0), which is indistinguishable between "the sample failed" and "the quad
+ * never rasterised". The control -- the SAME quad with no art, which must read white -- is what
+ * separated them in one run. It is also what found the real fault: sampling SDL's own texture
+ * through its GPU handle gives zeros, which is why claim C032 is falsified and why this pass
+ * owns its uploads.
+ */
+static void selftest_texture(void)
+{
+    enum { W = 64, H = 64, TW = 16, TH = 4 };
+
+    unsigned char px[TW * TH * 4];
+    for (int y = 0; y < TH; y++)
+        for (int x = 0; x < TW; x++) {
+            unsigned char *p = px + (y * TW + x) * 4;
+            const int left = x < TW / 2;
+            p[0] = (unsigned char)(left ? 255 : 0);
+            p[1] = (unsigned char)(left ? 0 : 255);
+            p[2] = 0;
+            p[3] = 255;
+        }
+
+    /* One quad over the whole view, u running 0..1 across it. Depth 1.0 and camera 0, so the
+     * projection is out of the picture and this is about sampling only. */
+    const MeshVertex quad[] = {
+        {  0.0f, 0.0f,  0.0f, 1.0f,  0.0f, 0.0f,  0,1,0,  1,1,1,1 },
+        { 64.0f, 0.0f,  0.0f, 1.0f,  1.0f, 0.0f,  0,1,0,  1,1,1,1 },
+        {  0.0f, 0.0f, 64.0f, 1.0f,  0.0f, 1.0f,  0,1,0,  1,1,1,1 },
+        { 64.0f, 0.0f,  0.0f, 1.0f,  1.0f, 0.0f,  0,1,0,  1,1,1,1 },
+        { 64.0f, 0.0f, 64.0f, 1.0f,  1.0f, 1.0f,  0,1,0,  1,1,1,1 },
+        {  0.0f, 0.0f, 64.0f, 1.0f,  0.0f, 1.0f,  0,1,0,  1,1,1,1 },
+    };
+    const int NV = (int)(sizeof quad / sizeof quad[0]);
+
+    if (mesh_draw(quad, NV, W, H, 0, W, H, NULL)) {
+        unsigned char c[4] = { 0, 0, 0, 0 };
+        if (readback_px(W, H, W / 2, H / 2, c))
+            fprintf(stderr, "mesh selftest: untextured control rgba(%u,%u,%u,%u) -- the quad "
+                            "%s\n", c[0], c[1], c[2], c[3],
+                    c[3] ? "rasterises, so anything blank below is the SAMPLE and not the "
+                           "geometry"
+                         : "did NOT rasterise, so nothing below is about texturing");
+    }
+
+    MeshTexture *art = mesh_upload(px, TW, TH);
+    if (!art) {
+        fprintf(stderr, "mesh selftest: the art could not be uploaded, so the TEXTURE path was "
+                        "NOT tested\n");
+        return;
+    }
+    if (!mesh_draw(quad, NV, W, H, 0, W, H, art)) {
+        fprintf(stderr, "mesh selftest: the textured draw produced no texture, so the TEXTURE "
+                        "path was NOT tested\n");
+        mesh_texture_free(art);
+        return;
+    }
+
+    unsigned char l[4] = { 0, 0, 0, 0 }, r[4] = { 0, 0, 0, 0 };
+    if (!readback_px(W, H, W / 4, H / 2, l) || !readback_px(W, H, 3 * W / 4, H / 2, r)) {
+        fprintf(stderr, "mesh selftest: the texture arm could not be read back, so it measured "
+                        "NOTHING\n");
+        mesh_texture_free(art);
+        return;
+    }
+    const int left_red    = l[0] > l[1] && l[0] > 40;
+    const int right_green = r[1] > r[0] && r[1] > 40;
+    fprintf(stderr, "mesh selftest: textured quad reads rgba(%u,%u,%u,%u) on the left and "
+                    "rgba(%u,%u,%u,%u) on the right -- the source's own two halves %s\n",
+            l[0], l[1], l[2], l[3], r[0], r[1], r[2], r[3],
+            (left_red && right_green)
+                ? "arrived in the right places, so the sampler and the UVs are live"
+                : "did NOT arrive: the same colour both sides means the UVs are not reaching "
+                  "the sampler, the clear value means nothing was sampled");
+    fprintf(stderr, "mesh selftest: TEXTURE %s\n", (left_red && right_green) ? "PASS" : "FAIL");
+    mesh_texture_free(art);
 }
 
 void mesh_report(void)

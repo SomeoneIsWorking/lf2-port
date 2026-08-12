@@ -33,8 +33,9 @@
 /* FOUR numbers, not three -- x, jump height, floor row and parallax depth are independent in
  * LF2 because the game never unified them. See runtime/video/mesh.h. */
 layout(location = 0) in vec4 a_stage;    /* x, jump, row, depth */
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec4 a_color;
+layout(location = 1) in vec2 a_uv;
+layout(location = 2) in vec3 a_normal;
+layout(location = 3) in vec4 a_color;
 
 layout(set = 1, binding = 0) uniform Camera {
     vec4 u_cam;      /* x: the draw-time camera. y: view width. z: view height. w: unused. */
@@ -42,6 +43,7 @@ layout(set = 1, binding = 0) uniform Camera {
 
 layout(location = 0) out vec3 v_normal;
 layout(location = 1) out vec4 v_color;
+layout(location = 2) out vec2 v_uv;
 
 void main()
 {
@@ -67,6 +69,7 @@ void main()
      * projection, which would shear the normals. */
     v_normal = a_normal;
     v_color  = a_color;
+    v_uv     = a_uv;
     gl_Position = vec4(2.0 * sx / cam.u_cam.y - 1.0,
                        1.0 - 2.0 * sy / cam.u_cam.z,
                        cz, 1.0);

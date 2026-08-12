@@ -441,3 +441,37 @@ cached across frames. The spike read it once and did not re-read after a second 
 "stale handle" is unmeasured and is the first thing to check when texture support is written.
 
 That leaves the authored-data format as the only piece of #62 with nothing measured under it.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- TEXTURE SUPPORT LANDED, and the self-test falsified a claim on its way
+
+The pass samples art now, so the last engineering piece before authored geometry is done. The
+route asserts three more lines and `ctest shaders` covers the two new blobs.
+
+WHAT THE SELF-TEST FOUND, which is the part worth recording. Its first run came back
+rgba(0,0,0,0) -- and that is the SAME answer for three different faults: the sample failed, the
+UVs are wrong, or the quad never rasterised at all. So an untextured CONTROL was added, the same
+quad with no art, which must read white. It reads white. That separated them in one run, and
+then a second control -- a texture the pass UPLOADS ITSELF, sampled by the same pipeline with
+the same UVs -- came back with its two halves correct.
+
+So the sampler, the UVs, the pipeline and the geometry are all right, and what does not work is
+BORROWING SDL'S TEXTURE. Claim C032 is falsified: SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER reads
+back a non-null handle for an ordinary SDL_Texture, and a sample through it from this pass's own
+command buffer returns zeros. Two hypotheses were tried and neither is it -- SDL_FlushRenderer
+before the read changes nothing, and drawing the source through SDL_Render first changes
+nothing, so it is not an upload waiting on a flush.
+
+CONSEQUENCE, and it is a real cost stated plainly: the pass owns its uploads (mesh_upload /
+mesh_texture_free), so a stage's art will be on the GPU twice -- once for the display list and
+once for the geometry pass. That is not the design anyone would choose. It is the one that
+works, and the alternative was measured rather than assumed.
+
+The upload WAITS ON ITS FENCE before returning, because the next thing a caller does is draw
+with it and an upload still in flight samples as exactly the zeros this redesign came from.
+
+The sampler is NEAREST, like everything else the port draws (issue #41): the art is pixel art
+and a linear filter on a magnified texel is the blur that removing the whole-frame scale was
+about.
+
+STILL LEFT for a stage to be woven: the authored-data format, and nothing else in the renderer.
