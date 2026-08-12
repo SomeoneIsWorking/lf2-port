@@ -1,7 +1,7 @@
 ---
 id: 57
 title: tools/e2e.sh is treated as a test suite and takes minutes; the rule is nothing over 10 seconds
-status: open
+status: resolved
 symptom: reported, repeatedly. The route scripts boot the game and each run takes 25-83 seconds before a single assertion; thirteen scripts, several making 2-5 runs each, so a full sweep is 20+ minutes. They have been run as a routine gate after every change
 tags: reported,testing,verification,workflow
 created: 2026-08-11
@@ -150,3 +150,41 @@ WHAT THIS DOES NOT DO: it does not make the sweep a suite. A route still boots t
 13 of them still take minutes. The saving is real and it is per run, but lever (a) -- ctest is
 the suite, the routes are investigation tools -- is unchanged and is still the answer to the
 reporter's actual complaint. This entry stays open for that.
+
+### Resolution (2026-08-12)
+INTEGRATION VERIFIED, and the entry can now be closed on the answer it always pointed at.
+
+The whole tree, after a day that hand-ported two guest functions (issues #55, #58), rewired
+every route onto screen anchors, changed the renderer pinning of nine of them, and replaced a
+mouse gate:
+
+    ctest             10 tests, 1.53 s -- nothing in it boots the game
+    tools/e2e.sh      14 script(s) -- 14 passed, 0 failed, 0 skipped, 452 s
+    amdgpu faults     0 in the boot
+
+That matters more than the individual greens it is made of: every route had been verified alone,
+and isolated verification does not compose -- the object-pass port in particular sits under the
+renderer's character identification, the background pass and the coop tests alike.
+
+THE RESOLUTION IS LEVER (a), which this entry named first and which the reporter asked for three
+times: `ctest` is THE suite. It is 10 tests in about a second and a half, nothing in it boots
+the game, and it is what may be run after every edit. tools/e2e.sh is an INVESTIGATION TOOL --
+run one when it answers a specific question about a running game, say in the commit message when
+they were not run, and never treat the sweep as a gate.
+
+WHAT WAS DONE TO THE ROUTES ANYWAY, because "they are not a gate" is not a licence to leave them
+slow or wrong: the front-end wait went (840 frames off every run -- the front end is drawn and
+taking input on frame 1, and the 900 was never justified); every device's script takes screen
+anchors including the launcher click and the keyboard (#25); LF2_FRAME_DUMP takes them too;
+nine routes that assert nothing about the renderer no longer run on the GPU (#40); and
+`timeout -k` means the wall-clock guard can actually kill.
+
+AND THREE INSTRUMENTS WERE FOUND LYING while doing it, each reporting something alarming and
+false: a filename built as frame_00$FRAME that broke when the frame got shorter; a match-frame
+classifier keyed to the literal *002250*; and two dump routes that failed only on ZERO dumps, so
+one-of-two printed "ok". Those are the reason the sweep is worth having at all, and the reason
+it must not be trusted without its negatives.
+
+WHAT IS NOT CLAIMED: the sweep is 452 s and no arrangement makes thirteen game-booting scripts a
+ten-second suite. That was never the goal -- the goal was that the thing run after every edit is
+fast, and it is.
