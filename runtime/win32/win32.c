@@ -916,8 +916,8 @@ static uint32_t mouse_lparam(float wx, float wy)
      * density is 1.0 wherever this does not apply, so the multiply is a no-op there rather
      * than a special case (issue #56). */
     const float density = hw.window ? SDL_GetWindowPixelDensity(hw.window) : 1.0f;
-    float lx = wx * density, ly = wy * density;
-    lf2_window_to_compose(lx, ly, &lx, &ly);
+    float lx = 0, ly = 0;
+    lf2_pointer_to_compose(wx, wy, density, &lx, &ly);
     const int x = (int)lx - screen_offset_x(), y = (int)ly;
     host_ptr_x = x; host_ptr_y = y;
     return ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);

@@ -109,6 +109,29 @@ static inline void geom_window_to_compose(int win_w, int win_h, int comp_w, int 
     *cy = (wy - ry) / s;
 }
 
+/* ---- A SCALED DISPLAY, AND THE POINTER ON ONE (issue #56) ----
+ *
+ * SDL sizes a window in POINTS and draws it in PIXELS, and on a HiDPI display those differ by
+ * the window's pixel density -- 1920x1080 points is a 3840x2160 drawable at 200%. Everything
+ * above takes the PIXEL size, because that is what the frame is drawn into. The pointer does
+ * not: SDL delivers it in POINTS. So the one place the density enters the port's geometry is
+ * here, and it is a multiply rather than a special case, because the density is 1.0 wherever
+ * this does not apply.
+ *
+ * WHAT MUST BE TRUE, and what tests/test_geom.c walks: a scaled display changes the RESOLUTION
+ * the picture is drawn at and NOTHING ELSE. The same fraction of the window is the same
+ * composition pixel, and the composition is the same width, at every density. That is the
+ * whole meaning of "not upscaled" -- a port that composed from the point size would pass a
+ * round-trip test just as happily while drawing a 1080p frame onto a 4K panel, so the
+ * invariant is stated across densities, not within one. */
+static inline void geom_pointer_to_compose(int pix_w, int pix_h, int comp_w, int comp_h,
+                                           float density, float px, float py,
+                                           float *cx, float *cy)
+{
+    if (!(density > 0.0f)) density = 1.0f;
+    geom_window_to_compose(pix_w, pix_h, comp_w, comp_h, px * density, py * density, cx, cy);
+}
+
 /* ---- WHERE A FIXED-794 SCREEN SITS IN A WIDER COMPOSITION (issue #44) ----
  *
  * The front end, the mode menu, the loading screen, character selection and the pre-fight

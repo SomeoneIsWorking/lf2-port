@@ -67,6 +67,7 @@ pause_dropout     a joined player leaves from the pause menu, on its own pad
 exit_to_menu      LEAVE MATCH reaches the game's FRONT-END MENU, by its screen word (issue #22)
 two_human_match   pad two drives its fighter in the FIGHT, not just at selection
 widescreen        the composition follows the window, both directions, natives as negatives
+hidpi             the port on a SIMULATED 4K display at 200%, in a nested compositor (issue #56)
 resize            a resize leaves no stale pixels standing (issue #29)
 background        the background override draws what the recompiled body drew, byte for byte
 stage_mode        the port reaches STAGE mode and the section lock holds the camera (issue #36)
