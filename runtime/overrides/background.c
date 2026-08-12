@@ -290,6 +290,81 @@ void bg_camera_report(void)
                 cam_k, stage, view);
 }
 
+/* fn_00415160 as fn_0041a050 calls it: cdecl, five args, the caller pops. Marked as a world
+ * band for the same reason fill_layer is -- the fill helper is shared with the front end and
+ * the blit path cannot tell the two apart (issue #42). */
+static void alt_fill(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t colour)
+{
+    const uint32_t args[5] = { (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h, colour };
+    world_band_hint_set(1);
+    guest_call(DRAW_FILL, args, 5);
+    world_band_hint_set(0);
+    R(ESP) += 5 * 4;
+}
+
+/* fn_0041a050 -- the game's BUILT-IN background, hand-ported (issue #58).
+ *
+ * WHY. It draws a fixed backdrop rather than a stage's layers, and every one of its solid bands
+ * is 794 wide as a literal -- the game saying "the whole width of the screen" in the only units
+ * it had. On a 978-wide composition they cover 81% of it and the rest goes unpainted. Same
+ * substitution as the layer pass and the object pass: 794 is the VIEW, not a constant. It has to
+ * be an override for the same reason fn_0041a5a0 did -- the widths are immediates in recompiled
+ * code, so there is no address to write.
+ *
+ * IT IS A BACKGROUND A PLAYER CHOOSES, which is what made it worth doing: index 99 sits inside
+ * the range the stage chooser cycles (0042d7f6 maps the pick `count - 3` onto it; 004339a4 and
+ * 00435b48 wrap 100 back to it). No scripted route has ever drawn it only because every route
+ * takes the default background.
+ *
+ * __thiscall, one stack arg, RET 4. The three clip draws take their receiver from the background
+ * record -- Ghidra elides it at every call site, as it does throughout this binary.
+ *
+ * LF2_ALTBG_ORIG=1 runs the recompiled body instead, for the byte-identity A/B.
+ */
+enum { ALTBG_SKY   = 0x4d81978,      /* [[this+0x7d4]+off] -- the receiver of each clip draw */
+       ALTBG_CLOUD = 0x4d8197c,
+       ALTBG_POST  = 0x4d81974 };
+
+void fn_0041a050__orig(void);
+
+void fn_0041a050(void)
+{
+    if (getenv("LF2_ALTBG_ORIG")) { fn_0041a050__orig(); return; }
+
+    const uint32_t self = R(ECX);
+    const uint32_t arg0 = LD32(R(ESP) + 4);
+    const uint32_t rec  = LD32(self + 0x7d4);
+    const int32_t  cam  = (int32_t)LD32(BG_CAMERA_X);
+    /* THE ONE SUBSTITUTION. Everything below that was 0x31a is this, and the fence's bound
+     * 0x319 is one less than it, exactly as the game wrote them. */
+    const int32_t  w    = bg_view_width();
+
+    draw_layer(LD32(rec + ALTBG_SKY), 0xfa - cam / 100, 0x78, 0, arg0);
+
+    for (int32_t i = 0; i < 4000; i += 500)
+        draw_layer(LD32(rec + ALTBG_CLOUD), (i - (cam * 7) / 10) + 0x1e, 0xaf, 1, arg0);
+
+    alt_fill(0, 0x146, w, 0x14, 0x3f3f3f);
+    alt_fill(0, 0x159, w, 0x9c, 0x575757);
+    alt_fill(0, 0x1d7, w, 0x1e, 0x3f3f3f);
+    alt_fill(0, 0x148, w, 2,   0x373737);
+
+    for (int32_t x = (900 - cam) % 0x46; x < w - 1; x += 0x46) {
+        alt_fill(x,     0x124, 1, 0x25, 0x577fa7);
+        alt_fill(x + 1, 0x124, 1, 0x25, 0x2f4357);
+    }
+
+    alt_fill(0, 0x136, w, 1, 0x577fa7);
+    alt_fill(0, 0x137, w, 1, 0x2f4357);
+    alt_fill(0, 0x122, w, 1, 0x577fa7);
+    alt_fill(0, 0x123, w, 1, 0x2f4357);
+
+    for (int32_t i = 0; i < 0xc80; i += 0x140)
+        draw_layer(LD32(LD32(self + 0x7d4) + ALTBG_POST), (i - cam) + 10, 0x186, 0, arg0);
+
+    R(ESP) += 4 + 4;                  /* RET 4: the return address and one stack arg */
+}
+
 /* fn_0041a5a0 -- the stage's object pass -- is now HAND-PORTED, in
  * runtime/overrides/objects.c. The camera wrapper that used to sit here existed only because
  * the body was recompiled: it wrote the shifted camera into the guest's word around the call so
