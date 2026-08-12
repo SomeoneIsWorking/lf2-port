@@ -520,3 +520,59 @@ reach for a real sky too.
 
 LEFT: wiring the loader to the pass (background.c knows the stage and the registry, so it is
 where the lookup and the submit belong), and then the art, which is the hand-weaving itself.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the loader is WIRED, and the insertion-order question is what is left
+
+background.c now resolves `depth: layer <file>` against the loaded stage's own layers and
+loads a stage's `.stage` when the background index changes. Proven inside the running game:
+`tools/e2e.sh stage_geom`, three arms, all green.
+
+WHERE THE FILES LIVE, and why it took a decision. The port's cwd is the GAME TREE, because the
+game opens all of its own data by relative path -- and the game tree is neither in this repo nor
+shipped by it. Authored geometry is the PORT's content, committed here. So `stages/` is copied
+next to the binary by CMake and looked for there first, with the working directory second so a
+drop-in into an existing game tree also works. No absolute path is baked in anywhere.
+
+That copy is a custom TARGET and not a POST_BUILD command, and the difference is not cosmetic:
+POST_BUILD only fires when the target relinks, so an author who adds a .stage and rebuilds would
+get nothing copied and a game reporting no geometry -- the exact silent failure this subsystem
+is careful about everywhere else.
+
+WHY THE ROUTE EXISTS when ctest already walks the loader offline. Three things only exist once
+the game is running, and every one of them fails SILENTLY into a game that draws exactly as it
+did before -- which is also what success looks like on a stage nobody has woven:
+
+  - is `stages/` found at all (a copy step that did nothing looks identical)
+  - is the stage identified by its own name (that comes from the record, C033)
+  - does `depth: layer <file>` resolve against the LOADED stage's layers
+
+So the route asserts all three states. `present` loads at the layer's DERIVED depth and the
+depth is asserted, not the vertex count alone -- a solid at the wrong depth parses, counts and
+is still wrong. Brokeback Clif's `bc1.bmp` spans 1379 on a 1500 stage, so (1500-794)/(1379-794)
+= 1.2068, written into the test rather than copied from its output, and that is what came back.
+`bad` names a layer the stage does not have and must be REFUSED -- the arm that proves the
+lookup reads the real record, since a lookup returning a constant would pass `present` whenever
+the constant happened to be right. `absent` must say so and name where it looked.
+
+THE FIXTURE IS NOT SHIPPED. It is written into the build directory for the run and removed
+after. A committed .stage would put a stray solid in front of every player on that stage, which
+is the author's call and not a test's. `stages/` is in the repo with a README and nothing else,
+and the README says the emptiness is the honest state.
+
+WHAT IS LEFT, and it is a design question rather than plumbing: SUBMITTING the vertices.
+`mesh_draw` returns one composited texture, and one texture goes into the painter order at ONE
+point -- but a set spans parallax depths and the game paints its own layers BETWEEN those
+depths. The Great Wall's `road3` is in front of the fighters while its `sky` is 267 deep, so
+"behind all layers" and "in front of all layers" are both wrong for a set that has a far pillar
+and a near railing.
+
+The shape that is actually right: a solid belongs immediately before the first layer whose
+derived depth is <= its own, which is the game's own painter order extended to authored
+geometry -- so the pass runs once per OCCUPIED gap, not once. That needs mesh.c to hold more
+than one live target (its contract today is "valid until the next call"). The number of gaps a
+hand-woven stage actually uses is small, so this is bounded, not a fan-out.
+
+Do NOT settle for a single insertion point. It would look right on the first authored stage --
+whichever one happens to have all its solids on one side of the layers -- and be wrong the
+moment a set has a foreground and a background piece, which is what a set IS.
