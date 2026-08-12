@@ -1,0 +1,15 @@
+# A fixture for tests/test_stagegeom.c. Not a real stage.
+stage: Great_Wall_Fixture
+
+solid:
+  model: models/box.obj
+  depth: layer hill1.bmp
+  at: 1200 0 400
+  tint: 255 128 0
+solid_end
+
+solid:
+  model: models/box.obj
+  depth: 1.0
+  at: 0 0 300
+solid_end

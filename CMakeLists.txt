@@ -202,6 +202,15 @@ target_include_directories(test_geom PRIVATE runtime runtime/overrides runtime/c
 target_compile_options(test_geom PRIVATE -Wall -Wextra)
 add_test(NAME geometry COMMAND test_geom)
 
+# The hand-woven stage geometry loader (issue #62). It takes no game data -- the caller resolves
+# a layer name to a span -- so it needs no guest and no GPU, only SDL's headers for MeshVertex.
+# Run from tests/ so the fixtures resolve by a relative path that is the same everywhere.
+add_executable(test_stagegeom tests/test_stagegeom.c runtime/video/stagegeom.c)
+target_include_directories(test_stagegeom PRIVATE runtime runtime/overrides runtime/video)
+target_link_libraries(test_stagegeom PRIVATE SDL3::SDL3)
+target_compile_options(test_stagegeom PRIVATE -Wall -Wextra)
+add_test(NAME stagegeom COMMAND test_stagegeom ${CMAKE_SOURCE_DIR}/tests/fixtures/stages)
+
 # The renderer's frame lifetime -- when a display list is cleared, how a frame held up under
 # the pause menu is rewound, which pooled texture serves a tile. runtime/video/render.c
 # includes the same header, so this is not a copy. No SDL, no window, no game.

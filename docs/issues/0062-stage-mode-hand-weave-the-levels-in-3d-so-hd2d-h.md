@@ -475,3 +475,48 @@ and a linear filter on a magnified texel is the blur that removing the whole-fra
 about.
 
 STILL LEFT for a stage to be woven: the authored-data format, and nothing else in the renderer.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- THE AUTHORED-DATA FORMAT EXISTS, and it is documented and tested
+
+docs/stage-geometry.md is what an author reads. runtime/video/stagegeom.c loads it. ctest
+stagegeom walks it offline in a millisecond.
+
+THE SHAPE, and the one decision in it worth explaining: `stages/<name>.stage` keyed on the
+stage's own bg.dat name, naming ordinary Wavefront OBJ models. An OBJ carries three axes and
+this engine needs four -- so how?
+
+  DEPTH IS A PROPERTY OF THE SOLID, NOT OF THE VERTEX. A pillar standing in a stage is at ONE
+  parallax depth; its vertices differ in x, jump and row. So the OBJ's `v x y z` become x, jump
+  and row, and the solid's own `depth:` line supplies the fourth. That is what lets any
+  modeller author for this without knowing anything about LF2's projection.
+
+  The limitation is written down rather than worked around: a solid that genuinely spans
+  parallax depths -- a wall receding from the fighters' plane into the distance -- has to be
+  split into several solids. That is LF2's projection, not the format's.
+
+`depth: layer hill1.bmp` is preferred to a number and takes the depth from the stage's OWN
+layer (C031), so an authored solid sits exactly in the plane of the art it belongs with and
+moves with it if the data ever says otherwise. Two cases have no derivable depth and the loader
+REFUSES rather than guessing: a stage that never pans, and a layer whose span is 794 or less.
+
+WHAT THE TEST IS ACTUALLY FOR. Every failure mode of a data loader is silent -- a missing file
+reads as "this stage has no geometry", an unknown key as a solid that never appears, an
+unresolvable layer as a solid at the wrong depth, a skipped OBJ line as a hole in the model.
+None crash and none look like a bug in a screenshot. So most of the 35 checks assert that the
+loader REFUSES, with a message naming the line: seven bad fixtures, each rejected for its own
+reason. The count of OBJ lines the subset does not read is reported rather than hidden, and the
+fixture deliberately contains four of them per model so that count is exercised.
+
+Two mutants run, because a test of refusals has to be shown to catch acceptance: silently
+ignoring an unknown key fails 2 checks, and defaulting an unresolvable layer to the fighters'
+plane fails 4.
+
+ONE FIXTURE WAS WRONG AND THE TEST CAUGHT IT: the no-derivable-depth case first used The Great
+Wall's real `sky`, span 800, which gives a six-pixel scroll range and a depth of 267 -- very far
+away and perfectly derivable. The loader was right and the fixture was not; it now uses a span
+of 794, where the range is genuinely zero. The comment says so, because the next person will
+reach for a real sky too.
+
+LEFT: wiring the loader to the pass (background.c knows the stage and the registry, so it is
+where the lookup and the submit belong), and then the art, which is the hand-weaving itself.

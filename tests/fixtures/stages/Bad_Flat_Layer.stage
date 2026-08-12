@@ -1,0 +1,4 @@
+solid:
+  model: models/box.obj
+  depth: layer flat.bmp
+solid_end
