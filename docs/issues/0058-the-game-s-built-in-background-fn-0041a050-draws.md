@@ -94,3 +94,31 @@ WHAT IS LEFT: name the three screens. FUN_00429730 is the pre-fight overlay's ow
 non-match screens rather than a stage -- but that is a guess and the entry has been burned once
 already. Read the three call sites before assuming; the fix itself is unchanged and small, an
 override for fn_0041a050 with its five band widths reading bg_view_width().
+
+### Note (2026-08-12)
+THE THREE SELECTION SITES READ, and background 99 is a NORMAL SELECTABLE BACKGROUND rather than
+a special screen. That settles the entry's open question and justifies the fix.
+
+    0042d7d6  CALL 0x00417170(0xe0, ...)          ; picks a background
+    0042d7db  MOV [0x0044d024],EAX                ; ...and stores it
+    0042d7e6  MOV ECX,[[ESI+0x7d4]+0x4d82384]     ; the background COUNT from the registry
+    0042d7ec  SUB ECX,3
+    0042d7f2  CMP EAX,ECX
+    0042d7f4  JNZ +                               ; if the pick is (count - 3)...
+    0042d7f6  MOV [0x0044d024],0x63               ; ...it becomes the built-in one
+
+and the other two are a CYCLE, which is what a chooser looks like:
+
+    004339a4  CMP EAX,0x64 / JNZ  ->  MOV [0x0044d024],0x63    ; 100 wraps back to 99
+    004339be  CMP EAX,0x63 / JNZ  ->  MOV [0x0044d024],EBP     ; 99 steps on
+
+So 99 sits INSIDE the range a player cycles through when choosing a stage, and one particular
+pick out of the table maps onto it. It is not a debug screen and not dead code: an ordinary
+player reaches it by choosing backgrounds, which is exactly why no scripted route ever has --
+every route takes the default and never touches the chooser.
+
+CONCLUSION: the fix is worth doing. fn_0041a050 (502 bytes) becomes an override with its five
+band widths reading bg_view_width(), the same substitution made for the layer pass and now for
+the object pass. It should be accepted the same way -- byte-identity against the recompiled body
+at a 794 view, in pixels and state, which tools/routes/objects_test.sh is now the template for.
+A route that reaches it needs to drive the background chooser, which nothing does yet.
