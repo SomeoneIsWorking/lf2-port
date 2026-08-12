@@ -109,6 +109,51 @@ static inline void geom_window_to_compose(int win_w, int win_h, int comp_w, int 
     *cy = (wy - ry) / s;
 }
 
+/* ---- HOW FAR AWAY A BACKGROUND LAYER IS, WHICH THE GAME ALREADY SAYS (issues #49, #62) ----
+ *
+ * The hand-woven stage sets need a depth for everything in them, and the assumption behind
+ * issue #62 was that all of it would have to be authored. For the layers the game already
+ * draws, it does not: the depth is in the shipped data and has been all along.
+ *
+ * THE DERIVATION, from the parallax the port already implements. fn_0041a250 offsets a layer by
+ *
+ *     off = -((span - 794) * camera) / (stage_width - 794)
+ *
+ * so a layer moves at RATE r = (span - 794) / (stage_width - 794) as the camera pans: r = 0 is
+ * a layer that never moves, r = 1 is one that moves exactly with the camera. That is a
+ * perspective divide written as a scroll ratio. For a camera translating past a point at depth
+ * z, the point's screen shift goes as 1/z, so a layer at rate r sits at
+ *
+ *     z / z_ref = 1 / r
+ *
+ * where z_ref is the plane that moves 1:1 with the camera -- the plane the FIGHTERS stand in,
+ * since the game pans to keep them centred. Every number in it is already read by
+ * runtime/overrides/background.c.
+ *
+ * WHY THIS IS AN IDENTIFICATION AND NOT AN ANALOGY, and it is worth stating because a plausible
+ * formula over two numbers is cheap. Applied to all 12 shipped stages it produces a depth
+ * ordering that matches each stage's own DRAWING ORDER, which nothing forced it to: Tai Hom
+ * Village comes out 134, 17.5, 13.9, 1.75, 1.45, 1.33, 1.11, 1.00 in file order; CUHK puts its
+ * sky at 4.66, its buildings at 2.1-2.6 and its front floor at 1.00. And it predicts something
+ * no ordering could have suggested -- The Great Wall's `road3` has rate 1.125, i.e. z 0.89,
+ * IN FRONT of the fighters -- which is exactly what that layer is: the strip along the bottom
+ * of the screen at y 481.
+ *
+ * THE TWO DEGENERATE CASES ARE REAL STAGES, not guards invented for the arithmetic:
+ *   stage_width <= 794   HK Coliseum. There is no camera pan at all, so no layer's rate is
+ *                        observable and no depth can be derived. Returns 0, meaning "unknown".
+ *   span <= 794          a layer that never moves: infinitely far. Returns 0 as well, and the
+ *                        caller must place it at its own far plane rather than at 1/0.
+ * A caller that treats 0 as "at the fighters' plane" would put every stage's sky in the fight.
+ */
+static inline float geom_layer_depth(int span, int stage_width)
+{
+    if (stage_width <= GEOM_SCREEN_W) return 0.0f;   /* no pan: nothing is observable */
+    const float r = (float)(span - GEOM_SCREEN_W) / (float)(stage_width - GEOM_SCREEN_W);
+    if (r <= 0.0f) return 0.0f;                      /* never moves: infinitely far */
+    return 1.0f / r;
+}
+
 /* ---- A SCALED DISPLAY, AND THE POINTER ON ONE (issue #56) ----
  *
  * SDL sizes a window in POINTS and draws it in PIXELS, and on a HiDPI display those differ by

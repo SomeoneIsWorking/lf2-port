@@ -287,6 +287,82 @@ static void test_density(void)
     }
 }
 
+/* ---- A BACKGROUND LAYER'S DEPTH IS IN THE SHIPPED DATA (issues #49, #62) ----
+ *
+ * Every number below is a real layer of a real stage, read out of its bg.dat with
+ * tools/re/decrypt_dat.py. They are here rather than in a note because the whole value of the
+ * derivation is that it agrees with twelve stages it was not fitted to -- a formula over two
+ * numbers is cheap, and what makes this an identification is that the depths come out in each
+ * stage's own DRAWING ORDER without being asked to.
+ */
+static void test_layer_depth(void)
+{
+    /* THE ANCHOR. A layer whose span equals the stage width moves 1:1 with the camera, so it
+     * is at the fighters' own plane -- depth exactly 1. Every stage has at least one. */
+    eqf("Great Wall road2 (span 2400, stage 2400) is at the fighters' plane",
+        geom_layer_depth(2400, 2400), 1.0f);
+    eqf("Brokeback Clif bc4 (1500/1500) likewise", geom_layer_depth(1500, 1500), 1.0f);
+
+    /* THE FAR END. The Great Wall's sky barely moves at all: span 800 on a 2400 stage is a
+     * scroll range of six pixels across the whole level. */
+    eqf("Great Wall sky (800/2400) is 1606/6 = 267 deep",
+        geom_layer_depth(800, 2400), 1606.0f / 6.0f);
+    /* Six pixels of travel against a 1606-pixel pan. Written as the ratio rather than as 267.67
+     * so the check states the DERIVATION and not a number copied out of a run -- an expectation
+     * transcribed from the output it is checking cannot fail. */
+    eq("...and that is far beyond the fighters", geom_layer_depth(800, 2400) > 100.0f, 1);
+
+    /* THE MIDDLE, in drawing order, on a stage that has a full gradient of them. Tai Hom
+     * Village's layers are authored back to front and the depths must come out monotonically
+     * DECREASING -- nothing in the arithmetic forces that, which is the point. */
+    {
+        const int thv[] = { 800, 840, 852, 1255, 1350, 1400, 1520, 1600 };
+        float prev = 1e9f;
+        for (unsigned i = 0; i < sizeof thv / sizeof thv[0]; i++) {
+            const float d = geom_layer_depth(thv[i], 1600);
+            char what[96];
+            snprintf(what, sizeof what,
+                     "Tai Hom Village layer %u (span %d) is nearer than the one behind it",
+                     i, thv[i]);
+            eq(what, d < prev, 1);
+            prev = d;
+        }
+        eqf("Tai Hom Village's backmost layer is 134 deep", geom_layer_depth(800, 1600),
+            806.0f / 6.0f);
+        eqf("and its frontmost is at the fighters' plane", geom_layer_depth(1600, 1600), 1.0f);
+    }
+
+    /* THE PREDICTION, which is what raises this above curve-fitting: The Great Wall's road3
+     * has a span WIDER than the stage, so its rate exceeds 1 and its depth is less than the
+     * fighters' -- it is in FRONT of them. That is exactly what the layer is (y 481, the strip
+     * along the bottom of the screen), and no ordering argument could have suggested it. */
+    {
+        const float d = geom_layer_depth(2600, 2400);
+        eq("Great Wall road3 (2600/2400) is IN FRONT of the fighters", d < 1.0f, 1);
+        eqf("...at 1606/1806 of their depth", d, 1606.0f / 1806.0f);
+    }
+
+    /* THE TWO DEGENERATE CASES, which are real stages and not invented guards. Both return 0
+     * for UNKNOWN, and the header says why a caller must not read that as "at the fighters'
+     * plane": doing so would put every stage's sky into the fight. */
+    eqf("HK Coliseum (stage 794) has no pan, so no depth is observable",
+        geom_layer_depth(794, 794), 0.0f);
+    eqf("a stage narrower than the screen likewise", geom_layer_depth(700, 700), 0.0f);
+    eqf("a layer that never moves is infinitely far, reported as unknown",
+        geom_layer_depth(794, 2400), 0.0f);
+    eqf("and so is one whose span is below the screen", geom_layer_depth(600, 2400), 0.0f);
+
+    /* AND THE NEGATIVE THAT KEEPS THE REST HONEST: two layers at different spans on the same
+     * stage must NOT come out at the same depth. Without this, a broken derivation returning a
+     * constant would satisfy every "is nearer than" check above by never changing at all --
+     * no, it would not, but it would satisfy the anchors, which is the half that reads as
+     * confirmation. */
+    eq("CUHK's sky and its front floor are at different depths",
+       geom_layer_depth(967, 1600) != geom_layer_depth(1600, 1600), 1);
+    eq("and the sky is the further of the two",
+       geom_layer_depth(967, 1600) > geom_layer_depth(1600, 1600), 1);
+}
+
 /* ---- how much world is on screen ---- */
 static void test_compose(void)
 {
@@ -490,6 +566,7 @@ int main(void)
     test_screen_align();
     test_unproject();
     test_density();
+    test_layer_depth();
     test_compose();
     test_parallax();
     test_camera();

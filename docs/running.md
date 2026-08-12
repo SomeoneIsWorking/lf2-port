@@ -1101,7 +1101,15 @@ before searching it.
 
       tools/re/stage_gaps.py                # every stage at a 978 view (a 1080p window)
       tools/re/stage_gaps.py --view 2542    # an ultrawide window
+      tools/re/stage_gaps.py --depth        # each layer's depth, from its own parallax rate
       tools/re/stage_gaps.py --all          # the prop trap, and why it is not the answer
+
+  `--depth` prints the other half of the work order, and it is the half that turned out not to
+  need authoring at all: a layer's scroll rate `(span-794)/(stage_width-794)` is a perspective
+  divide written as a ratio, so its depth is `1/rate` with 1.0 being the plane the fighters
+  stand in — already in the shipped data for every layer of every stage (claim C031,
+  `geom_layer_depth`). Only NEW solids have to be given one. Rate above 1 means a layer is in
+  FRONT of the fighters, which The Great Wall's `road3` is.
 - `LF2_SCREEN_HASH=1` — reports a screen change when a large fraction of a subsampled
   framebuffer signature differs, so menu animation does not register. This is the only
   usable "did anything happen" signal, since the key array reads the same on most screens.
