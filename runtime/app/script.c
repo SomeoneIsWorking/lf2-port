@@ -30,14 +30,21 @@
  * first press cut 840 frames of waiting off the front of every run (issue #57). Like the
  * others it comes from what the game DRAWS -- the flat backdrop colour that appears exactly
  * once in .text -- so it cannot be true on a build that never reached the screen. */
-enum { SCREEN_N = 4 };
-static long screen_first[SCREEN_N] = { -1, -1, -1, -1 };
-static const char *const SCREEN_NAME[SCREEN_N] = { "frontend", "charselect", "overlay", "match" };
+/* `modemenu` is the VS / Stage / Championship list. It is drawn in EVERY run -- at frame 5,
+ * between the loading screen and character selection (issue #59) -- but for only a frame or
+ * two, because a route's presses go straight through it. LF2_MODE holds it open. It is here
+ * because issue #22 needs a frame that is DEMONSTRABLY the mode menu as its positive control:
+ * that screen and character selection share a blit destination and can share a picture, so
+ * "which screen is this" cannot be read off a frame dump by comparing it with another dump. */
+enum { SCREEN_N = 5 };
+static long screen_first[SCREEN_N] = { -1, -1, -1, -1, -1 };
+static const char *const SCREEN_NAME[SCREEN_N] = { "frontend", "modemenu", "charselect",
+                                                   "overlay", "match" };
 
 void script_observe_screens(long frame)
 {
-    const int up[SCREEN_N] = { panel_frontend_up(), panel_charselect_up(), panel_overlay_up(),
-                               panel_hud_up() };
+    const int up[SCREEN_N] = { panel_frontend_up(), panel_modemenu_up(),
+                               panel_charselect_up(), panel_overlay_up(), panel_hud_up() };
     for (int i = 0; i < SCREEN_N; i++)
         if (up[i] && screen_first[i] < 0) {
             screen_first[i] = frame;
