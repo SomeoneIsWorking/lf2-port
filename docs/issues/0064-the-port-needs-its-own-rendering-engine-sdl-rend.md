@@ -191,3 +191,34 @@ STILL OUT: the lighting. hd2d is a post-process over a finished picture, reconst
 from the gradient of a sprite's silhouette because that is all it has by the time it runs. The
 engine now has a real depth buffer, stored, with sprites and geometry both in it -- which is the
 input that pass never had.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the codemap's renderer row had become unreadable; split into four
+
+Not a renderer change. A WORKFLOW defect, and it outranks the feature work by the project's own
+rule: the codemap is what a session is supposed to CONSULT at the start, and the "Native
+renderer" cell had grown to 19,711 characters -- roughly 1,500 words in a single table cell,
+accreted one commit at a time. Nobody can read that at the start of a session, so in practice
+nobody would, and the map stops doing its job while still looking maintained.
+
+The cause is structural rather than carelessness: every renderer commit appended its findings to
+the one cell because there was only one cell. The fix is the split, not a trim.
+
+    Renderer: the engine          engine.c/.h, quad shaders  -- what draws
+    Renderer: display list        render.c/.h                -- what records
+    Renderer: HD2D lighting       hd2d.c, stagelight.h       -- what shades
+    Renderer: stage geometry      mesh.c, stagegeom.c        -- what is authored
+
+19,711 chars -> 1,700..2,900 each. Nothing was invented and nothing load-bearing was dropped:
+every claim reference (C010, C018, C019, C021, C029, C031, C032, C033, C034), every hard-won
+constraint, and every "this obvious fix is wrong and why" survives. What went is the NARRATIVE --
+the sentences that recorded the order things were discovered in, which is exactly what the issue
+notes and commit messages already hold and what a status map should not.
+
+Each row now answers what a map is for: what exists, what its status is, what is missing, and the
+non-obvious facts a reader would otherwise re-derive.
+
+STILL OVERSIZE and left alone deliberately: the Widescreen row, at 7,292 characters. It has the
+same disease and deserves the same treatment, but splitting two subsystems in one pass would make
+the diff impossible to check against the originals -- and an unreviewable doc change is how a
+load-bearing sentence gets silently lost.
