@@ -83,3 +83,43 @@ modelling is done -- otherwise the models arrive and cannot be drawn.
 
 NOTHING HAS BEEN BUILT, and nothing should be until the reporter asks. This is a cost estimate,
 recorded so the cost is known when the question is asked rather than discovered afterwards.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the blocker is smaller than the estimate said: depth is ADDITIVE
+
+The feasibility note above says the first commit is a depth buffer, and that this "means either
+SDL_GPU directly rather than SDL_Render, or a depth pre-pass faked into the existing shader
+path... a renderer change of the same size as issue #30's original work". Read against SDL 3.4's
+own headers, the first half of that dichotomy is a false one.
+
+WHAT THE HEADERS SAY (both checked, /usr/include/SDL3):
+  - SDL_render.h contains the string "depth" ZERO times. There is no depth attachment and no
+    depth test on the 2D path. That half of the estimate stands.
+  - SDL_render.h also exposes `SDL_GetGPURendererDevice(SDL_Renderer *)` and the property
+    `SDL_PROP_RENDERER_GPU_DEVICE_POINTER`. The `gpu` backend the port already asks for BY NAME
+    (claim C020) is built on an SDL_GPUDevice the port can take a handle to.
+
+SO THE SHAPE IS: one device, two consumers. Everything the port draws today keeps going through
+SDL_Render exactly as it does. Hand-woven geometry is rendered by a SEPARATE SDL_GPU pass on
+the SAME device, into its own colour target with its own depth attachment, depth-tested
+properly against itself -- and the finished texture is then handed to the display list as an
+ordinary quad. No rewrite of render.c, no second device, no change to the software fallback,
+and `tools/e2e.sh background`'s byte-identity arm is untouched because a stage with no geometry
+submits no pass.
+
+WHY THAT IS ENOUGH FOR WHAT WAS ACTUALLY ASKED FOR, and this is the part the estimate did not
+separate: issue #62 asks for the LEVELS to be woven in 3D -- the set the fighters stand in, not
+the fighters. A set is BEHIND every sprite, so it never has to interpenetrate one; the
+interpenetration that genuinely needs a shared depth buffer is mesh-against-mesh, and that is
+entirely inside the offscreen pass. LF2's own painter order continues to place the sprites, as
+it always has.
+
+WHAT IS STILL UNVERIFIED and needs a spike on the GPU: that
+`SDL_GetGPURendererDevice` returns a usable device for a renderer created as
+`SDL_CreateRenderer(window, "gpu")` rather than via `SDL_CreateGPURenderer`. The property is
+documented for the backend, but "documented" is not "measured" -- and if it returns NULL the
+port would create the device itself and pass it to `SDL_CreateGPURenderer`, which is a
+three-line change to window creation rather than a rewrite either way.
+
+This does not make #62 small. It makes its FIRST commit small, which is what the estimate was
+about.

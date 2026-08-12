@@ -1,7 +1,7 @@
 ---
 id: 23
 title: Widescreen: a stage's sky layer stops at 794 and leaves black beside it
-status: open
+status: resolved
 symptom: in a window wider than 794x550 the upper part of the stage background ends partway across and the rest of that band is black, while the ground and the tiling layers do fill the width
 tags: rendering
 created: 2026-08-05
@@ -596,3 +596,6 @@ whose backmost layer is a static 794-800 px picture, plus Brokeback_Clif (1379),
 and the three Templates (967), against whatever view the window gives.
 
 STATUS: not fixable on its own. Reopened work belongs to #62.
+
+### Resolution (2026-08-12)
+Folded into #62. Reading every shipped bg.dat killed the span<=view predicate three edits were pinned around -- it catches props (a 180px patch of grass, a 127px lamp post) that have the next layer behind them. Only the BACKMOST run leaves real black, and tools/re/stage_gaps.py now measures it: 9 of 12 stages short at a 978 view, 11 of 12 at 2542. Asked with those numbers the reporter chose to hand-weave the columns rather than stretch, tile, mirror, edge-clamp or letterbox them, so this entry has no fix of its own and hands its measurement to #62 as that entry's first work order.

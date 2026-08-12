@@ -39,6 +39,7 @@
  *   fn_0043f010  text.c     clip draw -- glyph hinting, the ad notice, the game's cursor
  *   fn_00423940  text.c     font sheet selection
  *   fn_0043c4a0  text.c     text draw
+ *   fn_0041b130  text.c     the mode caption -- right-anchored to the VIEW (issue #60)
  *   fn_004148a0  assets.c   the data-file decrypt
  *   fn_0041a250  background.c  the stage's background layer draw -- parallax, tiling, cc/c1/c2
  *   fn_00416fb0  audio_pan.c   stereo pan for one sound source, category A

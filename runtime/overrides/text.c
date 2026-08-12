@@ -6,6 +6,7 @@
 
 #include "overrides.h"
 #include "world.h"
+#include "geom.h"
 
 #include "guest_ops.h"
 #include "guest_map.h"
@@ -247,4 +248,113 @@ void fn_0043c4a0(void)
     if (getenv("LF2_ADS_ON")) { void fn_0043c4a0__orig(void); fn_0043c4a0__orig(); return; }
     R(EAX) = 0;
     R(ESP) += 4;                             /* pop the return address only */
+}
+
+/* ---------------------------------------------------------------------------
+ * fn_0041b130 -- the mode caption at the bottom of the screen, "Stage mode (Difficult)".
+ *
+ * Issue #60. It is drawn RIGHT-ANCHORED to the game's own 794-wide screen and nothing moved
+ * it when the composition is wider, so on a 978-wide view it sat 184 px short of the edge.
+ *
+ * READ OUT OF THE DECOMPILATION, and the entry's previous conclusion was wrong because it was
+ * not. That note searched the two small callers of the outline wrapper for the literals 0x31a
+ * and 0x319, found neither, and concluded the constant must live in fn_004246b0 -- one of the
+ * four monoliths this project does not hand-port -- which closed the issue off as "decide
+ * whether a static label is worth a data-word hunt inside 20 KB". Neither half held up. The
+ * constant is 0x316, not 0x31a, and the x is not a literal at all:
+ *
+ *     FUN_00423a70(&caption, strlen(caption) * -8 + 0x316, 0x213, 0x40, 4, 0, 0)
+ *
+ * 0x316 is 790, which is 794 less a four-pixel right margin, and the layout is the standard
+ * right-anchor: the string's own length decides where it starts. That is in fn_0041b130, 598
+ * bytes, not in any monolith -- so the substitution that fixed issues #55 and #58 applies
+ * here after all: own the function, and make its 794 the view.
+ *
+ * WHAT THIS FUNCTION DOES, in full: it assembles the caption into the guest buffer at
+ * CAPTION from the game mode (its first argument) and the difficulty word, then draws it. The
+ * strings are copied FROM THEIR GUEST ADDRESSES rather than transcribed into this file --
+ * they are the shipped binary's text and do not belong in the repo, and reading them at
+ * runtime is also what makes this port exact rather than a re-typing of it.
+ *
+ * The two y values are the game's: 531 normally, 510 when the caller asks for the raised
+ * position. Neither moves, because the vertical layout is not what widescreen changes.
+ *
+ * WHY THE PORT'S CONTROLS HINT DOES NOT COLLIDE, which the entry flagged as the open risk:
+ * that hint is LEFT-anchored (`8 + screen_offset_x()`, runtime/video/ddraw.c) on the same
+ * bottom edge. Right-anchoring the caption to the VIEW moves it further from the hint than it
+ * is today, not closer -- the two only converge as the view NARROWS, and the view floors at
+ * the game's own 794 where this is byte-identical anyway.
+ *
+ * ABI: __cdecl-in-guest, two stack arguments, RET 8.
+ * ------------------------------------------------------------------------ */
+void fn_0041b130__orig(void);
+
+enum { CAPTION = 0x00450c38, DIFFICULTY = 0x00450c30, STAGE_KIND = 0x00450b94 };
+/* The right margin the game lays the caption out against: 794 - 790. */
+enum { CAPTION_MARGIN = GEOM_SCREEN_W - 0x316, CAPTION_Y = 0x213, CAPTION_Y_RAISED = 0x1fe };
+
+/* The game's own strings, by guest address. Nothing here is a copy of one. */
+static uint32_t caption_mode_str(int32_t mode)
+{
+    switch (mode) {
+    case 0:  return 0x004490cc;
+    case 1:  return ((int32_t)LD32(STAGE_KIND) / 10 == 5) ? 0x004490b0 : 0x004490c0;
+    case 2:  return 0x0044909c;
+    case 3:  return 0x00449094;
+    case 4:  return 0x00449084;
+    default: return 0;              /* the game leaves the buffer alone; so does this */
+    }
+}
+
+static uint32_t caption_difficulty_str(void)
+{
+    switch ((int32_t)LD32(DIFFICULTY)) {
+    case  0: return 0x004490a4;
+    case  1: return 0x00449078;
+    case  2: return 0x00449070;
+    case -1: return 0x00449064;
+    default: return 0;              /* no suffix, exactly as the game's fall-through */
+    }
+}
+
+static uint32_t guest_append(uint32_t dst, uint32_t src)
+{
+    if (!src) return dst;
+    while (LD8(dst)) dst++;
+    for (;;) { const uint8_t c = LD8(src++); ST8(dst++, c); if (!c) break; }
+    return dst - 1;                 /* the new terminator */
+}
+
+void fn_0041b130(void)
+{
+    /* LF2_CAPTION_ORIG=1 runs the recompiled body, which is the gate's control arm. */
+    if (getenv("LF2_CAPTION_ORIG")) { fn_0041b130__orig(); return; }
+
+    const int32_t mode    = (int32_t)LD32(R(ESP) + 4);
+    const int32_t raised  = (int32_t)LD32(R(ESP) + 8);
+
+    const uint32_t base = caption_mode_str(mode);
+    if (base) { ST8(CAPTION, 0); guest_append(CAPTION, base); }
+    const uint32_t end = guest_append(CAPTION, caption_difficulty_str());
+    const int len = (int)(end - CAPTION);
+
+    /* THE ONE CHANGED NUMBER. The game anchors to its own screen's right edge; the port
+     * anchors to the VIEW's, which is the same thing at 794 and is what widescreen means
+     * everywhere else in this port. */
+    const int32_t x = (int32_t)bg_view_width() - CAPTION_MARGIN - 8 * len;
+    const int32_t y = raised ? CAPTION_Y_RAISED : CAPTION_Y;
+
+    /* fn_00423a70(str, x, y, cols, rows, 0, 0) -- the outline wrapper, seven arguments pushed
+     * right to left, __cdecl: the callee pops only the return address and this pops the
+     * arguments. The return address is the game's own, from the call site this replaces
+     * (guest 0x0041b349), so a trace through here reads as the original call rather than as a
+     * synthetic one. */
+    void fn_00423a70(void);
+    PUSH32(0u); PUSH32(0u); PUSH32(4u); PUSH32(0x40u);
+    PUSH32((uint32_t)y); PUSH32((uint32_t)x); PUSH32(CAPTION);
+    PUSH32(0x0041b349u);
+    fn_00423a70();
+    R(ESP) += 28;
+
+    R(ESP) += 4 + 8;                       /* RET 8 */
 }
