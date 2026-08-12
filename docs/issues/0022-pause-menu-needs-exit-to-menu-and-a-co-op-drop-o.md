@@ -5,7 +5,7 @@ status: open
 symptom: the pause menu offers only RESUME and QUIT GAME: there is no way back to the front end without killing the process, and a joined player has no way to leave a match deliberately
 tags: reported,pause,menu,coop,drop-in,ux
 created: 2026-08-05
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 REPORTED. runtime/app/pause.c currently has exactly two items:
@@ -356,3 +356,35 @@ addresses a few frames after the exit completes and reports what each held first
 explicitly when a word was ALREADY zero so that writing nothing cannot read as a negative. It
 costs a run per candidate rather than a rebuild. It is the discriminator downstream of it that
 was missing.
+
+### Note (2026-08-12)
+THE POSITIVE CONTROL EXISTS NOW. This entry said: 'WHAT THE NEXT SESSION MUST DO FIRST, before
+any more diffing or probing: get a frame that is DEMONSTRABLY the mode menu -- the VS / Stage /
+Championship list -- and know what drove the game there. Until that exists there is no positive
+control, and without one every result here is the same shape: a measurement that cannot fail.'
+
+Done, and it took two things that did not exist when this was written:
+
+  panel_modemenu_up()   issue #51 -- the mode menu identified by the full-screen colour only it
+                        paints (0x122565, one site in the whole binary), rather than by the game
+                        MODE word that reads 1/4/5 in a match
+  @modemenu             a route anchor over that signal, so a dump can be aimed at the screen
+                        instead of at a frame number
+
+And the screen is reachable and held: LF2_MODE holds the mode menu open (it reports doing so),
+so a dump at @modemenu+20 lands squarely on it rather than in the frame or two it is up for
+otherwise (issue #59 -- it IS drawn in every run, at frame 5).
+
+    screens reached -- frontend@1 modemenu@6 charselect@7 overlay@427
+    mode-menu frame vs character-select frame: 65507/436700 px differ (15.0%)
+
+FIFTEEN PER CENT, against the 0.0% that made every earlier comparison in this entry vacuous.
+The two screens are now distinguishable by picture, which is what the whole method needed.
+
+WHAT THAT UNBLOCKS, in order: the six candidate words -- 0x00451200, 0x004511fc, 0x0045115c,
+0x00450b80, 0x00450b90, 0x004554d0 -- are recorded above as UNTESTED, not eliminated, because
+they were judged against a comparison that could not fail. Each can now be re-run with
+LF2_EXIT_PROBE and judged against a real 15% baseline: a word whose zeroing puts the game on the
+mode menu should move the picture toward the mode-menu frame, and one that does nothing should
+leave it on character select. That is a discriminator with both classes available for the first
+time in this entry's life.
