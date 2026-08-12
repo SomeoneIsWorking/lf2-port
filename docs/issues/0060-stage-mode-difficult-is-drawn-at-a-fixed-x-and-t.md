@@ -64,3 +64,30 @@ STILL OPEN, unchanged: where the caption BELONGS in a wide view. It is right-anc
 game's 794, so the faithful port is to right-anchor it to the view -- but the port's own controls
 hint already sits along that bottom edge, and the two must not collide. Decide that with a
 screenshot, not from the code.
+
+### Note (2026-08-12)
+MEASURED, and it corrects the note above it. The caption's glyphs do NOT come from FUN_00423a70's
+own draw at 00423a63; every one of them comes from ret=004239f2, which re/functions.tsv puts
+inside FUN_00423940 itself (298 bytes).
+
+    y=531/532   x=773, 774, 781, 782 ...   ret=004239f2   (1546 draws each)
+
+fn_00423940 IS ALREADY AN OVERRIDE in runtime/overrides/text.c, so unlike issues #55 and #58 no
+new port is needed to reach this draw -- the port already owns the function the glyphs come out
+of. And there is no 0x31a or 0x319 anywhere in its 298 bytes: it draws at whatever x it is handed
+and does no anchoring of its own.
+
+SO THE CONSTANT IS STILL FURTHER UP, in whatever calls FUN_00423a70 (the 139-byte layout wrapper,
+whose four calls into fn_00423940 are the only ones in the binary). The chain is now fully
+mapped and only its top is unnamed:
+
+    ??? computes x  ->  FUN_00423a70 (lays out)  ->  fn_00423940 (draws, OVERRIDDEN)  ->  glyphs
+
+DO NOT 'fix' this inside fn_00423940 by recognising the caption and shifting it. That override
+sees only an x and a string; recognising the caption there means matching on its text or its y,
+which is the pattern-matching this port refuses -- and it would move any other string that
+happened to share the row. The constant belongs to the function that computes it, and that is
+the one to find and own.
+
+The remaining question is still the design one and still wants a screenshot: right-anchored to the
+view is the faithful reading, but the port's controls hint shares that bottom edge.
