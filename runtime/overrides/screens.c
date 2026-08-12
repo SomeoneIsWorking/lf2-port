@@ -363,6 +363,7 @@ static void exit_probe(long f);
 void exit_probe_tick(long f);
 static long exit_probe_watch_from = -1;
 static int  exit_probe_saw_menu;
+static int  exit_probe_said;
 static int  exit_dev = -1;
 static long exit_since, exit_overlay_at;
 
@@ -398,6 +399,11 @@ void exit_to_menu_begin(int dev)
 
 void exit_to_menu_tick(void)
 {
+    /* BEFORE the early-out, and that is the whole point: exit_probe zeroes exit_state when it
+     * writes, so a watch armed there and ticked below this line never ran at all -- seven
+     * candidate runs printed their write and then said NOTHING, which reads as "no verdict"
+     * rather than as "the instrument is dead". */
+    exit_probe_tick(hostwin_frames());
     if (!exit_state) return;
     const long f = hostwin_frames();
 
@@ -414,7 +420,6 @@ void exit_to_menu_tick(void)
     }
 
     if (exit_state == 3) { exit_probe(f); return; }
-    exit_probe_tick(f);
     if (!overlay_open()) return;
     if (exit_state == 1) {
         exit_state = 2;
@@ -487,9 +492,17 @@ enum { EXIT_PROBE_WATCH = 240 };
 
 void exit_probe_tick(long f)
 {
+    /* SELFTEST: arm the watch at frame 0 instead of after an exit. The mode menu is drawn at
+     * frame 5 of every run (issue #59), so it falls inside the window and the POSITIVE branch
+     * MUST print. Without this the probe has only ever been run against one class -- seven
+     * candidates in a row reported "did not appear", which is indistinguishable from a verdict
+     * that cannot say anything else. This is the case that makes the negatives mean something. */
+    if (exit_probe_watch_from < 0 && getenv("LF2_EXIT_PROBE_SELFTEST")) exit_probe_watch_from = 0;
     if (exit_probe_watch_from < 0) return;
     if (panel_modemenu_up()) exit_probe_saw_menu = 1;
-    if (f - exit_probe_watch_from == EXIT_PROBE_WATCH) {
+    if (exit_probe_said) return;
+    if (f - exit_probe_watch_from >= EXIT_PROBE_WATCH) {
+        exit_probe_said = 1;
         if (exit_probe_saw_menu)
             fprintf(stderr, "exit probe: THE MODE MENU CAME UP within %d frame(s) of the write "
                             "-- this candidate reaches it\n", EXIT_PROBE_WATCH);

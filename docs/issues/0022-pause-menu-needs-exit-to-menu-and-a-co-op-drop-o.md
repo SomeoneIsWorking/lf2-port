@@ -388,3 +388,41 @@ LF2_EXIT_PROBE and judged against a real 15% baseline: a word whose zeroing puts
 mode menu should move the picture toward the mode-menu frame, and one that does nothing should
 leave it on character select. That is a discriminator with both classes available for the first
 time in this entry's life.
+
+### Note (2026-08-12)
+THE SIX CANDIDATES ARE ELIMINATED -- legitimately this time, with the discriminator run against
+BOTH classes before any of them was believed.
+
+    LF2_EXIT_PROBE_SELFTEST=1   exit probe: THE MODE MENU CAME UP within 240 frame(s)
+                                (screens reached -- frontend@1 modemenu@6 charselect@7)
+
+    00449060  (control)         the mode menu did NOT appear in the 240 frame(s) after the write
+    00451200                    did NOT appear
+    004511fc                    did NOT appear
+    0045115c                    did NOT appear
+    00450b80                    did NOT appear
+    00450b90                    did NOT appear
+    004554d0                    did NOT appear
+
+Every one of the seven writes HAPPENED -- the probe reports what each word held first and all
+seven were non-zero (93, 1, 1, 3, 1, 1, 4), so none of these is the "wrote a word already zero"
+non-result the entry warns about.
+
+WHAT MAKES THIS DIFFERENT FROM THE FIRST TIME THEY WERE "ELIMINATED": the earlier round judged
+them by diffing frames against a control that read 0.0%, and the entry correctly retracted it --
+"those six are NOT eliminated, they are untested". This round replaces the diff with
+panel_modemenu_up() (issue #51) and, crucially, PROVES THE VERDICT CAN SAY THE OTHER THING:
+LF2_EXIT_PROBE_SELFTEST arms the watch at frame 0, where the mode menu is drawn at frame 5 in
+every run (issue #59), so the positive branch must fire -- and does.
+
+AND THE INSTRUMENT WAS DEAD ON ITS FIRST RUN, silently. exit_probe zeroes exit_state when it
+writes, and exit_to_menu_tick begins `if (!exit_state) return;` -- so the watch, ticked below
+that line, never ran. Seven candidate runs printed their write and then said NOTHING. That reads
+as "no verdict yet" rather than "the instrument is dead", which is why the tick now runs BEFORE
+the early-out and why the self-test exists at all.
+
+WHERE THIS LEAVES THE ENTRY: the six words are gone, and the .data diff that produced them came
+from a mislabelled pair, so the LIST ITSELF is suspect rather than incomplete. The next step is
+not more candidates from that diff -- it is a fresh diff, now that a frame which is demonstrably
+the mode menu can be produced on demand (@modemenu, LF2_MODE holds it) and compared against the
+screen the exit actually reaches.
