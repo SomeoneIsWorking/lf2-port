@@ -123,3 +123,27 @@ three-line change to window creation rather than a rewrite either way.
 
 This does not make #62 small. It makes its FIRST commit small, which is what the estimate was
 about.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- measured: the device, the depth format and the bridge all work
+
+The note above reasoned from the headers that depth could be additive. It has now been RUN,
+both classes, under gpuguard -- claims C029 and C030:
+
+    gpu       renderer=gpu device=YES depth_d32=SUPPORTED driver=vulkan alloc=OK
+    software  renderer=software device=no
+    gpu       wrap=OK same_object=YES draw=OK
+    software  no device, so nothing to wrap -- the negative fired
+
+`same_object=YES` is the load-bearing one: reading SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER back
+off the wrapper returns the identical pointer, so SDL is holding the port's own GPU texture
+rather than having ignored the property and made a blank one.
+
+So the estimate in the feasibility note -- "a renderer change of the same size as issue #30's
+original work" -- does not apply to the first commit. The mesh pass shares the device the port
+already has, renders into its own colour and D32_FLOAT depth targets, and the finished colour
+target is wrapped as an SDL_Texture the existing display list draws. No copy, no rewrite of
+render.c, no second device, and the software compositor is untouched.
+
+This entry stays open for the MODELS. The renderer work moved to #62, which is the entry that
+asked for a use for them.
