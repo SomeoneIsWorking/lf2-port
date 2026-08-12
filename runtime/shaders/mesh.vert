@@ -70,6 +70,7 @@ layout(set = 1, binding = 0) uniform Camera {
 layout(location = 0) out vec3 v_normal;
 layout(location = 1) out vec4 v_color;
 layout(location = 2) out vec2 v_uv;
+layout(location = 3) out float v_depth;
 
 void main()
 {
@@ -99,6 +100,7 @@ void main()
     v_normal = a_normal;
     v_color  = a_color;
     v_uv     = a_uv;
+    v_depth  = depth;
     gl_Position = vec4(sx * cam.u_place.x + cam.u_place.y,
                        sy * cam.u_place.z + cam.u_place.w,
                        cz, 1.0);
