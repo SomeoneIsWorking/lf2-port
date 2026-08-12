@@ -23,11 +23,18 @@
 
 layout(location = 0) in vec3 v_normal;
 layout(location = 1) in vec4 v_color;
+layout(location = 2) in vec2 v_uv;
+
+/* The stage's art, sampled from the texture render.c has ALREADY uploaded (claim C032) rather
+ * than from a second copy. u_tint.x is 1 when a texture is bound and 0 when it is not, so the
+ * untextured case is a multiply by white rather than a second pipeline. */
+layout(set = 2, binding = 0) uniform sampler2D u_src;
 
 layout(set = 3, binding = 0) uniform Light {
     vec4 u_light;      /* xyz: direction TOWARD the light, stage axes. w: its strength. */
     vec4 u_sky;        /* rgb: hemisphere ambient from above. a: unused. */
     vec4 u_ground;     /* rgb: hemisphere ambient from below. a: unused. */
+    vec4 u_tint;       /* x: 1 when a texture is bound, 0 when it is not. */
 } lit;
 
 layout(location = 0) out vec4 o_color;
@@ -46,5 +53,11 @@ void main()
     float up = n.y * 0.5 + 0.5;
     vec3 ambient = mix(lit.u_ground.rgb, lit.u_sky.rgb, up);
 
-    o_color = vec4(v_color.rgb * (ambient + key), v_color.a);
+    /* The texture's alpha carries through: the colour key became alpha on upload, so a
+     * sprite's transparent pixels stay transparent here and the composite over the game's own
+     * layers is correct without a discard. */
+    vec4 tex = texture(u_src, v_uv);
+    vec4 base = mix(vec4(1.0), tex, lit.u_tint.x) * v_color;
+
+    o_color = vec4(base.rgb * (ambient + key), base.a);
 }

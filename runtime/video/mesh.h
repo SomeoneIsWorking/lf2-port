@@ -51,6 +51,7 @@ typedef struct {
     float jump;     /* LF2's vertical axis; subtracts from the row */
     float row;      /* the floor row this point stands on -- the game's z, C018 */
     float depth;    /* parallax depth, 1.0 = the fighters' plane; 0 = unknown/infinitely far */
+    float u, v;     /* into the source texture, 0..1; ignored when no texture is bound */
     float nx, ny, nz;
     float r, g, b, a;
 } MeshVertex;
@@ -70,8 +71,34 @@ int  mesh_ready(void);
  * is not a linear function of (X, depth, 1), so the divide is per vertex. See geom.h.
  *
  * The returned texture is owned by this module and is valid until the next call. */
+/* THE ART IS THE PASS'S OWN, and it is on the GPU twice. That is not the design anyone would
+ * choose and it is not an oversight -- claim C032 was recorded saying the pass could sample the
+ * texture render.c has already uploaded, through SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER, and it
+ * is FALSIFIED. The handle is readable; a sample through it from this pass's own command buffer
+ * comes back rgba(0,0,0,0).
+ *
+ * That was discriminated rather than assumed, against three controls in one run: the same quad
+ * with no texture reads white, so the geometry rasterises; a texture uploaded HERE and sampled
+ * by the same pipeline with the same UVs reads its two halves correctly, so the sampler and the
+ * UVs are right; and neither SDL_FlushRenderer nor drawing the source through SDL_Render first
+ * changes anything, so it is not an upload waiting on a flush. SDL's texture is simply not in a
+ * state a foreign command buffer can sample.
+ *
+ * So: mesh_upload gives back a handle the pass owns, and mesh_draw samples that. The cost is
+ * one extra copy of a stage's art in VRAM. The alternative -- reaching into SDL's texture --
+ * has been measured and does not work.
+ *
+ * `art` is NULL for flat vertex colour, which is a multiply by white in the shader rather than
+ * a second pipeline. */
+typedef struct MeshTexture MeshTexture;
+
+/* Upload RGBA8 pixels the pass will own. NULL if the pass is unavailable or the upload failed,
+ * and it says which. Free with mesh_texture_free. */
+MeshTexture *mesh_upload(const void *rgba, int w, int h);
+void         mesh_texture_free(MeshTexture *t);
+
 SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
-                       int camera, int view_w, int view_h);
+                       int camera, int view_w, int view_h, const MeshTexture *art);
 
 /* LF2_MESH_SELFTEST=1: submit two overlapping triangles in the WRONG painter order -- the far
  * one second -- and report whether the near one survived. A depth pass that is not actually
