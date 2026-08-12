@@ -546,7 +546,7 @@ static int targets_make(int w, int h)
         return 0;
     }
     SDL_SetTextureScaleMode(wrapped, SDL_SCALEMODE_NEAREST);
-    if (st_dof) { SDL_DestroyGPURenderState(st_dof); st_dof = NULL; }
+    if (st_dof)   { SDL_DestroyGPURenderState(st_dof); st_dof = NULL; }
 
     SDL_PropertiesID pg = SDL_CreateProperties();
     SDL_SetPointerProperty(pg, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, tex_gbuf);
@@ -960,8 +960,23 @@ static void gbuf_report(int w, int h)
     ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
     ti.size = (Uint32)bytes;
     SDL_GPUTransferBuffer *tb = SDL_CreateGPUTransferBuffer(DEV, &ti);
-    if (!tb) {
+    /* THE COLOUR TARGET IS READ BACK BESIDE IT, and that pairing is the whole point of the
+     * second buffer rather than a convenience. An effect gated on this G-buffer is driven by a
+     * CONJUNCTION -- it acts where a pixel is both selected by its own rule AND in the world --
+     * and neither buffer alone can say whether that conjunction is ever satisfied. Measured
+     * separately once, they both looked fine: a match frame had 1106 pixels over 0.75 luminance,
+     * and the buffer had real distances in it, and a luminance bloom over the two still changed
+     * NOTHING, because the two sets did not intersect at a single pixel. A histogram of each
+     * half would have gone on agreeing with itself indefinitely. */
+    SDL_GPUTransferBufferCreateInfo ci2;
+    SDL_zero(ci2);
+    ci2.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    ci2.size = (Uint32)((size_t)w * (size_t)h * 4u);   /* RGBA8 */
+    SDL_GPUTransferBuffer *cb = SDL_CreateGPUTransferBuffer(DEV, &ci2);
+    if (!tb || !cb) {
         fprintf(stderr, "engine gbuf: no download buffer (%s) -- READ NOTHING\n", SDL_GetError());
+        if (tb) SDL_ReleaseGPUTransferBuffer(DEV, tb);
+        if (cb) SDL_ReleaseGPUTransferBuffer(DEV, cb);
         return;
     }
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
@@ -971,15 +986,22 @@ static void gbuf_report(int w, int h)
     reg.texture = tex_gbuf; reg.w = (Uint32)w; reg.h = (Uint32)h; reg.d = 1;
     SDL_GPUTextureTransferInfo dst = { tb, 0, (Uint32)w, (Uint32)h };
     SDL_DownloadFromGPUTexture(cp, &reg, &dst);
+    reg.texture = tex_color;
+    SDL_GPUTextureTransferInfo dstc = { cb, 0, (Uint32)w, (Uint32)h };
+    SDL_DownloadFromGPUTexture(cp, &reg, &dstc);
     SDL_EndGPUCopyPass(cp);
     SDL_GPUFence *f = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
     if (f) { SDL_WaitForGPUFences(DEV, true, &f, 1); SDL_ReleaseGPUFence(DEV, f); }
 
     const uint16_t *px = (const uint16_t *)SDL_MapGPUTransferBuffer(DEV, tb, false);
-    if (!px) {
+    const uint8_t  *cx = (const uint8_t  *)SDL_MapGPUTransferBuffer(DEV, cb, false);
+    if (!px || !cx) {
         fprintf(stderr, "engine gbuf: the readback could not be mapped (%s) -- READ NOTHING\n",
                 SDL_GetError());
+        if (px) SDL_UnmapGPUTransferBuffer(DEV, tb);
+        if (cx) SDL_UnmapGPUTransferBuffer(DEV, cb);
         SDL_ReleaseGPUTransferBuffer(DEV, tb);
+        SDL_ReleaseGPUTransferBuffer(DEV, cb);
         return;
     }
     enum { BUCKETS = 24 };
@@ -987,11 +1009,38 @@ static void gbuf_report(int w, int h)
     long  cnt[BUCKETS];
     int nb = 0;
     long normals = 0, zero = 0, total = 0;
+    /* HOW MUCH OF THE FRAME'S BRIGHT SET IS ACTUALLY IN THE WORLD -- the question that killed
+     * the luminance bloom (issue #63), kept because it is the question any future
+     * brightness-driven effect has to answer before it is written. BRIGHT_T is a reference
+     * point rather than a live threshold: 0.75 is the value such an effect would reach for, and
+     * the run that mattered reported 766 pixels above it with ZERO of them carrying a distance. */
+    const float BRIGHT_T = 0.75f;
+    long bright = 0, bright_world = 0, bright_flat = 0;
+    /* The WORLD's own luminance distribution, in twentieths, which is the half nobody measures.
+     * A threshold gets picked from the whole frame's distribution and then applied to a
+     * population the world gate has already removed the bright end of -- the HUD and the text
+     * are most of what is bright in an LF2 frame. */
+    enum { LUMB = 20 };
+    long lumh[LUMB];
+    memset(lumh, 0, sizeof lumh);
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             const uint16_t *p = px + ((size_t)y * (size_t)w + (size_t)x) * 4u;
             const float nx = half_to_float(p[0]), ny = half_to_float(p[1]),
                         nz = half_to_float(p[2]), d = half_to_float(p[3]);
+            const uint8_t *c = cx + ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            const float l = (0.2126f * (float)c[0] + 0.7152f * (float)c[1]
+                             + 0.0722f * (float)c[2]) / 255.0f;
+            if (l > BRIGHT_T) {
+                bright++;
+                if (d > 0.0f) bright_world++; else bright_flat++;
+            }
+            if (d > 0.0f) {
+                int b = (int)(l * (float)LUMB);
+                if (b < 0) b = 0;
+                if (b >= LUMB) b = LUMB - 1;
+                lumh[b]++;
+            }
             total++;
             if (nx * nx + ny * ny + nz * nz > 0.25f) normals++;
             if (!(d > 0.0f)) { zero++; continue; }
@@ -1003,7 +1052,9 @@ static void gbuf_report(int w, int h)
         }
     }
     SDL_UnmapGPUTransferBuffer(DEV, tb);
+    SDL_UnmapGPUTransferBuffer(DEV, cb);
     SDL_ReleaseGPUTransferBuffer(DEV, tb);
+    SDL_ReleaseGPUTransferBuffer(DEV, cb);
 
     /* Nothing on screen yet: say nothing and look again in sixty frames. The bound above is
      * what turns "never found one" into a message rather than into silence. */
@@ -1013,6 +1064,26 @@ static void gbuf_report(int w, int h)
     fprintf(stderr, "engine gbuf: %dx%d, %ld px -- %ld with a real surface normal, %ld with no "
                     "distance (sprites, HUD and anything uncovered)\n",
             w, h, total, normals, zero);
+    /* Stated as a conjunction with BOTH of its halves, so a zero cannot be read as "the effect
+     * is broken" when it means "nothing bright is in the world". The two failure modes it
+     * separates are the only two there are: bright_world == 0 with bright > 0 says the gate
+     * rejects everything the threshold picks, and bright == 0 says the threshold picks nothing. */
+    fprintf(stderr, "engine gbuf: over %.2f luminance: %ld px, of which %ld carry a distance "
+                    "(in the world) and %ld do not (HUD, text, sprites -- gated out of any "
+                    "world effect)\n", (double)BRIGHT_T, bright, bright_world, bright_flat);
+    {
+        /* Printed as a CUMULATIVE tail -- "how many world pixels a threshold here would select"
+         * -- because that is the question being asked of it. A per-bucket count would need the
+         * reader to do the sum, and the sum is the whole point. */
+        long tail = 0;
+        for (int b = LUMB - 1; b >= 0; b--) {
+            tail += lumh[b];
+            if (lumh[b] || tail)
+                fprintf(stderr, "engine gbuf:   world luminance >= %.2f : %ld px (%.3f%% of the "
+                                "world)\n", (double)b / (double)LUMB, tail,
+                        100.0 * (double)tail / (double)(total - zero ? total - zero : 1));
+        }
+    }
     for (int a = 0; a < nb; a++)          /* nearest first, which is how a stage reads */
         for (int b = a + 1; b < nb; b++)
             if (val[b] < val[a]) {
@@ -1041,8 +1112,7 @@ int engine_dof_enabled(void)
 int engine_present(SDL_Texture *dst, float max_radius)
 {
     if (!init_ok || !wrapped) return 0;
-    if (!engine_dof_enabled()) return 0;
-
+    if (!engine_dof_enabled()) return 0;    /* nothing to do: the caller copies the frame */
     struct { float params[4], focus[4]; } u;
     u.params[0] = 1.0f / (float)tgt_w;
     u.params[1] = 1.0f / (float)tgt_h;

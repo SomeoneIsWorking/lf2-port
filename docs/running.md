@@ -1971,6 +1971,29 @@ plain composition; there is deliberately no approximation to fall back to.
   — and `LF2_ENGINE=1 LF2_RENDER_SKIP=7` must differ, which is what proves the engine is what
   drew the matching frame rather than the old path having drawn both dumps.
 
+- **`LF2_ENGINE_GBUF=1`** reads the engine's G-buffer back and says what is actually in it
+  (instrument I016). It prints the DISTINCT distances with their pixel counts, so the answer can
+  be checked against the stage's own `bg.dat` — a layer's depth is `(stage_width-794)/(span-794)`
+  (C031), and those are the numbers that must appear. Brokeback Clif reports `1.0000` and
+  `1.2061`, which is 706/585 at half-float precision.
+
+  A counter could only say the engine was *handed* a distance; it could not say the distance
+  survived the vertex format, the attachment, the half-float encoding and the blend state, every
+  one of which fails silently into a buffer of zeros. It also **reads the colour target back
+  beside the G-buffer**, and reports the CONJUNCTION rather than two independent histograms: how
+  many pixels are over 0.75 luminance, how many of *those* carry a distance, and the world's own
+  luminance distribution. That pairing is what killed the luminance bloom (C035) — 766 px above
+  the threshold and **zero** of them in the world, where each half measured alone looked fine.
+
+  It looks every 60th frame until one carries a distance, bounded at 40 tries, and says so if
+  none ever does. The first cut latched on frame 1 — the front-end menu, no stage — and reported
+  an entirely zero buffer, which was true and useless.
+
+  The offline companion is **`tools/re/stage_lum.py`** (I017), which answers the same question
+  about the ART rather than a frame: the luminance distribution of every shipped background
+  layer, black colour key excluded, BI_RLE8 decoded in-tool. `--selftest` proves it fires in
+  both directions; a missing corpus exits 2 rather than printing a clean zero.
+
 - **`LF2_STAGE_GEOM=1`** makes the hand-woven stage geometry report its **negative** (issue
   #62). A loaded `.stage` always announces itself — its solid count, its vertices, the OBJ
   lines the loader does not read, and each solid's parallax **depth** — and a `.stage` that is
