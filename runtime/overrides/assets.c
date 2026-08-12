@@ -147,6 +147,62 @@ void bg_shadow_size(int *w, int *h)
 /* Which stage is loaded, so a shadow object learned on one is discarded on the next. */
 uint32_t bg_shadow_stage(void) { return LD32(BG_INDEX); }
 
+/* ---- the record's two strings ----
+ *
+ * fn_0040c160, the bg.dat parser, scans `name:` and each `layer:` path straight into the
+ * background record (world.h carries the offsets and how they were read). So the port can name
+ * the loaded stage and its layers from the game's own memory -- no second decrypt of bg.dat, no
+ * data.txt, and no assumption that the registry index matches the order the files load in.
+ * Issue #62 needs both: the stage's name keys its hand-woven geometry file, and a layer's name
+ * is how an authored solid takes that layer's parallax depth.
+ *
+ * A 30-byte field is not guaranteed to be NUL-terminated by anything but the data, so both of
+ * these copy out and terminate. Returning a pointer into guest memory would hand the caller a
+ * string that is only accidentally a C string.
+ */
+static const char *bg_string(uint32_t at, char *out, size_t n)
+{
+    size_t i = 0;
+    for (; i + 1 < n && i < BG_NAME_LEN; i++) {
+        const char c = (char)LD8(at + (uint32_t)i);
+        if (!c) break;
+        out[i] = c;
+    }
+    out[i] = 0;
+    return out;
+}
+
+const char *bg_stage_name(void)
+{
+    const uint32_t registry = LD32(BG_REGISTRY);
+    if (!registry) return NULL;                   /* no stage loaded: not the same as "" */
+    static char name[BG_NAME_LEN + 1];
+    bg_string(registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u + BG_STAGE_NAME,
+              name, sizeof name);
+    /* fn_0040c160 turns every '_' into ' ' as it reads the file, so the record says "The Great
+     * Wall" where bg.dat says "The_Great_Wall". Put them back, because the FILE's spelling is
+     * what a hand-woven stage is named after and a name with spaces in it is a poor file name. */
+    for (char *p = name; *p; p++) if (*p == ' ') *p = '_';
+    return name;
+}
+
+const char *bg_layer_name(int layer)
+{
+    if (layer < 0 || layer >= bg_layer_count()) return NULL;
+    const uint32_t registry = LD32(BG_REGISTRY);
+    if (!registry) return NULL;
+    static char path[BG_NAME_LEN + 1];
+    bg_string(registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u
+                       + BG_LAYER_NAME + (uint32_t)layer * BG_NAME_LEN,
+              path, sizeof path);
+    /* The record holds the path as bg.dat writes it -- `bg\sys\gw\hill1.bmp`, with the game's
+     * backslashes. The leaf is what identifies the layer to an author, and it is unique within
+     * a stage because it is a file in one directory. */
+    char *leaf = path;
+    for (char *p = path; *p; p++) if (*p == '\\' || *p == '/') leaf = p + 1;
+    return leaf;
+}
+
 /* bg.dat's `zboundary:` -- see world.h for why this is the FLOOR and not just a clamp.
  *
  * Located by dumping the whole background record (LF2_BG_RECORD) and reading the per-stage
@@ -228,20 +284,35 @@ static void bg_record_report(uint32_t which)
     const uint32_t base = registry + which * BG_STRIDE_DW * 4u;
     const int32_t  cnt = (int32_t)LD32(base + BG_LAYER_COUNT);
     const int n = cnt <= 0 ? 0 : (cnt < BG_MAX_LAYERS ? (int)cnt : BG_MAX_LAYERS);
-    fprintf(stderr, "bg table: background %u  stage width %u  %d layer(s)%s\n",
-            which, LD32(base + BG_STAGE_WIDTH), n,
+    /* The NAME, and it is the check on the whole string half of the record: `decrypt_dat.py`
+     * prints bg.dat's own `name:` and its own layer paths, and this prints what the game
+     * parsed them into. Two files' worth of strings agreeing to the character is what turns
+     * "0x4d4617c looked like a name" into an identification. A record whose name is empty
+     * prints as (empty) rather than as nothing, because a blank in this column would read as
+     * "the report did not get that far". */
+    char nm[BG_NAME_LEN + 1];
+    bg_string(base + BG_STAGE_NAME, nm, sizeof nm);
+    fprintf(stderr, "bg table: background %u  \"%s\"  stage width %u  %d layer(s)%s\n",
+            which, nm[0] ? nm : "(empty)", LD32(base + BG_STAGE_WIDTH), n,
             which == LD32(BG_INDEX) ? "   <- loaded" : "");
     if (n == 0) {
         fprintf(stderr, "bg table:   NO LAYERS -- this record is empty; that is a fact about "
                         "this index, not about the address computation\n");
         return;
     }
-    for (int i = 0; i < n; i++)
-        fprintf(stderr, "bg table:   layer %-2d span=%-6u x=%-6d y=%-4d loop=%u\n", i,
+    for (int i = 0; i < n; i++) {
+        char lp[BG_NAME_LEN + 1];
+        /* The layer name array's stride is 30 BYTES, not 4 -- it is a table of fixed-width
+         * strings and the numeric fields around it are dword arrays. Indexing it the way the
+         * others are indexed reads a quarter of the way into each name. */
+        bg_string(base + BG_LAYER_NAME + (uint32_t)i * BG_NAME_LEN, lp, sizeof lp);
+        fprintf(stderr, "bg table:   layer %-2d span=%-6u x=%-6d y=%-4d loop=%-4u %s\n", i,
                 LD32(base + BG_LAYER_SPAN + (uint32_t)i * 4u),
                 (int32_t)LD32(base + BG_LAYER_X + (uint32_t)i * 4u),
                 (int32_t)LD32(base + BG_LAYER_Y + (uint32_t)i * 4u),
-                LD32(base + BG_LAYER_LOOP + (uint32_t)i * 4u));
+                LD32(base + BG_LAYER_LOOP + (uint32_t)i * 4u),
+                lp[0] ? lp : "(no name -- the record's string field is empty here)");
+    }
 }
 
 /* LF2_BG_TABLE=1 prints the loaded stage's layers once; LF2_BG_TABLE=all prints EVERY

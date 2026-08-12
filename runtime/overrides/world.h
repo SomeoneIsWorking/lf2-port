@@ -211,8 +211,48 @@ enum { GAME_TOP_MODE = 0x00458b00, GAME_MODE_WORD = 0x0044d070 };
  * chosen item runs in. They are one word on purpose -- picking the item IS picking the mode. */
 enum { SCREEN_WORD = 0x0044d020, MENU_CURSOR = 0x00451160 };
 enum { SCREEN_MATCH = 0, SCREEN_CHARSELECT = 1, SCREEN_FRONTEND = 10 };
+/* THE WHOLE RECORD, from fn_0040c160 -- the bg.dat parser itself (issue #62).
+ *
+ * Every constant below used to be located by dumping the record and recognising a value
+ * (LF2_BG_RECORD, and the derivations are still in assets.c because they were real work).
+ * fn_0040c160 makes that unnecessary: it is the function that FILLS this record, one
+ * `fscanf` per bg.dat key, so the field a key lands in is written down rather than inferred.
+ * Its shape is
+ *
+ *     void __thiscall FUN_0040c160(this, index, ?, path)
+ *         base = this + index * 0x990                     // 0x990 == BG_STRIDE_DW * 4
+ *         "name:"        -> base + 0x4d4617c   %s, then every '_' becomes ' '
+ *         "width:"       -> base + 0x4d45db0   %d
+ *         "zboundary:"   -> base + 0x4d45db4, +0x4d45db8
+ *         "perspective:" -> base + 0x4d45dbc, +0x4d45dc0
+ *         "shadow:"      -> base + 0x4d46154   %s   then shadowsize %d %d
+ *         "layer:"       -> base + 0x4d45dd0 + n*30   %s   (the bitmap path, 30 bytes)
+ *           ...the per-layer keys, each  this + (n + index*612)*4 + <constant>
+ *
+ * The eight constants that were already here came out of it UNCHANGED, which is the check
+ * worth stating: an address arrived at by recognising 1500, 300 and 510 in a dump and an
+ * address read off the fscanf that writes it are two independent derivations, and they agree
+ * to the byte. One name did not survive -- see BG_LAYER_TRANSPARENCY.
+ *
+ * THE STRINGS ARE THE POINT OF THIS PASS. The record carries the stage's own NAME and each
+ * layer's own bitmap PATH, so the port can say "this stage is The Great Wall and its second
+ * layer is hill1.bmp" without decrypting bg.dat, without data.txt, and without assuming the
+ * load order matches the registry index. That is what lets hand-woven geometry be keyed on
+ * the stage's own name and take its depth from a named layer (issue #62). They are BYTES,
+ * not dwords, and the layer array's stride is 30 BYTES rather than the 4 the numeric fields
+ * use -- indexing it like a dword array reads four layers into one.
+ */
 enum { BG_STRIDE_DW = 612, BG_MAX_LAYERS = 30 };
-enum { BG_LAYER_PIC    = 81027484,      /* -120 the picture handed to the draw call */
+enum { BG_NAME_LEN = 30 };              /* the fscanf destinations are 30 bytes apart */
+enum { BG_LAYER_TRANSPARENCY = 81027484, /* -120 bg.dat's `transparency:`. This was called
+                                          * BG_LAYER_PIC and described as "the picture handed
+                                          * to the draw call" -- located by dump, named by
+                                          * guess. fn_0040c160 scans `transparency:` into it.
+                                          * The DRAW is unaffected: fn_0041a250 passes this
+                                          * field as its fourth argument either way, and
+                                          * background.c passes the same one. Only the name
+                                          * was wrong, and a wrong name is what sends the next
+                                          * reader looking for a picture handle. */
        BG_LAYER_SPAN   = 81027604,      /* +0   bg.dat's `width:` -- the scroll span */
        BG_LAYER_X      = 81027724,      /* +120 */
        BG_LAYER_Y      = 81027844,      /* +240 -- appears verbatim in fn_0041a250 */
@@ -227,9 +267,30 @@ enum { BG_LAYER_PIC    = 81027484,      /* -120 the picture handed to the draw c
 enum { BG_STAGE_WIDTH  = 81026480,      /* -1124, per background, not per layer */
        BG_Z_MIN        = 81026484,      /* -1120 bg.dat's `zboundary:` -- the far edge of */
        BG_Z_MAX        = 81026488,      /* -1116   the walkable floor, and the near edge   */
+       /* bg.dat's `perspective:`, two integers. NOT read anywhere else in this port, and it
+        * is here because fn_0040c160 parses it and no shipped bg.dat sets it -- which is a
+        * fact worth recording rather than a field worth using. A stage that did set it would
+        * be the one piece of depth the DATA states, so if a future stage format ever wants
+        * one, this is where the game already looks. */
+       BG_PERSPECTIVE_A = 81026492,     /* -1116+4 */
+       BG_PERSPECTIVE_B = 81026496,
        BG_SHADOW_W     = 81026500,      /* -1104 bg.dat's `shadowsize:` */
        BG_SHADOW_H     = 81026504,      /* -1100 */
-       BG_LAYER_COUNT  = 81026508 };    /* -1096; fn_0041a250 loops on this count */
+       BG_LAYER_COUNT  = 81026508,      /* -1096; fn_0041a250 loops on this count */
+       /* ---- the strings, in BYTES ---- */
+       BG_LAYER_NAME   = 81026512,      /* -1092 + layer*30: the layer's bitmap path, as
+                                         * written in bg.dat -- `bg\sys\gw\hill1.bmp`, with
+                                         * the game's own backslashes. 30 layers of 30 bytes
+                                         * is 900, and 81026512 + 900 is exactly
+                                         * BG_SHADOW_PATH, which is what makes BG_MAX_LAYERS
+                                         * 30 a fact about the record and not a guess. */
+       BG_SHADOW_PATH  = 81027412,      /* bg.dat's `shadow:` -- the ellipse bitmap's path */
+       BG_STAGE_NAME   = 81027452 };    /* bg.dat's `name:`, with every '_' ALREADY TURNED
+                                         * INTO A SPACE by fn_0040c160. So the record says
+                                         * "The Great Wall" where the file says
+                                         * "The_Great_Wall", and anything matching a file
+                                         * name against this has to put the underscores
+                                         * back. */
 enum { BG_CAMERA_X     = 0x00450bc4 };  /* the world camera, in stage coordinates */
 /* A SECOND upper bound on the camera, applied by fn_0041b5d0 right after the stage-width one
  * and only when it is non-zero (0x0041bbad..0x0041bbba):
@@ -256,6 +317,14 @@ uint32_t bg_layer_field(uint32_t field_const, int layer);
 uint32_t bg_stage_field(uint32_t field_const);   /* a per-background field (no layer index) */
 int      bg_layer_count(void);          /* the game's own layer count, clamped to BG_MAX_LAYERS */
 void     bg_table_report(void);         /* LF2_BG_TABLE=1: the loaded stage's layers */
+
+/* The loaded stage's own name, as bg.dat spells it -- underscores, not the spaces the record
+ * holds -- or NULL when no stage is loaded. NULL and "" are different answers and both are
+ * returned honestly: "" would be a record whose name field is empty. */
+const char *bg_stage_name(void);
+/* One layer's bitmap, without its directory: `hill1.bmp` out of `bg\sys\gw\hill1.bmp`. NULL
+ * for an index the loaded stage does not have. */
+const char *bg_layer_name(int layer);
 
 /* The width the layer pass draws into -- the game's 794, or the widescreen composition.
  * background.c owns it; it is out here because a renderer wanting the stage's geometry
