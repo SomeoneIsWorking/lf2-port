@@ -376,3 +376,43 @@ the next person will "simplify" it back to three and reintroduce the inconsisten
 None of this needed a run: it is three recorded claims read together. Worth noting because the
 previous note called it "bounded RE rather than an open question" and it turned out to be
 neither -- it was already answered and not yet assembled.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- THE PROJECTION IS BUILT, and it agrees with the game's own placement
+
+geom_stage_project / geom_stage_clip in runtime/overrides/geom.h, transcribed into
+runtime/shaders/mesh.vert, with the vertex format now carrying the four numbers the fork's
+resolution named.
+
+    screen_x = x - camera/depth        (C031: the horizontal is a 1/z translation)
+    screen_y = row - jump              (C018: the depth axis projects down at slope 1)
+
+NOT A MATRIX, and the header says why: screen_x = X - camera/d is not a linear function of
+(X, d, 1). A 4x4 with a perspective divide gives X/d, not X - c/d. So the depth rides as a
+per-vertex attribute and the division happens per vertex -- which is also what makes the
+"four numbers" concrete rather than a note.
+
+THE ACCEPTANCE TEST, and it is the assertion the whole pass rests on: a quad placed at a
+layer's derived depth must land where geom_layer_offset -- the GAME'S OWN placement, a
+different expression entirely -- puts that layer's picture. tests/test_geom.c walks seven real
+layers of real stages (The Great Wall's sky, hill1, road1, road2 and road3; CUHK's sky;
+Brokeback Clif's cliffs) at five camera positions including 0 and the stage's full pan. They
+agree to within a pixel, which is the game's integer divide against the quad's float.
+
+Also asserted there, because each is a thing that could silently be wrong:
+  - the vertical: a fighter at zboundary 300 draws on row 300, at 510 on row 510, and jumping
+    40 lifts it exactly 40 rows and nothing else;
+  - THE PROPERTY THAT MAKES IT NOT A PERSPECTIVE CAMERA -- two points at the same depth and
+    different rows shift horizontally by the SAME amount. A perspective camera cannot, which is
+    why one is not used;
+  - the clip-space depth ordering across the whole range the shipped stages use (0.89 to 535),
+    monotone and inside [0,1], with the fighters' plane at exactly 0.5;
+  - an UNKNOWN depth (0) going to the far plane and not moving with the camera at all.
+
+Mutants run: ignoring the depth in the shift fails 24 checks; disabling the pipeline's depth
+test still makes tools/e2e.sh mesh print FAIL after the rewrite, so the discriminator survived
+the change to the vertex format.
+
+WHAT IS LEFT before a stage can be woven: the pass has no TEXTURE support (vertex colour only),
+so the existing bg.dat layers cannot yet be submitted as quads; and the authored-data format
+does not exist. Neither is blocked on anything now.

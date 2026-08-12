@@ -117,8 +117,10 @@ int mesh_init(SDL_Renderer *r)
 
     SDL_GPUVertexAttribute attrs[3];
     SDL_zero(attrs);
+    /* FOUR floats: x, jump, row, depth. See MeshVertex in mesh.h for why row and depth are
+     * separate channels and must stay that way. */
     attrs[0].location = 0; attrs[0].buffer_slot = 0;
-    attrs[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+    attrs[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
     attrs[0].offset = (Uint32)offsetof(MeshVertex, x);
     attrs[1].location = 1; attrs[1].buffer_slot = 0;
     attrs[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
@@ -270,7 +272,8 @@ static int vbuf_reserve(int n)
     return 1;
 }
 
-SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h, const float view[16])
+SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
+                       int camera, int view_w, int view_h)
 {
     if (!init_ok || n <= 0 || w <= 0 || h <= 0) return NULL;
     if (!targets_make(w, h) || !vbuf_reserve(n)) return NULL;
@@ -324,7 +327,10 @@ SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h, const float vie
     SDL_BindGPUGraphicsPipeline(pass, PIPE);
     SDL_GPUBufferBinding vb = { vbuf, 0 };
     SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
-    SDL_PushGPUVertexUniformData(cmd, 0, view, 16 * sizeof(float));
+    /* The camera and the view, which is all the projection needs -- there is no matrix,
+     * because screen_x = X - camera/depth is not linear in (X, depth, 1). See geom.h. */
+    const float camv[4] = { (float)camera, (float)view_w, (float)view_h, 0.0f };
+    SDL_PushGPUVertexUniformData(cmd, 0, camv, sizeof camv);
     SDL_PushGPUFragmentUniformData(cmd, 0, &LIGHT, sizeof LIGHT);
     SDL_DrawGPUPrimitives(pass, (Uint32)n, 1, 0, 0);
     SDL_EndGPURenderPass(pass);
@@ -354,30 +360,31 @@ static void selftest(void)
                         "tested -- this is not a pass\n", init_why);
         return;
     }
-    enum { W = 64, H = 64 };
-    /* An identity view: the vertices below are already in clip space, so this test is about the
-     * depth test and nothing else. */
-    static const float IDENT[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+    enum { W = 64, H = 64, VIEW_W = 64, VIEW_H = 64 };
 
-    /* NEAR (z 0.20), red, covering the left half. Submitted FIRST. */
-    /* FAR  (z 0.80), blue, covering the whole quad. Submitted SECOND -- so a pass with no
-     * depth test paints it over the red. */
+    /* The camera is 0 so the horizontal shift is out of the picture: this test is about the
+     * DEPTH TEST and nothing else, and a projection bug would otherwise be able to move a
+     * triangle off the pixels being read and look like a depth failure.
+     *
+     * NEAR is depth 1.0 (the fighters' plane) and covers the LEFT half. It is submitted FIRST.
+     * FAR is depth 9.0 and covers the WHOLE quad, submitted SECOND -- so a pass with no depth
+     * test paints it over the near one. */
     const MeshVertex tri[] = {
-        { -1.0f, -1.0f, 0.20f,  0,1,0,  1,0,0,1 },
-        {  0.0f, -1.0f, 0.20f,  0,1,0,  1,0,0,1 },
-        { -1.0f,  1.0f, 0.20f,  0,1,0,  1,0,0,1 },
-        {  0.0f, -1.0f, 0.20f,  0,1,0,  1,0,0,1 },
-        {  0.0f,  1.0f, 0.20f,  0,1,0,  1,0,0,1 },
-        { -1.0f,  1.0f, 0.20f,  0,1,0,  1,0,0,1 },
+        {  0.0f, 0.0f,  0.0f, 1.0f,  0,1,0,  1,0,0,1 },
+        { 32.0f, 0.0f,  0.0f, 1.0f,  0,1,0,  1,0,0,1 },
+        {  0.0f, 0.0f, 64.0f, 1.0f,  0,1,0,  1,0,0,1 },
+        { 32.0f, 0.0f,  0.0f, 1.0f,  0,1,0,  1,0,0,1 },
+        { 32.0f, 0.0f, 64.0f, 1.0f,  0,1,0,  1,0,0,1 },
+        {  0.0f, 0.0f, 64.0f, 1.0f,  0,1,0,  1,0,0,1 },
 
-        { -1.0f, -1.0f, 0.80f,  0,1,0,  0,0,1,1 },
-        {  1.0f, -1.0f, 0.80f,  0,1,0,  0,0,1,1 },
-        { -1.0f,  1.0f, 0.80f,  0,1,0,  0,0,1,1 },
-        {  1.0f, -1.0f, 0.80f,  0,1,0,  0,0,1,1 },
-        {  1.0f,  1.0f, 0.80f,  0,1,0,  0,0,1,1 },
-        { -1.0f,  1.0f, 0.80f,  0,1,0,  0,0,1,1 },
+        {  0.0f, 0.0f,  0.0f, 9.0f,  0,1,0,  0,0,1,1 },
+        { 64.0f, 0.0f,  0.0f, 9.0f,  0,1,0,  0,0,1,1 },
+        {  0.0f, 0.0f, 64.0f, 9.0f,  0,1,0,  0,0,1,1 },
+        { 64.0f, 0.0f,  0.0f, 9.0f,  0,1,0,  0,0,1,1 },
+        { 64.0f, 0.0f, 64.0f, 9.0f,  0,1,0,  0,0,1,1 },
+        {  0.0f, 0.0f, 64.0f, 9.0f,  0,1,0,  0,0,1,1 },
     };
-    if (!mesh_draw(tri, (int)(sizeof tri / sizeof tri[0]), W, H, IDENT)) {
+    if (!mesh_draw(tri, (int)(sizeof tri / sizeof tri[0]), W, H, 0, VIEW_W, VIEW_H)) {
         fprintf(stderr, "mesh selftest: the pass produced no texture, so NOTHING was tested\n");
         return;
     }

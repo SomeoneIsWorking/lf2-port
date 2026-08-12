@@ -23,7 +23,6 @@
 
 layout(location = 0) in vec3 v_normal;
 layout(location = 1) in vec4 v_color;
-layout(location = 2) in vec3 v_world;
 
 layout(set = 3, binding = 0) uniform Light {
     vec4 u_light;      /* xyz: direction TOWARD the light, stage axes. w: its strength. */
