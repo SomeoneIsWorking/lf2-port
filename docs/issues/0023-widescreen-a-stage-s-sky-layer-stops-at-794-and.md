@@ -5,7 +5,7 @@ status: open
 symptom: in a window wider than 794x550 the upper part of the stage background ends partway across and the rest of that band is black, while the ground and the tiling layers do fill the width
 tags: rendering
 created: 2026-08-05
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 OBSERVED, not reported, while verifying issue #20 -- and it is PRE-EXISTING, not caused by
@@ -474,3 +474,35 @@ AND THE OPEN QUESTION IS UNCHANGED and still belongs to whoever looks at it: whe
 a 70-pixel treeline by 22% beats the black band. Everything above is how to do it, not whether
 to. If the answer is "letterbox instead", the same hint is what a deliberate letterbox would be
 driven from -- the port would still need to know which layers have no more picture.
+
+### Note (2026-08-12)
+THE THREE EDIT SITES, PINNED, so the next session executes rather than re-derives. Nothing below
+is a new decision -- the entry already specifies the mechanism; this is where it lands.
+
+  1. THE HINT SETTER -- runtime/video/hostwin.h, beside world_band_hint_set (line 80) and
+     shadow_hint_set: a layer_exhausted_hint_set taking an int, defined in runtime/video/ddraw.c
+     next to world_band_hint_set. Same shape as the two that already exist: set immediately
+     before the draw, consumed by the next blit, cleared after.
+
+  2. THE CALL -- runtime/overrides/background.c, the NON-LOOPING arm of the layer loop (the
+     draw-once branch of the pass documented at lines 27-28). Set it when span <= view, and say
+     nothing otherwise. The condition is the entry's, unchanged.
+
+  3. THE TEST TO DELETE -- runtime/video/ddraw.c line 1484, the spans_screen predicate built
+     from dl, dr and NATIVE_W, together with the comment at 1468-1473 that already admits it
+     matches the front end's backdrop "to the pixel" and claims narrowing is enough. The
+     entry's own measurement is why narrowing is not enough: forests.bmp and forestm1.bmp
+     arrive with IDENTICAL rectangles (both dr 800) and need opposite treatment, so no
+     predicate over that rectangle can be right.
+
+THE GATE EXISTS, which is what makes this executable work rather than exploratory:
+tools/e2e.sh background runs byte-identity at 794 -- which must stay identical, because at view
+794 no layer has span <= view except HK Coliseum's, whose stage is 794 wide -- a 1600 arm that
+must differ, and a skewed-parallax arm proving the identity check can fail.
+
+EXPECT IT NOT TO WORK FIRST TRY. Two blits with identical rectangles needing opposite treatment
+is exactly the shape that survives a careless change. Run the 794 arm before believing anything.
+
+STILL NOT DECIDED, and still not mine: whether stretching a 70-pixel treeline by 22% beats the
+black band. The hint above is what a deliberate letterbox would be driven from too -- the port
+needs to know which layers have no more picture either way.
