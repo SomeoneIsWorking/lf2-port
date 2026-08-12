@@ -5,7 +5,7 @@ status: open
 symptom: not a defect -- a direction the reporter may ask for: some real 3D geometry among the sprites, hand-weaved and deliberately simple, to push the HD2D/remastered look further
 tags: reported,rendering,renderer,hd2d,feature,future
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 RAISED 2026-08-11 as something that MIGHT be asked for later, not as work to start now. The
@@ -54,3 +54,32 @@ DEPENDS ON, and these should land first: issue #48 (cast shadows fall on objects
 not -- shadows have no depth today, and that is exactly the gap 3D geometry would widen),
 issue #23 (a stage's sky has no picture beside it in a wide view), and issue #40 (GPU runs on
 this machine are limited until Vulkan validation has run).
+
+### Note (2026-08-12)
+FEASIBILITY READ AGAINST THE RENDERER AS IT ACTUALLY STANDS -- not a plan, and nothing built.
+This is the one thing that can be established without asking for the feature: whether the port
+could take hand-made 3D models at all, and what the first real obstacle is.
+
+WHAT THE NATIVE RENDERER IS TODAY: SDL's `gpu` backend driven through SDL_RenderGeometry (two
+call sites in runtime/video/render.c), with committed SPIR-V fragment shaders for the isometric
+light and the shadow mask, drawing per-quad into a full-resolution render target.
+
+THE OBSTACLE, AND IT IS STRUCTURAL RATHER THAN A MATTER OF EFFORT: there is NO DEPTH BUFFER.
+The single "depth" match in render.c is the display list's depth SORT -- the painter's ordering
+the game itself computes in fn_0041a5a0 -- and hd2d.c has none at all. SDL_RenderGeometry is a
+2D triangle submission path; it has no depth attachment and no depth test to enable.
+
+WHAT FOLLOWS. Flat sprites can be painter-sorted because LF2 sorts them for us and they never
+interpenetrate. A hand-made MESH does interpenetrate -- with itself, first of all -- so it
+cannot be drawn correctly by submitting triangles in sorted order. So this entry is not "model
+some objects and draw them"; its first step is a depth attachment, which means either SDL_GPU
+directly rather than SDL_Render, or a depth pre-pass faked into the existing shader path. That
+is a renderer change of the same size as issue #30's original work, and it belongs to #30
+rather than here.
+
+WHY RECORD IT: the entry reads as a small additive nicety ("maybe some 3D objects later"), and
+it is not. Anyone picking it up should know the first commit is a depth buffer, before any
+modelling is done -- otherwise the models arrive and cannot be drawn.
+
+NOTHING HAS BEEN BUILT, and nothing should be until the reporter asks. This is a cost estimate,
+recorded so the cost is known when the question is asked rather than discovered afterwards.
