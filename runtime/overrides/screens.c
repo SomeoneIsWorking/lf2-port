@@ -465,11 +465,20 @@ static void exit_probe(long f)
         char *end = NULL;
         const unsigned long addr = strtoul(p, &end, 16);
         if (end == p) break;
+        /* `addr` writes zero; `addr=value` writes that value. The second form is not a
+         * convenience -- a probe that can only write ZERO cannot test a candidate whose
+         * mode-menu value is non-zero, and the fresh diff has four of those (00450b90=1,
+         * 00451160=1, 00451224=20, 00458580=35). Six candidates came back negative before this
+         * existed, and for the non-zero ones that negative meant nothing at all. */
+        unsigned long val = 0;
+        if (*end == '=') { const char *q = end + 1; char *e2 = NULL;
+                           val = strtoul(q, &e2, 0); if (e2 != q) end = e2; }
         const uint32_t was = LD32((uint32_t)addr);
-        ST32((uint32_t)addr, 0u);
-        fprintf(stderr, "exit probe: [%08lx] was %u, wrote 0 at frame %ld%s\n",
-                addr, was, f, was == 0 ? "  -- IT WAS ALREADY ZERO, so this proves nothing"
-                                       : "");
+        ST32((uint32_t)addr, (uint32_t)val);
+        fprintf(stderr, "exit probe: [%08lx] was %u, wrote %lu at frame %ld%s\n",
+                addr, was, val, f,
+                was == (uint32_t)val ? "  -- IT ALREADY HELD THAT VALUE, so this proves nothing"
+                                     : "");
         wrote++;
         p = (*end == ',') ? end + 1 : end;
     }
