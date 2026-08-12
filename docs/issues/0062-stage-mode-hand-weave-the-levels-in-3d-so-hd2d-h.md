@@ -163,3 +163,37 @@ game tree exits 2 saying it searched NOTHING; a stage whose backmost layer loops
 needing nothing rather than omitted; and `--all` prints the WRONG predicate (every non-looping
 layer narrower than the view) beside the explanation of why it is wrong, so the prop trap
 cannot be rediscovered as a finding.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the renderer half is de-risked end to end, measured not reasoned
+
+Both remaining "does SDL even do this" questions are now answered by spikes run against BOTH
+classes under gpuguard (claims C029 and C030), so the offscreen mesh pass has no unknowns of
+that kind left:
+
+    SDL_GetGPURendererDevice(renderer)          -> a real device on the port's own `gpu`
+                                                   renderer; driver=vulkan. The `software`
+                                                   renderer returns none, which is the negative.
+    D32_FLOAT as a depth-stencil target          -> SUPPORTED, and a 256x256 depth texture
+                                                   allocates.
+    SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER  -> wraps an SDL_GPUTexture as an ordinary
+                                                   SDL_Texture, and reading the property back
+                                                   off the wrapper returns the IDENTICAL
+                                                   pointer. SDL_RenderTexture draws it.
+
+SO THE PIPELINE IS, with no copy anywhere in it:
+
+  1. take the device off the renderer the port already creates
+  2. allocate a colour target (COLOR_TARGET|SAMPLER) and a D32_FLOAT depth target
+  3. draw the stage's woven geometry into them with a depth-tested graphics pipeline
+  4. wrap the colour target as an SDL_Texture
+  5. hand it to the existing display list as the BACKMOST quad
+
+render.c is not rewritten, the software compositor is untouched, and a stage with no authored
+geometry allocates nothing and submits nothing -- which is what keeps tools/e2e.sh background
+byte-exact.
+
+WHAT IS STILL UNMEASURED, and the claims say so rather than implying otherwise: the spike drew
+the wrapped texture but did not read its pixels back, so "draw=OK" is the API accepting it and
+not yet a picture; and no graphics PIPELINE has been built against the depth format, only a
+texture allocated. Both are first-commit work rather than feasibility risks.
