@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hd2d.h"
+
 #include "../shaders/gen/mesh_vert_spv.h"
 #include "../shaders/gen/mesh_spv.h"
 
@@ -50,18 +52,39 @@ static const char *init_why = "not attempted";
 static long stat_passes, stat_tris;
 static int  stat_slots;   /* the most slots any one frame has needed */
 
-/* THE LIGHT IS THE SPRITES', not this pass's own. hd2d.c lights the fighters from a direction
- * in the stage's three axes and shears their cast shadows along the SAME vector, so a
- * fighter's shading and their shadow can never disagree. A set lit from somewhere else would
- * put the whole scene into that contradiction one step larger. These are the same numbers;
- * when hd2d.c's become configurable, this reads them rather than keeping a second copy. */
+/* THE LIGHT IS THE SPRITES', not this pass's own, and it is now READ rather than copied.
+ *
+ * hd2d.c lights the fighters from a direction in the stage's three axes and shears their cast
+ * shadows along the SAME vector, so a fighter's shading and their shadow can never disagree. A
+ * set lit from somewhere else puts the whole scene into that contradiction one step larger --
+ * geometry lit from the right while every shadow in the picture falls to the left.
+ *
+ * THIS FILE USED TO HOLD A COPY, and the copy had already drifted. It said { -0.45, 0.80, 0.40 }
+ * where hd2d.c says { -0.25, 0.94, 0.22 }, with a comment asserting "these are the same
+ * numbers" -- so the two were about 15 degrees apart and the note said they were not. Worse,
+ * hd2d.c's is not a constant at all: the pause menu's Options screen sets it from two angles
+ * (issue #37), so a player moving the light moved the fighters and left the set behind.
+ *
+ * Nothing to keep in step now. hd2d_light_vector() is the single source, read per draw, which
+ * is once per gap per frame and not a cost worth caching. */
 typedef struct { float dir[4], sky[4], ground[4], tint[4]; } LightUniform;
-static const LightUniform LIGHT = {
-    { -0.45f, 0.80f, 0.40f, 0.85f },      /* toward the light, and its strength */
-    {  0.34f, 0.36f, 0.42f, 0.0f },       /* sky ambient -- cool, from above */
-    {  0.20f, 0.18f, 0.16f, 0.0f },       /* ground ambient -- warm, from below */
-    {  0.0f,  0.0f,  0.0f,  0.0f },       /* tint.x set per draw: 1 with a texture, 0 without */
-};
+static LightUniform light_now(void)
+{
+    LightUniform u = {
+        { 0.0f, 1.0f, 0.0f, 0.85f },      /* dir.xyz from hd2d below; .w is this pass's key */
+        { 0.34f, 0.36f, 0.42f, 0.0f },    /* sky ambient -- cool, from above */
+        { 0.20f, 0.18f, 0.16f, 0.0f },    /* ground ambient -- warm, from below */
+        { 0.0f,  0.0f,  0.0f,  0.0f },    /* tint.x set per draw: 1 with a texture, 0 without */
+    };
+    float d[3];
+    hd2d_light_vector(d);
+    /* A zero vector would be hd2d never having been initialised; the default above stands
+     * rather than normalising a zero and shading everything black. */
+    if (d[0] != 0.0f || d[1] != 0.0f || d[2] != 0.0f) {
+        u.dir[0] = d[0]; u.dir[1] = d[1]; u.dir[2] = d[2];
+    }
+    return u;
+}
 
 static SDL_GPUSampler *SMP;
 
@@ -460,7 +483,7 @@ SDL_Texture *mesh_draw(int slot, const MeshVertex *v, int n, int w, int h,
      * A sampler must be bound whether or not there is art: the fragment shader declares one,
      * and leaving it unbound is undefined rather than "the branch is not taken". The colour
      * target stands in when there is nothing to sample -- u_tint.x is 0, so nothing reads it. */
-    LightUniform lu = LIGHT;
+    LightUniform lu = light_now();
     if (art && art->tex) lu.tint[0] = 1.0f;
     SDL_GPUTextureSamplerBinding tsb = { (art && art->tex) ? art->tex : t->color, SMP };
     SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);

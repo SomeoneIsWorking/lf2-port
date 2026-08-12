@@ -81,6 +81,13 @@ void hd2d_shadow_project(float *across, float *up);
  * Setting them recomputes the one direction vector, so the shading and the cast shadows move
  * together and cannot be given different lights. */
 void hd2d_light_angles(float *azimuth_deg, float *elevation_deg);
+/* The one direction vector those two angles produce, in the stage's own axes (x across, y up
+ * = LF2's jump axis, z toward the camera). It is exposed so that the geometry pass can light a
+ * hand-woven set from the SAME light rather than keeping a second copy -- see mesh.c, where a
+ * copy had already drifted to a different direction while its comment said the two agreed.
+ * A set lit from somewhere the fighters' shadows do not come from is the one contradiction
+ * this whole subsystem is arranged to prevent. */
+void hd2d_light_vector(float out[3]);
 void hd2d_light_set_angles(float azimuth_deg, float elevation_deg);
 
 /* ---- the character buffer ----
