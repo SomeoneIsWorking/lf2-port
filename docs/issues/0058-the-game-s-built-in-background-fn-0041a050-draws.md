@@ -122,3 +122,31 @@ band widths reading bg_view_width(), the same substitution made for the layer pa
 the object pass. It should be accepted the same way -- byte-identity against the recompiled body
 at a 794 view, in pixels and state, which tools/routes/objects_test.sh is now the template for.
 A route that reaches it needs to drive the background chooser, which nothing does yet.
+
+### Note (2026-08-12)
+THE OVERRIDE IS WRITTEN AND BUILDS, AND IT IS NOT VERIFIED IN PLAY. Both halves matter.
+
+runtime/overrides/background.c now carries fn_0041a050 as a hand-port: __thiscall, one stack arg,
+RET 4, its three clip receivers read from the background record ([[this+0x7d4]+0x4d81978 /
++0x4d8197c / +0x4d81974], all elided by Ghidra), its fills through the same cdecl helper the layer
+pass uses and marked as world bands. Every 0x31a is bg_view_width() and the fence loop's 0x319 is
+one less than it, exactly as the game wrote them. LF2_ALTBG_ORIG=1 runs the recompiled body.
+
+WHAT IS VERIFIED: it compiles, ctest is 10/10, and background + objects are green -- which says
+only that nothing ELSE regressed. That is a real result but a narrow one, and it is guaranteed by
+construction rather than by testing: no route selects background 99, so fn_0041a050 is never
+called in any of those runs and could not have broken them whatever it contained.
+
+WHAT IS NOT VERIFIED: the port itself. Not one pixel of it has been drawn. There is no route that
+reaches background 99, which is the same gap that made this entry's reachability an open question
+in the first place.
+
+WHAT IT NEEDS, and it is small: a way to select background 99 so the objects_test.sh treatment can
+be applied -- byte-identity against LF2_ALTBG_ORIG=1 at a 794 view, in pixels and state, where
+bg_view_width() is 794 and the two must agree exactly. The port already has the right precedent
+for that in LF2_MODE (runtime/overrides/menu.c), which writes the mode menu's OWN selection word
+and lets the route's confirm dispatch it rather than faking the screen. The background index at
+0x0044d024 is the same kind of word, and 0042d7f6 shows the game writing 99 into it directly.
+
+UNTIL THEN, treat this override as UNPROVEN. It cannot affect normal play -- nothing selects 99
+without a player choosing it -- but that is an argument about blast radius, not about correctness.
