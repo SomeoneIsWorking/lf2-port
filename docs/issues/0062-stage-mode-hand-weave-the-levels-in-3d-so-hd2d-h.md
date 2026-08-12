@@ -284,3 +284,51 @@ WHAT THIS CHANGES FOR THE FEATURE:
     every stage's sky into the fight.
 
 The 13-check mutant (a constant depth) fails ctest geometry, so the test discriminates.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- THE NEXT STEP IS A FORK, and it needs deciding before the camera exists
+
+With the depths in hand (C031) the obvious next piece is the camera that turns stage (x, y, z)
+into clip space. Working it out against the game's own projection turns up a fork that must not
+be guessed at, so it is recorded here rather than resolved by whoever writes the matrix first.
+
+WHAT THE GAME'S PROJECTION ACTUALLY IS. A 2D layer at depth z draws at `lx - camera/z`: its
+authored x, shifted by the camera divided by its depth. Note what is NOT there -- a SCALE. LF2
+draws every layer's picture at its authored size no matter how far away it is. So the game's
+projection shifts by 1/z and magnifies by 1. That is not a perspective projection; it is an
+orthographic one with a per-depth translation, which is what "2.5D" means here.
+
+THE FORK:
+
+  A  MATCH THE GAME. Orthographic, translation by 1/z, no foreshortening. Every existing bg.dat
+     layer then sits in the 3D set at its derived depth and lands EXACTLY where it lands today,
+     which is both the faithful answer and an exact acceptance test: a quad at a layer's depth
+     must scroll where the 2D layer scrolls, at every camera position and every view width.
+     Hand-woven solids get parallax and lighting but no vanishing point. Worth noting this is
+     also what the HD2D look usually is -- an orthographic camera with a tilt, not a wide lens.
+
+  B  TRUE PERSPECTIVE. Solids foreshorten properly, which is what most people picture when they
+     hear 3D. But then the existing layers CANNOT be placed in it: a sky at depth 4.66 would be
+     drawn at a fifth of its size, so every stage's own art would have to be re-authored to sit
+     in the new camera. That is a much larger feature than this entry describes, and it changes
+     the game's picture rather than adding to it.
+
+WHAT IS NOT ESTABLISHED, and blocks the vertical half of EITHER answer. There are two depth
+notions in the data and it is not known whether they are the same axis at the same scale:
+  - a LAYER's depth, from its parallax rate (C031), which is what this note is about;
+  - a FIGHTER's z, which runs between bg.dat's `zboundary:` rows and is where the walkable
+    floor is ON SCREEN (C021, validated on 12 of 12 stages).
+Physically they must be the same thing -- something further into the stage is further away --
+but whether a fighter at the far zboundary row is at the same depth as a layer of rate r, for
+which r, has not been measured. The camera's TILT is exactly that relationship: it is what
+decides how much of a floor is visible, and getting it from a guess would be the "magic
+placement constant" this project refuses.
+
+MEASURING IT is a bounded piece of RE rather than an open question: the game projects a
+fighter's z to a screen row somewhere in fn_0041a5a0's draw (already hand-ported in
+runtime/overrides/objects.c) and to a shadow position, and reading that mapping gives the
+scale directly. That is the next thing to do, and it should be done before any matrix is
+written.
+
+NOTHING HAS BEEN BUILT for the camera. The mesh pass takes a view matrix from its caller
+precisely so this decision has somewhere to land.
