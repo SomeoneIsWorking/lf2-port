@@ -422,12 +422,14 @@ static int stage_layer_lookup(void *ctx, const char *layer, int *span, int *stag
 static StageGeom stage_geom;
 static int       stage_geom_bg = -1;    /* the index stage_geom was loaded for */
 static int       stage_geom_tried;      /* a load was attempted, so 0 vertices means 0 */
+static int       geom_planned_bg = -1;  /* the stage the gap plan below was built for */
 
 static void stage_geom_sync(void)
 {
     const int bg = (int)LD32(BG_INDEX);
     if (stage_geom_tried && bg == stage_geom_bg) return;
     stagegeom_free(&stage_geom);
+    geom_planned_bg = -1;
     stage_geom_bg = bg;
     stage_geom_tried = 1;
 
@@ -528,8 +530,11 @@ static GeomRun   geom_runs[64];
 static int       geom_nruns;
 static int       geom_gaps[GEOM_GAPS_MAX];           /* the occupied gaps, ascending */
 static int       geom_ngaps;
-static MeshVertex *geom_scratch;                     /* one gap's vertices, gathered */
-static int         geom_scratch_cap;
+/* ONE PERSISTENT BUFFER PER GAP, built when the plan is, not per frame. The display list holds
+ * a reference to these, so they must outlive the frame -- and a stage's geometry does not change
+ * while the stage is loaded, so rebuilding them per frame would be pure copying. */
+static MeshVertex *geom_slice[GEOM_GAPS_MAX];
+static int         geom_slice_n[GEOM_GAPS_MAX];
 static long        geom_frames, geom_submits, geom_no_surface, geom_over_gaps;
 
 /* How deep is layer `i`, with 0 meaning infinitely far. */
@@ -583,34 +588,51 @@ static void geom_plan(int count, int32_t stage_width)
             if (geom_gaps[b] < geom_gaps[a]) {
                 const int t = geom_gaps[a]; geom_gaps[a] = geom_gaps[b]; geom_gaps[b] = t;
             }
+
+    /* Gather each gap's solids into one buffer. Done HERE rather than per frame because the
+     * result depends only on the stage's geometry and its layer depths, both of which are fixed
+     * while the stage is loaded. */
+    for (int k = 0; k < geom_ngaps; k++) {
+        int total = 0;
+        for (int r = 0; r < geom_nruns; r++)
+            if (geom_runs[r].gap == geom_gaps[k]) total += geom_runs[r].count;
+        free(geom_slice[k]);
+        geom_slice[k] = NULL;
+        geom_slice_n[k] = 0;
+        if (total <= 0) continue;
+        geom_slice[k] = malloc((size_t)total * sizeof *geom_slice[k]);
+        if (!geom_slice[k]) continue;
+        int at = 0;
+        for (int r = 0; r < geom_nruns; r++) {
+            if (geom_runs[r].gap != geom_gaps[k]) continue;
+            memcpy(geom_slice[k] + at, stage_geom.v + geom_runs[r].first,
+                   (size_t)geom_runs[r].count * sizeof *geom_slice[k]);
+            at += geom_runs[r].count;
+        }
+        geom_slice_n[k] = at;
+    }
 }
 
-/* Run the pass for one gap and put its finished target into the list at THIS point. */
+/* Record one gap's geometry into the display list at THIS point in the painter order.
+ *
+ * IT NO LONGER RENDERS ANYTHING HERE, and that is the whole of issue #64 arriving. This used to
+ * run a full render pass per gap -- its own colour and depth target, submitted before the list
+ * was even drawn -- and hand the finished texture over, because the two renderers could only
+ * meet as a texture. The engine takes the vertices and draws them in the SAME pass as the
+ * sprites, sharing the one depth buffer. The SDL_Render path still composites per gap, from
+ * render.c, because it cannot take geometry at all; both read the same recorded entry.
+ *
+ * The vertices are a REFERENCE. A stage's geometry is loaded once and submitted every frame, so
+ * the slices below live as long as the stage does -- which is exactly the lifetime the display
+ * list needs. Copying them per frame would be a memcpy of the whole set sixty times a second
+ * for no reason.
+ */
 static void geom_submit(int gap, int camera, int view_w, int view_h)
 {
     int slot = -1;
     for (int k = 0; k < geom_ngaps; k++) if (geom_gaps[k] == gap) { slot = k; break; }
-    if (slot < 0) return;
+    if (slot < 0 || !geom_slice[slot] || geom_slice_n[slot] <= 0) return;
 
-    int n = 0;
-    for (int r = 0; r < geom_nruns; r++) if (geom_runs[r].gap == gap) n += geom_runs[r].count;
-    if (n <= 0) return;
-    if (n > geom_scratch_cap) {
-        MeshVertex *p = realloc(geom_scratch, (size_t)n * sizeof *p);
-        if (!p) return;
-        geom_scratch = p; geom_scratch_cap = n;
-    }
-    int at = 0;
-    for (int r = 0; r < geom_nruns; r++) {
-        if (geom_runs[r].gap != gap) continue;
-        memcpy(geom_scratch + at, stage_geom.v + geom_runs[r].first,
-               (size_t)geom_runs[r].count * sizeof *geom_scratch);
-        at += geom_runs[r].count;
-    }
-
-    SDL_Texture *t = mesh_draw(slot, geom_scratch, n, view_w, view_h,
-                               camera, view_w, view_h, NULL);
-    if (!t) return;
     const uint32_t dst = frame_source_pixels();
     if (!dst) {
         /* COUNTED. The composition surface is discovered from the game's own copy to the
@@ -620,7 +642,8 @@ static void geom_submit(int gap, int camera, int view_w, int view_h)
         geom_no_surface++;
         return;
     }
-    render_stage_mesh(dst, t, view_w, view_h);
+    render_stage_mesh(dst, geom_slice[slot], geom_slice_n[slot], slot,
+                      camera, view_w, view_h);
     geom_submits++;
 }
 
@@ -812,8 +835,18 @@ void fn_0041a250(void)
 
     /* The hand-woven geometry, planned before the loop and submitted INSIDE it, because where
      * each pass lands in the painter order is the whole point (issue #62). */
-    if (stage_geom.n) { geom_plan((int)count, stage_width); geom_frames++; }
-    else              { geom_nruns = geom_ngaps = 0; }
+    /* Planned when the STAGE changes, not per frame: the gaps depend only on the geometry and
+     * the layer depths, and both are fixed while a stage is loaded. Re-planning per frame also
+     * meant re-gathering every slice per frame, which the display list's reference to them now
+     * makes plainly wrong as well as wasteful. */
+    if (stage_geom.n && geom_planned_bg != stage_geom_bg) {
+        geom_plan((int)count, stage_width);
+        geom_planned_bg = stage_geom_bg;
+    } else if (!stage_geom.n) {
+        geom_nruns = geom_ngaps = 0;
+        geom_planned_bg = -1;
+    }
+    if (stage_geom.n) geom_frames++;
     int next_gap = 0;
 
     for (int i = 0; i < (int)count; i++) {

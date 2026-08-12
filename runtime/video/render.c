@@ -47,10 +47,19 @@ typedef struct {
     int      tw, th;
     SDL_Texture *tile_tex;          /* made once per frame, used by every pass over the list */
     SDL_FRect tile_src;             /* the tw x th corner of it that this tile actually is */
-    /* E_MESH: a finished geometry pass, already rendered, placed at THIS point in the painter
-     * order. Not pooled and not uploaded here -- mesh.c owns the target and it stays live
-     * until that slot is drawn again. */
-    SDL_Texture *mesh_tex;
+    /* E_MESH: hand-woven stage geometry, RECORDED rather than pre-rendered.
+     *
+     * It used to be a finished SDL_Texture, which meant the background override had to run a
+     * whole render pass per parallax gap before the list was even drawn -- the arrangement
+     * issue #64 exists to remove. A display list records; it does not draw. The vertices belong
+     * to the stage and are stable for as long as it is loaded, so this is a reference and not a
+     * copy.
+     *
+     * `slot` is only for the old path, which still has to composite each gap as its own
+     * texture because SDL_Render cannot take geometry at all. */
+    const void *mesh_v;             /* MeshVertex *, owned by the background override */
+    int         mesh_n, mesh_slot;
+    int         mesh_camera, mesh_view_w, mesh_view_h;
 } Entry;
 
 /* The Entry array and its destination. HOW MANY entries it holds, where the port's overlay
@@ -309,14 +318,20 @@ void render_blit(uint32_t dst_pixels,
  * object the pass rendered into (claim C030), and it stays live until that slot is drawn
  * again. That is why the caller must use a different slot per insertion point.
  */
-void render_stage_mesh(uint32_t dst_pixels, SDL_Texture *tex, int w, int h)
+void render_stage_mesh(uint32_t dst_pixels, const void *verts, int n, int slot,
+                       int camera, int view_w, int view_h)
 {
-    if (!render_gpu_enabled() || !tex || w <= 0 || h <= 0) return;
+    if (!render_gpu_enabled() || !verts || n <= 0 || view_w <= 0 || view_h <= 0) return;
     Entry *e = entry_push(dst_pixels);
     if (!e) return;
     e->kind = E_MESH;
-    e->dst = (SDL_FRect){ 0.0f, 0.0f, (float)w, (float)h };
-    e->mesh_tex = tex;
+    e->dst = (SDL_FRect){ 0.0f, 0.0f, (float)view_w, (float)view_h };
+    e->mesh_v = verts;
+    e->mesh_n = n;
+    e->mesh_slot = slot;
+    e->mesh_camera = camera;
+    e->mesh_view_w = view_w;
+    e->mesh_view_h = view_h;
 }
 
 /* The ground marker. Recorded in the list rather than kept in a side variable so it keeps its
@@ -704,8 +719,16 @@ static void draw_list(List *l, int pass, float world, float ox, float oy, int fr
              * the same key light and the same vector, so a solid's shading and a fighter's
              * shadow cannot disagree. Running it through the sprite lighting as well would
              * light it twice. */
-            SDL_SetTextureBlendMode(e->mesh_tex, SDL_BLENDMODE_BLEND);
-            SDL_RenderTexture(R, e->mesh_tex, NULL, &dst);
+            /* THE OLD PATH still has to render the geometry into its own target and then
+             * composite that target as a texture, because SDL_Render cannot take geometry with
+             * a depth buffer at all. That is the cost issue #64 is about, and it is left intact
+             * here so the two paths stay diffable. */
+            SDL_Texture *mt = mesh_draw(e->mesh_slot, (const MeshVertex *)e->mesh_v, e->mesh_n,
+                                        e->mesh_view_w, e->mesh_view_h,
+                                        e->mesh_camera, e->mesh_view_w, e->mesh_view_h, NULL);
+            if (!mt) continue;
+            SDL_SetTextureBlendMode(mt, SDL_BLENDMODE_BLEND);
+            SDL_RenderTexture(R, mt, NULL, &dst);
             stat_mesh++;
             continue;
         }
@@ -788,7 +811,8 @@ static void clear_to(SDL_Texture *rt, uint8_t r, uint8_t g, uint8_t b, uint8_t a
  */
 static EngineQuad *eq;
 static int         eq_cap;
-static long        stat_engine_frames, stat_engine_mesh_skipped;
+static EngineGeom  egeom[64];
+static long        stat_engine_frames, stat_engine_geom;
 
 static EngineQuad *eq_reserve(int n)
 {
@@ -809,7 +833,7 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
     if (!out) return 0;
 
     const int skip = render_skip();
-    int n = 0;
+    int n = 0, ng = 0;
     for (int i = 0; i < ov; i++) {
         if (skip > 0 && (i % skip) == 0) continue;   /* the negative arm, honoured identically */
         Entry *e = &l->e[i];
@@ -817,12 +841,24 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
          * feet are (C019). draw_list consumes it the same way in the colour pass. */
         if (e->kind == E_GROUND) continue;
         if (e->kind == E_MESH) {
-            /* NOT DRAWN YET, and counted rather than skipped quietly. Stage geometry is an
-             * already-rendered texture from the separate pass, which is exactly the arrangement
-             * issue #64 exists to remove -- it is submitted INTO this pass in the next step
-             * rather than composited as a texture. A silent skip here would read as a stage
-             * with nothing authored for it. */
-            stat_engine_mesh_skipped++;
+            /* INTO THE SAME PASS, at this point in the painter order -- not composited back as
+             * a texture. `at` is the quad index it precedes, so the engine can give it the
+             * sliver of depth between this quad and the last. Recording where it goes is all
+             * this loop does; the engine does the drawing. */
+            if (ng < (int)(sizeof egeom / sizeof egeom[0]) && e->mesh_v && e->mesh_n > 0) {
+                egeom[ng].v = e->mesh_v;
+                egeom[ng].n = e->mesh_n;
+                egeom[ng].at = n;
+                egeom[ng].camera = e->mesh_camera;
+                /* The SAME map the quads get, written as scale and bias: a stage pixel sx
+                 * lands at (sx + world) * scale + ox in the output, and that in clip space. */
+                egeom[ng].sx_scale = 2.0f * scale / (float)ow;
+                egeom[ng].sx_bias  = 2.0f * (world * scale + ox) / (float)ow - 1.0f;
+                egeom[ng].sy_scale = -2.0f * scale / (float)oh;
+                egeom[ng].sy_bias  = 1.0f - 2.0f * oy / (float)oh;
+                ng++;
+                stat_engine_geom++;
+            }
             continue;
         }
 
@@ -869,7 +905,7 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
         n++;
     }
 
-    SDL_Texture *frame = engine_draw(out, n, ow, oh);
+    SDL_Texture *frame = engine_draw(out, n, egeom, ng, ow, oh);
     if (!frame) return 0;                        /* engine_draw said why; fall back */
 
     /* The engine's target, placed on the caller's. It is the SAME GPU object the pass rendered

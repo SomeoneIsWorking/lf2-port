@@ -121,11 +121,19 @@ int render_hold_begin(void);
  * not part of the scene. render_hold_begin does the same for a frozen frame. */
 void render_overlay_mark(uint32_t dst_pixels);
 
-/* Place an already-rendered geometry pass at THIS point in the painter order (issue #62). The
- * position in the list is the whole content of the call: a hand-woven set spans parallax depths
- * and the game paints its own layers between them, so the background override calls this
- * between the layers it belongs between. `tex` is mesh.c's target and is not owned here. */
-void render_stage_mesh(uint32_t dst_pixels, struct SDL_Texture *tex, int w, int h);
+/* RECORD hand-woven stage geometry at THIS point in the painter order (issues #62, #64).
+ *
+ * The position in the list is the whole content of the call: a set spans parallax depths and the
+ * game paints its own layers between them, so the background override calls this between the
+ * layers each solid belongs between.
+ *
+ * `verts` is a `MeshVertex *` owned by the caller and must stay alive until the frame is drawn.
+ * A stage's geometry is loaded once and submitted every frame, so that is its natural lifetime.
+ * It is a REFERENCE, not a copy, and it is recorded rather than rendered -- a display list
+ * records; it does not draw. `slot` is used only by the SDL_Render path, which has to composite
+ * each gap as its own texture because it cannot take geometry at all. */
+void render_stage_mesh(uint32_t dst_pixels, const void *verts, int n, int slot,
+                       int camera, int view_w, int view_h);
 
 /* The presented frame, read back off the GPU into an ARGB8888 buffer. This is what makes the
  * two paths diffable: without it every LF2_FRAME_DUMP would be the software compositor's

@@ -66,6 +66,32 @@ typedef struct {
     int         host_w, host_h, host_pitch;
 } EngineQuad;
 
+/* Hand-woven stage geometry, submitted into the SAME pass as the sprites (issue #64).
+ *
+ * This is the piece the old arrangement could not do at all. A geometry pass and a sprite pass
+ * that cannot share a texture can only meet as a render target, so a set spanning parallax
+ * depths cost one full-screen colour+depth pair per gap. Here it is a draw call in the middle
+ * of the quad stream, into the one depth buffer.
+ *
+ * `at` is the quad index this geometry is drawn BEFORE -- the position in the game's painter
+ * order that the port chose for it, which is the whole content of the placement. The engine
+ * gives it the sliver of depth between that quad and the previous one, so it is ordered against
+ * the game's layers by the list and against other geometry in the same sliver by its own
+ * parallax depth. Interpenetration is a mesh-against-mesh problem and that is exactly the pair
+ * that can interpenetrate.
+ */
+typedef struct {
+    const void *v;              /* MeshVertex *, owned by the caller */
+    int         n;
+    int         at;             /* draw before quad `at` */
+    int         camera;
+    /* WHERE THE COMPOSITION SITS ON THE SCREEN, as an affine map from stage pixels to clip
+     * space. The caller has it already -- it is the same scale and offset every sprite quad
+     * gets -- and passing it rather than a viewport size is what stops the geometry sitting
+     * correctly in a 794-wide window and sliding out of the stage in any other. */
+    float       sx_scale, sx_bias, sy_scale, sy_bias;
+} EngineGeom;
+
 /* Bring the engine up on the device the port's `gpu` renderer is already built on (claim C029),
  * so there is one device and one texture pool. Reports WHY not, once, rather than going quiet:
  * an engine that silently does nothing is indistinguishable from a frame with nothing in it. */
@@ -79,7 +105,8 @@ int  engine_enabled(void);
 /* Draw `n` quads into an offscreen target `w` x `h` and return it as a texture the caller can
  * present. NULL if the engine is unavailable or n is 0. Owned by the engine, valid until the
  * next call. */
-struct SDL_Texture *engine_draw(const EngineQuad *q, int n, int w, int h);
+struct SDL_Texture *engine_draw(const EngineQuad *q, int n,
+                               const EngineGeom *g, int ng, int w, int h);
 
 /* A guest surface was written to, so any cached upload of it is stale. Same contract as
  * render_surface_dirty -- the cache is validated by content hash as well, and this is the cheap

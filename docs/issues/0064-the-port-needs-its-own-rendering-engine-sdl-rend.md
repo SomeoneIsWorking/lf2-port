@@ -135,3 +135,59 @@ WHAT IS NOT IN IT YET, and both are the reason it exists:
   - stage geometry is still the separate mesh pass. On the engine path an E_MESH entry is
     COUNTED, not drawn -- a silent skip would read as a stage with nothing authored for it.
   - the lighting is still hd2d's post-process over a finished picture.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the geometry is IN the engine's pass. Defect 3 is gone.
+
+Hand-woven stage geometry is now a draw call in the middle of the quad stream, into the one
+depth buffer, instead of a separate render pass per parallax gap composited back as a texture.
+
+MEASURED, tools/e2e.sh stage_geom, two solids straddling Brokeback Clif's layers:
+
+    1464 geometry draw(s) inside the engine's own pass
+    0    separate mesh passes          <- the render target per gap, gone
+    1464 draws over 732 frames         <- exactly two a frame, so the two solids kept their
+                                          own places in the painter order
+    0    geometry draws with no .stage <- the control
+
+Both counters are asserted, because either alone cannot tell "drawn in the sprite pass" from
+"composited as a texture as well".
+
+THE ONE HARD PART was reconciling two depth scales. A sprite has no depth of its own -- only a
+position in the game's painter order, which IS the game's answer and must not be second-guessed
+-- while a solid has a real parallax depth. They meet by giving each recorded piece of geometry
+the SLIVER of depth between the two list positions it sits between: ordered against the game's
+layers by where the port placed it in the list, and against other geometry in the same sliver by
+its own depth. That is exactly what a set needs, because interpenetration is a mesh-against-mesh
+problem and two solids in the same gap are the pair that can interpenetrate.
+
+THREE THINGS HAD TO MOVE, and each was a small piece of design rather than plumbing:
+
+  1. THE DISPLAY LIST NOW RECORDS GEOMETRY, NOT A TEXTURE. render_stage_mesh used to take a
+     finished SDL_Texture, which meant background.c had to run a whole render pass per gap
+     before the list was even drawn. A display list records; it does not draw. It now takes the
+     vertices by REFERENCE -- a stage's geometry is loaded once and submitted every frame, so
+     that is its natural lifetime -- and background.c builds one persistent buffer per gap when
+     the PLAN is built rather than gathering slices every frame.
+
+  2. THE PLAN IS PER STAGE, NOT PER FRAME. It was being recomputed every frame, which was merely
+     wasteful before and is plainly wrong now that the list holds references into its output.
+
+  3. THE PLACEMENT BECAME AN AFFINE MAP. mesh.vert used to divide by a view size, which is only
+     right when the pass owns the whole target. In the engine the composition is scaled by the
+     window and placed inside it, and a wide view shifts the world sideways -- every sprite quad
+     already gets that. Geometry drawn into the raw output would have sat correctly in a
+     794-wide window and slid out of the stage in any other. So the shader takes a scale and a
+     bias per axis; the standalone pass passes the identity, which is why its self-test is
+     unchanged.
+
+The SDL_Render path still composites per gap, from render.c, because it cannot take geometry at
+all -- kept deliberately so the two paths stay diffable.
+
+NOT REGRESSED: tools/e2e.sh render still green on all ten assertions, engine matching software
+at max channel diff 1 and 2. ctest 12/12. gpuguard latch clear.
+
+STILL OUT: the lighting. hd2d is a post-process over a finished picture, reconstructing a normal
+from the gradient of a sprite's silhouette because that is all it has by the time it runs. The
+engine now has a real depth buffer, stored, with sprites and geometry both in it -- which is the
+input that pass never had.

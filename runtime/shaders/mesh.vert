@@ -38,7 +38,33 @@ layout(location = 2) in vec3 a_normal;
 layout(location = 3) in vec4 a_color;
 
 layout(set = 1, binding = 0) uniform Camera {
-    vec4 u_cam;      /* x: the draw-time camera. y: view width. z: view height. w: unused. */
+    vec4 u_cam;      /* x: the draw-time camera. yzw: unused. */
+    /* WHERE THE COMPOSITION IS ON THE SCREEN, as a scale and a bias per axis.
+     *
+     * The geometry is authored in the stage's own pixels, and so is the game's picture -- but
+     * the picture is then scaled by the window and placed inside it (issue #41), and a wide
+     * view shifts the world sideways as well. Every sprite quad already gets that treatment;
+     * geometry drawn into the raw output instead would sit at the right place in a 794-wide
+     * window and slide out of the stage in any other.
+     *
+     * So the placement rides here rather than being folded into the view size: it is not a
+     * viewport, it is an affine map, and writing it as one is what lets the same shader serve
+     * the engine (a placed composition) and the standalone pass (the whole target, scale 1). */
+    vec4 u_place;    /* x: x scale. y: x bias. z: y scale. w: y bias. */
+    /* THE DEPTH SLIVER this geometry occupies (issue #64), as [lo, hi].
+     *
+     * The engine draws sprites and geometry into ONE depth buffer, and the two arrive on
+     * different scales: a sprite has no depth of its own, only a position in the game's
+     * painter order, while a solid has a real parallax depth. They are reconciled by giving
+     * each recorded piece of geometry the SLIVER of depth between the two list positions it
+     * sits between -- so a solid is ordered against the game's layers by where the port put
+     * it in the list, and against OTHER GEOMETRY IN THE SAME SLIVER by its own depth.
+     *
+     * That is what a set actually needs: interpenetration is a mesh-against-mesh problem, and
+     * two solids the port placed in the same gap are exactly the pair that can interpenetrate.
+     * Sliver x is lo, y is hi; zw unused. A degenerate [d, d] flattens the geometry onto one
+     * plane and is what the old per-gap render targets effectively did. */
+    vec4 u_slice;
 } cam;
 
 layout(location = 0) out vec3 v_normal;
@@ -62,6 +88,9 @@ void main()
      * planes cover without spending most of the buffer on emptiness. The fighters' plane lands
      * at exactly 0.5. Unknown depth goes to the far plane. */
     float cz = (depth > 0.0) ? depth / (depth + 1.0) : 1.0;
+    /* Into this piece's sliver of the shared buffer. The mapping is monotonic, so the ordering
+     * WITHIN the geometry is untouched -- only its range moves. */
+    cz = cam.u_slice.x + cz * (cam.u_slice.y - cam.u_slice.x);
 
     /* The normal is passed through UNTRANSFORMED because the projection above is not a rotation
      * and there is no per-object model matrix: the geometry is authored in stage space. When
@@ -70,7 +99,7 @@ void main()
     v_normal = a_normal;
     v_color  = a_color;
     v_uv     = a_uv;
-    gl_Position = vec4(2.0 * sx / cam.u_cam.y - 1.0,
-                       1.0 - 2.0 * sy / cam.u_cam.z,
+    gl_Position = vec4(sx * cam.u_place.x + cam.u_place.y,
+                       sy * cam.u_place.z + cam.u_place.w,
                        cz, 1.0);
 }
