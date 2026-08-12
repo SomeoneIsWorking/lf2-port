@@ -506,3 +506,93 @@ is exactly the shape that survives a careless change. Run the 794 arm before bel
 STILL NOT DECIDED, and still not mine: whether stretching a 70-pixel treeline by 22% beats the
 black band. The hint above is what a deliberate letterbox would be driven from too -- the port
 needs to know which layers have no more picture either way.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- THE PINNED PLAN IS WRONG, and the data says why
+
+The 2026-08-12 note above pins three edits driven by `span <= view`. That predicate is wrong,
+and reading every shipped stage's bg.dat shows it catches almost nothing it should.
+
+MEASURED, all 12 stages, offline (tools/re/decrypt_dat.py plus each layer's BMP header, which
+is where the PICTURE width lives -- bg.dat only gives the span). Non-looping layers whose
+picture does not reach a 1600-wide view:
+
+    Brokeback_Clif    3 such layers, worst bc1.bmp     460 px at x=0
+    CUHK             20 such layers, worst grass.bmp   180 px at x=0
+    The_Great_Wall    4 such layers, worst road1.bmp   235 px at x=0
+    Queen's_Island   13 such layers, worst qia.bmp     127 px at x=27
+    Lion_Forest       5 such layers, worst forestm3    284 px at x=0
+    Tai_Hom_Village  17 such layers, worst 4.bmp       364 px at x=245
+
+A 127-pixel lamp post and a 180-pixel patch of grass are not backdrops with "no more picture".
+They are PROPS: they cover their own patch of the stage on purpose, and what is beside them is
+not black, it is the layer behind them. `span <= view` does not distinguish a prop from a
+backdrop, so a hint driven by it would have stretched the lamp posts.
+
+WHAT ACTUALLY LEAVES BLACK is the BACKMOST layer, and only it -- nothing is drawn behind it, so
+the columns it does not reach are the only genuinely empty ones. Layer 0 of every stage:
+
+    Forbidden_Tower   sky.bmp     797 px at x=0, span  797     <- picture == span: static
+    The_Great_Wall    sky.bmp     800 px at x=0, span  800     <-   "
+    Lion_Forest       forests.bmp 800 px at x=0, span  800     <-   "
+    Queen's_Island    qi1.bmp     800 px at x=0, span  800     <-   "
+    Tai_Hom_Village   5.bmp       800 px at x=0, span  800     <-   "
+    HK_Coliseum       back1.bmp   794 px at x=0, span  794     <-   "
+    Template1/2/3     pic1.bmp    800 px at x=0, span  967     (pic2 167 at x=800 completes it)
+    Brokeback_Clif    bc1/2/3     460+460+459 end to end       = 1379
+    CUHK              floor1 x2   797+797 end to end           = 1594
+    Stanley_Prison    wall.bmp    LOOPS at 277                 -- already handled, no black
+
+So on 6 of 12 stages the backmost layer is a single picture 794-800 wide whose span EQUALS its
+picture width -- meaning it does not scroll at all (the scroll range is `span - 794`, i.e. 0 to
+6 pixels over the whole stage). It is a static full-screen backdrop and there is provably no
+more of it. On a 1920x1080 window the view is 978, so 178-184 columns of every frame on those
+six stages are black: about 18% of the picture. That is the reported symptom, exactly.
+
+THE MECHANISM THIS NEEDS is therefore not a hint about spans. background.c already knows the
+layer INDEX, and layer 0 is the backmost by construction -- no rectangle inference, no
+predicate over a blit, nothing to get wrong. Whatever the answer below is, it is applied to the
+backmost layer (or the backmost run of layers laid end to end, which is the Brokeback/CUHK/
+Template shape) and to nothing else.
+
+WHAT IS STILL A DECISION, now with numbers behind it rather than a guess about a treeline:
+
+  A  STRETCH the backmost layer to the view. At a 1080p window that is 800 -> 978, a 22%
+     horizontal stretch of one static gradient. At an ultrawide 2542 view it is 3.2x, which is
+     visibly a different picture.
+  B  TILE it at its own width. Free and exact for a sky that is a horizontal gradient
+     (constant along x); a visible seam for any that is not.
+  C  MIRROR-TILE. Seamless for every picture by construction, invents a reflection.
+  D  EDGE-CLAMP -- continue the outermost column outward. Indistinguishable from correct for a
+     horizontal gradient, smears for a picture with content at its edge. The least inventive of
+     the four: it adds no shape that is not already there.
+  E  LETTERBOX -- leave the black, deliberately, and say so.
+
+The entry's standing principle is "do not invent layout", which argues for E and then D. But
+18% of every frame on half the stages is what E costs, and that is the reporter's call rather
+than this entry's.
+
+### Note (2026-08-12)
+### DECIDED (2026-08-12) -- none of A..E. The columns get HAND-WOVEN, so this waits on #62
+
+Asked with the numbers above in front of it, the reporter's answer was "hand weave". So the
+four algorithmic fills and the deliberate letterbox are all rejected: the columns beyond the
+authored backdrop are to be filled with hand-authored per-stage content, which is issue #62.
+
+WHAT THAT SETTLES, and it is worth stating because it closes several loops at once:
+
+  - No hint, no predicate, no `span <= view` test. There is nothing for the port to INFER --
+    if a stage has authored extension content the port draws it, and if it does not there is
+    nothing to draw. The three edits pinned in the 2026-08-12 note are not to be made.
+  - `ddraw.c`'s rectangle-based stretch tests keep their current scope. They were only ever
+    going to be replaced by the hint this entry no longer needs.
+  - The entry's original principle survives intact and is now the DESIGN rather than a
+    constraint on one: "do not invent layout" -- so the layout is authored instead.
+
+WHAT THIS ENTRY STILL OWNS, and it is the useful part: the measurement of what has to be
+authored. The note above names, per stage, the backmost layer, its picture width and the
+columns it leaves empty. That list IS the work order for the backdrop half of #62 -- six stages
+whose backmost layer is a static 794-800 px picture, plus Brokeback_Clif (1379), CUHK (1594)
+and the three Templates (967), against whatever view the window gives.
+
+STATUS: not fixable on its own. Reopened work belongs to #62.
