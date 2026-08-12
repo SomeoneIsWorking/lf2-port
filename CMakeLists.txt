@@ -95,6 +95,7 @@ add_executable(lf2
     runtime/video/render.c
     runtime/video/hd2d.c
     runtime/video/mesh.c
+    runtime/video/engine.c
     runtime/video/stagegeom.c
     runtime/app/main.c)
 # EVERY subsystem directory is on the include path, which is what lets a file say
@@ -149,6 +150,7 @@ set_source_files_properties(
     runtime/video/render.c
     runtime/video/hd2d.c
     runtime/video/mesh.c
+    runtime/video/engine.c
     runtime/video/stagegeom.c
     runtime/app/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")

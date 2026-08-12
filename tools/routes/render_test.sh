@@ -62,6 +62,14 @@ arm soft LF2_RENDERER=soft
 arm gpu  LF2_HD2D=off
 arm skip LF2_HD2D=off LF2_RENDER_SKIP=7
 arm light
+# THE PORT'S OWN ENGINE (issue #64), against the SAME software compositor and the SAME
+# tolerance. Its first version is deliberately a REPRODUCTION rather than an improvement --
+# one that both replaced the renderer and changed the shading would fail this comparison for
+# two reasons at once and could not be told apart from a broken one. So it has to match, and
+# `engskip` is its own negative: the engine honours LF2_RENDER_SKIP, so an engine frame with
+# every 7th entry dropped must differ, or the two engine dumps are not the engine.
+arm engine     LF2_HD2D=off LF2_ENGINE=1
+arm engineskip LF2_HD2D=off LF2_ENGINE=1 LF2_RENDER_SKIP=7
 
 # "<maxdiff> <differing> <total>" for two PPMs, or "ERR ..." -- never silence.
 cmp_ppm() {
@@ -102,7 +110,7 @@ for f in "$OUT/soft"/*.ppm; do
     [ -e "$f" ] || continue
     n=$(basename "$f")
     frames_done=$((frames_done + 1))
-    for arm_dir in gpu skip; do
+    for arm_dir in gpu skip engine engineskip; do
         if [ ! -f "$OUT/$arm_dir/$n" ]; then
             echo "  FAIL  $n: the $arm_dir arm produced no such frame"; fail=1
         fi
@@ -135,6 +143,38 @@ for f in "$OUT/soft"/*.ppm; do
         echo "        (max $smax over $sn px) -- these two dumps are not the two renderers,"
         echo "        so the match above proves nothing"
         fail=1
+    fi
+
+    # ---- THE PORT'S OWN ENGINE, held to the same bar (issue #64) ----
+    if [ -f "$OUT/engine/$n" ] && [ -f "$OUT/engineskip/$n" ]; then
+        set -- $(cmp_ppm "$f" "$OUT/engine/$n")
+        if [ "$1" = "ERR" ]; then echo "  FAIL  $n: engine compare: $2"; fail=1; else
+            emax=$1; en=$2
+            set -- $(cmp_ppm "$f" "$OUT/engineskip/$n")
+            if [ "$1" = "ERR" ]; then echo "  FAIL  $n: engineskip compare: $2"; fail=1; else
+                esmax=$1; esn=$2
+                if [ "$emax" -le "$TOL" ]; then
+                    echo "  ok    $n: the ENGINE matches software (max channel diff $emax,"
+                    echo "        $en/$gtot px differ) -- it reproduces the renderer it replaces"
+                else
+                    echo "  FAIL  $n: the engine differs from software by $emax levels on $en px"
+                    echo "        (tolerance $TOL). Its first version must REPRODUCE the old"
+                    echo "        picture; anything better comes after this passes."
+                    fail=1
+                fi
+                # Without this the line above would read the same if the engine never ran and
+                # the old path drew both dumps.
+                if [ "$esmax" -gt "$TOL" ] && [ "$esn" -gt 1000 ]; then
+                    echo "  ok    $n: the engine with every 7th draw dropped changes $esn px by"
+                    echo "        up to $esmax, so the engine really is what drew the frame above"
+                else
+                    echo "  FAIL  $n: the ENGINE with every 7th draw DROPPED still matched"
+                    echo "        software (max $esmax over $esn px) -- so LF2_ENGINE=1 did not"
+                    echo "        select it and the match above is the old path's"
+                    fail=1
+                fi
+            fi
+        fi
     fi
 
     # THE LIGHT ARM, and the reason it asserts two OPPOSITE things on the two frames.
