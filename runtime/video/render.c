@@ -2,6 +2,7 @@
  * runtime/video/hd2d.h for what is done with the geometry once it is here. */
 
 #include "render.h"
+#include "mesh.h"
 #include "framelife.h"
 #include "overrides/geom.h"
 #include "hd2d.h"
@@ -116,6 +117,10 @@ void render_init(SDL_Renderer *r)
     if (!render_gpu_enabled()) return;
     if (!tile_arena) tile_arena = malloc(TILE_BYTES_MAX);
     hd2d_init(r);
+    /* The depth-tested geometry pass shares this renderer's device (issues #49, #62). It
+     * reports why it cannot run rather than going quiet, because a pass that draws nothing is
+     * indistinguishable from a stage with no geometry authored for it. */
+    mesh_init(r);
 }
 
 static void targets_free(void)
@@ -1005,6 +1010,7 @@ void render_report(void)
                         "this run reached no match, or the stage's shadow object was never "
                         "identified\n");
     hd2d_report();
+    mesh_report();
     if (hd2d_ready() && stat_ground && !stat_shadow)
         fprintf(stderr, "render: %ld ground markers but NO cast shadows -- every one was "
                         "followed by something that could not be drawn\n", stat_ground);

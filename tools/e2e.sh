@@ -84,6 +84,7 @@ caption           the mode caption follows the view, with the recompiled body as
 stage_mode        the port reaches STAGE mode and the section lock holds the camera (issue #36)
 objects           the stage's OBJECT pass is deterministic, with a skewed camera as the negative (issue #55)
 render            the GPU renderer draws what the software compositor draws (issue #30)
+mesh              the depth-tested geometry pass really tests depth (issues #49, #62)
 "
 
 pass=0; fail=0; skip=0; failed=""

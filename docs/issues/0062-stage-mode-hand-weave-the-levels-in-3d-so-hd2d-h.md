@@ -197,3 +197,51 @@ WHAT IS STILL UNMEASURED, and the claims say so rather than implying otherwise: 
 the wrapped texture but did not read its pixels back, so "draw=OK" is the API accepting it and
 not yet a picture; and no graphics PIPELINE has been built against the depth format, only a
 texture allocated. Both are first-commit work rather than feasibility risks.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- FIRST COMMIT LANDED: the depth-tested pass exists and is proven
+
+runtime/video/mesh.{c,h} plus runtime/shaders/mesh.{vert,frag}. What it is:
+
+  - It takes the device off the renderer the port already creates (claim C029), so there is
+    ONE device and render.c is unchanged apart from one init call and one report call.
+  - A graphics pipeline with a D32_FLOAT depth attachment, depth test LESS, depth write on,
+    clearing depth to 1.0. Culling is deliberately OFF for now -- hand-authored geometry with
+    an inconsistent winding would vanish in patches, which reads as a hole in the model rather
+    than the authoring mistake it is; it goes on when the format has a validator.
+  - It renders into its own colour target, cleared to TRANSPARENT rather than to a colour,
+    because the display list composites it over the game's own layers.
+  - The colour target is wrapped as an ordinary SDL_Texture (claim C030) -- the same object, no
+    copy, no readback -- for the display list to place.
+  - A vertex buffer that grows and never shrinks, because a stage's geometry is authored once
+    and submitted every frame.
+
+WHAT IS PROVEN, and how. The pass ships a self-test that submits the one case a broken depth
+test cannot survive: a NEAR triangle first and a FAR one drawn over it. Two pixels are read
+back, not one:
+
+    mesh selftest: overlap pixel rgb(255,0,0) -- the NEAR triangle SURVIVED, so the depth test
+                   is running, though it was submitted FIRST and the far one over it
+    mesh selftest: far-only pixel rgb(0,0,255) -- the far triangle DID draw, which is what
+                   rules out a pass that simply drew nothing
+    mesh selftest: PASS
+
+The second line is load-bearing: without it an empty target would report the near triangle as
+surviving, because its absence is indistinguishable from its survival at a pixel the far one
+also failed to cover.
+
+RUN AGAINST BOTH CLASSES. With `enable_depth_test` set to false the overlap pixel comes back
+rgb(0,0,255) and the self-test prints FAIL. The route says how to break it on purpose, so the
+next person to touch the pipeline can check the test still discriminates.
+
+The self-test runs at INIT rather than from render_report, which is behind LF2_RENDER_DEBUG and
+fires every 900 frames -- a self-test needing two switches and a long run is the same as not
+having one. tools/e2e.sh mesh is what runs it.
+
+tools/build/build_shaders.sh now compiles *.vert as well as *.frag, taking the stage from the
+extension; ctest shaders covers all five blobs.
+
+WHAT IS NOT DONE, so the pass is not overread: nothing submits any geometry yet. mesh_report
+says so out loud rather than printing a clean zero. The next pieces are the stage-space camera
+(from the parallax rates and zboundary, both already read by the port) and the authored-data
+format, and neither is blocked by the renderer any more.
