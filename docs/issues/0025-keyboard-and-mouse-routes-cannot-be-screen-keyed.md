@@ -1,7 +1,7 @@
 ---
 id: 25
 title: Keyboard and mouse routes cannot be screen-keyed, so four tests still aim at moving targets
-status: open
+status: resolved
 symptom: smoke, mouse, widescreen and pause_dropout schedule every press by bare frame number, including presses aimed at the mode menu, character select, the overlay and the match -- the exact drift issue #18 was about
 tags: testing,virtual-pad,instrument,routes
 created: 2026-08-06
@@ -148,3 +148,31 @@ STILL FRAME-NUMBERED: smoke_test (its launcher click and its whole LF2_KEY_SCRIP
 widescreen_test's flow arm. Both are mechanical conversions of the same shape, and neither was done
 here because both routes run arms on the GPU and this session had already seen a card reset -- see
 issue #40. They are the last two, and converting them needs one GPU-capable session, not more RE.
+
+### Resolution (2026-08-12)
+ALL NINE ROUTES ARE NOW SCREEN-KEYED END TO END, the launcher clicks and the keyboard script
+included. The last two -- smoke and widescreen's flow arm -- were converted once GPU runs were
+authorised, since both drive arms on the native renderer.
+
+    smoke        LF2_CLICK_SCRIPT 403,228:900 -> @frontend+0
+                 LF2_KEY_SCRIPT   0x5A:960    -> 0x5A@frontend+60      QUIT_AFTER 3000 -> 2160
+    widescreen   403,228:900;400,241:1350     -> @frontend+0;@frontend+450
+    mouse        (converted earlier this session)
+
+Both verified: smoke PASSED, widescreen ok.
+
+WHAT THE ENTRY GOT WRONG, and it was true when written: 'the button@<screen> form exists ONLY for
+LF2_VIRTUAL_PAD'. runtime/win32/win32.c now parses both other scripts through script_when, the
+shared resolver in runtime/app/script.c, so all three devices take both forms. The structural half
+was fixed before this session; what remained was the routes.
+
+AND THE PREMISE UNDER THE WHOLE ENTRY WAS WRONG TOO: 'the two before any screen exists stay
+frame-numbered'. There is no such window. The front end paints its own backdrop colour on FRAME 1
+and takes input there, which is what @frontend signals (issue #57) -- so the 900 in every route was
+840 frames of waiting for a screen that was already up, not a necessity.
+
+ONE ARM KEPT ITS DURATION, and the reason is worth recording: widescreen's flow arm counts
+BACKDROP DRAWS (900 of them) rather than reaching a screen, so shortening the run by 840 frames
+removed the frames it counts and it failed with 'NO draw was ever kept at x 0'. Anchoring fixed
+where its presses LAND; it does not make the run shorter when the assertion is about how long
+something was on screen. Its LF2_QUIT_AFTER stays at 1500.
