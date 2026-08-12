@@ -91,3 +91,35 @@ the one to find and own.
 
 The remaining question is still the design one and still wants a screenshot: right-anchored to the
 view is the faithful reading, but the port's controls hint shares that bottom edge.
+
+### Note (2026-08-12)
+THE CHAIN IS TRACED TO ITS TOP, and the answer changes the strategy: the constant is owned by one
+of the game's MONOLITHS, which this project does not hand-port.
+
+Callers of FUN_00423a70, the layout wrapper:
+
+    FUN_0041b130    598 bytes    no 0x31a / 0x319 anywhere in it
+    FUN_0041b390    575 bytes    no 0x31a / 0x319 anywhere in it
+    FUN_004246b0  20570 bytes    one of the four monoliths
+
+And the two small ones are not this string. Read at 0041b3c5..0041b3df, that call site pushes
+x = 0xa -- a label at x 10, not the caption at 613. So the caption's position comes from
+FUN_004246b0.
+
+WHY THAT MATTERS. CLAUDE.md is explicit that the game's four monolithic functions exist only as
+recompiled code and that hand-porting them is not on the table. So the substitution that fixed
+issues #55 and #58 -- own the function, make its 794 the view -- is NOT available here, and any
+plan for #60 that assumes it is has not read this far.
+
+WHAT IS LEFT, honestly, and none of it is free:
+  1. FIND A DATA WORD. The caption's x may be computed from something in .data rather than from
+     an immediate; if it is, that word can be written the way the walk lock and the camera are
+     (issues #43, #39). LF2_MEM_DUMP across two widths would show it. This is the only cheap
+     outcome and it may not exist.
+  2. LEAVE IT. The caption is right-anchored to the game's 794 and in a wide view sits 184 px
+     left of the edge. That is wrong but it is not broken, and it is one static label.
+  3. The one thing NOT to do is recognise the string inside fn_00423940 and shift it there --
+     see the note above for why that is pattern-matching and would move anything sharing the row.
+
+This entry is no longer 'find the constant'. It is 'decide whether a static label is worth a
+data-word hunt inside a 20 KB function', and that is a judgement call, not a measurement.
