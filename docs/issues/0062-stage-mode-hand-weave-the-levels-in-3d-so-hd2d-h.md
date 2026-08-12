@@ -245,3 +245,42 @@ WHAT IS NOT DONE, so the pass is not overread: nothing submits any geometry yet.
 says so out loud rather than printing a clean zero. The next pieces are the stage-space camera
 (from the parallax rates and zboundary, both already read by the port) and the authored-data
 format, and neither is blocked by the renderer any more.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- HALF THE AUTHORING IS NOT NEEDED: the depths are in the shipped data
+
+The entry's plan said each bg.dat layer would have to be "placed at a z" by hand, with the
+existing `width:` as the constraint to reproduce. That has it backwards. The z is ALREADY THE
+`width:`, and can be read straight out of it (claim C031).
+
+fn_0041a250 offsets a layer by -((span - 794) * camera) / (stage_width - 794), so its scroll
+RATE is (span - 794)/(stage_width - 794). A camera panning past a point at depth z shifts it as
+1/z, so that ratio IS a perspective divide and
+
+    depth / depth_of_the_fighters' plane  =  1 / rate
+
+`geom_layer_depth` in runtime/overrides/geom.h, `tools/re/stage_gaps.py --depth` to print it.
+
+WHY IT IS AN IDENTIFICATION AND NOT A PLAUSIBLE FORMULA OVER TWO NUMBERS. On all 12 shipped
+stages the depths come out in each stage's own DRAWING ORDER, which nothing in the arithmetic
+forces -- Tai Hom Village is 134, 17.5, 13.9, 1.75, 1.45, 1.33, 1.11, 1.00 in file order; CUHK
+puts its sky at 4.66, its buildings at 2.1-2.6 and its front floor at 1.00. And it predicts
+something no ordering argument could have suggested: The Great Wall's road3 has span 2600 on a
+2400 stage, so rate 1.125 and depth 0.89 -- IN FRONT of the fighters. That is exactly what the
+layer is, the strip at y 481 along the bottom of the screen.
+
+WHAT THIS CHANGES FOR THE FEATURE:
+  - Every existing layer can be placed in the 3D set from the game's own numbers. Nobody
+    authors a depth for the sky, the hills, the floors or the props.
+  - The parallax is then a CONSEQUENCE of the camera rather than something to reproduce, which
+    is also the acceptance test: a quad at a layer's derived depth must scroll exactly where
+    the 2D layer scrolls, at every camera position and every view width.
+  - What is left to author is genuinely new: the solids a flat layer only implies (the walls of
+    a cave, the pillars of a hall), and the columns issue #23 measured.
+  - Two stages have NO derivable depth and say so rather than defaulting: HK Coliseum, whose
+    stage is 794 wide so nothing pans, and any layer whose span is 794 or less, which never
+    moves and is infinitely far. geom_layer_depth returns 0 for UNKNOWN in both, and its header
+    says why a caller must not read that as "at the fighters' plane" -- doing so would put
+    every stage's sky into the fight.
+
+The 13-check mutant (a constant depth) fails ctest geometry, so the test discriminates.

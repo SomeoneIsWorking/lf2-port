@@ -22,8 +22,14 @@ A layer covers columns [x, x + picture_width). The backmost RUN is the leading l
 to end at the same y -- Brokeback Clif's three cliff pieces, CUHK's doubled floor, the
 Templates' pic1+pic2 pair -- so the run's reach is the far edge of the last of them.
 
+--depth prints the other half of the work order, and it is the half that turned out NOT to need
+authoring: a layer's SCROLL RATE is a perspective divide written as a ratio, so its depth is
+already in the shipped data (claim C031, and geom_layer_depth in runtime/overrides/geom.h).
+Only NEW solids have to be given one.
+
     tools/re/stage_gaps.py                     # every stage at a 978 view (a 1080p window)
     tools/re/stage_gaps.py --view 2542         # an ultrawide window
+    tools/re/stage_gaps.py --depth             # each layer's DEPTH, from its own parallax rate
     tools/re/stage_gaps.py --all               # every non-looping layer, with the prop trap
     tools/re/stage_gaps.py --game path/to/game
 
@@ -110,6 +116,9 @@ def main():
     ap.add_argument("--view", type=int, default=978,
                     help="composition width in game pixels; 978 is a 1920x1080 window "
                          "(default: 978)")
+    ap.add_argument("--depth", action="store_true",
+                    help="print each layer's DEPTH, derived from its own parallax rate -- the "
+                         "numbers the hand-weaving does NOT have to author")
     ap.add_argument("--all", action="store_true",
                     help="also list every non-looping layer narrower than the view -- the "
                          "PROPS, which are not the answer; see the module docstring")
@@ -164,6 +173,34 @@ def main():
     if total_short == 0:
         print("That is a real negative only if the view is genuinely covered -- re-run with a "
               "wider --view before concluding there is nothing to do.")
+
+    if args.depth:
+        print("\n---- each layer's depth, as a multiple of the FIGHTERS' plane ----")
+        print("A layer offsets by -((span-794)*camera)/(stage_width-794), so its scroll RATE is")
+        print("(span-794)/(stage_width-794) -- a perspective divide written as a ratio. A camera")
+        print("panning past a point at depth z shifts it as 1/z, so depth = 1/rate, with 1.0 being")
+        print("the plane the fighters stand in. These are the depths the hand-weaving does NOT")
+        print("have to invent; only NEW solids do. Rate > 1 means IN FRONT of the fighters.\n")
+        for f in files:
+            text = subprocess.run([sys.executable, DECRYPT, f],
+                                  capture_output=True, text=True).stdout
+            name = re.search(r"name:\s*(\S+)", text)
+            name = name.group(1) if name else os.path.dirname(f)
+            stage_w = int((re.search(r"width:\s*(\d+)", text) or [0, 0])[1])
+            if stage_w <= SCREEN_W:
+                print("  %-18s stage %d -- NO camera pan, so no layer's rate is observable and "
+                      "NO depth can be derived here" % (name, stage_w))
+                continue
+            print("  %s (stage %d)" % (name, stage_w))
+            for path, span, x, y, loop in parse_layers(text):
+                rate = (span - SCREEN_W) / float(stage_w - SCREEN_W)
+                if rate <= 0:
+                    d = "never moves: infinitely far"
+                else:
+                    d = "%7.2f%s" % (1.0 / rate,
+                                     "   <-- IN FRONT of the fighters" if rate > 1.0 else "")
+                print("     %-24s span %5d  rate %6.3f  depth %s"
+                      % (os.path.basename(path), span, rate, d))
 
     if args.all:
         print("\n---- every non-looping layer narrower than the view, AND WHY THIS IS NOT THE "
