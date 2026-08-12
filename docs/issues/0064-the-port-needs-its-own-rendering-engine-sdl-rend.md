@@ -222,3 +222,88 @@ STILL OVERSIZE and left alone deliberately: the Widescreen row, at 7,292 charact
 same disease and deserves the same treatment, but splitting two subsystems in one pass would make
 the diff impossible to check against the originals -- and an unreviewable doc change is how a
 load-bearing sentence gets silently lost.
+
+### Note (2026-08-12)
+## Verified properly, and two gaps that the fast gate was hiding
+
+Prompted by "have you ever checked the work done so far?". Until this point every change had
+been gated on `ctest` plus the ONE render route. Run since:
+
+- **`tools/e2e.sh` full sweep: 19/19, 143 assertions, 0 skipped.** This is what actually clears
+  the ground-marker change in `engine_colour_pass` against mouse, background, stage_geom, coop
+  and the rest -- none of which had been run against it.
+- **Frames looked at, not just counted.** The defocus reads as a defocus on the distant cliff
+  (it smooths the art's own dithered stipple and softens the rock edges). Its contribution to
+  the flat ground is a max of **1 level over ~40k px**, which is not an effect -- expected,
+  since the ground is at the fighters' plane and in focus, but worth stating.
+
+## THE MISSING ARM, and it is the configuration the port is moving to
+
+**No route arm runs `LF2_ENGINE=1` with the lighting ON.** The engine arms all pin
+`LF2_HD2D=off`; the light arm leaves `LF2_ENGINE` unset. So the shipped-destination
+configuration is untested by the suite.
+
+Measured by hand (engine + hd2d + dof against engine alone, same pad script):
+
+    frame_000401 (character select): max diff 0, 0 px  -- the gate holds
+    frame_001351 (match):            max diff 152, 267028 px
+      rows 300-349  max 152   the fighters
+      rows 350-399  max   1   the ground: the defocus, and it is nothing
+      rows 400-449  max 126
+
+So the chain does run on the engine path and its negative still holds there. It is not
+asserted anywhere, which is the defect. That arm lands with the commit that makes
+`LF2_ENGINE=1` the default -- at which point `englight` BECOMES the light arm rather than
+being an eighth 300-second run.
+
+## Fixed here (b611e41), all zero picture change
+
+- `engine_colour_pass` never counted ground markers -- it REPLACES the `PASS_COLOUR` walk that
+  `draw_list` counts them in -- so `render_report` printed **"NO ground markers were seen, so
+  no shadow was replaced"** while shadows were being drawn. A negative its own method could not
+  contradict, on the path this port is moving to. Both counters wired on both paths.
+- `stat_ground_orphan` was not gated on the pass, so it counted once per pass. Every orphan
+  number reported before this is inflated by the number of passes that ran.
+- `engine_colour_pass` did not clear `have_ground` on `E_MESH`. Unreachable today.
+- Comment rot: the depth buffer's "the lighting step reads it" is FALSE -- `engine.c` creates it
+  `DEPTH_STENCIL_TARGET` only, no `SAMPLER`, and SDL declares no pixel format for depth, so it
+  cannot even be wrapped. Three more comments described a half-res blur that was deleted.
+- `render`/`background`/`resize` wrote dumps to `/tmp` via `mktemp -d` and **deleted them on
+  EXIT**, so a FAILING run destroyed the two frames anyone would want to look at. Now
+  gitignored `scratch/`, cleared at the START of the next run. `objects_test.sh` already had
+  this fix and its reasoning written down; the other three had missed it.
+- The defocus arm selected its frame by the glob `*000401*`, so it matched nothing whenever the
+  frame numbers moved and fell through to assert the OPPOSITE thing -- the exact mistake the
+  light arm was fixed away from. `light` also joins the missing-frame loop, since those
+  comparisons are guarded by a bare `[ -f ]`: an arm whose run died tested nothing and the
+  route stayed green.
+
+## The design for the rest of #64 is settled (workflow, 14 agents, 11 returned)
+
+The premise was **confirmed and sharpened** by a code read: `rt_chars` is cleared to 0 and
+written only as the literal `1.0` under `SDL_BLENDMODE_NONE` with a discard, so overlapping
+fighters form a **binary union** whose interior seam has an exactly-zero mask gradient and
+therefore no bevel -- and that is most of a match. `.g` IS per-object (each quad pushes its own
+ground row) but never reaches the normal, and two fighters on the same row have identical `.g`
+anyway.
+
+**The fix is NOT per-texture normal maps** (my first idea): a quad samples a sub-rect of a
+sheet, so a neighbourhood operator leaks across adjacent animation frames, and giving sprites
+real normals breaks the G-buffer's exact-`(0,0,0)`-means-billboard marker. It is to **tag the
+mask per object**: `hd2d_gbuf.frag`'s `o_gbuf.ba` are hardcoded and read by nothing, `u_geom` is
+already pushed and flushed per quad, so the object's own `E_GROUND` ordinal goes in `.ba` and
+`mask_gradient` rejects any tap whose tag differs. No new pass, no new target, no new uniform,
+no new binding, **no new tunable**.
+
+**The critical catch, which is why this is not landed yet:** a no-op implementation of that fix
+**passes the entire suite** -- ctest stays green (the header is correct, the shader is a copy),
+the light arm's `hmax>8 && hn>2000` is a lower bound the unchanged bevel already clears, and the
+menu arm is zero either way. So the gate comes FIRST: `LF2_HD2D_TAGSTAT=1` reporting *N distinct
+tags over M covered pixels, S pixels with a differing neighbour*, asserted on the existing light
+arm's stderr in both directions -- `N>=2, S>0` in a match, `N==0, M==0` on the menu.
+
+Caveat on the design's provenance, stated because it affects how much it should be trusted:
+3 of 14 agents failed. The "does this matter VISUALLY" lens never returned, so the premise is
+confirmed by CODE and not by an independent visual argument; and the "light inside the engine's
+fragment stage" design never returned, so that alternative is rejected unopposed rather than
+beaten. Full plan: scratch is transient -- the shape is above.
