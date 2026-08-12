@@ -25,6 +25,7 @@ layout(location = 0) in vec2 a_pos;      /* composition pixels -- the game's own
 layout(location = 1) in float a_depth;   /* 0 nearest .. 1 farthest, already normalised */
 layout(location = 2) in vec2 a_uv;
 layout(location = 3) in vec4 a_color;    /* a tint, or the fill colour when there is no texture */
+layout(location = 4) in float a_world;   /* the draw's real distance; 0 = unknown */
 
 layout(set = 1, binding = 0) uniform View {
     vec4 u_view;     /* x: composition width. y: composition height. zw: unused. */
@@ -32,11 +33,13 @@ layout(set = 1, binding = 0) uniform View {
 
 layout(location = 0) out vec2 v_uv;
 layout(location = 1) out vec4 v_color;
+layout(location = 2) out float v_world;
 
 void main()
 {
     v_uv    = a_uv;
     v_color = a_color;
+    v_world = a_world;
     /* Composition pixels to clip space, y down. No half-pixel offset: the quads arrive on
      * integer pixel boundaries from the game's own rectangles, and adding one here would put
      * every sprite half a texel off its stated place -- which at a scale of 1 is exactly the

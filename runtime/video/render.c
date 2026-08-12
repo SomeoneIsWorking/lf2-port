@@ -47,6 +47,20 @@ typedef struct {
     int      tw, th;
     SDL_Texture *tile_tex;          /* made once per frame, used by every pass over the list */
     SDL_FRect tile_src;             /* the tw x th corner of it that this tile actually is */
+    /* THE DRAW'S REAL DISTANCE, as a parallax depth -- 1.0 is the plane the fighters stand in,
+     * larger is further away, and 0 means UNKNOWN (issue #63).
+     *
+     * NOT the same thing as the depth the engine's depth buffer holds, and conflating the two
+     * is the trap. The buffer's depth is the draw's POSITION IN THE PAINTER ORDER, which is the
+     * game's own answer about what covers what and must be preserved exactly. This is a
+     * DISTANCE, and it is what a depth of field has to be a function of -- a blur driven off
+     * draw order would be "defocus by how late something was drawn", which is the screen-space
+     * effect issue #63 exists to not repeat.
+     *
+     * Known for the stage's background layers, whose depth is derivable from their own parallax
+     * rate (C031), and for authored geometry, which carries it per vertex. Left 0 for the HUD,
+     * the text and the port's own UI, which are not in the world at all. */
+    float world_depth;
     /* E_MESH: hand-woven stage geometry, RECORDED rather than pre-rendered.
      *
      * It used to be a finished SDL_Texture, which meant the background override had to run a
@@ -191,6 +205,12 @@ static void frame_touch(void)
     tile_list = -1;
 }
 
+/* The depth of the draw about to be recorded, in the same units as Entry.world_depth. Set by
+ * the background override around a layer's draw, the way world_band_hint marks a world band --
+ * the game's own draw call goes through the guest, so there is no argument to add. */
+static float depth_hint;
+void render_depth_hint_set(float d) { depth_hint = d > 0.0f ? d : 0.0f; }
+
 static Entry *entry_push(uint32_t dst_pixels)
 {
     frame_touch();
@@ -199,6 +219,7 @@ static Entry *entry_push(uint32_t dst_pixels)
     if (FL.n[li] >= LIST_MAX) { lists[li].dropped++; stat_dropped++; return NULL; }
     Entry *e = &lists[li].e[FL.n[li]++];
     memset(e, 0, sizeof *e);
+    e->world_depth = depth_hint;
     return e;
 }
 
@@ -869,6 +890,7 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
         q->w = e->dst.w * scale;
         q->h = e->dst.h * scale;
         q->r = q->g = q->b = q->a = 1.0f;
+        q->world_depth = e->world_depth;
 
         if (e->kind == E_FILL) {
             q->r = (float)((e->argb >> 16) & 0xff) / 255.0f;

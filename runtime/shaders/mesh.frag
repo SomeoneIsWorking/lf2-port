@@ -24,6 +24,7 @@
 layout(location = 0) in vec3 v_normal;
 layout(location = 1) in vec4 v_color;
 layout(location = 2) in vec2 v_uv;
+layout(location = 3) in float v_depth;
 
 /* The stage's art, sampled from the texture render.c has ALREADY uploaded (claim C032) rather
  * than from a second copy. u_tint.x is 1 when a texture is bound and 0 when it is not, so the
@@ -38,6 +39,10 @@ layout(set = 3, binding = 0) uniform Light {
 } lit;
 
 layout(location = 0) out vec4 o_color;
+/* The G-buffer, same contract as quad.frag: rgb is a real surface normal and a is the real
+ * distance. Geometry is the one thing in the frame that HAS a normal, so this is where a
+ * non-zero one comes from -- and `length(n) > 0.5` is what tells a reader so. */
+layout(location = 1) out vec4 o_gbuf;
 
 void main()
 {
@@ -60,4 +65,7 @@ void main()
     vec4 base = mix(vec4(1.0), tex, lit.u_tint.x) * v_color;
 
     o_color = vec4(base.rgb * (ambient + key), base.a);
+    /* The interpolated normal, normalised, and the solid's own parallax depth -- which the
+     * vertex stage carries as the fourth position channel. */
+    o_gbuf = vec4(n, v_depth);
 }

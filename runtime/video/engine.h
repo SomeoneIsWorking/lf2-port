@@ -47,7 +47,11 @@ struct SDL_Texture;
 typedef struct {
     float    x, y, w, h;        /* destination, composition pixels */
     float    u0, v0, u1, v1;    /* source, 0..1; ignored when there is no texture */
-    float    depth;             /* 0 nearest .. 1 farthest */
+    float    depth;             /* 0 nearest .. 1 farthest -- the PAINTER ORDER, not a distance */
+    /* The draw's real distance as a parallax depth (1.0 = the fighters' plane, 0 = unknown).
+     * Written into the G-buffer for effects that must be a function of distance rather than of
+     * screen position or draw order -- see issue #63. */
+    float    world_depth;
     float    r, g, b, a;        /* tint, or the colour when there is no texture */
     /* The source SHEET, as guest memory. The engine owns the upload and the cache, so both
      * sprites and stage geometry sample the same object -- which is the whole of defect 2

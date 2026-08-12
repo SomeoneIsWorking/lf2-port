@@ -40,11 +40,23 @@ static SDL_GPUTransferBuffer *gvxfer;
 static int gvbuf_cap;
 static long stat_geom_draws, stat_geom_tris;
 
+static void gbuf_report(int w, int h);
+
 /* The offscreen pair. Colour is wrapped as an ordinary SDL_Texture (claim C030 -- the same
  * object, no copy and no readback) so the existing present path can put it on the screen while
  * the engine is being brought up beside the old renderer rather than in place of it. */
 static SDL_GPUTexture *tex_color, *tex_depth;
 static SDL_Texture    *wrapped;
+/* THE G-BUFFER (issue #63): a second colour attachment carrying a surface normal and the draw's
+ * real DISTANCE. It is a colour target rather than the depth buffer because SDL3 has no pixel
+ * format for depth at all -- checked, `SDL_pixels.h` declares none -- so a D32_FLOAT texture
+ * cannot be wrapped as an SDL_Texture and nothing outside the engine could ever sample it.
+ *
+ * R16G16B16A16_FLOAT rather than 8-bit: the alpha channel is a distance running from about 0.89
+ * (a foreground strip) to 535 (a distant sky) on the shipped stages, and eight bits of that is a
+ * staircase, which a defocus would turn into visible banding by distance. */
+static SDL_GPUTexture *tex_gbuf;
+static SDL_Texture    *wrapped_gbuf;
 static int             tgt_w, tgt_h;
 
 static SDL_GPUBuffer *vbuf;
@@ -55,7 +67,7 @@ static int  init_done, init_ok, enabled = -1;
 static const char *init_why = "not attempted";
 static long stat_frames, stat_quads, stat_batches, stat_uploads, stat_dropped;
 
-typedef struct { float x, y, depth, u, v, r, g, b, a; } QuadVertex;
+typedef struct { float x, y, depth, u, v, r, g, b, a, world; } QuadVertex;
 
 /* ---- the texture cache -------------------------------------------------------------------
  *
@@ -310,8 +322,10 @@ int engine_init(SDL_Renderer *r)
     vbd.pitch = sizeof(QuadVertex);
     vbd.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
-    SDL_GPUVertexAttribute attrs[4];
+    SDL_GPUVertexAttribute attrs[5];
     SDL_zero(attrs);
+    attrs[4].location = 4; attrs[4].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
+    attrs[4].offset = (Uint32)offsetof(QuadVertex, world);
     attrs[0].location = 0; attrs[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
     attrs[0].offset = (Uint32)offsetof(QuadVertex, x);
     attrs[1].location = 1; attrs[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
@@ -323,10 +337,16 @@ int engine_init(SDL_Renderer *r)
 
     int made = 0;
     for (int k = 0; k < BLEND_KINDS; k++) {
-        SDL_GPUColorTargetDescription ctd;
+        SDL_GPUColorTargetDescription ctd[2];
         SDL_zero(ctd);
-        ctd.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-        blend_state(&ctd.blend_state, k);
+        ctd[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        blend_state(&ctd[0].blend_state, k);
+        /* The G-buffer is NEVER blended, whatever the colour target does. A distance is not a
+         * quantity you can average with the one behind it: half way between a sprite at 1.0 and
+         * a sky at 535 is a plane that nothing in the scene occupies, and a defocus driven off
+         * it would blur a hard edge into a smooth ramp of wrong distances. The nearest writer
+         * wins outright, which is what the depth test already decides. */
+        ctd[1].format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
 
         SDL_GPUGraphicsPipelineCreateInfo pi;
         SDL_zero(pi);
@@ -335,10 +355,10 @@ int engine_init(SDL_Renderer *r)
         pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         pi.vertex_input_state.num_vertex_buffers = 1;
         pi.vertex_input_state.vertex_buffer_descriptions = &vbd;
-        pi.vertex_input_state.num_vertex_attributes = 4;
+        pi.vertex_input_state.num_vertex_attributes = 5;
         pi.vertex_input_state.vertex_attributes = attrs;
-        pi.target_info.num_color_targets = 1;
-        pi.target_info.color_target_descriptions = &ctd;
+        pi.target_info.num_color_targets = 2;
+        pi.target_info.color_target_descriptions = ctd;
         pi.target_info.has_depth_stencil_target = true;
         pi.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
         /* THE DEPTH IS WRITTEN AND TESTED, but the picture is still the painter order's --
@@ -385,10 +405,11 @@ int engine_init(SDL_Renderer *r)
             ga[3].location = 3; ga[3].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
             ga[3].offset = (Uint32)offsetof(MeshVertex, r);
 
-            SDL_GPUColorTargetDescription gct;
+            SDL_GPUColorTargetDescription gct[2];
             SDL_zero(gct);
-            gct.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-            blend_state(&gct.blend_state, BLEND_ALPHA);
+            gct[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            blend_state(&gct[0].blend_state, BLEND_ALPHA);
+            gct[1].format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
 
             SDL_GPUGraphicsPipelineCreateInfo gp;
             SDL_zero(gp);
@@ -399,8 +420,8 @@ int engine_init(SDL_Renderer *r)
             gp.vertex_input_state.vertex_buffer_descriptions = &gvbd;
             gp.vertex_input_state.num_vertex_attributes = 4;
             gp.vertex_input_state.vertex_attributes = ga;
-            gp.target_info.num_color_targets = 1;
-            gp.target_info.color_target_descriptions = &gct;
+            gp.target_info.num_color_targets = 2;
+            gp.target_info.color_target_descriptions = gct;
             gp.target_info.has_depth_stencil_target = true;
             gp.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
             /* LESS here, not LESS_OR_EQUAL: within a set the depth is REAL and a genuine tie is
@@ -459,9 +480,11 @@ int engine_enabled(void)
 
 static void targets_release(void)
 {
-    if (wrapped)   { SDL_DestroyTexture(wrapped); wrapped = NULL; }
+    if (wrapped)      { SDL_DestroyTexture(wrapped); wrapped = NULL; }
+    if (wrapped_gbuf) { SDL_DestroyTexture(wrapped_gbuf); wrapped_gbuf = NULL; }
     if (tex_color) { SDL_ReleaseGPUTexture(DEV, tex_color); tex_color = NULL; }
     if (tex_depth) { SDL_ReleaseGPUTexture(DEV, tex_depth); tex_depth = NULL; }
+    if (tex_gbuf)  { SDL_ReleaseGPUTexture(DEV, tex_gbuf); tex_gbuf = NULL; }
     tgt_w = tgt_h = 0;
 }
 
@@ -481,11 +504,15 @@ static int targets_make(int w, int h)
     ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
     tex_color = SDL_CreateGPUTexture(DEV, &ci);
 
+    ci.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+    ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    tex_gbuf = SDL_CreateGPUTexture(DEV, &ci);
+
     ci.format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
     ci.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
     tex_depth = SDL_CreateGPUTexture(DEV, &ci);
 
-    if (!tex_color || !tex_depth) {
+    if (!tex_color || !tex_depth || !tex_gbuf) {
         fprintf(stderr, "engine: could not allocate the %dx%d target pair: %s\n",
                 w, h, SDL_GetError());
         targets_release();
@@ -505,6 +532,25 @@ static int targets_make(int w, int h)
         return 0;
     }
     SDL_SetTextureScaleMode(wrapped, SDL_SCALEMODE_NEAREST);
+
+    SDL_PropertiesID pg = SDL_CreateProperties();
+    SDL_SetPointerProperty(pg, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, tex_gbuf);
+    SDL_SetNumberProperty(pg, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w);
+    SDL_SetNumberProperty(pg, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h);
+    SDL_SetNumberProperty(pg, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER,
+                          SDL_PIXELFORMAT_ABGR64_FLOAT);
+    wrapped_gbuf = SDL_CreateTextureWithProperties(R, pg);
+    SDL_DestroyProperties(pg);
+    if (!wrapped_gbuf) {
+        /* NOT fatal: the picture is unaffected and only distance-driven effects lose their
+         * input. Said out loud, because a silently absent G-buffer would make a depth of field
+         * do nothing and look like a switch that was never wired up. */
+        fprintf(stderr, "engine: the G-buffer could not be wrapped as a texture (%s) -- the "
+                        "frame is unaffected, but nothing can read distance from it\n",
+                SDL_GetError());
+    } else {
+        SDL_SetTextureScaleMode(wrapped_gbuf, SDL_SCALEMODE_NEAREST);
+    }
     tgt_w = w; tgt_h = h;
     return 1;
 }
@@ -544,10 +590,11 @@ static int vbuf_reserve(int bytes)
 static void emit(QuadVertex *v, const EngineQuad *q, float depth)
 {
     const float x0 = q->x, y0 = q->y, x1 = q->x + q->w, y1 = q->y + q->h;
-    const QuadVertex a = { x0, y0, depth, q->u0, q->v0, q->r, q->g, q->b, q->a };
-    const QuadVertex b = { x1, y0, depth, q->u1, q->v0, q->r, q->g, q->b, q->a };
-    const QuadVertex c = { x1, y1, depth, q->u1, q->v1, q->r, q->g, q->b, q->a };
-    const QuadVertex d = { x0, y1, depth, q->u0, q->v1, q->r, q->g, q->b, q->a };
+    const float wd = q->world_depth;
+    const QuadVertex a = { x0, y0, depth, q->u0, q->v0, q->r, q->g, q->b, q->a, wd };
+    const QuadVertex b = { x1, y0, depth, q->u1, q->v0, q->r, q->g, q->b, q->a, wd };
+    const QuadVertex c = { x1, y1, depth, q->u1, q->v1, q->r, q->g, q->b, q->a, wd };
+    const QuadVertex d = { x0, y1, depth, q->u0, q->v1, q->r, q->g, q->b, q->a, wd };
     v[0] = a; v[1] = b; v[2] = c;
     v[3] = a; v[4] = c; v[5] = d;
 }
@@ -673,15 +720,24 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
     }
     SDL_EndGPUCopyPass(copy);
 
-    SDL_GPUColorTargetInfo cti;
+    SDL_GPUColorTargetInfo cti[2];
     SDL_zero(cti);
-    cti.texture = tex_color;
+    cti[0].texture = tex_color;
     /* Opaque black, not transparent: this is the whole frame, not an overlay over one. A
      * transparent clear would let whatever the present path had behind it show through the
      * columns no quad covers, which is issue #29's ghost by another route. */
-    cti.clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 1.0f };
-    cti.load_op = SDL_GPU_LOADOP_CLEAR;
-    cti.store_op = SDL_GPU_STOREOP_STORE;
+    cti[0].clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 1.0f };
+    cti[0].load_op = SDL_GPU_LOADOP_CLEAR;
+    cti[0].store_op = SDL_GPU_STOREOP_STORE;
+
+    /* The G-buffer clears to a ZERO normal and a ZERO distance, which both read as "nothing
+     * known here" -- the same answer a sprite gives. Clearing the distance to something plausible
+     * instead, like the fighters' plane, would make every uncovered pixel claim to be at a
+     * distance nothing in the scene is at. */
+    cti[1].texture = tex_gbuf;
+    cti[1].clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 0.0f };
+    cti[1].load_op = SDL_GPU_LOADOP_CLEAR;
+    cti[1].store_op = SDL_GPU_STOREOP_STORE;
 
     SDL_GPUDepthStencilTargetInfo dti;
     SDL_zero(dti);
@@ -692,7 +748,7 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
     dti.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
     dti.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
 
-    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &cti, 1, &dti);
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, cti, 2, &dti);
     if (!pass) {
         fprintf(stderr, "engine: the render pass could not begin: %s\n", SDL_GetError());
         SDL_SubmitGPUCommandBuffer(cmd);
@@ -799,7 +855,143 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
 
     stat_frames++;
     stat_quads += n;
+    gbuf_report(w, h);
     return wrapped;
+}
+
+/* IEEE half to float. Written out rather than reached for, because the G-buffer readback is the
+ * only thing in the port that reads a 16-bit float and a wrong decode here would show up as
+ * plausible-but-wrong distances -- which is exactly the kind of number nobody double-checks. */
+static float half_to_float(uint16_t h)
+{
+    const uint32_t sgn = (uint32_t)(h >> 15) & 1u;
+    const uint32_t exp = (uint32_t)(h >> 10) & 0x1fu;
+    const uint32_t man = (uint32_t)h & 0x3ffu;
+    uint32_t bits;
+    if (exp == 0) {
+        if (man == 0) bits = sgn << 31;
+        else {
+            int e = -1;
+            uint32_t m = man;
+            do { m <<= 1; e++; } while (!(m & 0x400u));
+            bits = (sgn << 31) | ((uint32_t)(127 - 15 - e) << 23) | ((m & 0x3ffu) << 13);
+        }
+    } else if (exp == 31) {
+        bits = (sgn << 31) | 0x7f800000u | (man << 13);
+    } else {
+        bits = (sgn << 31) | ((exp - 15u + 127u) << 23) | (man << 13);
+    }
+    float f;
+    memcpy(&f, &bits, sizeof f);
+    return f;
+}
+
+/* LF2_ENGINE_GBUF=1: read the G-buffer back once and say what distances are actually in it.
+ *
+ * WHY A READBACK AND NOT A COUNTER. A counter can only say the engine was HANDED a distance; it
+ * cannot say the distance survived the vertex format, the attachment, the half-float encoding
+ * and the blend state. Every one of those fails silently into a buffer full of zeros, and a
+ * depth of field reading zeros does nothing at all -- which looks exactly like a feature that
+ * was never switched on.
+ *
+ * It prints the DISTINCT distances with their pixel counts, so the answer can be checked against
+ * the stage's own bg.dat: a layer's depth is (stage_width-794)/(span-794) (C031), and those are
+ * the numbers that must appear. A histogram nobody can check against an independent source is
+ * just a number.
+ */
+static void gbuf_report(int w, int h)
+{
+    if (!getenv("LF2_ENGINE_GBUF") || !tex_gbuf) return;
+    /* WHEN TO LOOK, and the first cut of this got it wrong in the way the rule about capping the
+     * BORING case warns about: it latched on the first frame, which is the front-end menu -- no
+     * stage, no layers, no distances -- and reported an entirely zero buffer. That reading was
+     * true and useless, and it would have read as "the G-buffer does not work".
+     *
+     * So it retries: every 60th frame until one actually carries a distance, bounded, and if
+     * none ever does the bound is reported rather than the run going quiet. The INTERESTING case
+     * is the one to keep looking for; the boring one is what gets capped. */
+    enum { GBUF_EVERY = 60, GBUF_TRIES = 40 };
+    static int done, tries;
+    static long seen;
+    if (done) return;
+    if ((seen++ % GBUF_EVERY) != 0) return;
+    if (++tries > GBUF_TRIES) {
+        if (tries == GBUF_TRIES + 1)
+            fprintf(stderr, "engine gbuf: looked at %d frames spread over the run and NOT ONE "
+                            "carried a distance. The buffer is being written and is entirely "
+                            "zero -- so either no stage was ever on screen, or the depth hint "
+                            "never reached a draw\n", GBUF_TRIES);
+        return;
+    }
+
+    const size_t bytes = (size_t)w * (size_t)h * 8u;   /* RGBA16F */
+    SDL_GPUTransferBufferCreateInfo ti;
+    SDL_zero(ti);
+    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    ti.size = (Uint32)bytes;
+    SDL_GPUTransferBuffer *tb = SDL_CreateGPUTransferBuffer(DEV, &ti);
+    if (!tb) {
+        fprintf(stderr, "engine gbuf: no download buffer (%s) -- READ NOTHING\n", SDL_GetError());
+        return;
+    }
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
+    SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureRegion reg;
+    SDL_zero(reg);
+    reg.texture = tex_gbuf; reg.w = (Uint32)w; reg.h = (Uint32)h; reg.d = 1;
+    SDL_GPUTextureTransferInfo dst = { tb, 0, (Uint32)w, (Uint32)h };
+    SDL_DownloadFromGPUTexture(cp, &reg, &dst);
+    SDL_EndGPUCopyPass(cp);
+    SDL_GPUFence *f = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    if (f) { SDL_WaitForGPUFences(DEV, true, &f, 1); SDL_ReleaseGPUFence(DEV, f); }
+
+    const uint16_t *px = (const uint16_t *)SDL_MapGPUTransferBuffer(DEV, tb, false);
+    if (!px) {
+        fprintf(stderr, "engine gbuf: the readback could not be mapped (%s) -- READ NOTHING\n",
+                SDL_GetError());
+        SDL_ReleaseGPUTransferBuffer(DEV, tb);
+        return;
+    }
+    enum { BUCKETS = 24 };
+    float val[BUCKETS];
+    long  cnt[BUCKETS];
+    int nb = 0;
+    long normals = 0, zero = 0, total = 0;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            const uint16_t *p = px + ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            const float nx = half_to_float(p[0]), ny = half_to_float(p[1]),
+                        nz = half_to_float(p[2]), d = half_to_float(p[3]);
+            total++;
+            if (nx * nx + ny * ny + nz * nz > 0.25f) normals++;
+            if (!(d > 0.0f)) { zero++; continue; }
+            int hit = -1;
+            for (int b = 0; b < nb; b++)
+                if (d > val[b] * 0.999f && d < val[b] * 1.001f) { hit = b; break; }
+            if (hit >= 0) { cnt[hit]++; continue; }
+            if (nb < BUCKETS) { val[nb] = d; cnt[nb] = 1; nb++; }
+        }
+    }
+    SDL_UnmapGPUTransferBuffer(DEV, tb);
+    SDL_ReleaseGPUTransferBuffer(DEV, tb);
+
+    /* Nothing on screen yet: say nothing and look again in sixty frames. The bound above is
+     * what turns "never found one" into a message rather than into silence. */
+    if (nb == 0) return;
+    done = 1;
+
+    fprintf(stderr, "engine gbuf: %dx%d, %ld px -- %ld with a real surface normal, %ld with no "
+                    "distance (sprites, HUD and anything uncovered)\n",
+            w, h, total, normals, zero);
+    for (int a = 0; a < nb; a++)          /* nearest first, which is how a stage reads */
+        for (int b = a + 1; b < nb; b++)
+            if (val[b] < val[a]) {
+                const float t = val[a]; val[a] = val[b]; val[b] = t;
+                const long c = cnt[a]; cnt[a] = cnt[b]; cnt[b] = c;
+            }
+    for (int b = 0; b < nb; b++)
+        fprintf(stderr, "engine gbuf:   distance %8.4f  %ld px%s\n", (double)val[b], cnt[b],
+                nb == BUCKETS && b == nb - 1 ? "   (bucket list FULL -- more may exist)" : "");
 }
 
 void engine_report(void)
