@@ -1,0 +1,5 @@
+solid:
+  model: models/box.obj
+  depth: 1.0
+  colour: 255 0 0
+solid_end

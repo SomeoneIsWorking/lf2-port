@@ -1,0 +1,4 @@
+solid:
+  model: models/nothing_here.obj
+  depth: 1.0
+solid_end
