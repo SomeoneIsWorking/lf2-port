@@ -1896,14 +1896,6 @@ plain composition; there is deliberately no approximation to fall back to.
   only the final x cannot show which of them declined or why. That is how issue #54 was
   settled, and it overturned two earlier guesses about which branch was at fault.
 
-- **`LF2_EXIT_PROBE=<hex>[,<hex>…]`** zeroes those guest addresses a few frames after the pause
-  menu's exit completes, and reports what each one held first — saying explicitly when a word
-  was **already zero**, so that writing nothing cannot read as a negative result. It makes
-  testing a candidate for "which word sends the game back to its menu" cost a run rather than a
-  rebuild (issue #22). Note that the discriminator downstream of it is the hard part: comparing
-  two frame dumps does **not** distinguish the mode menu from character selection, because they
-  can share a picture as well as a blit destination (issue #59).
-
 - **`LF2_BG_TABLE=1`** prints the loaded stage's layer table once, the first frame a match is
   actually on screen. **`LF2_BG_TABLE=all`** prints *every* background record the registry
   holds — all twelve — regardless of which one is loaded.

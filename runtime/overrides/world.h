@@ -186,6 +186,24 @@ enum { BG_REGISTRY = 0x00458b00 + 2004, BG_INDEX = 0x0044d024 };
  * the positive control that the watch fires and silence afterwards. That is why exiting to a
  * menu drives the ENTRY sequence: there is no exit sequence to drive. */
 enum { GAME_TOP_MODE = 0x00458b00, GAME_MODE_WORD = 0x0044d070 };
+
+/* SCREEN_WORD is the game's own screen selector, read from the decompilation of fn_0041bc90
+ * and fn_00429730 rather than from a .data diff (issue #61). fn_0041bc90 runs the match while
+ * it is 0 and otherwise hands it, BY ADDRESS, to fn_00429730, which dispatches on it:
+ *
+ *      0            the match itself
+ *      1            character selection (the panel proper)
+ *      2            enter character selection with the stage list armed -> becomes 1
+ *      3            reset every player's selection, then -> 1
+ *      10           the FRONT-END MENU, fn_00431d10 -- the eight-item list
+ *      0x14..0x32   fn_00432ab0        0x78..0x96  fn_00434ab0
+ *      200..299     fn_00438b40        300         fn_00437220
+ *
+ * MENU_CURSOR is the same word the port already knows as the game mode: fn_00429730 passes
+ * &0x00451160 to fn_00431d10, which uses it as the front-end cursor (0..7) AND as the mode the
+ * chosen item runs in. They are one word on purpose -- picking the item IS picking the mode. */
+enum { SCREEN_WORD = 0x0044d020, MENU_CURSOR = 0x00451160 };
+enum { SCREEN_MATCH = 0, SCREEN_CHARSELECT = 1, SCREEN_FRONTEND = 10 };
 enum { BG_STRIDE_DW = 612, BG_MAX_LAYERS = 30 };
 enum { BG_LAYER_PIC    = 81027484,      /* -120 the picture handed to the draw call */
        BG_LAYER_SPAN   = 81027604,      /* +0   bg.dat's `width:` -- the scroll span */

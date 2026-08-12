@@ -6,6 +6,7 @@
 
 #include "overrides.h"
 #include "geom.h"
+#include "world.h"
 
 #include "guest_ops.h"
 #include "guest_map.h"
@@ -358,14 +359,54 @@ enum { EXIT_KEY_HOLD = 6 };               /* frames F4 is held, matching the key
 enum { EXIT_SETTLE = 10 };                /* frames the overlay is left to appear properly */
 enum { EXIT_GIVEUP = 400 };               /* about seven seconds; then say so and stop */
 
-static int  exit_state;                   /* 0 idle, 1 F4 sent, 2 overlay seen, 3 probing */
-static void exit_probe(long f);
-void exit_probe_tick(long f);
-static long exit_probe_watch_from = -1;
-static int  exit_probe_saw_menu;
-static int  exit_probe_said;
+enum { EXIT_LAND_WATCH = 180 };           /* frames the screen word is followed afterwards */
+
+static int  exit_state;                   /* 0 idle, 1 F4 sent, 2 overlay seen */
 static int  exit_dev = -1;
 static long exit_since, exit_overlay_at;
+static long exit_land_from = -1;
+static uint32_t exit_land_last;
+static int  exit_land_said;
+
+/* Which screen the game is on, in its own words: SCREEN_WORD is what fn_0041bc90 hands to
+ * fn_00429730 and what that dispatches on (see runtime/overrides/world.h). Naming it is the
+ * whole verdict for "did the exit land on the front end" -- the alternative, comparing frame
+ * dumps, cannot tell the front-end menu from character selection, because they share a blit
+ * destination and can share a picture (issue #59). */
+static const char *screen_name(uint32_t s)
+{
+    switch (s) {
+    case SCREEN_MATCH:      return "the match";
+    case SCREEN_CHARSELECT: return "character selection";
+    case 2:                 return "character selection (entering, stage list armed)";
+    case 3:                 return "character selection (selections being reset)";
+    case SCREEN_FRONTEND:   return "the FRONT-END MENU";
+    default:                return "a screen this port has not named";
+    }
+}
+
+/* Follow the screen word after the exit dispatches and say where it settled.
+ *
+ * This runs BEFORE the early-out in the tick below, because the exit's own state machine is
+ * finished by the time the game moves -- a watch behind that `return` would never run, which
+ * is how its predecessor managed seven runs that printed nothing and read as "no verdict"
+ * rather than as "the instrument is dead". It reports on EVERY exit, and it prints where the
+ * game went even when that is the right place: a verdict that can only ever say "wrong" is
+ * not a verdict. */
+static void exit_landing_tick(long f)
+{
+    if (exit_land_from < 0 || exit_land_said) return;
+    const uint32_t now = LD32(SCREEN_WORD);
+    if (now != exit_land_last) {
+        fprintf(stderr, "exit to menu: screen %u -> %u (%s) at frame %ld\n",
+                exit_land_last, now, screen_name(now), f);
+        exit_land_last = now;
+    }
+    if (f - exit_land_from < EXIT_LAND_WATCH) return;
+    exit_land_said = 1;
+    fprintf(stderr, "exit to menu: LANDED on screen %u -- %s -- %d frames after the confirm\n",
+            now, screen_name(now), EXIT_LAND_WATCH);
+}
 
 void exit_to_menu_begin(int dev)
 {
@@ -399,11 +440,7 @@ void exit_to_menu_begin(int dev)
 
 void exit_to_menu_tick(void)
 {
-    /* BEFORE the early-out, and that is the whole point: exit_probe zeroes exit_state when it
-     * writes, so a watch armed there and ticked below this line never ran at all -- seven
-     * candidate runs printed their write and then said NOTHING, which reads as "no verdict"
-     * rather than as "the instrument is dead". */
-    exit_probe_tick(hostwin_frames());
+    exit_landing_tick(hostwin_frames());
     if (!exit_state) return;
     const long f = hostwin_frames();
 
@@ -419,7 +456,6 @@ void exit_to_menu_tick(void)
         return;
     }
 
-    if (exit_state == 3) { exit_probe(f); return; }
     if (!overlay_open()) return;
     if (exit_state == 1) {
         exit_state = 2;
@@ -433,92 +469,7 @@ void exit_to_menu_tick(void)
     input_synth_confirm(exit_dev, 2);
     fprintf(stderr, "exit to menu: overlay selection set to Exit (item %d) and device %d's "
                     "attack issued -- the game dispatches it from here\n", OV_EXIT, exit_dev);
-    exit_state = 3;
-    exit_overlay_at = f;
-}
-
-/* ---- LF2_EXIT_PROBE: which .data word sends the game back to its mode menu (issue #22) ----
- *
- * A DIAGNOSTIC, and it stays one. The .data diff between the mode menu and the screen this
- * exit reaches leaves a short list of words that read zero at the mode menu, and a diff can
- * only ever produce suspects -- the test is to write one and watch. This writes the words
- * named in LF2_EXIT_PROBE (comma-separated hex guest addresses) once, a few frames after the
- * exit completes, so a candidate costs a run rather than a rebuild.
- *
- * It says what it wrote and what was there, because a probe that writes a word already zero
- * proves nothing and must not read as a negative result. */
-enum { EXIT_PROBE_WAIT = 30 };
-
-static void exit_probe(long f)
-{
-    if (f - exit_overlay_at < EXIT_PROBE_WAIT) return;
     exit_state = 0;
-    const char *spec = getenv("LF2_EXIT_PROBE");
-    if (!spec) return;
-    if (panel_hud_up()) {
-        fprintf(stderr, "exit probe: the match is still up at frame %ld, so nothing was "
-                        "written -- this run tested NOTHING\n", f);
-        return;
-    }
-    int wrote = 0;
-    for (const char *p = spec; *p; ) {
-        char *end = NULL;
-        const unsigned long addr = strtoul(p, &end, 16);
-        if (end == p) break;
-        /* `addr` writes zero; `addr=value` writes that value. The second form is not a
-         * convenience -- a probe that can only write ZERO cannot test a candidate whose
-         * mode-menu value is non-zero, and the fresh diff has four of those (00450b90=1,
-         * 00451160=1, 00451224=20, 00458580=35). Six candidates came back negative before this
-         * existed, and for the non-zero ones that negative meant nothing at all. */
-        unsigned long val = 0;
-        if (*end == '=') { const char *q = end + 1; char *e2 = NULL;
-                           val = strtoul(q, &e2, 0); if (e2 != q) end = e2; }
-        const uint32_t was = LD32((uint32_t)addr);
-        ST32((uint32_t)addr, (uint32_t)val);
-        fprintf(stderr, "exit probe: [%08lx] was %u, wrote %lu at frame %ld%s\n",
-                addr, was, val, f,
-                was == (uint32_t)val ? "  -- IT ALREADY HELD THAT VALUE, so this proves nothing"
-                                     : "");
-        wrote++;
-        p = (*end == ',') ? end + 1 : end;
-    }
-    if (!wrote)
-        fprintf(stderr, "exit probe: LF2_EXIT_PROBE=\"%s\" named no address I could parse, so "
-                        "NOTHING was written\n", spec);
-    if (wrote) exit_probe_watch_from = f;
-}
-
-/* THE VERDICT, which this probe never had. Judging it used to mean diffing the frame after the
- * write against a frame of the mode menu -- and issue #22 records how that went: the two screens
- * share a blit destination and the "mode menu" side of the comparison was character selection,
- * so the positive control read 0.0% and six candidates were written up as negatives when they
- * were untested.
- *
- * panel_modemenu_up() (issue #51) removes the diffing entirely: the mode menu is identified by
- * the full-screen colour only it paints. So the probe can simply ASK whether the screen it is
- * trying to reach came up, for a while after the write, and say so. */
-enum { EXIT_PROBE_WATCH = 240 };
-
-void exit_probe_tick(long f)
-{
-    /* SELFTEST: arm the watch at frame 0 instead of after an exit. The mode menu is drawn at
-     * frame 5 of every run (issue #59), so it falls inside the window and the POSITIVE branch
-     * MUST print. Without this the probe has only ever been run against one class -- seven
-     * candidates in a row reported "did not appear", which is indistinguishable from a verdict
-     * that cannot say anything else. This is the case that makes the negatives mean something. */
-    if (exit_probe_watch_from < 0 && getenv("LF2_EXIT_PROBE_SELFTEST")) exit_probe_watch_from = 0;
-    if (exit_probe_watch_from < 0) return;
-    if (panel_modemenu_up()) exit_probe_saw_menu = 1;
-    if (exit_probe_said) return;
-    if (f - exit_probe_watch_from >= EXIT_PROBE_WATCH) {
-        exit_probe_said = 1;
-        if (exit_probe_saw_menu)
-            fprintf(stderr, "exit probe: THE MODE MENU CAME UP within %d frame(s) of the write "
-                            "-- this candidate reaches it\n", EXIT_PROBE_WATCH);
-        else
-            fprintf(stderr, "exit probe: the mode menu did NOT appear in the %d frame(s) after "
-                            "the write. That is a real negative for this candidate ONLY if the "
-                            "write happened -- read the line above, which says so when the word "
-                            "was already zero\n", EXIT_PROBE_WATCH);
-    }
+    exit_land_from = f;
+    exit_land_last = LD32(SCREEN_WORD);
 }
