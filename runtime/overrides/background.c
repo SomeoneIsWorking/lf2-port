@@ -85,10 +85,16 @@ static void lf_store(uint32_t registry, uint32_t bg, uint32_t field, int i, uint
     ST32(registry + (bg * BG_STRIDE_DW + (uint32_t)i) * 4u + field, v);
 }
 
-/* One picture, at one place. The clip index is -1 -- the whole picture, not a glyph. */
-static void draw_layer(uint32_t obj, int32_t x, int32_t y, uint32_t pic, uint32_t arg0)
+/* One picture, at one place. The clip index is -1 -- the whole picture, not a glyph.
+ *
+ * `transparent` is bg.dat's `transparency:` straight out of the record, and it is the fourth
+ * argument because that is what fn_0043f010 does with it: `-(arg != 0) & 0x8000` ORed into the
+ * blit flags, i.e. the colour key. This used to be called `pic` on the strength of a field name
+ * that was itself a guess; two readings agree it is the transparency flag -- fn_0040c160 scans
+ * `transparency:` into that field, and fn_0043f010 uses it as a key enable. */
+static void draw_layer(uint32_t obj, int32_t x, int32_t y, uint32_t transparent, uint32_t arg0)
 {
-    const uint32_t args[6] = { (uint32_t)x, (uint32_t)y, 0xffffffffu, pic, 0u, arg0 };
+    const uint32_t args[6] = { (uint32_t)x, (uint32_t)y, 0xffffffffu, transparent, 0u, arg0 };
     R(ECX) = obj;
     guest_call(DRAW_CLIP, args, 6);
 }
@@ -571,7 +577,7 @@ void fn_0041a250(void)
         }
 
         const uint32_t obj = lf(registry, bg, BG_LAYER_OBJ, i);
-        const uint32_t pic = lf(registry, bg, BG_LAYER_PIC, i);
+        const uint32_t transparent = lf(registry, bg, BG_LAYER_TRANSPARENCY, i);
         const int32_t y = (int32_t)lf(registry, bg, BG_LAYER_Y, i);
         const int32_t lx = (int32_t)lf(registry, bg, BG_LAYER_X, i);
         const int32_t loop = (int32_t)lf(registry, bg, BG_LAYER_LOOP, i);
@@ -585,11 +591,11 @@ void fn_0041a250(void)
              * right edge there, which is why the native-width arm of the test still comes
              * out byte-identical. */
             for (int32_t x = lx; x < span || off + x < view; x += loop)
-                draw_layer(obj, off + x, y, pic, arg0);
+                draw_layer(obj, off + x, y, transparent, arg0);
         } else {
             /* loop < 0 would spin for ever; the game would too, but it is a data error and
              * drawing the layer once is the closest thing to what was meant. */
-            draw_layer(obj, off + lx, y, pic, arg0);
+            draw_layer(obj, off + lx, y, transparent, arg0);
         }
     }
 
