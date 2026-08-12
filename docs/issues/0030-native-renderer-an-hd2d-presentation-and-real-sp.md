@@ -1,7 +1,7 @@
 ---
 id: 30
 title: Native renderer: an HD2D presentation and real sprite-cast shadows
-status: open
+status: resolved
 symptom: the port draws exactly what LF2 drew -- flat blits onto a software surface with the game's own fake shadow ellipse. Wanted: a native renderer with an HD2D look (depth, lighting, bloom/DOF over the pixel art) and shadows actually cast from the sprites
 tags: reported,rendering,renderer,hd2d,shadows,feature
 created: 2026-08-06
@@ -455,3 +455,47 @@ WHAT IS GENUINELY STILL OPEN on this entry, so the corrected list is not read as
     identified.
   - THE STAGE IS FLAT PAINTED LAYERS. That is now issue #62 rather than this entry, and #62 has
     the depth-tested pass and the per-layer depths already.
+
+### Note (2026-08-12)
+### RESOLVED (2026-08-12) -- the accounting, item by item, with a third stale entry corrected
+
+The reporter asked for three things. Two are delivered and the third is split out rather than
+left buried in a resolved entry.
+
+  1. A NATIVE RENDERER. Done. The game's draws are GPU geometry through a display list, scaled
+     per quad into a full-resolution target, with the software compositor as the fallback.
+     tools/e2e.sh render holds it: the GPU frame matches the software one to a max of 1-2 levels
+     of 255, dropping every 7th draw changes 134928 px so the match can fail, and the light
+     changes 182635 px on a frame with fighters and NOTHING on one without.
+  2. HD2D LOOK. The lighting is done -- one key light as a direction in the stage's own axes,
+     hemisphere ambient, a bevel normal from the sprite's silhouette, and the floor lit as a
+     HORIZONTAL surface. Bloom and DOF are NOT done and are now issue #63.
+  3. REAL SHADOWS CAST FROM THE SPRITES. Done. 2778 ground markers produced 2778 cast shadows
+     in one run -- every marker consumed -- sheared along the same light vector the shading
+     uses, into a mask so a shadow keeps the sky's colour rather than being a hole.
+
+A THIRD STALE ITEM on the "still open" list, found by reading the shader rather than the note:
+
+  "the floor is lit as a billboard"  NOT TRUE. runtime/shaders/hd2d_light.frag lines 127-164
+  light the floor as a horizontal surface and the backdrop as a vertical one, from bg.dat's own
+  zboundary row with a feather, applied AS COLOUR ONLY at locked luminance -- so the ground
+  picks up the sky's colour and the rock face does not, and the backdrop's multiplier is exactly
+  1, which is what lets a fighterless frame stay byte-identical. That is precisely the "light
+  the floor as a GROUND PLANE rather than as a billboard" the older note called the honest next
+  step; it was taken and the list was not updated.
+
+AND THE FOURTH ITEM IS NOT A GAP AT ALL. "The shadows are placed from the game's own ellipse
+rather than from z" was written as a defect. Reading render.c, it is the better design and says
+so: "WHERE it goes comes from the game, not from a guess: the ellipse the game drew is at the
+object's feet". objects.c draws that ellipse only when the game's own condition holds
+(state > -0x46 && phase < 2), i.e. when the GAME says the thing is standing on the floor. An
+object with no ellipse is one the game says is not. Placing a shadow for it from z would invent
+a floor contact the game does not express -- replacing a measured source with a derived one for
+no stated benefit. Nothing to build; the item is withdrawn rather than deferred.
+
+So what is left of this entry is bloom and depth of field, which is issue #63, and the flat
+stage, which is issue #62. Both are named asks with their own entries and their own
+constraints, which is a better place for them than a list at the bottom of a closed one.
+
+### Resolution (2026-08-12)
+Two of the three asks are delivered -- the native renderer (GPU display list, per-quad scaling, matching the software compositor to 1-2 levels of 255) and real sprite-cast shadows (2778 markers, 2778 shadows, sheared along the same light vector the shading uses). The HD2D lighting is done including the floor lit as a horizontal surface from zboundary, which was the third stale item on the 'still open' list. The fourth item, 'shadows placed from the ellipse rather than from z', is withdrawn rather than deferred: the ellipse is the game's own statement that an object stands on the floor, and deriving it from z would invent a floor contact the game does not express. Bloom and depth of field are split out as issue #63 rather than buried here; the flat stage is issue #62.

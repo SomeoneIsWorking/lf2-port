@@ -147,3 +147,29 @@ render.c, no second device, and the software compositor is untouched.
 
 This entry stays open for the MODELS. The renderer work moved to #62, which is the entry that
 asked for a use for them.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the BACKGROUNDS third of this entry has moved to #62 and is underway
+
+This entry covers three things -- models for objects, for items and for backgrounds. The third
+is now issue #62, which the reporter asked for directly, and it has taken all the renderer work
+with it:
+
+  - the depth-tested offscreen pass exists (runtime/video/mesh.c), sharing the renderer's own
+    device, with a self-test a broken depth test fails;
+  - the projection is built and agrees with the game's own layer placement on real stages;
+  - both directions of the GPU-texture bridge are measured (C030, C032).
+
+So this entry's stated blocker -- "the first commit is a depth buffer, before any modelling is
+done" -- is discharged. What remains here is the OBJECTS and ITEMS thirds, and they are a
+different problem from the backgrounds one in a way worth stating before anyone starts:
+
+  - a background layer is drawn ONCE per frame from data the port fully reads, so replacing it
+    with geometry is a swap at a known place;
+  - an object is drawn by fn_0041a5a0 (hand-ported, runtime/overrides/objects.c) from a sprite
+    sheet chosen by the character's animation frame. Replacing that with a model means the
+    model has to have every frame's POSE, or a rig and an animation mapping. LF2 has 23
+    playable fighters with hundreds of frames each. That is an art project, not a port task,
+    and nothing about the renderer makes it smaller.
+
+Recorded so the depth-buffer work is not read as having unblocked the objects half. It has not.
