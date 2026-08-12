@@ -5,7 +5,7 @@ status: open
 symptom: the port draws exactly what LF2 drew -- flat blits onto a software surface with the game's own fake shadow ellipse. Wanted: a native renderer with an HD2D look (depth, lighting, bloom/DOF over the pixel art) and shadows actually cast from the sprites
 tags: reported,rendering,renderer,hd2d,shadows,feature
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-12
 ---
 
 REPORTED 2026-08-06. Filed on receipt, not yet scoped -- what follows is what the port
@@ -387,3 +387,32 @@ STILL OPEN ON THIS ISSUE:
     already carries an arbitrary-sized bitmap, so this is small.
   - the pause menu and the controls hint still present through the software compositor,
     because they draw straight onto the primary and are in no display list.
+
+### Note (2026-08-12)
+STATUS RE-VERIFIED THIS SESSION, on the GPU, after two hand-ports touched the draw path.
+
+tools/e2e.sh render, run today with the object pass now hand-ported (issue #55) and the
+built-in background ported (issue #58):
+
+    ok  frame_000401  gpu matches software (max channel diff 1, 251/436700 px differ)
+    ok  frame_000401  dropping every 7th draw changes 40423 px by up to 255
+    ok  frame_000401  the light changes NOTHING on a frame with no fighters in it
+    ok  frame_001351  gpu matches software (max channel diff 2, 386/436700 px differ)
+    ok  frame_001351  dropping every 7th draw changes 134928 px by up to 251
+    ok  frame_001351  the light changes 182635 px by up to 152 on a frame WITH fighters
+
+and tools/e2e.sh pause_dropout: the native renderer drew 120 paused frames over its retained
+list. 0 amdgpu faults in the boot afterwards.
+
+WHY THAT IS WORTH RECORDING RATHER THAN ASSUMED: fn_0041a5a0 is the pass that draws every
+fighter, their shadows and their tags, and it is now the port's own code rather than recompiled
+output. The renderer's whole character-identification rests on the game drawing a shadow ellipse
+at an object's feet immediately before the object (claim C019) -- which is a property of THAT
+pass. A port that got the ordering subtly wrong would have broken the lighting's subject
+selection while still drawing a correct-looking software frame. The two arms above are what says
+it did not: the light still changes nothing on a fighterless frame and 182635 px on one with
+fighters, the same numbers as before the port.
+
+WHAT REMAINS OPEN ON THIS ENTRY IS UNCHANGED and is feature work the reporter framed as a
+direction rather than a defect: the stage is still flat painted layers. Nothing here has been
+built uninvited.
