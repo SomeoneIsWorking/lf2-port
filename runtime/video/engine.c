@@ -9,8 +9,13 @@
 
 #include "guest.h"
 
+#include "mesh.h"
+#include "hd2d.h"
+
 #include "../shaders/gen/quad_vert_spv.h"
 #include "../shaders/gen/quad_spv.h"
+#include "../shaders/gen/mesh_vert_spv.h"
+#include "../shaders/gen/mesh_spv.h"
 
 /* ---- state ------------------------------------------------------------------------------ */
 
@@ -25,6 +30,15 @@ static SDL_GPUSampler *SMP;
  * is a one-off cost at startup; a changed colour is a whole class of drift. */
 enum { BLEND_NONE = 0, BLEND_ALPHA = 1, BLEND_PREMUL = 2, BLEND_KINDS = 3 };
 static SDL_GPUGraphicsPipeline *PIPE[BLEND_KINDS];
+
+/* The GEOMETRY pipeline, in the same pass and against the same depth buffer as the quads above.
+ * Alpha-blended, because a set is drawn over the game's painted layers and every texel its
+ * geometry does not cover has to let them through. */
+static SDL_GPUGraphicsPipeline *GPIPE;
+static SDL_GPUBuffer *gvbuf;
+static SDL_GPUTransferBuffer *gvxfer;
+static int gvbuf_cap;
+static long stat_geom_draws, stat_geom_tris;
 
 /* The offscreen pair. Colour is wrapped as an ordinary SDL_Texture (claim C030 -- the same
  * object, no copy and no readback) so the existing present path can put it on the screen while
@@ -347,6 +361,65 @@ int engine_init(SDL_Renderer *r)
         return 0;
     }
 
+    /* ---- the geometry pipeline, sharing everything ---- */
+    {
+        SDL_GPUShader *gvs = shader_make(mesh_vert_spv, sizeof mesh_vert_spv,
+                                         SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, "geometry vertex");
+        SDL_GPUShader *gfs = shader_make(mesh_spv, sizeof mesh_spv,
+                                         SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1, "geometry fragment");
+        if (gvs && gfs) {
+            SDL_GPUVertexBufferDescription gvbd;
+            SDL_zero(gvbd);
+            gvbd.slot = 0;
+            gvbd.pitch = sizeof(MeshVertex);
+            gvbd.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+
+            SDL_GPUVertexAttribute ga[4];
+            SDL_zero(ga);
+            ga[0].location = 0; ga[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+            ga[0].offset = (Uint32)offsetof(MeshVertex, x);
+            ga[1].location = 1; ga[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
+            ga[1].offset = (Uint32)offsetof(MeshVertex, u);
+            ga[2].location = 2; ga[2].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+            ga[2].offset = (Uint32)offsetof(MeshVertex, nx);
+            ga[3].location = 3; ga[3].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+            ga[3].offset = (Uint32)offsetof(MeshVertex, r);
+
+            SDL_GPUColorTargetDescription gct;
+            SDL_zero(gct);
+            gct.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            blend_state(&gct.blend_state, BLEND_ALPHA);
+
+            SDL_GPUGraphicsPipelineCreateInfo gp;
+            SDL_zero(gp);
+            gp.vertex_shader = gvs;
+            gp.fragment_shader = gfs;
+            gp.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+            gp.vertex_input_state.num_vertex_buffers = 1;
+            gp.vertex_input_state.vertex_buffer_descriptions = &gvbd;
+            gp.vertex_input_state.num_vertex_attributes = 4;
+            gp.vertex_input_state.vertex_attributes = ga;
+            gp.target_info.num_color_targets = 1;
+            gp.target_info.color_target_descriptions = &gct;
+            gp.target_info.has_depth_stencil_target = true;
+            gp.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+            /* LESS here, not LESS_OR_EQUAL: within a set the depth is REAL and a genuine tie is
+             * coplanar geometry, where either answer is as good. The quads use OR_EQUAL only
+             * because a batch shares one ordinal by construction. */
+            gp.depth_stencil_state.enable_depth_test = true;
+            gp.depth_stencil_state.enable_depth_write = true;
+            gp.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
+            gp.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+            gp.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+            GPIPE = SDL_CreateGPUGraphicsPipeline(DEV, &gp);
+            if (!GPIPE)
+                fprintf(stderr, "engine: the geometry pipeline failed: %s -- sprites draw, "
+                                "hand-woven sets do NOT\n", SDL_GetError());
+        }
+        if (gvs) SDL_ReleaseGPUShader(DEV, gvs);
+        if (gfs) SDL_ReleaseGPUShader(DEV, gfs);
+    }
+
     SDL_GPUSamplerCreateInfo si;
     SDL_zero(si);
     /* NEAREST, always: this is pixel art magnified two or three times, and the frame is built
@@ -479,7 +552,55 @@ static void emit(QuadVertex *v, const EngineQuad *q, float depth)
     v[3] = a; v[4] = c; v[5] = d;
 }
 
-SDL_Texture *engine_draw(const EngineQuad *q, int n, int w, int h)
+/* One gap's geometry, uploaded into its own buffer. Separate from the quad buffer because the
+ * vertex FORMAT differs -- a MeshVertex carries four position channels and a normal. */
+static int gvbuf_reserve(int bytes)
+{
+    if (gvbuf && gvbuf_cap >= bytes) return 1;
+    if (gvbuf)  { SDL_ReleaseGPUBuffer(DEV, gvbuf); gvbuf = NULL; }
+    if (gvxfer) { SDL_ReleaseGPUTransferBuffer(DEV, gvxfer); gvxfer = NULL; }
+    SDL_GPUBufferCreateInfo bi;
+    SDL_zero(bi);
+    bi.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+    bi.size = (Uint32)bytes;
+    gvbuf = SDL_CreateGPUBuffer(DEV, &bi);
+    SDL_GPUTransferBufferCreateInfo ti;
+    SDL_zero(ti);
+    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    ti.size = (Uint32)bytes;
+    gvxfer = SDL_CreateGPUTransferBuffer(DEV, &ti);
+    if (!gvbuf || !gvxfer) {
+        fprintf(stderr, "engine: could not allocate a %d-byte geometry buffer: %s\n",
+                bytes, SDL_GetError());
+        if (gvbuf)  { SDL_ReleaseGPUBuffer(DEV, gvbuf); gvbuf = NULL; }
+        if (gvxfer) { SDL_ReleaseGPUTransferBuffer(DEV, gvxfer); gvxfer = NULL; }
+        gvbuf_cap = 0;
+        return 0;
+    }
+    gvbuf_cap = bytes;
+    return 1;
+}
+
+/* The light, read from hd2d rather than copied. stagelight.h is the one source and mesh.c reads
+ * it the same way -- a second copy here is the exact bug issue #62's note records. */
+typedef struct { float dir[4], sky[4], ground[4], tint[4]; } GeomLight;
+static GeomLight geom_light(void)
+{
+    GeomLight u = {
+        { 0.0f, 1.0f, 0.0f, 0.85f },
+        { 0.34f, 0.36f, 0.42f, 0.0f },
+        { 0.20f, 0.18f, 0.16f, 0.0f },
+        { 0.0f, 0.0f, 0.0f, 0.0f },
+    };
+    float d[3];
+    hd2d_light_vector(d);
+    if (d[0] != 0.0f || d[1] != 0.0f || d[2] != 0.0f) {
+        u.dir[0] = d[0]; u.dir[1] = d[1]; u.dir[2] = d[2];
+    }
+    return u;
+}
+
+SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng, int w, int h)
 {
     if (!init_ok || n <= 0 || w <= 0 || h <= 0) return NULL;
     if (!targets_make(w, h)) return NULL;
@@ -515,10 +636,41 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, int w, int h)
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
     if (!cmd) { fprintf(stderr, "engine: no command buffer: %s\n", SDL_GetError()); return NULL; }
 
+    /* The geometry, concatenated into one buffer with each piece's offset remembered, so the
+     * whole frame is a single upload however many gaps a set occupies. */
+    int gtotal = 0;
+    for (int k = 0; k < ng; k++) if (GPIPE && g[k].v && g[k].n > 0) gtotal += g[k].n;
+    int goff[64];
+    int gused = 0;
+    if (gtotal > 0 && gvbuf_reserve(gtotal * (int)sizeof(MeshVertex))) {
+        void *gmap = SDL_MapGPUTransferBuffer(DEV, gvxfer, false);
+        if (gmap) {
+            MeshVertex *gp = (MeshVertex *)gmap;
+            int at = 0;
+            for (int k = 0; k < ng && gused < (int)(sizeof goff / sizeof goff[0]); k++) {
+                if (!GPIPE || !g[k].v || g[k].n <= 0) { goff[k] = -1; continue; }
+                goff[k] = at;
+                memcpy(gp + at, g[k].v, (size_t)g[k].n * sizeof(MeshVertex));
+                at += g[k].n;
+                gused++;
+            }
+            SDL_UnmapGPUTransferBuffer(DEV, gvxfer);
+        } else {
+            gtotal = 0;
+        }
+    } else {
+        gtotal = 0;
+    }
+
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
     SDL_GPUTransferBufferLocation from = { vxfer, 0 };
     SDL_GPUBufferRegion into = { vbuf, 0, (Uint32)(verts * (int)sizeof(QuadVertex)) };
     SDL_UploadToGPUBuffer(copy, &from, &into, false);
+    if (gtotal > 0) {
+        SDL_GPUTransferBufferLocation gfrom = { gvxfer, 0 };
+        SDL_GPUBufferRegion ginto = { gvbuf, 0, (Uint32)(gtotal * (int)sizeof(MeshVertex)) };
+        SDL_UploadToGPUBuffer(copy, &gfrom, &ginto, false);
+    }
     SDL_EndGPUCopyPass(copy);
 
     SDL_GPUColorTargetInfo cti;
@@ -555,7 +707,40 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, int w, int h)
      * sheet, so consecutive already collapses most of them. */
     int i = 0, bound_pipe = -1;
     SDL_GPUTexture *bound_tex = NULL;
+    int gnext = 0;
     while (i < n) {
+        /* THE GEOMETRY GOES IN HERE, in the middle of the quad stream, into the same depth
+         * buffer -- which is the whole of issue #64's defect 3 gone. It used to be a separate
+         * render pass into its own colour+depth pair per gap, composited back as a texture,
+         * because the two renderers could only meet as a texture.
+         *
+         * Its depth sliver is the gap between this quad's ordinal and the previous one's, so it
+         * is ordered against the game's layers by where the port placed it in the list and
+         * against other geometry in the same sliver by its own parallax depth. */
+        while (gnext < ng && g[gnext].at <= i) {
+            const int k = gnext++;
+            if (gtotal <= 0 || !GPIPE || goff[k] < 0 || g[k].n <= 0) continue;
+            const float hi = 1.0f - (float)i / (float)(n + 1);
+            const float lo = 1.0f - (float)(i + 1) / (float)(n + 1);
+            SDL_BindGPUGraphicsPipeline(pass, GPIPE);
+            SDL_GPUBufferBinding gvb = { gvbuf, 0 };
+            SDL_BindGPUVertexBuffers(pass, 0, &gvb, 1);
+            SDL_GPUTextureSamplerBinding gts = { tex_color, SMP };
+            SDL_BindGPUFragmentSamplers(pass, 0, &gts, 1);
+            const float cam[12] = {
+                (float)g[k].camera, 0.0f, 0.0f, 0.0f,
+                g[k].sx_scale, g[k].sx_bias, g[k].sy_scale, g[k].sy_bias,
+                lo, hi, 0.0f, 0.0f,
+            };
+            const GeomLight gl = geom_light();
+            SDL_PushGPUVertexUniformData(cmd, 0, cam, sizeof cam);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &gl, sizeof gl);
+            SDL_DrawGPUPrimitives(pass, (Uint32)g[k].n, 1, (Uint32)goff[k], 0);
+            stat_geom_draws++;
+            stat_geom_tris += g[k].n / 3;
+            bound_pipe = -1;            /* the quad pipeline must be rebound after this */
+        }
+
         SDL_GPUTexture *t = (q[i].src_pixels || q[i].host_argb) ? tex_for(&q[i]) : NULL;
         const int kind = q[i].blend < 0 || q[i].blend >= BLEND_KINDS ? BLEND_ALPHA : q[i].blend;
         int j = i + 1;
@@ -584,6 +769,31 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, int w, int h)
         stat_batches++;
         i = j;
     }
+    /* Anything the port placed after the last quad -- geometry nearer than every layer, still
+     * behind the sprites the game goes on placing itself. */
+    while (gnext < ng) {
+        const int k = gnext++;
+        if (gtotal <= 0 || !GPIPE || goff[k] < 0 || g[k].n <= 0) continue;
+        const float hi = 1.0f - (float)(n - 1) / (float)(n + 1);
+        const float lo = 1.0f - (float)n / (float)(n + 1);
+        SDL_BindGPUGraphicsPipeline(pass, GPIPE);
+        SDL_GPUBufferBinding gvb = { gvbuf, 0 };
+        SDL_BindGPUVertexBuffers(pass, 0, &gvb, 1);
+        SDL_GPUTextureSamplerBinding gts = { tex_color, SMP };
+        SDL_BindGPUFragmentSamplers(pass, 0, &gts, 1);
+        const float cam[12] = {
+            (float)g[k].camera, 0.0f, 0.0f, 0.0f,
+            g[k].sx_scale, g[k].sx_bias, g[k].sy_scale, g[k].sy_bias,
+            lo, hi, 0.0f, 0.0f,
+        };
+        const GeomLight gl = geom_light();
+        SDL_PushGPUVertexUniformData(cmd, 0, cam, sizeof cam);
+        SDL_PushGPUFragmentUniformData(cmd, 0, &gl, sizeof gl);
+        SDL_DrawGPUPrimitives(pass, (Uint32)g[k].n, 1, (Uint32)goff[k], 0);
+        stat_geom_draws++;
+        stat_geom_tris += g[k].n / 3;
+    }
+
     SDL_EndGPURenderPass(pass);
     SDL_SubmitGPUCommandBuffer(cmd);
 
@@ -605,6 +815,9 @@ void engine_report(void)
     if (engine_enabled() && !stat_frames)
         fprintf(stderr, "engine: it is SELECTED and has drawn NOTHING -- no frame reached it, "
                         "which is a different fault from a frame that came out wrong\n");
+    fprintf(stderr, "engine: stage geometry -- %ld draw(s), %ld triangle(s), in the SAME pass "
+                    "as the sprites%s\n", stat_geom_draws, stat_geom_tris,
+            GPIPE ? "" : "  (NO geometry pipeline: sets are not drawn at all)");
     if (stat_dropped)
         fprintf(stderr, "engine: %ld quad(s) were dropped for want of a texture; art is MISSING "
                         "from those frames\n", stat_dropped);
@@ -619,6 +832,9 @@ void engine_shutdown(void)
     targets_release();
     if (vbuf)  { SDL_ReleaseGPUBuffer(DEV, vbuf); vbuf = NULL; }
     if (vxfer) { SDL_ReleaseGPUTransferBuffer(DEV, vxfer); vxfer = NULL; }
+    if (gvbuf)  { SDL_ReleaseGPUBuffer(DEV, gvbuf); gvbuf = NULL; }
+    if (gvxfer) { SDL_ReleaseGPUTransferBuffer(DEV, gvxfer); gvxfer = NULL; }
+    if (GPIPE) { SDL_ReleaseGPUGraphicsPipeline(DEV, GPIPE); GPIPE = NULL; }
     if (SMP)   { SDL_ReleaseGPUSampler(DEV, SMP); SMP = NULL; }
     for (int k = 0; k < BLEND_KINDS; k++)
         if (PIPE[k]) { SDL_ReleaseGPUGraphicsPipeline(DEV, PIPE[k]); PIPE[k] = NULL; }

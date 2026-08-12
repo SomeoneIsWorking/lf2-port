@@ -489,7 +489,14 @@ SDL_Texture *mesh_draw(int slot, const MeshVertex *v, int n, int w, int h,
     SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
     /* The camera and the view, which is all the projection needs -- there is no matrix,
      * because screen_x = X - camera/depth is not linear in (X, depth, 1). See geom.h. */
-    const float camv[4] = { (float)camera, (float)view_w, (float)view_h, 0.0f };
+    /* This pass owns its whole target, so the placement is the identity map -- stage pixel 0
+     * is the left edge, view_w is the right -- and the geometry spans the whole depth buffer.
+     * The engine passes a real placement and a narrower sliver; see engine.c and mesh.vert. */
+    const float camv[12] = {
+        (float)camera, 0.0f, 0.0f, 0.0f,
+        2.0f / (float)view_w, -1.0f, -2.0f / (float)view_h, 1.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+    };
     SDL_PushGPUVertexUniformData(cmd, 0, camv, sizeof camv);
     SDL_PushGPUFragmentUniformData(cmd, 0, &lu, sizeof lu);
     SDL_DrawGPUPrimitives(pass, (Uint32)n, 1, 0, 0);
