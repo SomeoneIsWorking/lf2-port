@@ -426,3 +426,40 @@ from a mislabelled pair, so the LIST ITSELF is suspect rather than incomplete. T
 not more candidates from that diff -- it is a fresh diff, now that a frame which is demonstrably
 the mode menu can be produced on demand (@modemenu, LF2_MODE holds it) and compared against the
 screen the exit actually reaches.
+
+### Note (2026-08-12)
+THE EXIT ALREADY REACHES THE MODE MENU. It has all along. It passes through it in ONE FRAME and
+lands on character selection, which is why every attempt to find "the word that gets us there"
+was looking for something that was never missing.
+
+LF2_FRAMING_DEBUG logs each screen as it paints its own backdrop colour. Around the exit:
+
+    frame 1404   fill 122565   THE MODE MENU        <- the exit's own doing
+    frame 1405   fill 000000   character selection  <- one frame later
+    frame 1433   fill 122565   the mode menu again  <- the probe's write
+    frame 1602   fill 000000   character selection  <- after a press at 1600
+
+So the entry's standing conclusion -- "OPTION (b) TRIED AND IT DOES NOT ARRIVE AT THE MODE MENU"
+-- is wrong. It arrives. It does not STAY.
+
+AND THE RECOVERED MENU IS FUNCTIONAL, not just drawn: the press at frame 1600 moved it on to
+character selection at 1602. Whatever state the exit leaves behind, the mode menu built on it
+takes input and dispatches normally.
+
+WHAT THE PROBE FOUND ANYWAY, and it is worth keeping: 0044d020 = 10 brings the mode menu up on
+demand. That is the screen-state word this entry named long ago as "the honest identifier"
+(FUN_00431d10 reached from FUN_00429730 when DAT_0044d020 == 10) and never tested -- every round
+of diffing chased other words. Thirteen single-word candidates were tested against it and every
+one came back negative, with the positive control firing, so the discriminator was working the
+whole time; the address was simply not among the candidates the diffs produced.
+
+SO THE REAL DEFECT IS A ONE-FRAME OVERSHOOT, and the likely cause is in the port's own exit
+sequence rather than in the game: exit_to_menu_begin sets the overlay's selection to Exit and
+ISSUES A DEVICE ATTACK to make the game dispatch it (the run log says so). If that synthesized
+press is still live when the mode menu appears a frame later, the menu consumes it and confirms
+its first item -- which lands exactly where this run lands.
+
+WHAT TO DO NEXT, and it is a measurement first: log the injected press's lifetime against the
+frame the mode menu appears. If they overlap, the fix is to stop issuing input once the overlay
+has dispatched, not to write any word. That would make this a port bug with a small fix rather
+than the RE hunt it has been.
