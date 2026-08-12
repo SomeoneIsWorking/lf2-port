@@ -463,3 +463,40 @@ WHAT TO DO NEXT, and it is a measurement first: log the injected press's lifetim
 frame the mode menu appears. If they overlap, the fix is to stop issuing input once the overlay
 has dispatched, not to write any word. That would make this a port bug with a small fix rather
 than the RE hunt it has been.
+
+### Note (2026-08-12)
+THE SCREEN WORD'S SEQUENCE, MEASURED, and it settles somewhere the entry never considered.
+
+0x0044d020 read straight out of .data dumps across the transition (no code change, one run):
+
+    frame 1400    0044d020 = 1
+    frame 1403    = 1
+    frame 1404    = 10      <- the MODE MENU, for one frame
+    frame 1405    = 3
+    frame 1406    = 1
+    frame 1450    = 1       <- and it stays there
+
+So the exit does not overshoot by accident and it is not the port's synthesized press. The
+game walks 1 -> 10 -> 3 -> 1 and SETTLES on 1, which is character selection. The mode menu is a
+state it passes through on the way somewhere else.
+
+THE SYNTHESIZED-PRESS HYPOTHESIS IS REFUTED, not merely unproven. The previous note guessed the
+confirm's second gather was landing on the menu; a cancel was written that fires the moment
+panel_modemenu_up() goes true, and it NEVER FIRED -- the two gathers are already spent by frame
+1404. The change was reverted rather than left in as a plausible-looking no-op.
+
+WHAT THIS MEANS FOR THE FEATURE. The reporter asked for "leave the match, return to the front
+end, keep the process alive". The GAME's own answer to leaving a match is character selection --
+that is where its state machine settles, and it is what a player would get pressing Exit in the
+original. So the port's exit already does what the game does, and the entry's target is a step
+FURTHER BACK than the game goes on its own.
+
+That is a design question again, but a much better posed one than before: not "why does our exit
+miss the mode menu" (it does not miss it -- the game leaves it), but "should EXIT TO MENU stop
+where the game stops, or carry on to the front end". Both are implementable; only the second
+needs anything beyond what already works.
+
+AND 0044d020 = 10 HOLDS when written directly: the probe run left the mode menu up and it took
+input normally (a press moved it to character selection). So if the answer is "stop at the mode
+menu", the mechanism exists and is one word -- the game's own screen state, the same kind of
+write LF2_MODE already makes into the mode menu's selection.
