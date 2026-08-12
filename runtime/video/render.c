@@ -931,10 +931,18 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
     if (!frame) return 0;                        /* engine_draw said why; fall back */
 
     /* The engine's target, placed on the caller's. It is the SAME GPU object the pass rendered
-     * into (C030), so this is a blit and not a readback. */
-    SDL_SetRenderTarget(R, dst);
-    SDL_SetTextureBlendMode(frame, SDL_BLENDMODE_NONE);
-    SDL_RenderTexture(R, frame, NULL, NULL);
+     * into (C030), so this is a blit and not a readback -- and the blit is where the DEFOCUS
+     * happens, since it is the one moment the finished frame and its G-buffer are both to hand.
+     *
+     * The radius is in texels of the OUTPUT, so it scales with the window: a fixed pixel radius
+     * would be a heavy blur at 794x550 and a hairline at 4K, which is a blur that is a function
+     * of resolution rather than of distance. */
+    const float dof_radius = (float)oh / 110.0f;   /* 5 texels at the game's own 550 rows */
+    if (!engine_present(dst, dof_radius)) {
+        SDL_SetRenderTarget(R, dst);
+        SDL_SetTextureBlendMode(frame, SDL_BLENDMODE_NONE);
+        SDL_RenderTexture(R, frame, NULL, NULL);
+    }
     stat_engine_frames++;
     return 1;
 }

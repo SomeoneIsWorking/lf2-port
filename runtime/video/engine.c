@@ -16,6 +16,7 @@
 #include "../shaders/gen/quad_spv.h"
 #include "../shaders/gen/mesh_vert_spv.h"
 #include "../shaders/gen/mesh_spv.h"
+#include "../shaders/gen/dof_spv.h"
 
 /* ---- state ------------------------------------------------------------------------------ */
 
@@ -39,6 +40,14 @@ static SDL_GPUBuffer *gvbuf;
 static SDL_GPUTransferBuffer *gvxfer;
 static int gvbuf_cap;
 static long stat_geom_draws, stat_geom_tris;
+
+/* THE DEFOCUS (issue #63). A render state rather than a pipeline, because it is a pass over the
+ * finished frame through SDL_Render -- the same shape hd2d's lighting uses. Rebuilt whenever the
+ * G-buffer is, since it holds a binding to it. */
+static SDL_GPUShader     *sh_dof;
+static SDL_GPURenderState *st_dof;
+static long stat_dof_frames;
+static int  dof_on = -1;
 
 static void gbuf_report(int w, int h);
 
@@ -441,6 +450,11 @@ int engine_init(SDL_Renderer *r)
         if (gfs) SDL_ReleaseGPUShader(DEV, gfs);
     }
 
+    sh_dof = shader_make(dof_spv, sizeof dof_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1, "defocus");
+    if (!sh_dof)
+        fprintf(stderr, "engine: no defocus shader -- frames are presented unblurred, which is "
+                        "a picture without a depth of field rather than a broken one\n");
+
     SDL_GPUSamplerCreateInfo si;
     SDL_zero(si);
     /* NEAREST, always: this is pixel art magnified two or three times, and the frame is built
@@ -532,6 +546,7 @@ static int targets_make(int w, int h)
         return 0;
     }
     SDL_SetTextureScaleMode(wrapped, SDL_SCALEMODE_NEAREST);
+    if (st_dof) { SDL_DestroyGPURenderState(st_dof); st_dof = NULL; }
 
     SDL_PropertiesID pg = SDL_CreateProperties();
     SDL_SetPointerProperty(pg, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, tex_gbuf);
@@ -549,7 +564,22 @@ static int targets_make(int w, int h)
                         "frame is unaffected, but nothing can read distance from it\n",
                 SDL_GetError());
     } else {
+        /* LINEAR on the G-buffer would average two distances at a texel boundary and invent a
+         * plane nothing in the scene occupies -- the same reason its attachment is never
+         * blended. NEAREST, so every sample is a distance something actually is at. */
         SDL_SetTextureScaleMode(wrapped_gbuf, SDL_SCALEMODE_NEAREST);
+        if (sh_dof) {
+            SDL_GPUTextureSamplerBinding b = { tex_gbuf, SMP };
+            SDL_GPURenderStateCreateInfo ci;
+            SDL_zero(ci);
+            ci.fragment_shader = sh_dof;
+            ci.num_sampler_bindings = 1;
+            ci.sampler_bindings = &b;
+            st_dof = SDL_CreateGPURenderState(R, &ci);
+            if (!st_dof)
+                fprintf(stderr, "engine: could not create the defocus render state (%s) -- the "
+                                "frame is presented unblurred\n", SDL_GetError());
+        }
     }
     tgt_w = w; tgt_h = h;
     return 1;
@@ -994,6 +1024,48 @@ static void gbuf_report(int w, int h)
                 nb == BUCKETS && b == nb - 1 ? "   (bucket list FULL -- more may exist)" : "");
 }
 
+/* Is the defocus running? ON by default, because a feature nobody can find is not a feature --
+ * `LF2_DOF=off` is the A/B control arm, the same shape LF2_HD2D=off has for the lighting, and it
+ * is what tools/e2e.sh render diffs against. */
+int engine_dof_enabled(void)
+{
+    if (dof_on < 0) {
+        const char *v = getenv("LF2_DOF");
+        dof_on = (v && (strcmp(v, "off") == 0 || strcmp(v, "0") == 0)) ? 0 : 1;
+    }
+    return dof_on && st_dof != NULL;
+}
+
+/* Present the engine's finished frame onto `dst`, through the defocus when it is available.
+ * Returns 0 if the caller should do a plain copy instead. */
+int engine_present(SDL_Texture *dst, float max_radius)
+{
+    if (!init_ok || !wrapped) return 0;
+    if (!engine_dof_enabled()) return 0;
+
+    struct { float params[4], focus[4]; } u;
+    u.params[0] = 1.0f / (float)tgt_w;
+    u.params[1] = 1.0f / (float)tgt_h;
+    u.params[2] = max_radius;
+    u.params[3] = 1.0f;
+    /* THE FOCUS IS THE FIGHTERS' PLANE, and it is 1.0 by derivation rather than by taste: a
+     * parallax depth of 1 is the plane an object shifts with the camera at rate 1, which is
+     * where the game puts every fighter (C018/C031). Focusing anywhere else would defocus the
+     * one thing the player is looking at. */
+    u.focus[0] = 1.0f;
+    u.focus[1] = u.focus[2] = u.focus[3] = 0.0f;
+    SDL_SetGPURenderStateFragmentUniforms(st_dof, 0, &u, sizeof u);
+
+    SDL_SetRenderTarget(R, dst);
+    SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
+    SDL_SetGPURenderState(R, st_dof);
+    SDL_SetTextureBlendMode(wrapped, SDL_BLENDMODE_NONE);
+    SDL_RenderTexture(R, wrapped, NULL, NULL);
+    SDL_SetGPURenderState(R, NULL);
+    stat_dof_frames++;
+    return 1;
+}
+
 void engine_report(void)
 {
     if (!getenv("LF2_ENGINE_DEBUG")) return;
@@ -1010,6 +1082,9 @@ void engine_report(void)
     fprintf(stderr, "engine: stage geometry -- %ld draw(s), %ld triangle(s), in the SAME pass "
                     "as the sprites%s\n", stat_geom_draws, stat_geom_tris,
             GPIPE ? "" : "  (NO geometry pipeline: sets are not drawn at all)");
+    fprintf(stderr, "engine: defocus %s -- %ld frame(s) presented through it%s\n",
+            engine_dof_enabled() ? "ON" : "off", stat_dof_frames,
+            sh_dof ? "" : "  (NO defocus shader: frames are presented unblurred)");
     if (stat_dropped)
         fprintf(stderr, "engine: %ld quad(s) were dropped for want of a texture; art is MISSING "
                         "from those frames\n", stat_dropped);
@@ -1027,6 +1102,8 @@ void engine_shutdown(void)
     if (gvbuf)  { SDL_ReleaseGPUBuffer(DEV, gvbuf); gvbuf = NULL; }
     if (gvxfer) { SDL_ReleaseGPUTransferBuffer(DEV, gvxfer); gvxfer = NULL; }
     if (GPIPE) { SDL_ReleaseGPUGraphicsPipeline(DEV, GPIPE); GPIPE = NULL; }
+    if (st_dof) { SDL_DestroyGPURenderState(st_dof); st_dof = NULL; }
+    if (sh_dof) { SDL_ReleaseGPUShader(DEV, sh_dof); sh_dof = NULL; }
     if (SMP)   { SDL_ReleaseGPUSampler(DEV, SMP); SMP = NULL; }
     for (int k = 0; k < BLEND_KINDS; k++)
         if (PIPE[k]) { SDL_ReleaseGPUGraphicsPipeline(DEV, PIPE[k]); PIPE[k] = NULL; }

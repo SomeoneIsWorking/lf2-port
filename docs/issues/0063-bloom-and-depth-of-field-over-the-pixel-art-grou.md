@@ -111,3 +111,49 @@ TWO FAULTS THE READBACK CAUGHT, both on its first use and both of them mine:
 STILL TO DO, and this entry stays open for it: the defocus itself. The acceptance test this entry
 already names is now runnable -- the fighters' plane in focus and a layer at a known depth not,
 at every camera position -- because the distances are in the buffer and independently checkable.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the DEPTH OF FIELD is built, and it passes this entry's own test
+
+runtime/shaders/dof.frag, presented through engine_present. On by default; `LF2_DOF=off` is the
+A/B control arm, the same shape LF2_HD2D=off has for the lighting.
+
+THE TEST THIS ENTRY ASKED FOR, run:
+
+    frame_000401 (character selection, NO stage)   the defocus changes NOTHING -- max diff 0
+    frame_001351 (a match)                          it changes 84395 px by up to 31
+
+Those are opposite on the two frames on purpose, and the first is the one that matters: it is
+what catches an effect spreading over the whole picture, which is why the previous
+bloom/DOF/haze/vignette cut was deleted. And it holds BY CONSTRUCTION rather than by tuning -- a
+pixel with no distance in the G-buffer takes an untouched branch, and a menu frame has no layers,
+so every pixel there takes it.
+
+THE FIGHTERS ARE NEVER BLURRED, and not as a special case: they write no distance at all, so they
+take the same untouched branch the HUD does. The focal plane is 1.0 by DERIVATION rather than by
+taste -- a parallax depth of 1 is the plane an object shifts with the camera at rate 1, which is
+where the game puts every fighter (C018/C031).
+
+THE MEASURE IS 1/d, NOT d. Defocus is a difference of reciprocals, and the reciprocal is what
+makes it bounded: the shipped stages run from about 0.89 to 535, and 1/d maps all of that into
+(0, 1.1] with the fighters' plane at exactly 1. Using d directly would put almost the whole range
+in the last few percent of the blur and make every stage look the same.
+
+A TAP ONLY COUNTS IF IT IS AT THE SAME DISTANCE -- a ratio, not a difference, because distance is
+a scale (1.0 against 1.2 is a real step between layers; 500 against 535 is the same sky). Without
+it a blurred sky pulls the colour of a sharp fighter out across its own silhouette, which is the
+classic halo and exactly what would make this read as a filter again.
+
+The radius is in texels of the OUTPUT (oh/110, i.e. 5 texels at the game's own 550 rows), so it
+scales with the window. A fixed pixel radius would be a heavy blur at 794x550 and a hairline at
+4K -- a blur that is a function of resolution rather than of distance.
+
+KNOWN AND BOUNDED, recorded rather than left to be discovered: the defocus is applied where the
+engine's frame is copied out, which is BEFORE hd2d's lighting rather than after it. Physically a
+lens defocuses everything, so cast shadows and the floor tint stay sharp on a surface that has
+been blurred. It is invisible on the stages measured so far because both things it touches sit at
+depth 1.0 -- the floor a shadow falls on is in focus by definition. It will show on a stage whose
+shadow-receiving floor is a distant layer, and the fix is to move the defocus after hd2d_post,
+which needs the lit frame as the shader's source rather than the engine's own target.
+
+STILL OPEN: the BLOOM half of this entry.
