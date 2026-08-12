@@ -576,3 +576,59 @@ hand-woven stage actually uses is small, so this is bounded, not a fan-out.
 Do NOT settle for a single insertion point. It would look right on the first authored stage --
 whichever one happens to have all its solids on one side of the layers -- and be wrong the
 moment a set has a foreground and a background piece, which is what a set IS.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- the geometry is SUBMITTED, once per occupied gap. The engineering is done.
+
+The insertion-order question the previous note left open is answered and implemented, not
+deferred. THE RULE is the game's own painter order extended to authored geometry: a solid at
+parallax depth d is drawn immediately before the FIRST layer whose derived depth is <= d --
+after everything it is behind, before the first thing it is in front of. A solid nearer than
+every layer goes after all of them, still behind the sprites, which the game places itself.
+
+A layer's depth is derived (C031), and geom_layer_depth returns 0 where it is not derivable --
+a stage that never pans, a layer that never moves. That 0 means INFINITELY FAR here and is
+compared as such. Reading it as a small number would put the sky in front of the fighters.
+
+WHAT HAD TO CHANGE for it:
+
+  mesh.c    one target per SLOT, 8 of them, allocated on demand. A finished pass is composited
+            as one quad and one quad enters the order at one point, so several gaps need
+            several live targets -- a single target would be overwritten by the next gap before
+            the frame was drawn. A slot out of range is REPORTED and refused, never clamped:
+            clamping draws the solid at another gap's point in the order, which looks like a
+            badly authored set rather than like a pass out of slots.
+  render.c  E_MESH, an entry holding an already-rendered texture drawn at THIS point in the
+            list. Blended, because the pass clears to transparent and every texel its geometry
+            does not cover has to let the game's layers through. Not lit again by hd2d -- the
+            pass shades from the same key light and the same vector, so lighting it twice is
+            the only thing that could make a solid's shading and a fighter's shadow disagree.
+  ddraw.c   frame_source_pixels(), the composition surface, discovered from the game's own copy
+            to the primary rather than hardcoded. It is 0 until that copy has happened, and a
+            frame that drops geometry for want of it is COUNTED -- "the surface is not known
+            yet" and "there was nothing to draw" produce the same empty frame.
+
+MEASURED, and the measurement is the point. `tools/e2e.sh stage_geom` gained a GPU arm with TWO
+solids straddling Brokeback Clif's layers: one at bc1.bmp's derived 1.2068 (equal to layers
+0..2, so it belongs behind every layer) and one at 0.5 (nearer than bc4/bc5 at 1.0, so it
+belongs after all of them). Result: 1464 geometry passes over 732 frames -- EXACTLY TWO A FRAME
+-- and mesh=0 on the control run with no .stage file. The override's own counter and the
+renderer's agree.
+
+One solid could not have shown this: with one solid every placement rule agrees, which is why
+the arm uses two and why "one pass a frame" is called out in the failure text as the merge that
+the per-gap design exists to prevent.
+
+TWO INSTRUMENT BUGS FOUND AND FIXED IN THE TEST ITSELF, both of the same shape -- reading a
+counter before the thing it counts exists:
+  - LF2_QUIT_AFTER=1400 with reports on a 900-frame cadence meant the run reported the state at
+    frame 900, before the match starts at ~1000. It read as "not one pass reached the frame".
+    Now 1900, so the report at 1800 sees the match.
+  - the assertion grepped the FIRST report line, which is the same pre-match zero. Now the last.
+
+The byte-identity arm of `tools/e2e.sh background` still holds, ctest 11/11, and the mesh
+self-test still passes. GPU: gpuguard latch clear before and after, 0 kernel trouble lines.
+
+WHAT IS LEFT IS THE ART, and only the art. No engineering piece is outstanding. `stages/` is in
+the repo with a README and nothing in it, and that emptiness is honest: the port loads what is
+there and a stage with no file draws exactly as it always has.

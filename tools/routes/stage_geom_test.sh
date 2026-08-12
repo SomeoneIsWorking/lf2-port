@@ -176,5 +176,136 @@ if grep -q "^stage geometry: $STAGE -- " "$LOG"; then
     say_fail "      across stages, or the report is unconditional"
 fi
 
+
+# ---- arms 4 and 5: does any of it actually REACH THE FRAME? ---------------------------------
+#
+# Everything above proves the file was READ. None of it proves a single triangle was drawn: the
+# pass runs on the GPU renderer, its finished target is placed in the display list, and both of
+# those can fail into a game that looks exactly the same. `mesh=N` in the renderer's own report
+# is the count of geometry passes that entered the list, and the geometry report says how many
+# were submitted and how many were dropped for want of a composition surface.
+#
+# THE NEGATIVE IS THE SECOND RUN, and it is what makes the first one mean anything: with no
+# .stage file, `mesh` must be 0. A count that is non-zero either way would be counting something
+# else. These two are the only GPU instances this route starts (issue #40 counts them), and they
+# run through gpuguard when it is installed so a device loss stops the run rather than the
+# session.
+gpu_arm() {
+    label=$1; shift
+    PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
+    PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178"
+    PAD="$PAD,south@charselect+238,up@charselect+298,up@charselect+358"
+    PAD="$PAD,south@charselect+418,south@charselect+618,south@charselect+838"
+    PAD="$PAD,up@overlay+99,up@overlay+159,south@overlay+219"
+    # 1900 frames, not 1400. Both counters below are printed on a 900-frame cadence, and the
+    # match does not start until about frame 1000 -- so a run that stopped at 1400 reported the
+    # state at frame 900, before any geometry existed, and read as "not one pass reached the
+    # frame". The first report that can see the match is the one at 1800.
+    RUN="timeout -k 5 300"
+    command -v gpuguard >/dev/null 2>&1 && RUN="gpuguard run --timeout 300 --"
+    ( cd "$GAME" && \
+      env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
+          LF2_VIRTUAL_PAD="$PAD" LF2_STAGE_GEOM=1 LF2_RENDER_DEBUG=1 \
+          LF2_QUIT_AFTER=1900 "$@" \
+          $RUN "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
+    echo "  --    arm $label (GPU)"
+}
+
+mesh_count() { sed -n 's/^render: .* mesh=\([0-9][0-9]*\).*/\1/p' "$LOG" | tail -1; }
+
+# TWO SOLIDS AT DIFFERENT DEPTHS, and that is the assertion this arm exists for. One solid
+# proves the pass runs; it cannot show that geometry is placed at the RIGHT point in the
+# painter order, because with one solid every placement rule agrees. These two straddle the
+# stage's layers:
+#
+#   the first  takes bc1.bmp's derived depth, 1.2068, which equals the depth of layers 0..2 --
+#              so it belongs immediately before layer 0, i.e. behind every layer
+#   the second is at 0.5, nearer than every layer this stage has (bc4 and bc5 are at 1.0) --
+#              so it belongs after all of them, still behind the sprites
+#
+# That is TWO occupied gaps, so the pass must run TWICE per frame. A renderer count equal to
+# the frame count would mean the two solids were merged into one placement, which is the exact
+# failure the per-gap design exists to prevent and which looks perfectly fine on a stage whose
+# solids happen to sit on one side of the layers.
+cat > "$STAGES/$STAGE.stage" <<EOF
+stage: $STAGE
+solid:
+  model: models/_probe.obj
+  depth: layer $LAYER
+  at: 700 0 400
+solid_end
+solid:
+  model: models/_probe.obj
+  depth: 0.5
+  at: 300 0 480
+solid_end
+EOF
+gpu_arm "reaches the frame, in two gaps"
+gpu_on=$(grep -m1 "^render: gpu=on" "$LOG" || true)
+with=$(mesh_count)
+# The LAST report, not the first. Both counters print on a 900-frame cadence, so the report at
+# frame 900 is the pre-match state and reads as a clean zero -- which is exactly the shape of
+# "nothing happened" this whole route exists to tell apart from the real thing.
+sub=$(grep "^stage geometry: .* pass(es) placed in the display list" "$LOG" | tail -1)
+subn=$(printf '%s' "$sub" | sed -n 's/^stage geometry: [0-9]* frame(s) with geometry, \([0-9]*\) pass.*/\1/p')
+
+if [ -z "$gpu_on" ]; then
+    echo "  SKIP  the GPU renderer did not come up in this environment, so whether the pass"
+    echo "        reaches the frame was NOT measured. The read-side arms above still ran."
+    grep -m1 "^render: gpu=" "$LOG" || true
+    grep -m1 "^mesh: " "$LOG" || true
+elif [ -z "$with" ]; then
+    say_fail "the renderer report has no mesh= field, so nothing counted geometry passes"
+    grep -m1 "^render: gpu=" "$LOG" || true
+elif [ "$with" -gt 0 ]; then
+    say_ok "reached the frame: mesh=$with geometry pass(es) placed in the display list"
+    frames=$(printf '%s' "$sub" | sed -n 's/^stage geometry: \([0-9]*\) frame.*/\1/p')
+    if [ -n "$frames" ] && [ "$frames" -gt 0 ]; then
+        if [ "$with" -eq $((frames * 2)) ]; then
+            say_ok "per gap: $with passes over $frames frames is exactly TWO a frame, so the"
+            say_ok "         two solids were placed at their own points in the layer order"
+        else
+            say_fail "per gap: $with passes over $frames frames is not two a frame. The two"
+            say_fail "         solids straddle this stage's layers and must be submitted"
+            say_fail "         separately -- one pass a frame means they were merged into a"
+            say_fail "         single placement, which puts one of them on the wrong side of"
+            say_fail "         the layers it belongs behind"
+        fi
+    fi
+    depths=$(grep -c "^stage geometry:   solid at depth" "$LOG" || true)
+    if [ "$depths" -ge 2 ]; then
+        say_ok "the loader reported $depths solids at distinct depths"
+        grep "^stage geometry:   solid at depth" "$LOG" | sort -u | sed 's/^/        /'
+    else
+        say_fail "only $depths distinct depth(s) were reported for a two-solid stage"
+    fi
+    if [ -n "$subn" ] && [ "$subn" -gt 0 ]; then
+        say_ok "submit: $sub"
+    else
+        say_fail "the override reports $subn pass(es) submitted while the renderer counted"
+        say_fail "         $with -- the two counters disagree, so one of them is not counting"
+        say_fail "         what it says: $sub"
+    fi
+
+    # ---- and the NEGATIVE, without which the count above proves nothing ----
+    rm -f "$STAGES/$STAGE.stage"
+    gpu_arm "no geometry"
+    without=$(mesh_count)
+    if [ -z "$without" ]; then
+        say_fail "the control run produced no mesh= field, so it cannot serve as the negative"
+    elif [ "$without" = 0 ]; then
+        say_ok "control: with no .stage file, mesh=0 -- so the $with above is this geometry"
+    else
+        say_fail "control: with NO .stage file the renderer still reports mesh=$without, so the"
+        say_fail "         count is not measuring the authored geometry"
+    fi
+else
+    say_fail "the .stage was read but mesh=0 -- NOT ONE pass reached the frame"
+    grep -m1 "^stage geometry: $STAGE -- " "$LOG" \
+        || say_fail "      ...and the .stage was not even LOADED in this run, so the run never"
+    grep -m2 "^stage geometry: [0-9]" "$LOG" || true
+    grep -m1 "^mesh: " "$LOG" || true
+fi
+
 [ "$fail" = 0 ] && echo "stage geometry: ok" || echo "stage geometry: FAILED"
 exit "$fail"

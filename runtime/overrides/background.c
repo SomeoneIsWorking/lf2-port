@@ -56,6 +56,7 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "stagegeom.h"
+#include "render.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -499,6 +500,143 @@ static void stage_geom_sync(void)
     }
 }
 
+/* ---- WHERE the geometry goes in the painter order, which is the whole of the submission ----
+ *
+ * A finished geometry pass composites as ONE full-screen quad, and one quad enters the game's
+ * painter order at ONE point. That is not enough, because a hand-woven set spans parallax
+ * depths and the game paints its OWN layers between them: The Great Wall's `road3` is in front
+ * of the fighters while its `sky` is 267 deep, so a set with a far pillar and a near railing
+ * has layers that belong BETWEEN its two solids. "Behind every layer" and "in front of every
+ * layer" are both wrong for it -- and each would look perfectly right on whichever stage
+ * happened to have all its solids on one side, which is exactly the kind of wrong that ships.
+ *
+ * So the pass runs once per OCCUPIED GAP. The rule is the game's own order extended to
+ * authored geometry: a solid at parallax depth d is drawn immediately before the first layer
+ * whose derived depth is <= d -- i.e. after everything it is in front of nothing of, and
+ * before the first thing it is in front of. A solid nearer than every layer goes after all of
+ * them, still behind the sprites.
+ *
+ * A layer's depth is derived, not authored (claim C031): `(stage_width - 794)/(span - 794)`.
+ * geom_layer_depth returns 0 where that is not derivable -- a stage that never pans, or a
+ * layer that never moves -- and 0 means INFINITELY FAR here, so it sorts behind everything.
+ * Comparing 0 as a small number would put the sky in front of the fighters.
+ */
+enum { GEOM_GAPS_MAX = 8 };     /* mesh.c's MESH_SLOTS; each gap needs its own live target */
+
+typedef struct { int gap, first, count; } GeomRun;   /* one solid: a run of equal depth */
+static GeomRun   geom_runs[64];
+static int       geom_nruns;
+static int       geom_gaps[GEOM_GAPS_MAX];           /* the occupied gaps, ascending */
+static int       geom_ngaps;
+static MeshVertex *geom_scratch;                     /* one gap's vertices, gathered */
+static int         geom_scratch_cap;
+static long        geom_frames, geom_submits, geom_no_surface, geom_over_gaps;
+
+/* How deep is layer `i`, with 0 meaning infinitely far. */
+static float layer_depth(int i, int32_t stage_width)
+{
+    const int32_t span = (int32_t)bg_layer_field(BG_LAYER_SPAN, i);
+    const float d = geom_layer_depth((int)span, (int)stage_width);
+    return d > 0.0f ? d : 1e30f;         /* not derivable == never moves == infinitely far */
+}
+
+/* Which gap a solid at depth `d` belongs in: the index of the first layer it is in front of. */
+static int gap_for_depth(float d, int count, int32_t stage_width)
+{
+    if (!(d > 0.0f)) d = 1e30f;          /* the loader refuses this, but the rule is total */
+    for (int i = 0; i < count; i++)
+        if (layer_depth(i, stage_width) <= d) return i;
+    return count;                        /* nearer than every layer */
+}
+
+/* Group the loaded vertices into solids and assign each a gap. Recomputed per frame because a
+ * layer's depth comes from the record, and a stage the port has not seen yet has none. */
+static void geom_plan(int count, int32_t stage_width)
+{
+    geom_nruns = geom_ngaps = 0;
+    for (int i = 0; i < stage_geom.n; ) {
+        const float d = stage_geom.v[i].depth;
+        int j = i;
+        while (j < stage_geom.n && stage_geom.v[j].depth == d) j++;
+        if (geom_nruns == (int)(sizeof geom_runs / sizeof geom_runs[0])) {
+            /* Said, not silently truncated: a set with more solids than this holds would
+             * simply lose its last ones, which looks like art that was never authored. */
+            static int said;
+            if (!said) {
+                said = 1;
+                fprintf(stderr, "stage geometry: more than %d solids at distinct depths -- the "
+                                "rest are NOT drawn\n",
+                        (int)(sizeof geom_runs / sizeof geom_runs[0]));
+            }
+            break;
+        }
+        const int gap = gap_for_depth(d, count, stage_width);
+        geom_runs[geom_nruns++] = (GeomRun){ gap, i, j - i };
+        int seen = 0;
+        for (int k = 0; k < geom_ngaps; k++) if (geom_gaps[k] == gap) { seen = 1; break; }
+        if (!seen && geom_ngaps < GEOM_GAPS_MAX) geom_gaps[geom_ngaps++] = gap;
+        else if (!seen) geom_over_gaps++;
+        i = j;
+    }
+    for (int a = 0; a < geom_ngaps; a++)            /* ascending, so the loop can walk them */
+        for (int b = a + 1; b < geom_ngaps; b++)
+            if (geom_gaps[b] < geom_gaps[a]) {
+                const int t = geom_gaps[a]; geom_gaps[a] = geom_gaps[b]; geom_gaps[b] = t;
+            }
+}
+
+/* Run the pass for one gap and put its finished target into the list at THIS point. */
+static void geom_submit(int gap, int camera, int view_w, int view_h)
+{
+    int slot = -1;
+    for (int k = 0; k < geom_ngaps; k++) if (geom_gaps[k] == gap) { slot = k; break; }
+    if (slot < 0) return;
+
+    int n = 0;
+    for (int r = 0; r < geom_nruns; r++) if (geom_runs[r].gap == gap) n += geom_runs[r].count;
+    if (n <= 0) return;
+    if (n > geom_scratch_cap) {
+        MeshVertex *p = realloc(geom_scratch, (size_t)n * sizeof *p);
+        if (!p) return;
+        geom_scratch = p; geom_scratch_cap = n;
+    }
+    int at = 0;
+    for (int r = 0; r < geom_nruns; r++) {
+        if (geom_runs[r].gap != gap) continue;
+        memcpy(geom_scratch + at, stage_geom.v + geom_runs[r].first,
+               (size_t)geom_runs[r].count * sizeof *geom_scratch);
+        at += geom_runs[r].count;
+    }
+
+    SDL_Texture *t = mesh_draw(slot, geom_scratch, n, view_w, view_h,
+                               camera, view_w, view_h, NULL);
+    if (!t) return;
+    const uint32_t dst = frame_source_pixels();
+    if (!dst) {
+        /* COUNTED. The composition surface is discovered from the game's own copy to the
+         * primary, so it is unknown for the first frames of a process -- and "the surface is
+         * not known yet" and "there was no geometry" produce the same picture. A count that
+         * keeps climbing means it is never discovered, which is a different bug entirely. */
+        geom_no_surface++;
+        return;
+    }
+    render_stage_mesh(dst, t, view_w, view_h);
+    geom_submits++;
+}
+
+void bg_geom_report(void)
+{
+    if (!getenv("LF2_STAGE_GEOM")) return;
+    fprintf(stderr, "stage geometry: %ld frame(s) with geometry, %ld pass(es) placed in the "
+                    "display list, %ld dropped for want of a known composition surface, "
+                    "%ld solid(s) past the %d-gap limit\n",
+            geom_frames, geom_submits, geom_no_surface, geom_over_gaps, GEOM_GAPS_MAX);
+    if (geom_frames && !geom_submits)
+        fprintf(stderr, "stage geometry: a stage HAS geometry and NOT ONE pass reached the "
+                        "frame -- the pass is unavailable (software renderer?), or the "
+                        "composition surface was never discovered\n");
+}
+
 /* Issue #28: the camera is still clamped to the 4:3 limit, so a wider view scrolls past the
  * wall a character can walk to.
  *
@@ -672,7 +810,16 @@ void fn_0041a250(void)
      * nearer layer must move further than a distant one. */
     const int32_t camera = (int32_t)bg_draw_camera();
 
+    /* The hand-woven geometry, planned before the loop and submitted INSIDE it, because where
+     * each pass lands in the painter order is the whole point (issue #62). */
+    if (stage_geom.n) { geom_plan((int)count, stage_width); geom_frames++; }
+    else              { geom_nruns = geom_ngaps = 0; }
+    int next_gap = 0;
+
     for (int i = 0; i < (int)count; i++) {
+        while (next_gap < geom_ngaps && geom_gaps[next_gap] == i)
+            geom_submit(geom_gaps[next_gap++], (int)camera, (int)view, GEOM_SCREEN_H);
+
         const uint32_t tint = lf(registry, bg, BG_LAYER_TINT, i);
         if (tint) { fill_layer(registry, bg, i, tint); continue; }
 
@@ -711,6 +858,10 @@ void fn_0041a250(void)
             draw_layer(obj, off + lx, y, transparent, arg0);
         }
     }
+    /* Anything nearer than every layer -- still behind the sprites, which the game goes on
+     * placing itself. */
+    while (next_gap < geom_ngaps)
+        geom_submit(geom_gaps[next_gap++], (int)camera, (int)view, GEOM_SCREEN_H);
 
     R(ESP) += 8;                                     /* RET 4: return address and one arg */
 }

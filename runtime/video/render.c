@@ -28,7 +28,7 @@
  */
 enum { LIST_MAX = 8192, SURF_MAX = FL_LISTS_MAX, TEX_MAX = 512, TILE_BYTES_MAX = 4u << 20 };
 
-enum EntryKind { E_TEX, E_FILL, E_TILE, E_GROUND };
+enum EntryKind { E_TEX, E_FILL, E_TILE, E_GROUND, E_MESH };
 
 typedef struct {
     int kind;
@@ -46,6 +46,10 @@ typedef struct {
     int      tw, th;
     SDL_Texture *tile_tex;          /* made once per frame, used by every pass over the list */
     SDL_FRect tile_src;             /* the tw x th corner of it that this tile actually is */
+    /* E_MESH: a finished geometry pass, already rendered, placed at THIS point in the painter
+     * order. Not pooled and not uploaded here -- mesh.c owns the target and it stays live
+     * until that slot is drawn again. */
+    SDL_Texture *mesh_tex;
 } Entry;
 
 /* The Entry array and its destination. HOW MANY entries it holds, where the port's overlay
@@ -95,6 +99,7 @@ static SDL_Texture *rt_shadow;      /* the cast-shadow mask */
 static int          target_w, target_h;
 
 static long stat_frames, stat_tex, stat_fill, stat_tile, stat_uploads, stat_dropped;
+static long stat_mesh;   /* geometry passes placed in the list -- see render_report */
 static long stat_soft_frames, stat_post, stat_ground, stat_shadow;
 static float ground_y_lo = 1e9f, ground_y_hi = -1e9f;
 static float stat_airborne_max;
@@ -288,6 +293,28 @@ void render_blit(uint32_t dst_pixels,
     e->src_pixels = src_pixels;
     e->sw = sw; e->sh = sh; e->spitch = spitch;
     e->keyed = keyed; e->key_lo = key_lo; e->key_hi = key_hi;
+}
+
+/* A finished geometry pass, placed at THIS point in the painter order (issue #62).
+ *
+ * WHY IT IS AN ENTRY RATHER THAN A DRAW AT A FIXED MOMENT. The whole reason the background
+ * override calls this between layers is that a hand-woven set spans parallax depths and the
+ * game paints its own layers between them -- so WHERE in the list the quad lands is the entire
+ * content of the call. Drawing it "before the layers" or "after them" from somewhere else in
+ * this file would throw that away.
+ *
+ * The texture is mesh.c's and is not owned, not pooled and not uploaded: it is the same GPU
+ * object the pass rendered into (claim C030), and it stays live until that slot is drawn
+ * again. That is why the caller must use a different slot per insertion point.
+ */
+void render_stage_mesh(uint32_t dst_pixels, SDL_Texture *tex, int w, int h)
+{
+    if (!render_gpu_enabled() || !tex || w <= 0 || h <= 0) return;
+    Entry *e = entry_push(dst_pixels);
+    if (!e) return;
+    e->kind = E_MESH;
+    e->dst = (SDL_FRect){ 0.0f, 0.0f, (float)w, (float)h };
+    e->mesh_tex = tex;
 }
 
 /* The ground marker. Recorded in the list rather than kept in a side variable so it keeps its
@@ -666,6 +693,21 @@ static void draw_list(List *l, int pass, float world, float ox, float oy, int fr
             continue;
         }
 
+        if (e->kind == E_MESH) {
+            /* Blended, because the pass clears to TRANSPARENT: every texel its geometry does
+             * not cover has to let the game's own layers through. NONE would put a rectangle
+             * over the stage.
+             *
+             * Not lit by hd2d: the geometry is shaded in the pass's own fragment shader, from
+             * the same key light and the same vector, so a solid's shading and a fighter's
+             * shadow cannot disagree. Running it through the sprite lighting as well would
+             * light it twice. */
+            SDL_SetTextureBlendMode(e->mesh_tex, SDL_BLENDMODE_BLEND);
+            SDL_RenderTexture(R, e->mesh_tex, NULL, &dst);
+            stat_mesh++;
+            continue;
+        }
+
         if (e->kind == E_TEX) {
             Tex *t = tex_for(e->src_pixels, e->sw, e->sh, e->spitch,
                              e->keyed, e->key_lo, e->key_hi);
@@ -959,9 +1001,9 @@ void render_report(void)
 {
     if (!getenv("LF2_RENDER_DEBUG")) return;
     fprintf(stderr, "render: gpu=%s frames=%ld (software fallbacks=%ld) quads=%ld fills=%ld "
-                    "tiles=%ld textures=%d uploads=%ld dropped=%ld\n",
+                    "tiles=%ld textures=%d uploads=%ld dropped=%ld mesh=%ld\n",
             render_gpu_enabled() ? "on" : "off", stat_frames, stat_soft_frames,
-            stat_tex, stat_fill, stat_tile, ntexes, stat_uploads, stat_dropped);
+            stat_tex, stat_fill, stat_tile, ntexes, stat_uploads, stat_dropped, stat_mesh);
     /* The allocation count is the number that matters: it must go FLAT once the pool is warm.
      * A count that keeps climbing with the frame count means tiles of ever-changing sizes and
      * the GPU allocator is being churned again, which is what wedged a GPU once. */

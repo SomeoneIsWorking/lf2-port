@@ -21,6 +21,10 @@ void hostwin_pump(void);
  * the point the 8-bit assumption was dropped, and every caller passed NULL. */
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch);
 
+/* The surface the frame is composed into, discovered from the game's own copy to the
+ * primary. 0 until that copy has happened. See ddraw.c. */
+uint32_t frame_source_pixels(void);
+
 #endif
 
 void audio_report(void);
@@ -67,6 +71,8 @@ int  gamepad_player_buttons(int index, unsigned char out[7]);
 void input_report(void);
 void audio_pan_report(void);
 void bg_camera_report(void);
+/* LF2_STAGE_GEOM=1: how much hand-woven geometry actually reached the frame (issue #62). */
+void bg_geom_report(void);
 void mode_force_report(void);  /* LF2_MODE: which mode a scripted run entered, and whether it did */   /* LF2_CAMERA: was the wide view actually re-centred? */   /* LF2_AUDIO_PAN: the audible span vs the picture (issue #39) */
 void clock_sites_report(void);   /* LF2_CLOCK_SITES: who reads the clock, and who spins on it */
 /* The scripted-input exit report lives in runtime/app/script.h (script_report). */

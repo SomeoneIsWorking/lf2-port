@@ -15,9 +15,28 @@ static SDL_GPUGraphicsPipeline *PIPE;
 
 /* The offscreen pair, rebuilt when the size changes -- which is every resize, exactly as
  * hd2d.c's lighting chain is. */
-static SDL_GPUTexture *tex_color, *tex_depth;
-static SDL_Texture    *wrapped;
-static int             tex_w, tex_h;
+/* ONE TARGET PER SLOT, and the reason there is more than one is the painter order (issue #62).
+ *
+ * A finished pass is composited as a single full-screen quad, and a single quad goes into the
+ * game's painter order at a single point -- but a hand-woven set spans parallax depths and the
+ * game paints its OWN layers between them. The Great Wall's `road3` is in front of the fighters
+ * while its `sky` is 267 deep, so a set with a far pillar and a near railing has layers that
+ * belong BETWEEN its two solids. "Behind every layer" and "in front of every layer" are both
+ * wrong for it.
+ *
+ * So the caller runs the pass once per OCCUPIED GAP in the layer order, and each of those needs
+ * its own live target -- a single target would be overwritten by the next gap before the frame
+ * was drawn. Slots are allocated on demand: a stage using three gaps costs three, and a stage
+ * with no geometry costs none. MESH_SLOTS bounds it, and going over is REPORTED and refused
+ * rather than quietly merged into a neighbouring slot, which would draw the solid at the wrong
+ * point in the order and look like geometry rather than like a bug. */
+enum { MESH_SLOTS = 8 };
+typedef struct {
+    SDL_GPUTexture *color, *depth;
+    SDL_Texture    *wrapped;
+    int             w, h;
+} MeshTarget;
+static MeshTarget slots[MESH_SLOTS];
 
 /* A vertex buffer that grows and never shrinks. A stage's geometry is authored once and
  * submitted every frame, so its size is stable after the first frame; reallocating per frame
@@ -29,6 +48,7 @@ static int vbuf_cap;
 static int  init_done, init_ok;
 static const char *init_why = "not attempted";
 static long stat_passes, stat_tris;
+static int  stat_slots;   /* the most slots any one frame has needed */
 
 /* THE LIGHT IS THE SPRITES', not this pass's own. hd2d.c lights the fighters from a direction
  * in the stage's three axes and shears their cast shadows along the SAME vector, so a
@@ -213,18 +233,18 @@ int mesh_init(SDL_Renderer *r)
     return 1;
 }
 
-static void targets_release(void)
+static void targets_release(MeshTarget *t)
 {
-    if (wrapped)   { SDL_DestroyTexture(wrapped); wrapped = NULL; }
-    if (tex_color) { SDL_ReleaseGPUTexture(DEV, tex_color); tex_color = NULL; }
-    if (tex_depth) { SDL_ReleaseGPUTexture(DEV, tex_depth); tex_depth = NULL; }
-    tex_w = tex_h = 0;
+    if (t->wrapped) { SDL_DestroyTexture(t->wrapped); t->wrapped = NULL; }
+    if (t->color)   { SDL_ReleaseGPUTexture(DEV, t->color); t->color = NULL; }
+    if (t->depth)   { SDL_ReleaseGPUTexture(DEV, t->depth); t->depth = NULL; }
+    t->w = t->h = 0;
 }
 
-static int targets_make(int w, int h)
+static int targets_make(MeshTarget *t, int w, int h)
 {
-    if (tex_color && tex_w == w && tex_h == h) return 1;
-    targets_release();
+    if (t->color && t->w == w && t->h == h) return 1;
+    targets_release(t);
 
     SDL_GPUTextureCreateInfo ci;
     SDL_zero(ci);
@@ -237,36 +257,36 @@ static int targets_make(int w, int h)
 
     ci.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    tex_color = SDL_CreateGPUTexture(DEV, &ci);
+    t->color = SDL_CreateGPUTexture(DEV, &ci);
 
     ci.format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
     ci.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
-    tex_depth = SDL_CreateGPUTexture(DEV, &ci);
+    t->depth = SDL_CreateGPUTexture(DEV, &ci);
 
-    if (!tex_color || !tex_depth) {
+    if (!t->color || !t->depth) {
         fprintf(stderr, "mesh: could not allocate the %dx%d offscreen pair: %s\n",
                 w, h, SDL_GetError());
-        targets_release();
+        targets_release(t);
         return 0;
     }
 
     /* THE BRIDGE (claim C030): SDL_Render draws the SAME object this pass rendered into --
      * no copy, no readback. */
     SDL_PropertiesID p = SDL_CreateProperties();
-    SDL_SetPointerProperty(p, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, tex_color);
+    SDL_SetPointerProperty(p, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, t->color);
     SDL_SetNumberProperty(p, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w);
     SDL_SetNumberProperty(p, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h);
     SDL_SetNumberProperty(p, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_RGBA32);
-    wrapped = SDL_CreateTextureWithProperties(R, p);
+    t->wrapped = SDL_CreateTextureWithProperties(R, p);
     SDL_DestroyProperties(p);
-    if (!wrapped) {
+    if (!t->wrapped) {
         fprintf(stderr, "mesh: the colour target could not be wrapped as a texture: %s\n",
                 SDL_GetError());
-        targets_release();
+        targets_release(t);
         return 0;
     }
-    SDL_SetTextureScaleMode(wrapped, SDL_SCALEMODE_NEAREST);
-    tex_w = w; tex_h = h;
+    SDL_SetTextureScaleMode(t->wrapped, SDL_SCALEMODE_NEAREST);
+    t->w = w; t->h = h;
     return 1;
 }
 
@@ -361,11 +381,28 @@ void mesh_texture_free(MeshTexture *t)
     SDL_free(t);
 }
 
-SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
+SDL_Texture *mesh_draw(int slot, const MeshVertex *v, int n, int w, int h,
                        int camera, int view_w, int view_h, const MeshTexture *art)
 {
     if (!init_ok || n <= 0 || w <= 0 || h <= 0) return NULL;
-    if (!targets_make(w, h) || !vbuf_reserve(n)) return NULL;
+    if (slot < 0 || slot >= MESH_SLOTS) {
+        /* SAID, not clamped. Clamping would draw this geometry into another gap's target and
+         * put it at the wrong point in the painter order -- a solid in front of a layer it
+         * belongs behind, which reads as a set that was authored badly rather than as a pass
+         * that ran out of slots. Once per process: it is a property of the stage, not of the
+         * frame, so a per-frame message would bury everything else. */
+        static int said;
+        if (!said) {
+            said = 1;
+            fprintf(stderr, "mesh: this stage's geometry needs slot %d and the pass holds %d "
+                            "-- that many separate places in the layer order. The solids in "
+                            "the deeper gaps are NOT drawn; raise MESH_SLOTS or merge solids "
+                            "onto fewer parallax depths\n", slot, MESH_SLOTS);
+        }
+        return NULL;
+    }
+    MeshTarget *t = &slots[slot];
+    if (!targets_make(t, w, h) || !vbuf_reserve(n)) return NULL;
 
     void *map = SDL_MapGPUTransferBuffer(DEV, vxfer, false);
     if (!map) {
@@ -390,7 +427,7 @@ SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
 
     SDL_GPUColorTargetInfo cti;
     SDL_zero(cti);
-    cti.texture = tex_color;
+    cti.texture = t->color;
     /* CLEARED TO TRANSPARENT, not to a colour: the display list composites this over the
      * game's own layers, so every texel the geometry does not cover has to let them through.
      * A black clear would put a rectangle over the stage. */
@@ -400,7 +437,7 @@ SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
 
     SDL_GPUDepthStencilTargetInfo dti;
     SDL_zero(dti);
-    dti.texture = tex_depth;
+    dti.texture = t->depth;
     dti.clear_depth = 1.0f;                /* the far plane; the test is LESS */
     dti.load_op = SDL_GPU_LOADOP_CLEAR;
     dti.store_op = SDL_GPU_STOREOP_DONT_CARE;
@@ -425,7 +462,7 @@ SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
      * target stands in when there is nothing to sample -- u_tint.x is 0, so nothing reads it. */
     LightUniform lu = LIGHT;
     if (art && art->tex) lu.tint[0] = 1.0f;
-    SDL_GPUTextureSamplerBinding tsb = { (art && art->tex) ? art->tex : tex_color, SMP };
+    SDL_GPUTextureSamplerBinding tsb = { (art && art->tex) ? art->tex : t->color, SMP };
     SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
     /* The camera and the view, which is all the projection needs -- there is no matrix,
      * because screen_x = X - camera/depth is not linear in (X, depth, 1). See geom.h. */
@@ -438,7 +475,8 @@ SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
 
     stat_passes++;
     stat_tris += n / 3;
-    return wrapped;
+    if (slot + 1 > stat_slots) stat_slots = slot + 1;
+    return t->wrapped;
 }
 
 /* ---- the self-test, and it is the reason this file can be believed -------------------------
@@ -484,7 +522,7 @@ static void selftest(void)
         { 64.0f, 0.0f, 64.0f, 9.0f,  0,0,  0,1,0,  0,0,1,1 },
         {  0.0f, 0.0f, 64.0f, 9.0f,  0,0,  0,1,0,  0,0,1,1 },
     };
-    if (!mesh_draw(tri, (int)(sizeof tri / sizeof tri[0]), W, H, 0, VIEW_W, VIEW_H, NULL)) {
+    if (!mesh_draw(0, tri, (int)(sizeof tri / sizeof tri[0]), W, H, 0, VIEW_W, VIEW_H, NULL)) {
         fprintf(stderr, "mesh selftest: the pass produced no texture, so NOTHING was tested\n");
         return;
     }
@@ -505,7 +543,7 @@ static void selftest(void)
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
     SDL_GPUTextureRegion reg;
     SDL_zero(reg);
-    reg.texture = tex_color; reg.w = W; reg.h = H; reg.d = 1;
+    reg.texture = slots[0].color; reg.w = W; reg.h = H; reg.d = 1;
     SDL_GPUTextureTransferInfo tti;
     SDL_zero(tti);
     tti.transfer_buffer = dl; tti.pixels_per_row = W; tti.rows_per_layer = H;
@@ -560,7 +598,7 @@ static int readback_px(int w, int h, int x, int y, unsigned char out[4])
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
     SDL_GPUTextureRegion reg;
     SDL_zero(reg);
-    reg.texture = tex_color; reg.w = (Uint32)w; reg.h = (Uint32)h; reg.d = 1;
+    reg.texture = slots[0].color; reg.w = (Uint32)w; reg.h = (Uint32)h; reg.d = 1;
     SDL_GPUTextureTransferInfo tti;
     SDL_zero(tti);
     tti.transfer_buffer = dl; tti.pixels_per_row = (Uint32)w; tti.rows_per_layer = (Uint32)h;
@@ -625,7 +663,7 @@ static void selftest_texture(void)
     };
     const int NV = (int)(sizeof quad / sizeof quad[0]);
 
-    if (mesh_draw(quad, NV, W, H, 0, W, H, NULL)) {
+    if (mesh_draw(0, quad, NV, W, H, 0, W, H, NULL)) {
         unsigned char c[4] = { 0, 0, 0, 0 };
         if (readback_px(W, H, W / 2, H / 2, c))
             fprintf(stderr, "mesh selftest: untextured control rgba(%u,%u,%u,%u) -- the quad "
@@ -641,7 +679,7 @@ static void selftest_texture(void)
                         "NOT tested\n");
         return;
     }
-    if (!mesh_draw(quad, NV, W, H, 0, W, H, art)) {
+    if (!mesh_draw(0, quad, NV, W, H, 0, W, H, art)) {
         fprintf(stderr, "mesh selftest: the textured draw produced no texture, so the TEXTURE "
                         "path was NOT tested\n");
         mesh_texture_free(art);
