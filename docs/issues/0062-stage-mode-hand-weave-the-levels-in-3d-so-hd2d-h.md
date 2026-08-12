@@ -332,3 +332,47 @@ written.
 
 NOTHING HAS BEEN BUILT for the camera. The mesh pass takes a view matrix from its caller
 precisely so this decision has somewhere to land.
+
+### Note (2026-08-12)
+### Note (2026-08-12) -- THE FORK RESOLVES, and the reason is that the game is not one camera
+
+The note above said the vertical half was blocked on whether a fighter's z and a layer's
+parallax depth are the same axis. They are not, and the port already had both halves recorded
+-- no new RE was needed, only reading C018 and C021 next to C031.
+
+WHAT A FIGHTER'S z DOES. C018: an object holds x at +0x10, jump height at +0x14 and z at +0x18,
+and fn_0041a5a0 depth-SORTS on +0x18. runtime/overrides/objects.c then draws that object's
+shadow at `y = [o+0x18] - shadow_height/2` and its tags at `[o+0x18] + 3`. So +0x18 is used
+DIRECTLY as a screen row: LF2's depth axis projects down the screen at slope exactly 1, one row
+per unit of depth. C021's zboundary rows (Brokeback Clif's 300 and 510) are that same field's
+bounds, and C018 confirms it independently -- pressing up walked +0x18 to exactly 300.
+
+So the vertical projection needs no guess and no magic constant: screen_y = z - jump_height,
+slope 1. That IS the camera's tilt, measured.
+
+WHAT A FIGHTER'S z DOES NOT DO. It does not affect the horizontal parallax. Every object shifts
+by `- cam`, flat, whether it stands at z 300 or z 510 -- objects.c's draws show it. A layer, by
+contrast, shifts by `- cam/depth`. So across the 210 rows of the walkable band the game uses NO
+parallax variation at all, while between layers it uses 1/z.
+
+THAT IS TWO DIFFERENT CAMERAS GLUED TOGETHER, and it settles the fork:
+
+  - A TRUE PERSPECTIVE CAMERA CANNOT REPRODUCE BOTH. It would have to give a fighter at the far
+    zboundary a different parallax rate from one at the near, and the game gives them the same.
+    Anything built on it disagrees with the game's own picture the moment a fighter walks
+    upstage -- which is every match.
+  - So option A stands, and not merely as the conservative choice: orthographic, vertical shear
+    of slope 1 by depth, horizontal translation by camera/parallax_depth. It reproduces every
+    existing layer AND every object exactly, which makes the acceptance test exact too.
+  - Hand-woven solids therefore get parallax, a floor that recedes at slope 1, and lighting --
+    but no vanishing point. That is the HD2D look rather than a compromise toward it.
+
+WHAT A VERTEX NEEDS, and this is the part the fork was hiding: FOUR numbers, not three. x, jump
+height, floor row and parallax depth are independent in LF2, because the game never unified
+them. A set authored as if depth were one axis would be authored against a camera the game does
+not have. The mesh vertex format gains a parallax-depth channel; the header must say why, or
+the next person will "simplify" it back to three and reintroduce the inconsistency.
+
+None of this needed a run: it is three recorded claims read together. Worth noting because the
+previous note called it "bounded RE rather than an open question" and it turned out to be
+neither -- it was already answered and not yet assembled.
