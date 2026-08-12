@@ -1939,10 +1939,35 @@ plain composition; there is deliberately no approximation to fall back to.
   tools/re/bg_table_check.py --selftest                     # asserts it can also say FAIL
   ```
 
+  Each line also carries the layer's **bitmap path** and each record its **stage name**, both
+  straight out of the record — `fn_0040c160`, the bg.dat parser, scans them there (claim C033).
+  The name is printed as the record spells it, with the game's own `_`→space substitution
+  applied, which is why `bg table` says `Brokeback Clif` where a `.stage` file is
+  `Brokeback_Clif`.
+
   `tools/re/bg_table_check.py` is the reason the table is trusted (instrument I006): it decrypts
   every `bg.dat` offline and matches each runtime record to a file by full geometry, with no
-  assumed ordering. It exits non-zero, saying it compared **nothing**, if the log holds no
-  table lines or the game tree holds no `bg.dat` — a missing corpus must not read as a pass.
+  assumed ordering, and then checks the **strings** against the file the geometry chose. Those
+  are independent derivations — four numbers per layer against two fscanf'd strings — and a
+  name that disagrees with matching geometry is the signature of a stride error, so it is a
+  failure rather than a note. It exits non-zero, saying it compared **nothing**, if the log
+  holds no table lines or the game tree holds no `bg.dat` — a missing corpus must not read as
+  a pass. Its `--selftest` rejects a wrong loop, a wrong stage name and a wrong layer name, and
+  accepts the record's spaces against the file's underscores.
+
+- **`LF2_STAGE_GEOM=1`** makes the hand-woven stage geometry report its **negative** (issue
+  #62). A loaded `.stage` always announces itself — its solid count, its vertices, the OBJ
+  lines the loader does not read, and each solid's parallax **depth** — and a `.stage` that is
+  wrong is always refused out loud. What this switch adds is the third case: a stage with *no*
+  authored geometry says so and names every directory it looked in.
+
+  That is the case worth being able to see, because "this stage has nothing woven into it" and
+  "the loader never ran, or looked in the wrong place, or read the stage's name wrong" all
+  produce the same picture and the same silence. `tools/e2e.sh stage_geom` is the run that
+  asserts all three states — loaded, refused, and absent — inside the real game.
+
+  Geometry is looked for **beside the binary** first (CMake copies the repo's `stages/` there
+  after every build) and in the working directory second, which is the game tree.
 
 ## Finding which code draws something — the blit chains
 

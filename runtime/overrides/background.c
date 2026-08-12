@@ -55,9 +55,11 @@
 #include "com.h"
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "stagegeom.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void fn_0041a250__orig(void);
 void fn_0041a5a0__orig(void);
@@ -387,6 +389,116 @@ int bg_view_width(void)
     return w > BG_SCREEN_W ? w : BG_SCREEN_W;
 }
 
+/* ---- the stage's hand-woven geometry (issue #62) ----
+ *
+ * This file is where it is loaded because this file already holds everything it needs: the
+ * stage record, the layer spans, the view width and the draw-time camera. docs/stage-geometry.md
+ * is the format; runtime/video/stagegeom.c is the loader, which knows nothing about the guest
+ * on purpose so that ctest can walk it offline.
+ *
+ * THE LOOKUP is what connects the two. An author writes `depth: layer hill1.bmp` and this
+ * resolves that name against the loaded stage's own layers -- the record carries each layer's
+ * bitmap path (claim C033) -- so the solid takes the depth the DATA gives that layer (C031)
+ * rather than a constant that goes stale. A name the stage does not have is refused by the
+ * loader, not defaulted.
+ */
+static int stage_layer_lookup(void *ctx, const char *layer, int *span, int *stage_width)
+{
+    (void)ctx;
+    const int n = bg_layer_count();
+    for (int i = 0; i < n; i++) {
+        const char *name = bg_layer_name(i);
+        if (!name || strcasecmp(name, layer) != 0) continue;
+        *span = (int)(int32_t)bg_layer_field(BG_LAYER_SPAN, i);
+        *stage_width = (int)(int32_t)bg_stage_field(BG_STAGE_WIDTH);
+        return 1;
+    }
+    return 0;
+}
+
+/* The loaded stage's geometry, reloaded when the stage changes and NOT once per frame. A
+ * stage is identified by its background index, which is the same word fn_0041a250 draws from. */
+static StageGeom stage_geom;
+static int       stage_geom_bg = -1;    /* the index stage_geom was loaded for */
+static int       stage_geom_tried;      /* a load was attempted, so 0 vertices means 0 */
+
+static void stage_geom_sync(void)
+{
+    const int bg = (int)LD32(BG_INDEX);
+    if (stage_geom_tried && bg == stage_geom_bg) return;
+    stagegeom_free(&stage_geom);
+    stage_geom_bg = bg;
+    stage_geom_tried = 1;
+
+    const char *name = bg_stage_name();
+    if (!name || !*name) return;         /* no stage loaded yet: try again next frame */
+
+    /* WHERE `stages/` IS, and why it is not simply the working directory. The process runs
+     * with its cwd in the GAME TREE, because the game opens all of its own data by relative
+     * path -- and the game tree is neither in this repo nor shipped by it. Authored geometry
+     * is the PORT's content: it is committed here, and it has to reach the running program
+     * without a path baked in that only works on the machine that built it.
+     *
+     * So it is looked for BESIDE THE EXECUTABLE first (CMake copies the repo's `stages/` next
+     * to the binary, and an installed port puts it there too), and in the working directory
+     * second, which is what makes a drop-in into an existing game tree work. Both are tried
+     * and the one that has the file wins; `stagegeom_load` treats a missing file as success
+     * with nothing in it, so a directory that is not there is not an error. */
+    char beside[512];
+    const char *dirs[2];
+    int nd = 0;
+    const char *base = SDL_GetBasePath();
+    if (base) {
+        snprintf(beside, sizeof beside, "%.480sstages", base);   /* base ends in a separator */
+        dirs[nd++] = beside;
+    }
+    dirs[nd++] = "stages";
+
+    for (int i = 0; i < nd; i++) {
+        if (!stagegeom_load(dirs[i], name, stage_layer_lookup, NULL, &stage_geom)) {
+            /* A file that exists and is wrong is reported EVERY time the stage is entered,
+             * not once: an author fixing a .stage file re-enters the stage to see whether it
+             * worked, and a once-only message would go quiet exactly then. */
+            fprintf(stderr, "stage geometry: %s/%s.stage was REFUSED -- %s\n",
+                    dirs[i], name, stage_geom.error);
+            return;
+        }
+        if (stage_geom.n) break;
+    }
+
+    if (stage_geom.n == 0) {
+        /* Not an error -- it is the state of every stage until one is authored -- and said
+         * out loud anyway, because "this stage has no authored geometry" and "the loader
+         * never ran" are the two things this whole subsystem can fail to distinguish. It
+         * names every directory it looked in, so a file in the wrong place reads as a file in
+         * the wrong place rather than as a stage nobody has woven yet. */
+        if (getenv("LF2_STAGE_GEOM")) {
+            fprintf(stderr, "stage geometry: %s has no <dir>/%s.stage, so nothing is woven "
+                            "into it -- this stage draws exactly as it always has. Looked "
+                            "in:\n", name, name);
+            for (int i = 0; i < nd; i++)
+                fprintf(stderr, "stage geometry:   %s\n", dirs[i]);
+        }
+        return;
+    }
+    fprintf(stderr, "stage geometry: %s -- %d solid(s), %d vertices, %d OBJ line(s) this "
+                    "loader does not read\n",
+            name, stage_geom.solids, stage_geom.n, stage_geom.skipped_lines);
+    /* THE DEPTHS, and they are the half of this worth printing. A count of vertices says the
+     * file parsed; a depth says the solid landed in the plane it was authored for, which is
+     * the thing `depth: layer <file>` exists to get right and the thing that goes silently
+     * wrong -- a solid at the fighters' plane instead of the far hill looks like geometry, not
+     * like a bug. Printed per solid, by watching the depth change down the vertex list. */
+    for (int i = 0; i < stage_geom.n; i++) {
+        if (i && stage_geom.v[i].depth == stage_geom.v[i - 1].depth) continue;
+        fprintf(stderr, "stage geometry:   solid at depth %.4f (%s)\n",
+                (double)stage_geom.v[i].depth,
+                stage_geom.v[i].depth > 1.0f ? "further than the fighters" :
+                stage_geom.v[i].depth < 1.0f ? "nearer than the fighters"  :
+                                               "the fighters' own plane");
+    }
+}
+
 /* Issue #28: the camera is still clamped to the 4:3 limit, so a wider view scrolls past the
  * wall a character can walk to.
  *
@@ -554,6 +666,7 @@ void fn_0041a250(void)
     const int32_t stage_width = (int32_t)LD32(base + BG_STAGE_WIDTH);
     const int32_t view = bg_view_width();
     camera_clamp_to_view(stage_width, view);
+    stage_geom_sync();       /* reloads only when the stage changes */
     /* The layers are part of the world, so they are drawn from the same shifted camera the
      * objects are -- their parallax included, because a re-centring IS a camera pan and a
      * nearer layer must move further than a distant one. */

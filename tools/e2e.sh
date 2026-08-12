@@ -85,6 +85,7 @@ stage_mode        the port reaches STAGE mode and the section lock holds the cam
 objects           the stage's OBJECT pass is deterministic, with a skewed camera as the negative (issue #55)
 render            the GPU renderer draws what the software compositor draws (issue #30)
 mesh              the depth-tested geometry pass really tests depth (issues #49, #62)
+stage_geom        a hand-woven .stage loads in the running game, at its layer's depth (issue #62)
 "
 
 pass=0; fail=0; skip=0; failed=""

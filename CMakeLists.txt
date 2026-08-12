@@ -95,6 +95,7 @@ add_executable(lf2
     runtime/video/render.c
     runtime/video/hd2d.c
     runtime/video/mesh.c
+    runtime/video/stagegeom.c
     runtime/app/main.c)
 # EVERY subsystem directory is on the include path, which is what lets a file say
 # #include "guest_ops.h" wherever it happens to live. The alternative -- relative "../"
@@ -103,6 +104,28 @@ add_executable(lf2
 target_include_directories(lf2 PRIVATE
     runtime runtime/cpu runtime/win32 runtime/video runtime/audio runtime/input runtime/app
     runtime/overrides)
+
+# The hand-woven stage geometry (issue #62) travels BESIDE THE BINARY.
+#
+# It cannot travel in the working directory: the port runs with its cwd in the GAME TREE,
+# because the game opens every one of its own files by relative path, and the game tree is
+# neither in this repo nor shipped by it. It cannot be an absolute path baked in at configure
+# time either -- that is exactly the machine-specific tracked path this project does not
+# commit. So the repo's `stages/` is copied next to the executable after every build, which is
+# also where an installed port would put it, and the runtime looks there first (see
+# `stage_geom_sync` in runtime/overrides/background.c).
+#
+# A custom TARGET rather than a POST_BUILD command, and the difference is not cosmetic:
+# POST_BUILD only fires when the target relinks, so an author who adds a .stage and rebuilds
+# gets nothing copied and a game that reports no geometry -- which is exactly the silent
+# failure this whole subsystem is careful about. A custom target runs every build.
+#
+# copy_directory_if_different, so an unchanged stages/ is not re-copied every time.
+add_custom_target(stages ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
+            ${CMAKE_SOURCE_DIR}/stages ${CMAKE_CURRENT_BINARY_DIR}/stages
+    COMMENT "stages/ -> beside the binary")
+add_dependencies(lf2 stages)
 
 # Warnings on the hand-written runtime only. The recompiled output is machine-emitted and
 # would bury the signal, so it is compiled without them rather than the whole target being
@@ -126,6 +149,7 @@ set_source_files_properties(
     runtime/video/render.c
     runtime/video/hd2d.c
     runtime/video/mesh.c
+    runtime/video/stagegeom.c
     runtime/app/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
