@@ -1094,6 +1094,7 @@ enum { PANEL_FRESH = 2 };
 static long panel_charselect_frame = -1000, panel_overlay_frame = -1000;
 static long panel_hud_frame = -1000;
 static long panel_frontend_frame = -1000;
+static long panel_modemenu_frame = -1000;
 
 static void panel_note(int l, int t, int r, int b)
 {
@@ -1181,6 +1182,10 @@ static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
      * Recorded here rather than in panel_note because the front end has no panel -- it paints
      * a backdrop and nothing panel-shaped. See script.c's `frontend` anchor. */
     if (c == FILL_FRONT_END) panel_frontend_frame = frames;
+    /* The mode menu's own colour, for the same reason: it is the only honest way to
+     * say "the mode menu is on screen". The word screens.c used to gate on is the game
+     * MODE, which reads 1/4/5 during a match (issue #51). */
+    if (c == FILL_MODE_MENU) panel_modemenu_frame = frames;
     if (!lf2_wide_width() || panel_hud_up()) return;
     if (left) framing_n_left++; else framing_n_centre++;
     char what[64];
@@ -1209,6 +1214,7 @@ int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_
  * paint other colours, and a route anchored here means "the first screen, before anything has
  * been chosen". */
 int panel_frontend_up(void)   { return frames - panel_frontend_frame   <= PANEL_FRESH; }
+int panel_modemenu_up(void)   { return frames - panel_modemenu_frame   <= PANEL_FRESH; }
 
 /* ---- centring what cannot be made wide ----
  *

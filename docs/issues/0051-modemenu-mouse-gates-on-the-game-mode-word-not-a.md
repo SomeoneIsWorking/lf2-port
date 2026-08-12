@@ -1,11 +1,11 @@
 ---
 id: 51
 title: modemenu_mouse gates on the GAME MODE word, not a screen, so it is live during a match
-status: open
+status: resolved
 symptom: runtime/overrides/screens.c treats 0x00451160 as the mode menu's selection and gates its mouse handler on LD32(0x00451160) < 8; that word is the game MODE and reads 1/4/5 during a match, so the gate is true in a match as well
 tags: input,mouse,menu,latent,re
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 FOUND 2026-08-11 by the RE done for issue #44, not by a report -- so it is a latent defect and
@@ -36,3 +36,29 @@ MEASURE IT before deciding how much it matters: LF2_OVERLAY_DEBUG has the shape 
 
 Do not fix this by adding a second condition that happens to exclude matches. Use the screen
 signal the RE found.
+
+### Resolution (2026-08-12)
+FIXED, and the misfire is MEASURED rather than assumed -- the entry asked for that explicitly
+('MEASURE IT before deciding how much it matters').
+
+    modemenu: the old game-mode gate was true on 1352 of 1800 frame(s) where the mode menu was
+              NOT drawn -- the handler was live off its own screen
+
+Three quarters of a run that walks the front end, the mode menu, character selection, the
+pre-fight overlay and a match. The gate  is the GAME MODE, which reads
+1/4/5 in a match, so it was satisfied nearly everywhere.
+
+THE FIX is the identifier the entry itself named, and the one this port already prefers: ask what
+the game DRAWS. The mode menu paints its whole screen 0x122565, a literal that appears exactly
+once in the binary, and runtime/video/ddraw.c already watches for it (per-screen framing, issue
+#44). panel_modemenu_up() joins panel_frontend_up() -- added this session for the route anchors --
+and screens.c gates on that instead of the mode word.
+
+VERIFIED BOTH WAYS, which matters because a gate can fail by being too tight as easily as too
+loose: tools/e2e.sh mouse still reaches charselect, the overlay and a match by pointer alone
+(7 of 7 clicks fired), and that route drives the mode menu WITH THE MOUSE -- so a gate that had
+become too tight would have stalled it at the front end. The counter above is the other side.
+
+LF2_MODEMENU_DEBUG=1 keeps the discriminator available: it prints how many frames the old gate
+would have been true on while the menu was not drawn, with its denominator, and says outright
+when a run shows no misfire that it says nothing about runs reaching other screens.

@@ -41,6 +41,7 @@ int  panel_charselect_up(void);
 int  panel_overlay_up(void);
 int  panel_hud_up(void);
 int  panel_frontend_up(void); /* the FIRST screen, from the flat colour only it paints */
+int  panel_modemenu_up(void); /* the MODE menu, likewise -- not the game-mode word (issue #51) */
 int  lf2_wide_width(void);    /* the composition's width when it is wider than 794, else 0 */
 
 /* Where the composition is drawn in the window, and how big (issue #41): the height sets the
