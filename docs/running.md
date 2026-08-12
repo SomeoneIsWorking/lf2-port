@@ -1955,6 +1955,22 @@ plain composition; there is deliberately no approximation to fall back to.
   a pass. Its `--selftest` rejects a wrong loop, a wrong stage name and a wrong layer name, and
   accepts the record's spaces against the file's underscores.
 
+- **`LF2_ENGINE=1`** makes the port's own rendering engine draw the frame instead of
+  SDL_Render (issue #64), and **`LF2_ENGINE_DEBUG=1`** makes it report what it drew — frames,
+  quads, batches, textures, uploads, and quads DROPPED for want of a texture. The report rides
+  on `LF2_RENDER_DEBUG`'s 900-frame cadence, so set both.
+
+  It is an **A/B control arm**, not a feature switch, and it is the same arrangement
+  `LF2_BG_ORIG` has for the background override: the engine becomes the default when it is
+  shown to match the software compositor, and the old path stays selectable so the two can go
+  on being diffed. A reimplementation that cannot be diffed against what it replaces is a
+  rewrite.
+
+  `tools/e2e.sh render` runs both arms. The engine one must MATCH the software compositor to
+  the same tolerance the old GPU path does — its first version is deliberately a reproduction
+  — and `LF2_ENGINE=1 LF2_RENDER_SKIP=7` must differ, which is what proves the engine is what
+  drew the matching frame rather than the old path having drawn both dumps.
+
 - **`LF2_STAGE_GEOM=1`** makes the hand-woven stage geometry report its **negative** (issue
   #62). A loaded `.stage` always announces itself — its solid count, its vertices, the OBJ
   lines the loader does not read, and each solid's parallax **depth** — and a `.stage` that is

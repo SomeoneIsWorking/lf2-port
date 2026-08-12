@@ -3,6 +3,7 @@
 
 #include "render.h"
 #include "mesh.h"
+#include "engine.h"
 #include "framelife.h"
 #include "overrides/geom.h"
 #include "hd2d.h"
@@ -126,6 +127,7 @@ void render_init(SDL_Renderer *r)
      * reports why it cannot run rather than going quiet, because a pass that draws nothing is
      * indistinguishable from a stage with no geometry authored for it. */
     mesh_init(r);
+    engine_init(r);
 }
 
 static void targets_free(void)
@@ -767,6 +769,118 @@ static void clear_to(SDL_Texture *rt, uint8_t r, uint8_t g, uint8_t b, uint8_t a
     SDL_RenderClear(R);
 }
 
+
+/* ---- the engine's colour pass (issue #64) --------------------------------------------------
+ *
+ * The list, turned into quads and handed to the port's own engine instead of to SDL_Render.
+ * Returns 0 when the engine is not the thing drawing, and the caller then runs draw_list as it
+ * always has -- which is what keeps the old path selectable as the A/B control arm.
+ *
+ * IT MUST PRODUCE THE SAME PICTURE, and that is the whole of this first version. The engine
+ * exists to light the scene with a real depth buffer, but a first version that both replaced
+ * the renderer AND changed the shading would fail tools/e2e.sh render for two reasons at once
+ * and could not be told apart from a broken one. So this is a TRANSLATION of draw_list's colour
+ * pass, entry kind for entry kind, and nothing more.
+ *
+ * The one thing it does that draw_list cannot: every quad lands in a real D32_FLOAT depth
+ * buffer, ordered by its position in the list. The picture is unchanged; the depth is new, and
+ * it is what the lighting step needs next.
+ */
+static EngineQuad *eq;
+static int         eq_cap;
+static long        stat_engine_frames, stat_engine_mesh_skipped;
+
+static EngineQuad *eq_reserve(int n)
+{
+    if (n <= eq_cap) return eq;
+    EngineQuad *p = realloc(eq, (size_t)n * sizeof *p);
+    if (!p) return NULL;
+    eq = p; eq_cap = n;
+    return eq;
+}
+
+static int engine_colour_pass(List *l, int li, int ov, float world, float ox, float oy,
+                              float scale, int ow, int oh, SDL_Texture *dst)
+{
+    (void)li;
+    if (!engine_enabled()) return 0;
+
+    EngineQuad *out = eq_reserve(ov > 0 ? ov : 1);
+    if (!out) return 0;
+
+    const int skip = render_skip();
+    int n = 0;
+    for (int i = 0; i < ov; i++) {
+        if (skip > 0 && (i % skip) == 0) continue;   /* the negative arm, honoured identically */
+        Entry *e = &l->e[i];
+        /* A ground marker draws nothing -- it is the game telling the port where an object's
+         * feet are (C019). draw_list consumes it the same way in the colour pass. */
+        if (e->kind == E_GROUND) continue;
+        if (e->kind == E_MESH) {
+            /* NOT DRAWN YET, and counted rather than skipped quietly. Stage geometry is an
+             * already-rendered texture from the separate pass, which is exactly the arrangement
+             * issue #64 exists to remove -- it is submitted INTO this pass in the next step
+             * rather than composited as a texture. A silent skip here would read as a stage
+             * with nothing authored for it. */
+            stat_engine_mesh_skipped++;
+            continue;
+        }
+
+        EngineQuad *q = &out[n];
+        memset(q, 0, sizeof *q);
+        q->x = (e->dst.x + world) * scale + ox;
+        q->y = e->dst.y * scale + oy;
+        q->w = e->dst.w * scale;
+        q->h = e->dst.h * scale;
+        q->r = q->g = q->b = q->a = 1.0f;
+
+        if (e->kind == E_FILL) {
+            q->r = (float)((e->argb >> 16) & 0xff) / 255.0f;
+            q->g = (float)((e->argb >> 8) & 0xff) / 255.0f;
+            q->b = (float)(e->argb & 0xff) / 255.0f;
+            q->blend = 0;                       /* BLEND_NONE, as SDL_BLENDMODE_NONE was */
+            n++;
+            continue;
+        }
+        if (e->kind == E_TILE) {
+            if (!tile_arena) continue;
+            q->host_argb  = tile_arena + e->tile_off;
+            q->host_w     = e->tw;
+            q->host_h     = e->th;
+            q->host_pitch = e->tw * 4;
+            /* The whole tile, not a corner: the engine keys its cache on the tile's own size,
+             * so there is no pooled texture with a stale remainder to avoid reading. That
+             * corner rectangle was a consequence of the pool, not of the tile. */
+            q->u0 = 0.0f; q->v0 = 0.0f; q->u1 = 1.0f; q->v1 = 1.0f;
+            q->blend = 2;                       /* premultiplied */
+            n++;
+            continue;
+        }
+        /* E_TEX */
+        if (e->sw <= 0 || e->sh <= 0) continue;
+        q->src_pixels = e->src_pixels;
+        q->sw = e->sw; q->sh = e->sh; q->spitch = e->spitch;
+        q->keyed = e->keyed; q->key_lo = e->key_lo; q->key_hi = e->key_hi;
+        q->u0 = e->src.x / (float)e->sw;
+        q->v0 = e->src.y / (float)e->sh;
+        q->u1 = (e->src.x + e->src.w) / (float)e->sw;
+        q->v1 = (e->src.y + e->src.h) / (float)e->sh;
+        q->blend = e->keyed ? 1 : 0;
+        n++;
+    }
+
+    SDL_Texture *frame = engine_draw(out, n, ow, oh);
+    if (!frame) return 0;                        /* engine_draw said why; fall back */
+
+    /* The engine's target, placed on the caller's. It is the SAME GPU object the pass rendered
+     * into (C030), so this is a blit and not a readback. */
+    SDL_SetRenderTarget(R, dst);
+    SDL_SetTextureBlendMode(frame, SDL_BLENDMODE_NONE);
+    SDL_RenderTexture(R, frame, NULL, NULL);
+    stat_engine_frames++;
+    return 1;
+}
+
 int render_present(uint32_t src_pixels, int off, int w, int h)
 {
     if (!render_gpu_enabled() || !R) return 0;
@@ -860,7 +974,9 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     const int ln = FL.n[li];
 
     clear_to(run_hd2d ? rt_albedo : target, 0, 0, 0, 255);
-    draw_list(l, PASS_COLOUR, (float)off, ox, oy, 0, ov);
+    if (!engine_colour_pass(l, li, ov, (float)off, ox, oy, scale, ow, oh,
+                            run_hd2d ? rt_albedo : target))
+        draw_list(l, PASS_COLOUR, (float)off, ox, oy, 0, ov);
 
     if (run_hd2d) {
         /* 2. WHICH PIXELS ARE A FIGHTER. Cleared to zero: everything the game drew that is
@@ -1053,6 +1169,7 @@ void render_report(void)
                         "identified\n");
     hd2d_report();
     mesh_report();
+    engine_report();
     if (hd2d_ready() && stat_ground && !stat_shadow)
         fprintf(stderr, "render: %ld ground markers but NO cast shadows -- every one was "
                         "followed by something that could not be drawn\n", stat_ground);
