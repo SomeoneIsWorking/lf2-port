@@ -1,0 +1,94 @@
+#!/bin/sh
+# LEAVE MATCH from the pause menu reaches the game's FRONT-END MENU (issue #22).
+#
+# WHAT IS ASSERTED, and why the verdict is a word rather than a picture. The game's screen
+# selector is 0x0044d020: fn_0041bc90 runs the match while it is 0 and otherwise hands it by
+# address to fn_00429730, which dispatches -- 1 is character selection, 10 is the front-end
+# menu (fn_00431d10, the eight-item list). Those two screens share a blit destination and can
+# share a picture, so a frame dump cannot tell them apart (issue #59); the word can, and the
+# word is what the game itself branches on. runtime/overrides/screens.c reports it.
+#
+# THE FAILURE THIS EXISTS TO CATCH. The exit places the post-match overlay's Exit item and
+# lets the GAME's own attack dispatch it. That synthetic press used to run for two gathers
+# unconditionally, and fn_00431c70 -- which the game runs on every way out of a match --
+# clears the held-button latch fn_00431b70 edge-detects against. So the second gather landed
+# on the front-end menu as a FRESH press, the menu confirmed whatever the cursor was on, and
+# the exit sailed straight through 10 to character selection. A run that lands on 1 is that
+# bug, and the route is deliberately the plain one-player case where it always reproduced.
+set -eu
+
+BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
+GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
+LOG=$(mktemp)
+trap 'rm -f "$LOG"' EXIT
+
+if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi
+if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; fi
+
+# Pad one takes the deterministic route into a VS match, keyed to the screens the game DRAWS
+# (issue #25), then pauses and takes the second row. Pad one joined through the game's own
+# character selection, so coop_owns is false for it and DROP OUT does not appear: the rows are
+# RESUME, LEAVE MATCH, ... and one press of DOWN lands on the item this route is about.
+PAD1="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
+PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358,south@charselect+418"
+PAD1="$PAD1,south@charselect+618,south@charselect+838"
+PAD1="$PAD1,up@overlay+99,up@overlay+159,south@overlay+219"        # 2 -> 1 -> 0 = Fight!
+PAD1="$PAD1,start@match+300,down@match+360,south@match+420"        # pause, LEAVE MATCH, take it
+
+echo "exit to menu: LEAVE MATCH should reach the front-end menu..."
+( cd "$GAME" && \
+  SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
+  LF2_VIRTUAL_PAD="$PAD1" \
+  LF2_QUIT_AFTER=2400 timeout -k 5 300 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
+
+fail=0
+say_ok()   { echo "  ok    $1"; }
+say_fail() { echo "  FAIL  $1"; fail=1; }
+
+# The chain first, because a break anywhere in it makes the verdict vacuous rather than wrong.
+if ! grep -q "exit to menu: F4 sent" "$LOG"; then
+    echo "  FAIL  the pause menu's LEAVE MATCH was never taken, so this run proves NOTHING"
+    echo "        about where the exit lands"
+    grep -m3 "^pause" "$LOG" || echo "        no pause-menu output at all"
+    exit 1
+fi
+say_ok "taken: $(grep -m1 'exit to menu: F4 sent' "$LOG")"
+
+if ! grep -q "exit to menu: the overlay is up" "$LOG"; then
+    say_fail "overlay: the game's post-match overlay never appeared, so F4 did not land"
+else
+    say_ok "overlay: $(grep -m1 'exit to menu: the overlay is up' "$LOG")"
+fi
+
+if ! grep -q "exit to menu: overlay selection set to Exit" "$LOG"; then
+    say_fail "confirm: the Exit item was never placed and confirmed"
+else
+    say_ok "confirm: $(grep -m1 'exit to menu: overlay selection set to Exit' "$LOG")"
+fi
+
+# THE VERDICT. It names the screen either way -- a landing report that only ever printed on
+# failure would be silent on the run that matters.
+land=$(grep -m1 "exit to menu: LANDED on screen" "$LOG" || true)
+if [ -z "$land" ]; then
+    say_fail "landing: the run never reported which screen the exit reached, so nothing here"
+    say_fail "         measured the thing this route is for"
+else
+    num=$(echo "$land" | sed 's/.*LANDED on screen \([0-9]*\).*/\1/')
+    case "$num" in
+    10) say_ok   "landing: $land" ;;
+    1|2|3)
+        say_fail "landing: $land"
+        say_fail "         that is CHARACTER SELECTION -- the exit passed through the"
+        say_fail "         front-end menu and a press confirmed its cursor (issue #22)" ;;
+    *)  say_fail "landing: $land"
+        say_fail "         which is neither the front-end menu (10) nor character selection" ;;
+    esac
+fi
+
+# The negative that keeps the synthetic press honest: if it was dropped at the screen change,
+# it says so, and that is the mechanism this route asserts rather than the symptom.
+drop=$(grep -m1 "synthetic attack had .* gather(s) left when the game moved" "$LOG" || true)
+[ -n "$drop" ] && say_ok "scope: $drop"
+
+[ "$fail" = 0 ] && echo "exit to menu: ok" || echo "exit to menu: FAILED"
+exit "$fail"

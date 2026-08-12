@@ -166,6 +166,25 @@ python3 ~/.claude/skills/issue-catalog/catalog.py show <id>
 - **Never claim a green that was not run.** If the thing that would verify a change is
   itself broken, say so and leave the work uncommitted or the commit message honest.
 
+## No black-box debugging — the answer is in the decompilation
+
+The binary is right there and `tools/re/ghidra_scripts/DecompDump.py` dumps any function to
+`scratch/decomp/` in seconds (`LF2_DECOMP_TARGETS`, invocation in `docs/running.md`). So a
+question about what the game does is answered by READING THE BRANCH, not by inferring it from
+outside.
+
+- **Banned: write-a-word-and-watch.** `LF2_EXIT_PROBE` diffed `.data` between two screens and
+  spent a run per candidate; six came back negative. The answer was three lines of
+  `fn_00431d10`. It is deleted.
+- **Banned: reading a sampled `.data` sequence as a state machine.** `0044d020` going
+  `1 -> 10 -> 3 -> 1` was written up as "the game walks there on its own". It does not — that
+  pair of writes is one confirm press, and only the code can say so (issue #22).
+- **Banned: a frame dump as the evidence for a state question.** Screens that share a blit
+  destination can share a picture.
+
+Measure ONE thing afterwards to confirm the read. Observation confirms an RE finding; it never
+substitutes for one. Issue #61.
+
 ## Env vars are for DIAGNOSTICS, never for features
 
 A feature nobody can find is not a feature. Drop-in coop was once behind `LF2_COOP=1` and had

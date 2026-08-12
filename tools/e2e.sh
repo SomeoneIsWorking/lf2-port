@@ -64,6 +64,7 @@ controller_2p     a second pad joins as player two, with a one-pad run as the co
 coop_dropin       a pad joins a match ALREADY RUNNING and drives the fighter it joined
 coop_select       a late joiner picks its character from the game's own roster
 pause_dropout     a joined player leaves from the pause menu, on its own pad
+exit_to_menu      LEAVE MATCH reaches the game's FRONT-END MENU, by its screen word (issue #22)
 two_human_match   pad two drives its fighter in the FIGHT, not just at selection
 widescreen        the composition follows the window, both directions, natives as negatives
 resize            a resize leaves no stale pixels standing (issue #29)

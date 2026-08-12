@@ -1,7 +1,7 @@
 ---
 id: 22
 title: Pause menu needs EXIT TO MENU and a co-op drop-out option
-status: open
+status: resolved
 symptom: the pause menu offers only RESUME and QUIT GAME: there is no way back to the front end without killing the process, and a joined player has no way to leave a match deliberately
 tags: reported,pause,menu,coop,drop-in,ux
 created: 2026-08-05
@@ -500,3 +500,57 @@ AND 0044d020 = 10 HOLDS when written directly: the probe run left the mode menu 
 input normally (a press moved it to character selection). So if the answer is "stop at the mode
 menu", the mechanism exists and is one word -- the game's own screen state, the same kind of
 write LF2_MODE already makes into the mode menu's selection.
+
+### Note (2026-08-12)
+### RESOLVED (2026-08-12) -- and the note above it is WRONG
+
+The previous note read a sampled sequence of 0x0044d020 (`1 -> 10 -> 3 -> 1`) and concluded
+"the game walks there on its own... THE SYNTHESIZED-PRESS HYPOTHESIS IS REFUTED". Both halves
+are wrong, and they are wrong in the way issue #61 names: a sampled state word cannot
+distinguish "the code goes there" from "an input drove it there". The decompilation can, and
+does, in three lines.
+
+**What the code says.** `fn_0041bc90` runs the match while 0x0044d020 is 0 and otherwise hands
+it BY ADDRESS to `fn_00429730`, which dispatches on it: 1 = character selection, 2 and 3 enter
+it, **10 = the FRONT-END MENU** (`fn_00431d10`, the eight-item list), 0x14..0x32 / 0x78..0x96 /
+200..299 / 300 = the other panels. `fn_00429730` also passes `&0x00451160` to `fn_00431d10`,
+which uses that one word as BOTH the front-end cursor (0..7) and the game mode -- picking the
+item is picking the mode.
+
+`fn_00431d10` writes the screen word in exactly one place: its confirm branch. Cursor 0, 1 or 4
+sets it to **3**, which `fn_00429730` turns into **1**. So `10 -> 3 -> 1` is not a walk. It is
+one confirm press on the front-end menu with the cursor on item 0, and nothing else in the
+binary produces that pair of writes.
+
+**What raises that confirm.** `fn_00431b70`, the menu's gather: per player it reads obj+0xcd..
+0xd3 -- the same seven bytes `runtime/overrides/input.c` writes as `BTN_CUR` -- and raises
+0x004513b4 (confirm) only on an EDGE, when the latch at 0x00451320 was clear. `fn_00431c70`,
+which the game runs on every way out of a match, zeroes both that latch and those seven bytes.
+
+**So the cause.** `input_synth_confirm(exit_dev, 2)` held the attack for two gathers
+unconditionally, and outside the game proper `fn_00419a60`'s override routes every device to
+slot 0 (`target = in_game ? dev_player[d] : 0`). Gather one dispatched the overlay's Exit;
+gather two landed after the transition, on the front-end menu, with the latch freshly cleared
+by `fn_00431c70` -- a fresh press by construction. The exit reached the front end correctly and
+was then pushed off it by its own press.
+
+Why the earlier cancel "never fired": it was armed on `panel_modemenu_up()`, a DRAWING signal.
+The write to 3 happens in the same frame the menu first runs, so a cancel keyed to the menu
+being drawn is one frame late by construction. That is a diagnostic that could not have printed
+the positive -- the exact failure mode the global rules describe.
+
+**The fix.** A synthetic press now belongs to the screen it was issued on: `input_synth_confirm`
+records 0x0044d020 and `synth_active()` drops the remaining gathers the moment it moves, saying
+so out loud. That is the game's own rule (`fn_00431c70`), not a shorter frame count.
+
+**Verified**, `tools/e2e.sh exit_to_menu` (new): LANDED on screen 10, the front-end menu, with
+"1 gather(s) left when the game moved from screen 1 to screen 10 -- dropped". Run against BOTH
+classes: with the scope check compiled out the same route lands on screen 1, character
+selection, and the route FAILS. `ctest` 10/10.
+
+`LF2_EXIT_PROBE` and its `exit_probe*` machinery are deleted (issue #61) -- the .data-word hunt
+it existed for was answered by one decompilation. `SCREEN_WORD`, `MENU_CURSOR` and the screen
+numbering are recorded in `runtime/overrides/world.h`.
+
+### Resolution (2026-08-12)
+The exit reached the front-end menu (screen word 0x0044d020 = 10) and was pushed off it by its own synthetic confirm: input_synth_confirm held the attack for two gathers, and fn_00431c70 clears the held-button latch across a screen change, so the leftover gather read as a fresh press to fn_00431b70 and fn_00431d10 confirmed cursor 0. The press is now scoped to the screen it was issued on. Verified by tools/e2e.sh exit_to_menu, which lands on 10 and fails on 1 with the scope compiled out.
