@@ -476,7 +476,7 @@ void fn_0041a250(void)
 {
     const uint32_t self = R(ECX);                    /* __thiscall */
     const uint32_t arg0 = LD32(R(ESP) + 4);
-    const uint32_t bg = LD32(BG_INDEX);
+    uint32_t bg = LD32(BG_INDEX);
 
     /* LF2_BG_ORIG=1 hands every frame to the recompiled body instead. It is the A/B this
      * file is verified by, not a fallback anyone should need: tools/routes/background_test.sh runs
@@ -492,6 +492,20 @@ void fn_0041a250(void)
 
     /* Index 99 is a different pass entirely (fn_0041a050) and nothing here applies to it.
      * The original body is kept callable for exactly this, and for the escape below. */
+    /* LF2_ALTBG_FORCE=1 draws the BUILT-IN background instead of the loaded stage's layers.
+     * It is a diagnostic and it fakes nothing: it takes the branch the game itself takes when
+     * the stage chooser lands on index 99, which is the only way a player sees this backdrop
+     * (issue #58). Without it the pass is unreachable from any scripted route, and its override
+     * could not be verified against the body it replaces. */
+    /* It has to write the GUEST WORD, not this local. The alt branch below hands off to
+     * fn_0041a250__orig, which reads the index out of 0x0044d024 itself -- so setting only the
+     * local left both arms of the A/B drawing the ordinary stage, and they came out identical
+     * at 794 AND at 1920. That read as "the port matches the body it replaces" and was really
+     * "neither arm ever called the ported function". */
+    const int alt_forced = getenv("LF2_ALTBG_FORCE") != NULL;
+    const uint32_t bg_saved = LD32(BG_INDEX);
+    if (alt_forced) { bg = BG_ALT_PASS; ST32(BG_INDEX, BG_ALT_PASS); }
+
     if (bg == BG_ALT_PASS) {
         /* COUNTED, because issue #58 turns on whether anyone ever sees this. fn_0041a050 draws
          * a fixed backdrop whose five bands are 794 wide as literals, so it would stop short in
@@ -506,6 +520,7 @@ void fn_0041a250(void)
         ST32(BG_CAMERA_X, (uint32_t)bg_draw_camera());
         fn_0041a250__orig();
         ST32(BG_CAMERA_X, saved);
+        if (alt_forced) ST32(BG_INDEX, bg_saved);
         return;
     }
 
