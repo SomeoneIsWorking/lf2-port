@@ -160,7 +160,7 @@ FLOG=$(mktemp)
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 LF2_RENDERER=soft \
   LF2_WINDOW_SIZE=1710x370 LF2_FRAMING_DEBUG=1 \
-  LF2_CLICK_SCRIPT="403,228:900;400,241:1350;200,150@charselect+98" \
+  LF2_CLICK_SCRIPT="403,228@frontend+0;400,241@frontend+450;200,150@charselect+98" \
   LF2_QUIT_AFTER=1500 timeout -k 5 200 "$BUILD/lf2" lf2.exe ) > "$FLOG" 2>&1 || true
 
 if ! grep -q "^framing:" "$FLOG"; then

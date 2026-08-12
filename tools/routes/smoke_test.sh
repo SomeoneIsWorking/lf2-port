@@ -60,14 +60,14 @@ echo "running a match headless (about 90s)..."
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
   LF2_CK_DEBUG=1 LF2_AUDIO_DEBUG=1 LF2_SCREEN_HASH=1 \
-  LF2_CLICK_SCRIPT="403,228:900" \
-  LF2_KEY_SCRIPT="0x5A:960,\
+  LF2_CLICK_SCRIPT="403,228@frontend+0" \
+  LF2_KEY_SCRIPT="0x5A@frontend+60,\
 0x5A@charselect+58,0x5A@charselect+118,0x5A@charselect+178,0x5A@charselect+238,\
 0x5A@charselect+298,0x5A@charselect+358,0x26@charselect+418,0x26@charselect+478,\
 0x5A@charselect+538,0x5A@charselect+738,\
 0x5A@overlay+219,0x26@overlay+319,0x26@overlay+379,0x5A@overlay+439,\
 0x27@match+108,0x5A@match+158" \
-  LF2_QUIT_AFTER=3000 \
+  LF2_QUIT_AFTER=2160 \
   ${TIMER:+$TIMER -f "%U %S %e" -o "$CPUFILE"} \
   timeout -k 5 150 "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1
 rc=$?
