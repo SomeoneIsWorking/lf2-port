@@ -201,8 +201,34 @@ void modemenu_mouse(void)
     int mx, my;
     if (!hostwin_pointer(&mx, &my)) return;
 
+    /* IS THE MODE MENU ACTUALLY ON SCREEN. This used to ask `LD32(MODEMENU_SEL) < 8`, and
+     * 0x00451160 is the game MODE, not a menu cursor -- FUN_00429730 and the score-board read
+     * it as 1/4/5 DURING A MATCH, so the gate was satisfied in a match too and the early-out
+     * was not doing the job its name claimed (issue #51). It is the same trap the pre-fight
+     * overlay fell into once: a .data flag that is the game mode wearing a screen's disguise.
+     *
+     * The honest signal is what the game DRAWS -- the mode menu paints its whole screen
+     * 0x122565, a literal that appears exactly once in the binary -- which is the identifier
+     * this port already uses for per-screen framing and for the `@frontend` route anchor. */
+    /* THE DISCRIMINATOR, counted rather than argued: frames on which the OLD gate was true and
+     * the new one is false are exactly the frames the handler used to be live on a screen that
+     * was not the mode menu. LF2_MODEMENU_DEBUG prints it with its denominator. */
+    {
+        static long live_frames, wrong_frames;
+        const int old_gate = LD32(MODEMENU_SEL) < MODEMENU_ITEMS;
+        const int new_gate = panel_modemenu_up();
+        live_frames++;
+        if (old_gate && !new_gate) wrong_frames++;
+        if (getenv("LF2_MODEMENU_DEBUG") && (live_frames % 900) == 0)
+            fprintf(stderr, "modemenu: the old game-mode gate was true on %ld of %ld frame(s) "
+                            "where the mode menu was NOT drawn -- %s\n",
+                    wrong_frames, live_frames,
+                    wrong_frames ? "the handler was live off its own screen (issue #51)"
+                                 : "so this run shows no misfire, and says nothing about runs "
+                                   "that reach other screens");
+    }
+    if (!panel_modemenu_up()) { modemenu_was_open = 0; return; }
     const uint32_t cur = LD32(MODEMENU_SEL);
-    if (cur >= MODEMENU_ITEMS) { modemenu_was_open = 0; return; }   /* not this screen */
 
     static int last_x = -1, last_y = -1;
     const int moved = screen_edge_seed(&modemenu_was_open, 1, &last_x, &last_y, mx, my);
