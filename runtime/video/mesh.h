@@ -70,7 +70,8 @@ int  mesh_ready(void);
  * camera here is how two views drift apart. There is no view MATRIX: screen_x = X - camera/depth
  * is not a linear function of (X, depth, 1), so the divide is per vertex. See geom.h.
  *
- * The returned texture is owned by this module and is valid until the next call. */
+ * The returned texture is owned by this module and is valid until the next call FOR THAT
+ * SLOT -- which is what lets a frame hold several finished passes at once. */
 /* THE ART IS THE PASS'S OWN, and it is on the GPU twice. That is not the design anyone would
  * choose and it is not an oversight -- claim C032 was recorded saying the pass could sample the
  * texture render.c has already uploaded, through SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER, and it
@@ -97,7 +98,13 @@ typedef struct MeshTexture MeshTexture;
 MeshTexture *mesh_upload(const void *rgba, int w, int h);
 void         mesh_texture_free(MeshTexture *t);
 
-SDL_Texture *mesh_draw(const MeshVertex *v, int n, int w, int h,
+/* `slot` is WHICH place in the game's painter order this geometry belongs at, and it is a
+ * parameter because one composited quad can only go in at one point while a set spans parallax
+ * depths that the game's own layers are painted between. The caller runs the pass once per
+ * occupied gap and each gap keeps its own live target; a slot out of range is REPORTED and
+ * refused, never clamped, because clamping draws a solid at the wrong point in the order and
+ * that looks like bad authoring rather than like a pass out of slots. */
+SDL_Texture *mesh_draw(int slot, const MeshVertex *v, int n, int w, int h,
                        int camera, int view_w, int view_h, const MeshTexture *art);
 
 /* LF2_MESH_SELFTEST=1: submit two overlapping triangles in the WRONG painter order -- the far

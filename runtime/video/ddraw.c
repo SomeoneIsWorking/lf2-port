@@ -454,6 +454,15 @@ static uint32_t frame_src_pixels;
 static int      frame_src_off;
 void frame_source_note(uint32_t pixels, int off) { frame_src_pixels = pixels; frame_src_off = off; }
 
+/* WHICH surface the frame is being composed into, for a caller that wants to put something in
+ * the display list at a particular point rather than at the end (issue #62's stage geometry).
+ *
+ * It is DISCOVERED, from the source of the game's own copy to the primary, not hardcoded -- so
+ * it is 0 until the first such copy has happened, which is once per process and not once per
+ * frame. A caller that gets 0 must count that rather than skip quietly: "the composition is not
+ * known yet" and "there was nothing to draw" produce the same empty frame. */
+uint32_t frame_source_pixels(void) { return frame_src_pixels; }
+
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
 {
     rwatch_frame();
@@ -519,7 +528,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     dump_heap(frames);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
-    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); world_band_report(); glyph_scale_report(); framing_report(); com_release_report(); input_report(); audio_pan_report(); bg_camera_report(); mode_force_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); world_band_report(); glyph_scale_report(); framing_report(); com_release_report(); input_report(); audio_pan_report(); bg_camera_report(); bg_geom_report(); mode_force_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
     /* The read profile is reported on the same periodic boundary and reset each time, so
      * each block covers one window rather than the whole run: an array swept only during a
      * match would otherwise be averaged with the menus that came before it. */

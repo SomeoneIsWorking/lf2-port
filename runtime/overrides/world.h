@@ -317,6 +317,7 @@ uint32_t bg_layer_field(uint32_t field_const, int layer);
 uint32_t bg_stage_field(uint32_t field_const);   /* a per-background field (no layer index) */
 int      bg_layer_count(void);          /* the game's own layer count, clamped to BG_MAX_LAYERS */
 void     bg_table_report(void);         /* LF2_BG_TABLE=1: the loaded stage's layers */
+void     bg_geom_report(void);          /* LF2_STAGE_GEOM=1: what reached the frame */
 
 /* The loaded stage's own name, as bg.dat spells it -- underscores, not the spaces the record
  * holds -- or NULL when no stage is loaded. NULL and "" are different answers and both are
