@@ -17,17 +17,15 @@ already implies, which is what an author picks a `depth: layer <file>` from.
 None of this is game content. A `.stage` file and the models it names are the port's own work
 and are committed here; nothing under `game/` ever is.
 
-## The PvE set pack
+## No shipped prop pack
 
-Every shipped Stage Mode background now has a small, original low-poly set: distant silhouettes
-plus a nearer landmark at the fighters' plane. They are deliberately additive. The game's painted
-layers remain the stage; these solids give HD2D real surfaces, normals and depth to light without
-copying any game art.
+This directory intentionally contains no stage scenes yet. The rejected first interpretation of
+issue #62 added low-poly foreground props over the painted levels. That was additional game content,
+not a 3D reconstruction of the existing PvE stages, and the entire pack was removed.
 
-The stage files name the planes in each background's own parallax data (`depth: layer …`) where
-that plane exists. `HK_Coliseum` is the explicit exception: its stage is 794 pixels wide and never pans, so
-no layer's depth is observable. Its new arena solids use the documented fighters' plane (`1.0`),
-not a fabricated layer-derived value.
+The generic loader and its synthetic fixtures remain because it is an independent renderer
+facility, but no PvE stage uses it. The painted backgrounds are rendered directly and widescreen
+coverage is handled by their layer composition, not by replacement geometry.
 
 CMake copies this directory next to the built binary after every build, and that is where the
 running port looks first — its working directory is the *game* tree, which is not part of this

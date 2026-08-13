@@ -121,9 +121,13 @@ target_include_directories(lf2 PRIVATE
 # gets nothing copied and a game that reports no geometry -- which is exactly the silent
 # failure this whole subsystem is careful about. A custom target runs every build.
 #
-# copy_directory_if_different, so an unchanged stages/ is not re-copied every time.
+# Replace the destination before copying. `copy_directory_if_different` does not remove files
+# deleted at the source, which let the rejected prop pack keep loading after every source OBJ and
+# scene had been deleted. The destination is generated build output, so it must mirror rather
+# than accumulate.
 add_custom_target(stages ALL
-    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_CURRENT_BINARY_DIR}/stages
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/stages ${CMAKE_CURRENT_BINARY_DIR}/stages
     COMMENT "stages/ -> beside the binary")
 add_dependencies(lf2 stages)
@@ -244,15 +248,6 @@ target_include_directories(test_stagegeom PRIVATE runtime runtime/overrides runt
 target_link_libraries(test_stagegeom PRIVATE SDL3::SDL3)
 target_compile_options(test_stagegeom PRIVATE -Wall -Wextra)
 add_test(NAME stagegeom COMMAND test_stagegeom ${CMAKE_SOURCE_DIR}/tests/fixtures/stages)
-
-# The actual authored PvE scenes, separate from the loader's positive/negative fixtures. This
-# catches a committed layer name or model-path typo before it becomes a stage that silently has
-# no geometry when a player reaches it.
-add_executable(test_stage_assets tests/test_stage_assets.c runtime/video/stagegeom.c)
-target_include_directories(test_stage_assets PRIVATE runtime runtime/overrides runtime/video)
-target_link_libraries(test_stage_assets PRIVATE SDL3::SDL3)
-target_compile_options(test_stage_assets PRIVATE -Wall -Wextra)
-add_test(NAME stage_assets COMMAND test_stage_assets ${CMAKE_SOURCE_DIR}/stages)
 
 # The renderer's frame lifetime -- when a display list is cleared, how a frame held up under
 # the pause menu is rewound, which pooled texture serves a tile. runtime/video/render.c

@@ -8,6 +8,7 @@
  * index copy with no colour conversion.
  */
 #include "render.h"
+#include "engine.h"
 #include "com.h"
 #include "guest_ops.h"
 #include "hostwin.h"
@@ -402,6 +403,8 @@ static void h_StretchBlt(void)
             dst[tx] = b->pal[src[bx]];      /* index -> XRGB via the bitmap's palette */
         }
     }
+    render_surface_dirty(dpix);
+    engine_surface_dirty(dpix);
     if (getenv("LF2_DUMP_SURF")) {
         static int n;
         char path[128];

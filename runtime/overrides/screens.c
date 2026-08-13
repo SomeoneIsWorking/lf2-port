@@ -293,6 +293,68 @@ enum { OVERLAY_ITEMS = GEOM_OVERLAY_ITEMS };
 static int overlay_was_open;
 static void overlay_mouse_closed(void) { overlay_was_open = 0; }
 
+/* LF2_STAGE_PREVIEW selects through the game's PRE-FIGHT state, not through its draw pass.
+ *
+ * FUN_00429730 is the owner: after Fight! is confirmed it conditionally randomises BG_INDEX,
+ * copies that index into a local, builds every fighter's spawn position from the record, loads
+ * that same record with fn_0040c030, and only then enters the match. Setting the validated index
+ * here and clearing the overlay's random-background flag therefore gives all consumers one
+ * coherent stage. The discarded draw-pass implementation changed the art after this work and
+ * produced exactly the mismatch this boundary avoids (issue #66).
+ *
+ * Stage Mode is allowed to replace the choice with its own scripted section stage. The close
+ * report says so rather than calling a screenshot of a different background a successful
+ * preview. VS mode leaves this choice intact and is the deterministic gallery route. */
+static int preview_target = -3;            /* -3 env unread; -2 registry unavailable; -1 invalid */
+static const char *preview_want;
+static long preview_overlay_frames;
+static int preview_said, preview_closed_said;
+
+static void stage_preview_tick(int open)
+{
+    if (preview_target == -3) {
+        preview_want = getenv("LF2_STAGE_PREVIEW");
+        preview_target = preview_want && *preview_want ? -2 : -1;
+    }
+    if (!preview_want || !*preview_want) return;
+
+    if (open) {
+        if (preview_target == -2) preview_target = bg_stage_index(preview_want);
+        if (preview_target < 0) {
+            if (!preview_said && preview_target == -1) {
+                preview_said = 1;
+                fprintf(stderr, "stage preview: LF2_STAGE_PREVIEW=%s names no loaded background; "
+                                "the pre-fight choice is unchanged\n", preview_want);
+            }
+            return;
+        }
+        ST32(BG_INDEX, (uint32_t)preview_target);
+        ST32(BG_RANDOM, 0);
+        preview_overlay_frames++;
+        if (!preview_said) {
+            preview_said = 1;
+            fprintf(stderr, "stage preview: %s is registry background %d; selected on the "
+                            "pre-fight overlay so match setup and rendering use one record\n",
+                    preview_want, preview_target);
+        }
+        return;
+    }
+
+    if (preview_overlay_frames && !preview_closed_said) {
+        preview_closed_said = 1;
+        const int actual = (int)LD32(BG_INDEX);
+        if (actual == preview_target)
+            fprintf(stderr, "stage preview: selection survived match initialization after %ld "
+                            "overlay frame(s); background %d owns gameplay and rendering\n",
+                    preview_overlay_frames, actual);
+        else
+            fprintf(stderr, "stage preview: the game replaced requested background %d with %d "
+                            "during match initialization (Stage Mode owns scripted section "
+                            "stages); this run is NOT a preview of %s\n",
+                    preview_target, actual, preview_want);
+    }
+}
+
 int overlay_open(void)
 {
     return game_top_mode() == MODE_IN_GAME && panel_overlay_up()
@@ -301,7 +363,8 @@ int overlay_open(void)
 
 void overlay_mouse(void)
 {
-    if (!overlay_open()) { overlay_mouse_closed(); return; }
+    if (!overlay_open()) { stage_preview_tick(0); overlay_mouse_closed(); return; }
+    stage_preview_tick(1);
 
     int mx, my;
     if (!hostwin_pointer(&mx, &my)) return;

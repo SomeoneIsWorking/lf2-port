@@ -167,7 +167,10 @@ void coop_debug_tick(uint32_t self);   /* every LF2_COOP_* probe, once per gathe
  * Each background record is 612 dwords (2448 bytes) and each layer field a 30-entry array.
  * The two per-BACKGROUND fields below are addressed the same way but with no layer index.
  */
-enum { BG_REGISTRY = 0x00458b00 + 2004, BG_INDEX = 0x0044d024 };
+enum { BG_REGISTRY = 0x00458b00 + 2004,
+       BG_INDEX = 0x0044d024,
+       BG_RANDOM = 0x0044d028 }; /* pre-fight "Random Background" flag; fn_00429730
+                                  * replaces BG_INDEX on confirm only while this is 1 */
 
 /* THE TWO WORDS THE GAME ENTERS ITSELF THROUGH (issue #22).
  *

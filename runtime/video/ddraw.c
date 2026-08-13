@@ -9,6 +9,7 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "render.h"
+#include "engine.h"
 #include "framespec.h"
 #include "script.h"
 
@@ -78,6 +79,16 @@ typedef struct { uint32_t entries[256]; } Palette;
 static uint32_t primary_surface;
 static uint32_t active_palette;
 
+/* Guest surfaces are mutable.  Both native render paths cache their GPU uploads, so every
+ * write known to DirectDraw must invalidate both caches.  The content hash is only a backstop:
+ * sampling rows cannot reliably notice a one-row colour-key border or a short-lived effect. */
+static void surface_changed(const Surface *s)
+{
+    if (!s) return;
+    render_surface_dirty(s->pixels);
+    engine_surface_dirty(s->pixels);
+}
+
 /* Surfaces live here rather than on the guest heap so a huge sprite sheet cannot
  * collide with malloc'd game data. The range is declared in guest_map.h, which is also
  * what stops it colliding with the sound PCM arena -- it used to, silently. */
@@ -132,8 +143,10 @@ void shadow_hint_set(int on) { shadow_hint = on; }
  * See the comment at that call site -- and issue #42, which is what a rectangle-shaped guess
  * cost. Counted so the widening cannot become a rule nobody has ever seen fire. */
 static int  world_band_hint;
+static int  world_backdrop_hint;
 static long world_band_fills, world_band_widened;
 void world_band_hint_set(int on) { world_band_hint = on; }
+void world_backdrop_hint_set(int on) { world_backdrop_hint = on; }
 
 void glyph_hint_clear(void) { glyph_hint = -1; }
 
@@ -827,6 +840,7 @@ static void surf_Unlock(uint32_t self)
     Surface *s = com_host(self);
     if (draw_paths_on() && self == lock_hash_surface
         && surface_hash(s) != lock_hash_at_lock) path_lock_wrote++;
+    surface_changed(s);
     if (s->primary) present_primary();
     com_ret(2, DD_OK);
 }
@@ -922,6 +936,7 @@ static void blit(Surface *d, int dx, int dy, int dw, int dh,
             }
         }
     }
+    surface_changed(d);
 }
 
 /* ---- THE SPACE BESIDE A SCREEN WHOSE BACKDROP IS A PICTURE (issue #44) ----
@@ -1520,6 +1535,7 @@ static void surf_Blt(uint32_t self)
             uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
             for (int x = dl < 0 ? 0 : dl; x < dr && x < d->w; x++) row[x] = fill & 0x00ffffffu;
         }
+        surface_changed(d);
         if (d->primary) present_primary();
         _lp_slot = LP_FILL;
         LOADPROF_END();
@@ -1596,7 +1612,8 @@ static void surf_Blt(uint32_t self)
         fprintf(stderr, "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n",
                 dl, dr, dt, db, d->w, NATIVE_W);
     if (lf2_wide_width() && panel_hud_up() && srcobj
-        && dl == 0 && dr == NATIVE_W && d->w > NATIVE_W)
+        && ((dl == 0 && dr == NATIVE_W) || world_backdrop_hint)
+        && d->w > NATIVE_W)
         dr = d->w;
 
     panel_note(dl, dt, dr, db);
