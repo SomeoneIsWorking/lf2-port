@@ -186,6 +186,27 @@ const char *bg_stage_name(void)
     return name;
 }
 
+int bg_stage_index(const char *want)
+{
+    const uint32_t registry = LD32(BG_REGISTRY);
+    if (!registry) return -2;
+    if (!want || !*want) return -1;
+
+    /* bg_table_report's scan shows the registry's live non-empty records in this bounded range.
+     * It is deliberately a scan of the game's parsed records, not a table of shipped names: a
+     * diagnostic selector that accepted a stale name would be indistinguishable from a scene
+     * that happened to be selected. */
+    for (uint32_t i = 0; i < 64; i++) {
+        const uint32_t base = registry + i * BG_STRIDE_DW * 4u;
+        if ((int32_t)LD32(base + BG_LAYER_COUNT) <= 0 && !LD32(base + BG_STAGE_WIDTH)) continue;
+        char name[BG_NAME_LEN + 1];
+        bg_string(base + BG_STAGE_NAME, name, sizeof name);
+        for (char *p = name; *p; p++) if (*p == ' ') *p = '_';
+        if (strcmp(name, want) == 0) return (int)i;
+    }
+    return -1;
+}
+
 const char *bg_layer_name(int layer)
 {
     if (layer < 0 || layer >= bg_layer_count()) return NULL;

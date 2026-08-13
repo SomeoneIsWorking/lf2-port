@@ -323,6 +323,11 @@ void     bg_geom_report(void);          /* LF2_STAGE_GEOM=1: what reached the fr
  * holds -- or NULL when no stage is loaded. NULL and "" are different answers and both are
  * returned honestly: "" would be a record whose name field is empty. */
 const char *bg_stage_name(void);
+/* The index of a named, non-empty background record, using the SAME parsed registry the game
+ * draws from. `-2` means the registry has not loaded; `-1` means it loaded but has no exact
+ * `<name>` match. The distinction is what lets a diagnostic wait honestly rather than calling
+ * a startup race an unknown stage. */
+int         bg_stage_index(const char *name);
 /* One layer's bitmap, without its directory: `hill1.bmp` out of `bg\sys\gw\hill1.bmp`. NULL
  * for an index the loaded stage does not have. */
 const char *bg_layer_name(int layer);
