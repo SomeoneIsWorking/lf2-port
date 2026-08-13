@@ -87,6 +87,10 @@ void shadow_hint_set(int on);
 /* The background override marks the stage's own colour-fill bands, because the game's fill
  * helper is shared with the front end and the blit cannot tell them apart (issue #42). */
 void world_band_hint_set(int on);
+/* The background override marks the stage's first non-looping painted layer while it crosses
+ * the guest call boundary. It is the far backdrop that may cover a wider composition; the blit
+ * rectangle alone cannot distinguish it from foreground art or a menu backdrop. */
+void world_backdrop_hint_set(int on);
 void world_band_report(void);   /* LF2_BAND_DEBUG=1 */
 void glyph_scale_report(void);  /* LF2_GLYPH_DEBUG=1 -- was text rasterised at window size? */
 void framing_report(void);      /* LF2_FRAMING_DEBUG=1 -- per-screen framing, issue #44 */

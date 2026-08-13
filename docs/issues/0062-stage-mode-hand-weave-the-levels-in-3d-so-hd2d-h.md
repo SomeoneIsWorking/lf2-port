@@ -683,3 +683,9 @@ changes NOTHING on a frame with no fighters in it.
 
 ### Resolution (2026-08-13)
 Authored original low-poly 3D scenes for all twelve shipped Stage Mode backgrounds in stages/, anchored to each stages own parallax layer where derivable; HK Coliseum explicitly uses the fighters plane because its 794-wide stage cannot reveal a layer depth. ctest stage_assets now loads and validates the complete shipping corpus (12/12), while the guarded stage_geom runtime route confirmed the live loader and engine pass.
+
+### Reopened (2026-08-13)
+User rejected the shipped low-poly scene interpretation: it adds foreground props/solids rather than making the existing PvE stage layers themselves 3D. Remove the entire authored prop corpus. The required result is a depth-aware reconstruction of the existing background art in HD2D, with no new game objects or decoration.
+
+### Resolution (2026-08-13)
+User withdrew the 3D-stage request. The rejected additive low-poly prop pack was deleted from source and build output; stages/ now contains no .stage or OBJ content. Future work is limited to graphical correctness of the original painted stages.

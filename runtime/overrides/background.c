@@ -65,59 +65,12 @@
 void fn_0041a250__orig(void);
 void fn_0041a5a0__orig(void);
 
-/* LF2_STAGE_PREVIEW=<stage_name> is a capture diagnostic, not a stage-mode feature.
- *
- * A Stage Mode section chooses its background while it builds its fighters, camera and locks
- * (FUN_00429730); overwriting BG_INDEX persistently after that would make those pieces describe
- * one stage while the renderer drew another. The preview therefore substitutes a validated
- * record ONLY for this background pass, then restores the game's word before anything else can
- * read it. This is the same guest-word rule that made LF2_ALTBG_FORCE non-vacuous, with the
- * crucial extra restore that makes a named gallery safe.
- */
-static int stage_preview_target(void)
-{
-    static int target = -3;                 /* -3: env not read; -2: waiting for registry */
-    static const char *want;
-    static int said;
-    if (target == -3) {
-        want = getenv("LF2_STAGE_PREVIEW");
-        target = want && *want ? -2 : -1;
-    }
-    if (target != -2) return target;
-    const int found = bg_stage_index(want);
-    if (found == -2) return -2;              /* game data has not loaded yet */
-    target = found;
-    if (!said) {
-        said = 1;
-        if (target >= 0)
-            fprintf(stderr, "stage preview: %s is registry background %d; it will replace only "
-                            "the draw pass and the game's selection is restored afterwards\n",
-                    want, target);
-        else
-            fprintf(stderr, "stage preview: LF2_STAGE_PREVIEW=%s names no loaded background; "
-                            "the game will draw its own selected stage unchanged\n", want);
-    }
-    return target;
-}
-
-static long stage_preview_swaps, stage_preview_restores, stage_preview_bad_restores;
-
-static void stage_preview_restore(int forced, uint32_t saved)
-{
-    if (!forced) return;
-    ST32(BG_INDEX, saved);
-    stage_preview_restores++;
-    if (LD32(BG_INDEX) != saved) stage_preview_bad_restores++;
-}
-
-enum { BG_ALT_PASS = 99 };              /* the index fn_0041a250 hands to fn_0041a050 */
-/* The camera's shadow copy and the two words that gate it, straight out of fn_0041b5d0:
- * when both gates are set the camera is READ from the mirror at 0x0041bc2f and written back
- * to it at 0x0041bc6e. What they select is not identified and does not need to be -- the
- * clamp only has to leave the mirror agreeing with the camera it clamped. */
+/* The camera's shadow copy and the two words that gate it, straight out of fn_0041b5d0. */
 enum { CAM_MIRROR    = 0x00450b7c,
        CAM_MIRROR_ON_A = 0x00450b74,
        CAM_MIRROR_ON_B = 0x00450b84 };
+
+enum { BG_ALT_PASS = 99 };              /* the index fn_0041a250 hands to fn_0041a050 */
 enum { DRAW_CLIP = 0x0043f010,          /* six args, stdcall: the callee pops them */
        DRAW_FILL = 0x00415160 };        /* five args, cdecl:  this function pops them */
 
@@ -703,11 +656,6 @@ void bg_geom_report(void)
         fprintf(stderr, "stage geometry: a stage HAS geometry and NOT ONE pass reached the "
                         "frame -- the pass is unavailable (software renderer?), or the "
                         "composition surface was never discovered\n");
-    if (getenv("LF2_STAGE_PREVIEW"))
-        fprintf(stderr, "stage preview: %ld draw-pass substitution(s), %ld restoration(s), %ld "
-                        "failed restoration(s) -- the game index is never retained by this "
-                        "diagnostic\n", stage_preview_swaps, stage_preview_restores,
-                stage_preview_bad_restores);
 }
 
 /* Issue #28: the camera is still clamped to the 4:3 limit, so a wider view scrolls past the
@@ -832,15 +780,8 @@ void fn_0041a250(void)
      * at 794 AND at 1920. That read as "the port matches the body it replaces" and was really
      * "neither arm ever called the ported function". */
     const int alt_forced = getenv("LF2_ALTBG_FORCE") != NULL;
-    const int preview = stage_preview_target();
-    const int preview_forced = preview >= 0;
     const uint32_t bg_saved = LD32(BG_INDEX);
     if (alt_forced) { bg = BG_ALT_PASS; ST32(BG_INDEX, BG_ALT_PASS); }
-    else if (preview_forced) {
-        bg = (uint32_t)preview;
-        ST32(BG_INDEX, bg);
-        stage_preview_swaps++;
-    }
 
     if (bg == BG_ALT_PASS) {
         /* COUNTED, because issue #58 turns on whether anyone ever sees this. fn_0041a050 draws
@@ -857,7 +798,6 @@ void fn_0041a250(void)
         fn_0041a250__orig();
         ST32(BG_CAMERA_X, saved);
         if (alt_forced) ST32(BG_INDEX, bg_saved);
-        else stage_preview_restore(preview_forced, bg_saved);
         return;
     }
 
@@ -865,7 +805,6 @@ void fn_0041a250(void)
     const uint32_t base = registry + bg * BG_STRIDE_DW * 4u;
     const int32_t count = (int32_t)LD32(base + BG_LAYER_COUNT);
     if (count <= 0) {
-        stage_preview_restore(preview_forced, bg_saved);
         R(ESP) += 8; return;                         /* RET 4: return address and one arg */
     }
 
@@ -882,7 +821,6 @@ void fn_0041a250(void)
                     count, bg, BG_MAX_LAYERS);
         }
         fn_0041a250__orig();
-        stage_preview_restore(preview_forced, bg_saved);
         return;
     }
 
@@ -968,7 +906,13 @@ void fn_0041a250(void)
         } else {
             /* loop < 0 would spin for ever; the game would too, but it is a data error and
              * drawing the layer once is the closest thing to what was meant. */
+            /* The first layer is the stage's far painted backdrop. Marking the semantic call
+             * site lets the blitter extend that existing art over a wide composition without
+             * guessing from rectangle shape (which also matches menu and foreground art).
+             * This adds no object or artwork; it only prevents uncovered black columns. */
+            world_backdrop_hint_set(i == 0);
             draw_layer(obj, off + lx, y, transparent, arg0);
+            world_backdrop_hint_set(0);
         }
         render_depth_hint_set(0.0f);
     }
@@ -977,6 +921,5 @@ void fn_0041a250(void)
     while (next_gap < geom_ngaps)
         geom_submit(geom_gaps[next_gap++], (int)camera, (int)view, GEOM_SCREEN_H);
 
-    stage_preview_restore(preview_forced, bg_saved);
     R(ESP) += 8;                                     /* RET 4: return address and one arg */
 }
