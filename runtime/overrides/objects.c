@@ -47,6 +47,7 @@ enum {
     NAME_MARK   = 0x00450b4c,     /* per-slot dword; -1 means the name is bracketed */
     NAME_TAIL   = 0x00449060,     /* the word appended after a bracketed name */
     GLYPH_SHEET = 0x0044faf4,     /* the font sheet every tag glyph is drawn from */
+    EFFECT_SHEET = 0x0044f8fc,    /* blood/impact icon sheet, loaded at 0041ad17/6b/bc */
     GLYPH_SURF  = 0x00455608,     /* the surface those glyphs go to */
     GLYPH_W     = 9,              /* one glyph cell, and the tag's per-character step */
 };
@@ -297,7 +298,7 @@ void fn_0041a5a0(void)
                     const int32_t x = ((int32_t)LD32(obj - 0x50 + slot) + (int32_t)LD32(obj + 0x1c))
                                       - cam + dx;
                     const int32_t y = (int32_t)LD32(obj - 0x28 + slot) + dy;
-                    draw_clip(0x0041ad22u, LD32(GLYPH_SHEET), x, y, clip, 1, 0, arg1);
+                    draw_clip(0x0041ad22u, LD32(EFFECT_SHEET), x, y, clip, 1, 0, arg1);
                     obj = OBJ(idx);
                     ST32(obj + slot, LD32(obj + slot) + 1);
                 } else if (e == live - 1) {
