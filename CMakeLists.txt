@@ -249,6 +249,12 @@ target_link_libraries(test_stagegeom PRIVATE SDL3::SDL3)
 target_compile_options(test_stagegeom PRIVATE -Wall -Wextra)
 add_test(NAME stagegeom COMMAND test_stagegeom ${CMAKE_SOURCE_DIR}/tests/fixtures/stages)
 
+add_executable(test_texrect tests/test_texrect.c)
+target_include_directories(test_texrect PRIVATE runtime/video)
+target_link_libraries(test_texrect PRIVATE m)
+target_compile_options(test_texrect PRIVATE -Wall -Wextra)
+add_test(NAME texrect COMMAND test_texrect)
+
 # The renderer's frame lifetime -- when a display list is cleared, how a frame held up under
 # the pause menu is rewound, which pooled texture serves a tile. runtime/video/render.c
 # includes the same header, so this is not a copy. No SDL, no window, no game.

@@ -4,6 +4,7 @@
 #include "render.h"
 #include "mesh.h"
 #include "engine.h"
+#include "texrect.h"
 #include "framelife.h"
 #include "overrides/geom.h"
 #include "hd2d.h"
@@ -961,10 +962,21 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
         q->src_pixels = e->src_pixels;
         q->sw = e->sw; q->sh = e->sh; q->spitch = e->spitch;
         q->keyed = e->keyed; q->key_lo = e->key_lo; q->key_hi = e->key_hi;
-        q->u0 = e->src.x / (float)e->sw;
-        q->v0 = e->src.y / (float)e->sh;
-        q->u1 = (e->src.x + e->src.w) / (float)e->sw;
-        q->v1 = (e->src.y + e->src.h) / (float)e->sh;
+        /* LF2_TEXRECT_EDGE restores the old shared-boundary coordinates as a defect
+         * injector. At 1x they often happen to select the right texel; magnification is the
+         * discriminator, where it produces issue #67's green line and issue #68's adjacent
+         * Bandit eye. */
+        const int whole_surface = e->src.x == 0.0f && e->src.y == 0.0f
+                               && e->src.w == (float)e->sw && e->src.h == (float)e->sh;
+        if (getenv("LF2_TEXRECT_EDGE") || whole_surface) {
+            q->u0 = e->src.x / (float)e->sw;
+            q->v0 = e->src.y / (float)e->sh;
+            q->u1 = (e->src.x + e->src.w) / (float)e->sw;
+            q->v1 = (e->src.y + e->src.h) / (float)e->sh;
+        } else {
+            texrect_centres(e->src.x, e->src.y, e->src.w, e->src.h, e->sw, e->sh,
+                            &q->u0, &q->v0, &q->u1, &q->v1);
+        }
         q->blend = e->keyed ? 1 : 0;
         n++;
     }

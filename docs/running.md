@@ -1971,6 +1971,10 @@ plain composition; there is deliberately no approximation to fall back to.
   — and `LF2_ENGINE=1 LF2_RENDER_SKIP=7` must differ, which is what proves the engine is what
   drew the matching frame rather than the old path having drawn both dumps.
 
+- **`LF2_TEXRECT_EDGE=1`** is the sprite-sheet boundary defect injector for issues #67/#68.
+  It restores normalized UVs on shared cell edges instead of texel centres; at magnified
+  resolutions the adjacent cell may leak into the selected menu row or animation frame.
+
 - **`LF2_ENGINE_GBUF=1`** reads the engine's G-buffer back and says what is actually in it
   (instrument I016). It prints the DISTINCT distances with their pixel counts, so the answer can
   be checked against the stage's own `bg.dat` — a layer's depth is `(stage_width-794)/(span-794)`

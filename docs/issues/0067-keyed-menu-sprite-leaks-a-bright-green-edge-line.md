@@ -10,16 +10,20 @@ updated: 2026-08-13
 
 ## Root cause
 
-The native renderer cached guest surfaces as GPU textures, but the DirectDraw `Blt`,
-`COLORFILL`, `Unlock`, and GDI `StretchBlt` write paths never called either renderer's existing
-dirty hook.  The sampled content hash was only a fallback and can miss a one-row change, so a
-reused sheet could retain opaque colour-key pixels from an older upload.
+Two renderer errors made a keyed sheet's border visible. Guest-surface writes did not invalidate
+cached GPU uploads, and the engine's manual quads addressed source-rectangle EDGES. An edge is
+shared with the adjacent texel; under magnification, nearest-sampler rounding can select the
+key-green row outside the menu cell.
 
 ## What was tried / dead ends
 
 
 ## Resolution
 
-Every guest-surface write now invalidates both native texture caches.  At the reported
-1177x550 window size, synchronized software and engine captures of `frontend+30` show the menu
-edge clean after the change.  The full 12-test suite passes.
+Every guest-surface write invalidates both native texture caches. Strict sprite-sheet subrects
+now address the centres of their first and last texels; whole-surface pictures retain 0..1 UVs.
+Four consecutive selected-menu frames at 1177x550 contain zero runs of key-green pixels, and a
+1920x1080 clean/injected pair proves the boundary-coordinate arm changes magnified subrects.
+
+`tests/test_texrect.c` asserts all four texel-centre bounds and has the old shared-edge coordinate
+as its negative. The renderer differential route remains green.
