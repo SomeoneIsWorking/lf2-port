@@ -1,6 +1,6 @@
 ---
 id: 68
-title: Neighboring Bandit animation cell bleeds into struck sprite
+title: Native object pass draws hit effects from the glyph sheet
 status: resolved
 tags: reported,renderer,sprite,combat
 created: 2026-08-13
@@ -13,20 +13,24 @@ The impact effect must be reproduced in both software and GPU render paths. Dete
 
 ## Root cause
 
-The supplied enlargement shows that the white square with a dark centre is an eye from the
-neighbouring animation cell, attached to the left edge of the struck fighter's hair. It is not
-an impact effect. `run.sh` passed the cell's integer boundaries to `SDL_RenderTexture`; on the
-scaled Wayland output, the left boundary could select the preceding sheet cell.
+Commit `9c07a7a` replaced the game's object pass, `fn_0041a5a0`, with
+`runtime/overrides/objects.c`. Its effects loop passed `LD32(0x0044faf4)`, the glyph sheet, as
+the `this` receiver to `fn_0043f010`. The original instructions at `0041ad17`, `0041ad6b`, and
+`0041adbc` load the receiver from `0x0044f8fc`, the blood/impact-effect sheet. Consequently the
+effect state and clip number were correct, but the clip was read from unrelated artwork.
 
 ## Resolution
 
-All display-list sprites, including combat characters and short-lived effects, now use the same
-explicit texel-centre quad as the menu. This prevents all four forms of adjacent-cell bleed while
-preserving the cell and full-surface paths. `LF2_TEXRECT_EDGE=1` restores the complete old
-`SDL_RenderTexture` call, rather than the earlier ineffective approximation that changed only
-manual-engine UVs. The native renderer still matches the software compositor at its differential
-gate.
+The effects loop now uses the binary's `0x0044f8fc` sheet pointer. The glyph pointer remains
+confined to multiplier and name-tag drawing.
 
-The two earlier resolutions were wrong: the first combat route captured Louis's `broken.bmp`
-debris rather than this Bandit frame, and `cb4c5b2` changed only the optional engine even though
-the user reported both defects in `run.sh`.
+The two earlier resolutions were wrong. The first route captured Louis's `broken.bmp` debris;
+the second interpreted the bad clip as neighbouring-cell bleed. Renderer comparisons could not
+locate this defect because the wrong sheet was selected before both the software compositor and
+GPU paths. Manual bisection established `9c54ac8` as good and its child `9c07a7a` as bad.
+
+### Reopened (2026-08-13)
+User confirms identical hit bug with LF2_ENGINE=1 and LF2_RENDERER=soft. This falsifies renderer-specific texel sampling as the cause; defect exists in or before the software composition. Must compare against vanilla and trace the composing blit.
+
+### Resolution (2026-08-13)
+Bisection found 9c07a7a as first bad commit. Its fn_0041a5a0 override used glyph-sheet pointer 0x0044faf4 for effect clips; original instructions load effect sheet 0x0044f8fc at 0041ad17/6b/bc. Corrected receiver restores blood burst. User visually confirmed; ctest 13/13 and objects pixel/state differential pass.
