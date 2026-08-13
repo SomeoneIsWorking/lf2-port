@@ -1,0 +1,19 @@
+stage: Forbidden_Tower
+solid:
+  model: models/pillar.obj
+  depth: layer w1.bmp
+  at: 380 0 420
+  tint: 84 69 108
+solid_end
+solid:
+  model: models/pillar.obj
+  depth: layer w1.bmp
+  at: 1200 0 420
+  tint: 84 69 108
+solid_end
+solid:
+  model: models/lantern.obj
+  depth: layer g1.bmp
+  at: 790 0 470
+  tint: 173 87 216
+solid_end

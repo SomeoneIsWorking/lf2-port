@@ -1,0 +1,19 @@
+stage: Stanley_Prison
+solid:
+  model: models/arch.obj
+  depth: layer wall.bmp
+  at: 380 0 410
+  tint: 78 91 102
+solid_end
+solid:
+  model: models/arch.obj
+  depth: layer wall.bmp
+  at: 1190 0 410
+  tint: 78 91 102
+solid_end
+solid:
+  model: models/lantern.obj
+  depth: layer wall.bmp
+  at: 790 0 465
+  tint: 231 112 42
+solid_end

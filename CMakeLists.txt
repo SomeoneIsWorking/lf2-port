@@ -245,6 +245,15 @@ target_link_libraries(test_stagegeom PRIVATE SDL3::SDL3)
 target_compile_options(test_stagegeom PRIVATE -Wall -Wextra)
 add_test(NAME stagegeom COMMAND test_stagegeom ${CMAKE_SOURCE_DIR}/tests/fixtures/stages)
 
+# The actual authored PvE scenes, separate from the loader's positive/negative fixtures. This
+# catches a committed layer name or model-path typo before it becomes a stage that silently has
+# no geometry when a player reaches it.
+add_executable(test_stage_assets tests/test_stage_assets.c runtime/video/stagegeom.c)
+target_include_directories(test_stage_assets PRIVATE runtime runtime/overrides runtime/video)
+target_link_libraries(test_stage_assets PRIVATE SDL3::SDL3)
+target_compile_options(test_stage_assets PRIVATE -Wall -Wextra)
+add_test(NAME stage_assets COMMAND test_stage_assets ${CMAKE_SOURCE_DIR}/stages)
+
 # The renderer's frame lifetime -- when a display list is cleared, how a frame held up under
 # the pause menu is rewound, which pooled texture serves a tile. runtime/video/render.c
 # includes the same header, so this is not a copy. No SDL, no window, no game.

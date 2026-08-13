@@ -1,0 +1,21 @@
+stage: HK_Coliseum
+# This 794-wide stage never pans, so its data cannot identify a layer plane.  The arena's new
+# solids are deliberately authored on the fighters' plane instead of pretending a layer depth.
+solid:
+  model: models/pillar.obj
+  depth: 1.00
+  at: 175 0 440
+  tint: 190 154 102
+solid_end
+solid:
+  model: models/pillar.obj
+  depth: 1.00
+  at: 620 0 440
+  tint: 190 154 102
+solid_end
+solid:
+  model: models/arch.obj
+  depth: 1.00
+  at: 398 0 410
+  tint: 150 110 73
+solid_end

@@ -1,0 +1,19 @@
+stage: The_Great_Wall
+solid:
+  model: models/arch.obj
+  depth: layer hill1.bmp
+  at: 420 0 365
+  tint: 170 136 96
+solid_end
+solid:
+  model: models/arch.obj
+  depth: layer hill1.bmp
+  at: 1410 0 365
+  tint: 170 136 96
+solid_end
+solid:
+  model: models/pillar.obj
+  depth: layer road2.bmp
+  at: 900 0 470
+  tint: 117 86 60
+solid_end
