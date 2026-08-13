@@ -17,12 +17,17 @@ already implies, which is what an author picks a `depth: layer <file>` from.
 None of this is game content. A `.stage` file and the models it names are the port's own work
 and are committed here; nothing under `game/` ever is.
 
-## This directory is empty on purpose
+## The PvE set pack
 
-No stage has been woven yet, and an empty directory is the honest state — the port loads what
-is here and a stage with no file draws exactly as it always has. It is not a placeholder to be
-filled with something plausible: a solid at a guessed depth looks like geometry rather than
-like a bug, which is why the loader refuses a depth it cannot derive instead of defaulting one.
+Every shipped Stage Mode background now has a small, original low-poly set: distant silhouettes
+plus a nearer landmark at the fighters' plane. They are deliberately additive. The game's painted
+layers remain the stage; these solids give HD2D real surfaces, normals and depth to light without
+copying any game art.
+
+The stage files name the planes in each background's own parallax data (`depth: layer …`) where
+that plane exists. `HK_Coliseum` is the explicit exception: its stage is 794 pixels wide and never pans, so
+no layer's depth is observable. Its new arena solids use the documented fighters' plane (`1.0`),
+not a fabricated layer-derived value.
 
 CMake copies this directory next to the built binary after every build, and that is where the
 running port looks first — its working directory is the *game* tree, which is not part of this

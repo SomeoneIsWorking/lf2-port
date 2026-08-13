@@ -1,0 +1,19 @@
+stage: CUHK
+solid:
+  model: models/arch.obj
+  depth: layer floor1.bmp
+  at: 470 0 385
+  tint: 157 130 99
+solid_end
+solid:
+  model: models/arch.obj
+  depth: layer floor1.bmp
+  at: 1190 0 385
+  tint: 157 130 99
+solid_end
+solid:
+  model: models/lantern.obj
+  depth: layer floor3.bmp
+  at: 810 0 455
+  tint: 255 191 75
+solid_end

@@ -1,0 +1,19 @@
+stage: Queen's_Island
+solid:
+  model: models/pillar.obj
+  depth: layer qi2.bmp
+  at: 360 0 405
+  tint: 215 202 168
+solid_end
+solid:
+  model: models/pillar.obj
+  depth: layer qi2.bmp
+  at: 1430 0 405
+  tint: 215 202 168
+solid_end
+solid:
+  model: models/lantern.obj
+  depth: layer qi3.bmp
+  at: 900 0 465
+  tint: 92 184 201
+solid_end

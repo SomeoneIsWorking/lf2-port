@@ -1,11 +1,11 @@
 ---
 id: 62
 title: Stage mode: hand-weave the levels in 3D so HD2D has real depth to light
-status: open
+status: resolved
 symptom: Stage mode's levels are flat 2D layers, so the HD2D pass has nothing to light: the depth it needs is not in bg.dat and cannot be derived from it. The ask is per-stage 3D geometry, authored by hand, that the levels are woven into.
 tags: reported,renderer,hd2d,stage
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-13
 ---
 
 ## What was reported
@@ -680,3 +680,6 @@ behaviour and that the two ends are the same light, so nobody "fixes" what was n
 
 Instrument I015. tools/e2e.sh render still passes, including the arm that asserts the light
 changes NOTHING on a frame with no fighters in it.
+
+### Resolution (2026-08-13)
+Authored original low-poly 3D scenes for all twelve shipped Stage Mode backgrounds in stages/, anchored to each stages own parallax layer where derivable; HK Coliseum explicitly uses the fighters plane because its 794-wide stage cannot reveal a layer depth. ctest stage_assets now loads and validates the complete shipping corpus (12/12), while the guarded stage_geom runtime route confirmed the live loader and engine pass.

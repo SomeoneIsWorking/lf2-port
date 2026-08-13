@@ -1,0 +1,13 @@
+stage: Template1
+solid:
+  model: models/crag.obj
+  depth: layer pic3.bmp
+  at: 280 0 380
+  tint: 106 121 137
+solid_end
+solid:
+  model: models/crag.obj
+  depth: layer pic5.bmp
+  at: 1060 0 460
+  tint: 80 96 111
+solid_end
