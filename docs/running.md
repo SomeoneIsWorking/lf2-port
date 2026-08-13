@@ -2008,6 +2008,14 @@ plain composition; there is deliberately no approximation to fall back to.
   Geometry is looked for **beside the binary** first (CMake copies the repo's `stages/` there
   after every build) and in the working directory second, which is the game tree.
 
+- **`LF2_STAGE_PREVIEW=<stage_name>`** deterministically previews one parsed background record
+  for screenshots and renderer diagnostics — for example `LF2_STAGE_PREVIEW=Lion_Forest`.
+  It accepts only an exact underscore-form name from the game's live background registry; an
+  unknown name says so and leaves the game's selected stage untouched. The selector swaps the
+  guest background-index word only while the background and authored geometry are drawn, then
+  restores it before the game's camera, fighter setup, or gameplay code can read it. This is a
+  capture diagnostic, not a Stage Mode feature or a way to change a match's actual level.
+
 ## Finding which code draws something — the blit chains
 
 The diff is the point. The chain for the ad panel and the chain for the character art share
