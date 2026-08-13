@@ -1972,8 +1972,9 @@ plain composition; there is deliberately no approximation to fall back to.
   drew the matching frame rather than the old path having drawn both dumps.
 
 - **`LF2_TEXRECT_EDGE=1`** is the sprite-sheet boundary defect injector for issues #67/#68.
-  It restores normalized UVs on shared cell edges instead of texel centres; at magnified
-  resolutions the adjacent cell may leak into the selected menu row or animation frame.
+  In the default renderer it restores the complete old `SDL_RenderTexture` call; in the
+  optional engine it restores normalized UVs on shared cell edges. At magnified resolutions
+  the adjacent cell may leak into the selected menu row or animation frame.
 
 - **`LF2_ENGINE_GBUF=1`** reads the engine's G-buffer back and says what is actually in it
   (instrument I016). It prints the DISTINCT distances with their pixel counts, so the answer can

@@ -13,20 +13,20 @@ The impact effect must be reproduced in both software and GPU render paths. Dete
 
 ## Root cause
 
-The supplied enlargement shows that the white square with a dark centre is an EYE attached to
-the left edge of the struck fighter's hair. It is not an impact effect. The engine normalized
-the animation cell's integer rectangle edges directly; the left coordinate therefore lay on
-the boundary shared with the preceding sprite-sheet cell, and magnified nearest sampling could
-select that neighbour.
+The supplied enlargement shows that the white square with a dark centre is an eye from the
+neighbouring animation cell, attached to the left edge of the struck fighter's hair. It is not
+an impact effect. `run.sh` passed the cell's integer boundaries to `SDL_RenderTexture`; on the
+scaled Wayland output, the left boundary could select the preceding sheet cell.
 
 ## Resolution
 
-Manual-engine subrects now run from the centre of the first texel to the centre of the last.
-This prevents all four forms of adjacent-cell bleed while preserving the cell's dimensions and
-the full-surface path. `LF2_TEXRECT_EDGE=1` restores the faulty coordinates as a test-only
-discriminator; at 1920x1080 it changes the magnified animation cells while the clean arm stays
-within them. The native renderer still matches the software compositor at its differential gate.
+All display-list sprites, including combat characters and short-lived effects, now use the same
+explicit texel-centre quad as the menu. This prevents all four forms of adjacent-cell bleed while
+preserving the cell and full-surface paths. `LF2_TEXRECT_EDGE=1` restores the complete old
+`SDL_RenderTexture` call, rather than the earlier ineffective approximation that changed only
+manual-engine UVs. The native renderer still matches the software compositor at its differential
+gate.
 
-The earlier resolution was wrong: renderer agreement only showed both paths consumed the same
-composition, and the first combat route captured Louis's `broken.bmp` debris rather than this
-Bandit frame. The user's screenshot supplied the missing discriminator.
+The two earlier resolutions were wrong: the first combat route captured Louis's `broken.bmp`
+debris rather than this Bandit frame, and `cb4c5b2` changed only the optional engine even though
+the user reported both defects in `run.sh`.

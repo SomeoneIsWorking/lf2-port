@@ -3,8 +3,8 @@
 
 /* A source rectangle names texels [x, x+w), but a normalized GPU coordinate exactly on x is
  * the boundary shared with texel x-1.  With nearest sampling, floating-point/raster rounding
- * can therefore select the neighbouring animation cell: issue #67's green menu line and
- * issue #68's stray eye beside a struck Bandit are the top and left forms of the same bug.
+ * can therefore select the neighbouring animation cell on a scaled output: issue #67's green
+ * menu line and issue #68's stray eye beside a struck fighter are two forms of the same bug.
  * Address the centres of the first and last texels instead. */
 static inline void texrect_centres(float x, float y, float w, float h,
                                    int sheet_w, int sheet_h,
