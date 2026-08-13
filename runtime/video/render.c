@@ -105,6 +105,20 @@ static List   lists[SURF_MAX];
 static Tex    texes[TEX_MAX];
 static int    ntexes;
 
+static void texture_uv(const SDL_FRect *src, int sw, int sh,
+                       float *u0, float *v0, float *u1, float *v1)
+{
+    const int whole = src->x == 0.0f && src->y == 0.0f
+                   && src->w == (float)sw && src->h == (float)sh;
+    if (getenv("LF2_TEXRECT_EDGE") || whole) {
+        *u0 = src->x / (float)sw; *v0 = src->y / (float)sh;
+        *u1 = (src->x + src->w) / (float)sw;
+        *v1 = (src->y + src->h) / (float)sh;
+    } else {
+        texrect_centres(src->x, src->y, src->w, src->h, sw, sh, u0, v0, u1, v1);
+    }
+}
+
 static uint8_t *tile_arena;
 
 /* Tile textures are POOLED and reused across frames rather than allocated per frame; see
@@ -579,8 +593,8 @@ static void draw_cast_shadow(Tex *t, const SDL_FRect *src, const SDL_FRect *spri
     }
 
     const SDL_FColor c = { 1.0f, 1.0f, 1.0f, 1.0f };   /* the shader writes coverage */
-    const float u0 = src->x / (float)t->w, u1 = (src->x + src->w) / (float)t->w;
-    const float v0 = src->y / (float)t->h, v1 = (src->y + src->h) / (float)t->h;
+    float u0, v0, u1, v1;
+    texture_uv(src, t->w, t->h, &u0, &v0, &u1, &v1);
 
     /* The sprite's foot edge sits at the ground point (displaced if it is in the air) and its
      * head edge lands where the projection puts it. */
@@ -597,6 +611,31 @@ static void draw_cast_shadow(Tex *t, const SDL_FRect *src, const SDL_FRect *spri
     /* NONE, not BLEND: the shader alpha-tests, so overlapping shadows overwrite instead of
      * accumulating into a doubly dark patch where two fighters stand together. */
     SDL_SetTextureBlendMode(t->tex, SDL_BLENDMODE_NONE);
+    SDL_RenderGeometry(R, t->tex, v, 4, idx, 6);
+}
+
+/* SDL_RenderTexture accepts a pixel-space source rectangle, but the GPU backend normalizes
+ * its integer edges onto boundaries shared by adjacent sheet cells. Draw the quad explicitly
+ * so the old renderer and the engine use the same texel-centre contract. */
+static void draw_texture_quad(Tex *t, const SDL_FRect *src, const SDL_FRect *dst)
+{
+    /* Restore the complete old run.sh path, not merely its UV values. SDL_RenderTexture
+     * constructs its own quad internally, so an injector that kept this function and only
+     * selected edge UVs did not actually reproduce the reported renderer. */
+    if (getenv("LF2_TEXRECT_EDGE")) {
+        SDL_RenderTexture(R, t->tex, src, dst);
+        return;
+    }
+    float u0, v0, u1, v1;
+    texture_uv(src, t->w, t->h, &u0, &v0, &u1, &v1);
+    const SDL_FColor white = { 1.0f, 1.0f, 1.0f, 1.0f };
+    const SDL_Vertex v[4] = {
+        { { dst->x,          dst->y },          white, { u0, v0 } },
+        { { dst->x + dst->w, dst->y },          white, { u1, v0 } },
+        { { dst->x + dst->w, dst->y + dst->h }, white, { u1, v1 } },
+        { { dst->x,          dst->y + dst->h }, white, { u0, v1 } },
+    };
+    const int idx[6] = { 0, 1, 2, 0, 2, 3 };
     SDL_RenderGeometry(R, t->tex, v, 4, idx, 6);
 }
 
@@ -767,12 +806,12 @@ static void draw_list(List *l, int pass, float world, float ox, float oy, int fr
             if (pass == PASS_CHARS) {
                 hd2d_chars_quad(ground.y + ground.h);
                 SDL_SetTextureBlendMode(t->tex, SDL_BLENDMODE_NONE);
-                SDL_RenderTexture(R, t->tex, &e->src, &dst);
+                draw_texture_quad(t, &e->src, &dst);
                 continue;
             }
             SDL_SetTextureBlendMode(t->tex, e->keyed ? SDL_BLENDMODE_BLEND
                                                      : SDL_BLENDMODE_NONE);
-            SDL_RenderTexture(R, t->tex, &e->src, &dst);
+            draw_texture_quad(t, &e->src, &dst);
             stat_tex++;
             continue;
         }
@@ -966,17 +1005,7 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
          * injector. At 1x they often happen to select the right texel; magnification is the
          * discriminator, where it produces issue #67's green line and issue #68's adjacent
          * Bandit eye. */
-        const int whole_surface = e->src.x == 0.0f && e->src.y == 0.0f
-                               && e->src.w == (float)e->sw && e->src.h == (float)e->sh;
-        if (getenv("LF2_TEXRECT_EDGE") || whole_surface) {
-            q->u0 = e->src.x / (float)e->sw;
-            q->v0 = e->src.y / (float)e->sh;
-            q->u1 = (e->src.x + e->src.w) / (float)e->sw;
-            q->v1 = (e->src.y + e->src.h) / (float)e->sh;
-        } else {
-            texrect_centres(e->src.x, e->src.y, e->src.w, e->src.h, e->sw, e->sh,
-                            &q->u0, &q->v0, &q->u1, &q->v1);
-        }
+        texture_uv(&e->src, e->sw, e->sh, &q->u0, &q->v0, &q->u1, &q->v1);
         q->blend = e->keyed ? 1 : 0;
         n++;
     }
