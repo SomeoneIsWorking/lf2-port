@@ -4,6 +4,7 @@
 #include "hostwin.h"
 #include "render.h"
 #include "script.h"
+#include "config.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -574,10 +575,12 @@ void hostwin_pump(void)
 static void keyboard_drive_ui(void)
 {
     static uint8_t was[3];
-    static const struct { uint8_t vk; int delta; } MAP[] = {
-        { 0x26, -1 },          /* up arrow    */
-        { 0x28, +1 },          /* down arrow  */
-        { 0x5A,  0 },          /* Z = attack -> confirm */
+    /* The remappable layout's own keys, so the front-end menu and the game agree about what
+     * the keyboard is -- up, down and attack (config.h, issue #70). */
+    const struct { uint32_t vk; int delta; } MAP[] = {
+        { config_key_vk(B_UP),  -1 },          /* up          */
+        { config_key_vk(B_DOWN), +1 },         /* down        */
+        { config_key_vk(B_ATTACK), 0 },        /* attack -> confirm */
     };
     for (unsigned i = 0; i < sizeof MAP / sizeof MAP[0]; i++) {
         const uint8_t down = (uint8_t)(hostwin_key_held(MAP[i].vk) != 0);
