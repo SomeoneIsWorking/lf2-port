@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
-project(lf2_port C)
+project(lf2_port C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(x86_decode recompiler/x86_decode.c)
 target_include_directories(x86_decode PUBLIC recompiler)
@@ -177,6 +179,31 @@ find_package(SDL3 REQUIRED CONFIG)
 # than relied on to keep being unnecessary.
 find_library(LF2_M m)
 target_link_libraries(lf2 PRIVATE SDL3::SDL3 $<$<BOOL:${LF2_M}>:${LF2_M}>)
+
+# ---- RmlUi (issue #70) ----
+#
+# The settings UI -- device mapping and the graphical tweaks -- is built with RmlUi, a C++
+# library, pinned as a git submodule at third_party/RmlUi. It is the one C++ dependency in a
+# port whose build was "a C compiler and SDL": the settings screen is a real document tree
+# (RML/CSS + data bindings), which is exactly the case the hand-rolled pause-menu pages were
+# never going to scale to. The submodule must be initialised (git submodule update --init),
+# and FreeType is required for RmlUi's default font engine. Everything else is OFF on purpose:
+# no samples, no tests, no Lua/SVG/Lottie, no shared lib.
+if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/RmlUi/CMakeLists.txt")
+    set(BUILD_SHARED_LIBS OFF)
+    set(RMLUI_SAMPLES OFF)
+    set(RMLUI_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF)
+    set(RMLUI_LUA_BINDINGS OFF)
+    set(RMLUI_LOTTIE_PLUGIN OFF)
+    set(RMLUI_SVG_PLUGIN OFF)
+    set(RMLUI_BACKEND_AUTO OFF)
+    set(RMLUI_FONT_ENGINE "freetype")
+    add_subdirectory(third_party/RmlUi)
+    target_link_libraries(lf2 PRIVATE RmlUi::Core)
+else()
+    message(FATAL_ERROR "third_party/RmlUi is missing -- run `git submodule update --init --recursive`")
+endif()
 
 # ---- the text faces, COMPILED IN (issue #45) ----
 #
