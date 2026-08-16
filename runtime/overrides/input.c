@@ -69,71 +69,6 @@ int device_player(int dev)
     return dev >= 0 && dev < MAX_DEV ? dev_player[dev] : -1;
 }
 
-/* A device that is actually driving a player, for a synthetic press that has to LAND. A
- * device with no slot has nowhere for its buttons to go inside the game proper, so a confirm
- * issued through one is silently thrown away -- which is exactly how a menu item can look
- * driven and do nothing. */
-int any_playing_device(void)
-{
-    for (int d = 0; d < MAX_DEV; d++) if (dev_player[d] >= 0) return d;
-    return -1;
-}
-
-/* Make a device's attack read as pressed for the next few gathers. The point is the same as
- * mouse_confirm_frames above, generalised past device 0: the port places a menu selection
- * and then lets the GAME's own button dispatch it, so the sound, the state change and the
- * screen it goes to are all the game's rather than a reconstruction. */
-static int synth_dev = -1, synth_frames;
-static uint32_t synth_screen;
-
-/* A synthetic press BELONGS TO THE SCREEN IT WAS ISSUED ON, and the game says so.
- *
- * fn_00431b70 is the menu's button gather: for each player it reads the same seven bytes this
- * file writes (obj+205..211, BTN_CUR) and raises up/down/confirm ONLY on an edge -- a press
- * counts when the per-player latch at 0x00451320 was clear. fn_00431c70, which the game runs
- * on every way out of a match, zeroes BOTH that latch and those seven bytes: after a screen
- * change no button is held as far as the menu is concerned, so the next frame with a button
- * down is a fresh press.
- *
- * That is exactly what a synthetic press spanning the change re-creates. The overlay's Exit
- * dispatch takes one gather; a second gather then lands on the front-end menu (fn_00431d10)
- * with the latch freshly cleared, fn_00431b70 raises 0x004513b4, and the menu confirms
- * whatever the cursor is on -- cursor 0 writes SCREEN_CHARSELECT-via-3 and the exit sails past
- * the front end. Issue #22, and it is why that issue read as "the game walks there on its own".
- *
- * So the press is dropped the moment the screen word moves. Not a frame count picked to be
- * short enough: the game's own rule, which is that input does not cross a screen. */
-void input_synth_confirm(int dev, int frames)
-{
-    synth_dev = dev;
-    synth_frames = frames;
-    synth_screen = LD32(SCREEN_WORD);
-    fprintf(stderr, "input: device %d's attack will read as pressed for %d gather(s) while "
-                    "the game stays on screen %u, so the game dispatches the menu item "
-                    "itself\n", dev, frames, synth_screen);
-}
-
-/* Returns 1 if this gather should carry the synthetic press. Says out loud when it drops one,
- * because a press that silently stopped being issued is indistinguishable from one that was
- * never asked for. */
-static int synth_active(void)
-{
-    if (synth_frames <= 0) return 0;
-    const uint32_t now = LD32(SCREEN_WORD);
-    if (now != synth_screen) {
-        fprintf(stderr, "input: device %d's synthetic attack had %d gather(s) left when the "
-                        "game moved from screen %u to screen %u -- dropped, because the "
-                        "game's own fn_00431c70 clears held buttons across a screen and the "
-                        "next menu would read this as a fresh press (issue #22)\n",
-                synth_dev, synth_frames, synth_screen, now);
-        synth_frames = 0;
-        synth_dev = -1;
-        return 0;
-    }
-    synth_frames--;
-    return 1;
-}
-
 static int device_buttons(int dev, unsigned char out[7])
 {
     if (dev == 0) {
@@ -178,7 +113,6 @@ void fn_00419a60(void)
     int present[MAX_DEV];
     for (int d = 0; d < MAX_DEV; d++) {
         present[d] = device_buttons(d, btn[d]);
-        if (d == synth_dev && synth_active()) btn[d][4] = 1;
         if (!present[d]) {
             memset(dev_prev[d], 0, 7);
             /* DROP-OUT: the device is gone -- unplugged mid-match. Its fighter goes with
