@@ -3,6 +3,8 @@ LF2_v2.0a.exe
 game/
 scratch/
 __pycache__/
+# The port's settings file (issue #70): a user's bindings are their own.
+lf2.cfg
 
 # Wine oracle prefix and run artifacts
 
