@@ -1,0 +1,42 @@
+---
+id: 70
+title: RmlUi settings UI: input mapping and graphical tweaks
+status: open
+symptom: The keyboard layout is one hardcoded set (arrows+Z/X/C in runtime/overrides/input.c) with no way to remap, and the renderer/light/DOF options live in a hand-rolled pause-menu page that cannot grow a real settings tree
+tags: reported,feature,ui,rmlui,input,options
+created: 2026-08-16
+updated: 2026-08-16
+---
+
+## Reported
+
+The user asked for RmlUi to host input mapping (control remapping) and graphical tweaks
+(renderer and its effects). This reverses the earlier decline recorded in runtime/app/pause.c
+and docs/running.md, which said RmlUi was wrong for 'two numbers' but should be revisited 'if
+the port ever grows a real settings screen'. Input mapping plus a settings tree is exactly
+that screen.
+
+## The constraint
+
+- The build is deliberately 'a C compiler and SDL and nothing else' (docs/codemap.md). RmlUi
+  is C++ with its own build, font stack and render backend; adding it makes it the largest
+  dependency in the port. This must be an explicit, documented decision, not an accident.
+- There is NO config file in the port yet ('inventing one for two numbers is the wrong order'
+  -- docs/running.md). A settings screen implies persistence, so a config file lands with it.
+- runtime/overrides/input.c hardcodes the one keyboard layout (VKS[7]) and deliberately
+  removes the game's own control.txt layouts. Input mapping means that table becomes
+  read-from-config, and every consumer of the seven buttons goes through it.
+- The graphical options already exist as runtime/app/options.{c,h} (renderer/lighting/DOF),
+  owned by the pause menu. RmlUi would own them instead, so options.{c,h} becomes the shared
+  state the RmlUi document binds to.
+- Dusklight is the prior art to crib from (src/dusk/ui), per the pause.c note.
+
+## Open questions that decide the shape
+
+- Vendor RmlUi how (submodule, FetchContent, vendored snapshot)? The repo has no vendor/ dir.
+- RmlUi renders through its own render interface; it must draw into the port's SDL3_GPU
+  engine (or the SDL_Render classic path) over the frozen frame like the pause menu does now.
+- Which input devices does mapping cover (keyboard only, or pad buttons too)?
+
+### Note (2026-08-16)
+RmlUi is no longer the requirement. The user's follow-up: 'You can make a regular UI, using game's systems or a custom UI for device mapping'. So the device-mapping screen is a REGULAR UI on the port's own systems -- the pause-menu page (runtime/app/pause.c) that already takes keyboard/pad/mouse and draws with the game's own glyphs, or a custom UI -- not a C++ library dependency. RmlUi is off the table unless a genuine document tree appears. The graphical tweaks are already the pause-menu Options page (#69), not RmlUi.
