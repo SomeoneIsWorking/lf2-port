@@ -12,6 +12,7 @@
 #include "engine.h"
 #include "framespec.h"
 #include "script.h"
+#include "rmlui.h"
 
 void menu_click_report(void);   /* issue #27: the click flag as the front-end menu sees it */
 
@@ -731,7 +732,7 @@ static void present_primary(void)
      * arena underneath them had been overwritten, so the frozen frame's text came out as
      * garbage while everything drawn from a cached texture looked perfect. */
     pause_in_list = pause_active() && frame_src_pixels && frame_src_pixels != s->pixels
-                    && pause_draw_list(frame_src_pixels, s->w, s->h);
+                    && (rmlui_active() || pause_draw_list(frame_src_pixels, s->w, s->h));
     pause_draw(s->pixels, s->w, s->h, s->pitch);
     hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
     LOADPROF_END();

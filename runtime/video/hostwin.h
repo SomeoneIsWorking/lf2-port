@@ -110,6 +110,9 @@ uint32_t bg_shadow_stage(void);
  * or the record does not give an ordered pair inside 550 rows. */
 int      bg_z_bounds(int *zmin, int *zmax);
 int  hostwin_key_held(uint32_t vk);
+/* The one scancode -> Windows VK table, shared with the RmlUi settings screen's key rebind
+ * (runtime/app/rmlui.cpp, issue #70). */
+uint32_t hostwin_key_from_scancode(SDL_Scancode sc);
 void hostwin_request_quit(void);
 int  hostwin_width(void);
 int  hostwin_height(void);
