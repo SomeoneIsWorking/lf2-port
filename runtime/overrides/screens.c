@@ -395,41 +395,79 @@ void overlay_mouse(void)
 /* ---------------------------------------------------------------------------
  * EXIT TO MENU -- leaving a match without killing the process (issue #22).
  *
- * The port does NOT reset its own state to fake this. The game has its own way out of a
- * match and that is what gets driven: F4. Verified by pressing it in a scripted run and
- * looking at the result -- scratch/exit22/frame_002400.png is the character-select screen
- * with the pre-fight overlay open, from a run that was in a fight forty frames earlier.
- *
- * That screen is one item short of the front end, and the item is the overlay's own Exit
- * (index 5 of OVERLAY_SEL). So the second step places that selection and lets the GAME's
- * attack button dispatch it, exactly as a mouse click on the overlay already does -- the
- * sound, the state change and the screen it goes to stay the game's.
- *
- * WHOSE attack, and why it is not the keyboard's: inside the game proper a device's buttons
- * only reach the game through the player slot it claimed, so a synthetic press from a device
- * with no slot goes nowhere. That is not a guess -- a scripted run pressing the keyboard's
- * own arrows and attack at this overlay moved the selection not at all
- * (scratch/exit22d/frame_002520.png still has "Fight!" highlighted), because the keyboard
- * had claimed no slot in it. The device that opened the pause menu was playing, so it has
- * one, and the confirm is issued through that.
+ * The game has its own way out of a match and that is what is driven: F4, then the
+ * post-match overlay's own Exit item. The first port of this INJECTED the inputs -- a
+ * synthetic F4 keystroke and a synthetic attack press -- and both are replaced by calling
+ * the game's own code directly (guest_end_match and guest_overlay_exit below), read off the
+ * decompilation of fn_0041bc90 and fn_00429730. That is the whole point: a port that owns
+ * the exit invokes the exit, it does not fake the keystrokes that would have invoked it.
  *
  * The whole thing must happen with the game UNFROZEN: the pause menu works by declining to
  * call fn_004246b0__orig, so nothing the game does can advance while it is up. The caller
  * unpauses first, and the state machine below then runs a frame at a time.
  * ------------------------------------------------------------------------ */
 enum { OV_EXIT = 5 };                     /* the overlay's own Exit item */
-enum { EXIT_KEY_HOLD = 6 };               /* frames F4 is held, matching the key scripts */
 enum { EXIT_SETTLE = 10 };                /* frames the overlay is left to appear properly */
 enum { EXIT_GIVEUP = 400 };               /* about seven seconds; then say so and stop */
 
 enum { EXIT_LAND_WATCH = 180 };           /* frames the screen word is followed afterwards */
 
-static int  exit_state;                   /* 0 idle, 1 F4 sent, 2 overlay seen */
-static int  exit_dev = -1;
+static int  exit_state;                   /* 0 idle, 1 match ended, 2 overlay seen */
 static long exit_since, exit_overlay_at;
 static long exit_land_from = -1;
 static uint32_t exit_land_last;
 static int  exit_land_said;
+
+/* ---- the game's own exit, called directly (issue #22's mechanism, natively) ----
+ *
+ * The first version of LEAVE MATCH drove the game by INJECTING input: a synthetic F4 key
+ * and a synthetic attack button. Both are gone -- a port that owns the exit should invoke
+ * the game's exit, not fake the keystrokes that would have invoked it. What the game does,
+ * read off the decompilation:
+ *
+ *   F4 during a match (fn_0041bc90):        fn_00416cd0(0x44d020, 0x451160); fn_00431c70(this);
+ *   the overlay's Exit item (fn_00429730):  fn_00401a30(0x455610, 0); *0x44d020 = 10;
+ *                                           *0x457580 = 0; fn_00431c70(this);
+ *
+ * `this` is the game object: EXISTS - 4, where the player-pointer table sits at +0x194
+ * (world.h). The calls go through the guest ABI -- arguments on the guest stack at the
+ * recompiled body's expected offsets, ECX carrying the __thiscall receiver -- and R(ESP) is
+ * restored to net zero: each body's trailing `R(ESP) += 4` pops a return-address slot a host
+ * call never pushed, so the caller compensates. See guest_ops.h's notes on the convention. */
+void fn_00416cd0(void);
+void fn_00431c70(void);
+void fn_00401a30(void);
+enum { GAME_OBJ = 0x00458b00, SOUND_OBJ = 0x00455610 };
+
+/* fn_0041bc90's F4 handler: ends the match so the game's own post-match overlay comes up. */
+static void guest_end_match(void)
+{
+    R(ESP) -= 8;                      /* the two arguments fn_00416cd0 reads at ESP+4/+8 */
+    ST32(R(ESP) + 4, SCREEN_WORD);
+    ST32(R(ESP) + 8, MENU_CURSOR);
+    fn_00416cd0();
+    R(ESP) += 4;                      /* the body's trailing +=4 pops a ret-addr slot a host
+                                       * call never pushed; net zero once the next is too */
+    R(ECX) = GAME_OBJ;
+    fn_00431c70();                    /* the match cleanup: latches, key array */
+    R(ESP) -= 4;
+}
+
+/* fn_00429730's overlay-Exit dispatch: stop the game's sound, move to the front-end screen
+ * word and run the same cleanup. */
+static void guest_overlay_exit(void)
+{
+    R(ESP) -= 8;                      /* fn_00401a30's one argument at ESP+4; the body pops
+                                       * 8 (ret-addr + arg), restoring ESP on its own */
+    ST32(R(ESP) + 4, 0);
+    R(ECX) = SOUND_OBJ;
+    fn_00401a30();
+    ST32(SCREEN_WORD, SCREEN_FRONTEND);
+    ST32(0x00457580u, 0);
+    R(ECX) = GAME_OBJ;
+    fn_00431c70();
+    R(ESP) -= 4;
+}
 
 /* Which screen the game is on, in its own words: SCREEN_WORD is what fn_0041bc90 hands to
  * fn_00429730 and what that dispatches on (see runtime/overrides/world.h). Naming it is the
@@ -473,32 +511,16 @@ static void exit_landing_tick(long f)
 
 void exit_to_menu_begin(int dev)
 {
-    /* The confirm has to come from a device that is DRIVING A PLAYER, or it lands nowhere
-     * (see the note above). The device that opened the pause menu usually is one; a pause
-     * opened from the keyboard by someone playing on a pad is not, so the press is issued
-     * through whoever is playing instead, and which it was is said out loud. */
-    if (device_player(dev) < 0) {
-        const int other = any_playing_device();
-        if (other >= 0) {
-            fprintf(stderr, "exit to menu: device %d is driving no player, so its press "
-                            "would land nowhere; the confirm is issued through device %d, "
-                            "which is driving player %d\n",
-                    dev, other, device_player(other));
-            dev = other;
-        } else {
-            fprintf(stderr, "exit to menu: NO device is driving a player, so nothing can "
-                            "confirm the overlay's Exit item. F4 is still sent -- the match "
-                            "ends and the player is left on the game's own screen -- but "
-                            "this will not reach the front end on its own\n");
-        }
-    }
-    exit_dev = dev;
+    (void)dev;
+    /* The exit is the game's own code now, called directly (guest_end_match above): no device
+     * has to be playing, no key has to be held, no synthetic press has to land. The device
+     * plumbing that the old F4+attack injection needed is gone with it. */
     exit_state = 1;
     exit_since = hostwin_frames();
     exit_overlay_at = -1;
-    hostwin_inject_key(0x73, 1);          /* F4 -- the game's own way out of a match */
-    fprintf(stderr, "exit to menu: F4 sent at frame %ld on behalf of device %d; waiting for "
-                    "the game's own post-match overlay\n", exit_since, dev);
+    guest_end_match();
+    fprintf(stderr, "exit to menu: the game's own match-end ran at frame %ld; waiting for "
+                    "its post-match overlay\n", exit_since);
 }
 
 void exit_to_menu_tick(void)
@@ -507,14 +529,12 @@ void exit_to_menu_tick(void)
     if (!exit_state) return;
     const long f = hostwin_frames();
 
-    if (exit_state == 1 && f - exit_since >= EXIT_KEY_HOLD) hostwin_inject_key(0x73, 0);
-
     if (f - exit_since > EXIT_GIVEUP) {
         fprintf(stderr, "exit to menu: GAVE UP after %d frames -- the overlay %s. The match "
                         "was left as it was rather than the port forcing a transition it "
                         "could not drive\n",
                 EXIT_GIVEUP, exit_overlay_at >= 0 ? "appeared but the Exit item never took"
-                                                  : "never appeared, so F4 did not land");
+                                                  : "never appeared, so the match-end did not land");
         exit_state = 0;
         return;
     }
@@ -528,10 +548,13 @@ void exit_to_menu_tick(void)
     }
     if (f - exit_overlay_at < EXIT_SETTLE) return;
 
+    /* The overlay's Exit item, dispatched natively: the selection is placed so the frame
+     * shows Exit highlighted, and then the game's own exit path runs (guest_overlay_exit)
+     * rather than a synthetic attack press being fed into the game's menu. */
     ST32(OVERLAY_SEL, (uint32_t)OV_EXIT);
-    input_synth_confirm(exit_dev, 2);
-    fprintf(stderr, "exit to menu: overlay selection set to Exit (item %d) and device %d's "
-                    "attack issued -- the game dispatches it from here\n", OV_EXIT, exit_dev);
+    guest_overlay_exit();
+    fprintf(stderr, "exit to menu: the game's own Exit dispatch ran at frame %ld -- "
+                    "screen word, sound and match cleanup are the game's\n", f);
     exit_state = 0;
     exit_land_from = f;
     exit_land_last = LD32(SCREEN_WORD);
