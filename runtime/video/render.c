@@ -11,6 +11,7 @@
 #include "options.h"
 #include "guest.h"
 #include "hostwin.h"
+#include "rmlui.h"
 
 #include <SDL3/SDL.h>
 
@@ -163,6 +164,10 @@ void render_init(SDL_Renderer *r)
      * indistinguishable from a stage with no geometry authored for it. */
     mesh_init(r);
     engine_init(r);
+    /* The settings screen is RmlUi over the same renderer (issue #70). It fails loudly when
+     * it cannot, and the pause menu refuses SETTINGS on the software path. */
+    if (!rmlui_init(r, hw.window))
+        fprintf(stderr, "render: the RmlUi settings screen is not available\n");
 }
 
 static void targets_free(void)
@@ -181,6 +186,7 @@ void render_shutdown(void)
     targets_free();
     for (int i = 0; i < FL.nlists; i++) { free(lists[i].e); lists[i].e = NULL; }
     fl_init(&FL);
+    rmlui_shutdown();
     free(tile_arena); tile_arena = NULL;
 }
 
@@ -1021,6 +1027,14 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     if (ov < ln) {
         SDL_SetRenderTarget(R, target);
         draw_list(l, (float)off, ox, oy, ov, ln);
+    }
+
+    /* The RmlUi settings screen, over the same frame (issue #70): the document composites
+     * into the composed frame between the game's draw and the present, so it is a layer of
+     * the picture rather than a separate window. */
+    if (rmlui_active()) {
+        SDL_SetRenderTarget(R, target);
+        rmlui_render();
     }
 
     SDL_SetRenderTarget(R, NULL);

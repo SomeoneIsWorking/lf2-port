@@ -5,6 +5,7 @@
 #include "render.h"
 #include "script.h"
 #include "config.h"
+#include "rmlui.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -529,6 +530,10 @@ void hostwin_pump(void)
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         gamepad_handle_event(&e);          /* controllers may come and go at any time */
+        /* The RmlUi settings screen takes its own input while it is up; an event it consumed
+         * -- a key rebind, an Escape that closed it -- must not also reach the game's message
+         * pump or the pause menu's key ledger. */
+        if (rmlui_event(&e)) continue;
         if (e.type == SDL_EVENT_QUIT) quit_posted = 1;
         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE &&
             (e.key.mod & SDL_KMOD_SHIFT)) quit_posted = 1;
@@ -760,6 +765,10 @@ static uint32_t scancode_to_vk(SDL_Scancode sc)
     default: return 0;
     }
 }
+
+/* The RmlUi settings screen rebinds keys from an SDL event (issue #70); it needs the same
+ * scancode -> Windows VK map the message pump uses, so the one table is not written twice. */
+uint32_t hostwin_key_from_scancode(SDL_Scancode sc) { return scancode_to_vk(sc); }
 
 static SDL_Scancode vk_to_scancode(uint32_t vk)
 {
