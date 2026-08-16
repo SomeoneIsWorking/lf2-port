@@ -5,7 +5,7 @@ status: resolved
 symptom: the pause menu offers only RESUME and QUIT GAME: there is no way back to the front end without killing the process, and a joined player has no way to leave a match deliberately
 tags: reported,pause,menu,coop,drop-in,ux
 created: 2026-08-05
-updated: 2026-08-12
+updated: 2026-08-17
 ---
 
 REPORTED. runtime/app/pause.c currently has exactly two items:
@@ -554,3 +554,6 @@ numbering are recorded in `runtime/overrides/world.h`.
 
 ### Resolution (2026-08-12)
 The exit reached the front-end menu (screen word 0x0044d020 = 10) and was pushed off it by its own synthetic confirm: input_synth_confirm held the attack for two gathers, and fn_00431c70 clears the held-button latch across a screen change, so the leftover gather read as a fresh press to fn_00431b70 and fn_00431d10 confirmed cursor 0. The press is now scoped to the screen it was issued on. Verified by tools/e2e.sh exit_to_menu, which lands on 10 and fails on 1 with the scope compiled out.
+
+### Note (2026-08-17)
+SUPERSEDED (2026-08-17): the synthetic-press mechanism this entry describes was itself replaced. LEAVE MATCH now calls the game's own exit code directly (screens.c's guest_end_match / guest_overlay_exit, read off fn_0041bc90 and fn_00429730): fn_00416cd0(0x44d020,0x451160) + fn_00431c70(this) to end the match, then fn_00401a30(0x455610,0) + screen=10 + 0x457580=0 + fn_00431c70(this) for the overlay Exit. input_synth_confirm and any_playing_device are DELETED -- no keystroke or button is injected, so the 'second gather confirms the front-end menu' bug class cannot recur because there is no press. tools/e2e.sh exit_to_menu (updated for the native flow) still lands on screen 10.
