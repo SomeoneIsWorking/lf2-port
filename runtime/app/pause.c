@@ -19,6 +19,7 @@
 #include "hd2d.h"
 #include "render.h"
 #include "options.h"
+#include "rmlui.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,13 +51,12 @@ int  hostwin_mouse_clicked(void);
  *
  * The rows are built per pause rather than being a fixed table, so the geometry, the hit
  * test and the drawing all agree without any of them knowing which items exist. */
-enum { IT_RESUME, IT_DROP, IT_EXIT, IT_OPTIONS, IT_QUIT,
-       IT_LIGHT_ANGLE, IT_LIGHT_HEIGHT,
-       IT_RENDERER, IT_LIGHTING, IT_DOF, IT_BACK, IT_KINDS };
+enum { IT_RESUME, IT_DROP, IT_EXIT, IT_OPTIONS, IT_SETTINGS, IT_QUIT,
+       IT_LIGHT_ANGLE, IT_LIGHT_HEIGHT, IT_BACK, IT_KINDS };
 static const char *const ITEM_TEXT[IT_KINDS] = {
-    "RESUME", "DROP OUT", "LEAVE MATCH", "OPTIONS", "QUIT GAME",
+    "RESUME", "DROP OUT", "LEAVE MATCH", "OPTIONS", "SETTINGS", "QUIT GAME",
     "LIGHT ANGLE", "LIGHT HEIGHT",
-    "RENDERER", "LIGHTING", "DEPTH OF FIELD", "BACK"
+    "BACK"
 };
 
 /* ---- OPTIONS, and why it is built out of the same rows as everything else ----
@@ -88,14 +88,10 @@ static void build_rows(void)
 {
     row_n = 0;
     if (page == PAGE_OPTIONS) {
-        /* The renderer and its effects are the player's now (issue #69): the engine draws by
-         * default and the lighting and depth of field ride with it, and each row flips its
-         * own option. The RENDERER row is a trap for a reason -- switching the renderer is
-         * switching the SHADING, not just the draw, because the effects are engine-only -- so
-         * it is first, where the eye lands. */
-        rows[row_n++] = IT_RENDERER;
-        rows[row_n++] = IT_LIGHTING;
-        rows[row_n++] = IT_DOF;
+        /* The light's direction only. The renderer and its effects moved to the RmlUi
+         * settings screen (issue #70) -- they are toggles on a document now -- while the two
+         * angles stay here because they are NUMBERS you want to watch the picture move while
+         * you change them, which is what a pause over a frozen frame is for (issue #37). */
         rows[row_n++] = IT_LIGHT_ANGLE;
         rows[row_n++] = IT_LIGHT_HEIGHT;
         rows[row_n++] = IT_BACK;
@@ -106,6 +102,10 @@ static void build_rows(void)
     if (drop_slot >= 0 && coop_owns(drop_slot)) rows[row_n++] = IT_DROP;
     rows[row_n++] = IT_EXIT;
     rows[row_n++] = IT_OPTIONS;
+    /* The RmlUi settings screen is a GPU-frame feature (rmlui_render runs inside
+     * render_present); on the software fallback there is nowhere to draw it, so the item is
+     * not offered rather than opening a screen that renders nothing. */
+    if (render_gpu_enabled()) rows[row_n++] = IT_SETTINGS;
     rows[row_n++] = IT_QUIT;
 }
 
@@ -117,9 +117,6 @@ static const char *row_value(int kind, char *buf, size_t n)
     hd2d_light_angles(&az, &el);
     if (kind == IT_LIGHT_ANGLE)  { snprintf(buf, n, "%+d", (int)(az + (az < 0 ? -0.5f : 0.5f))); return buf; }
     if (kind == IT_LIGHT_HEIGHT) { snprintf(buf, n, "%d", (int)(el + 0.5f)); return buf; }
-    if (kind == IT_RENDERER)     { snprintf(buf, n, "%s", opt_renderer_engine() ? "ENGINE" : "CLASSIC"); return buf; }
-    if (kind == IT_LIGHTING)     { snprintf(buf, n, "%s", opt_lighting() ? "ON" : "OFF"); return buf; }
-    if (kind == IT_DOF)          { snprintf(buf, n, "%s", opt_dof() ? "ON" : "OFF"); return buf; }
     return NULL;
 }
 
@@ -132,9 +129,6 @@ static void adjust(int delta)
     hd2d_light_angles(&az, &el);
     if (kind == IT_LIGHT_ANGLE)       hd2d_light_set_angles(az + 5.0f * (float)delta, el);
     else if (kind == IT_LIGHT_HEIGHT) hd2d_light_set_angles(az, el + 5.0f * (float)delta);
-    else if (kind == IT_RENDERER)     opt_set_renderer_engine(!opt_renderer_engine());
-    else if (kind == IT_LIGHTING)     opt_set_lighting(!opt_lighting());
-    else if (kind == IT_DOF)          opt_set_dof(!opt_dof());
 }
 
 /* Panel geometry, in the primary surface's own pixels. Centred on whatever the viewport is,
@@ -235,6 +229,12 @@ static void activate(void)
         sel = 0;
         build_rows();
         break;
+    case IT_SETTINGS:
+        /* The RmlUi screen takes over from here; the game stays frozen under it (rmlui_render
+         * composites over the paused frame). Escape inside the screen closes it and returns to
+         * this menu. */
+        rmlui_open();
+        break;
     case IT_BACK:
         page = PAGE_MAIN;
         sel = 0;
@@ -242,9 +242,6 @@ static void activate(void)
         break;
     case IT_LIGHT_ANGLE:
     case IT_LIGHT_HEIGHT:
-    case IT_RENDERER:
-    case IT_LIGHTING:
-    case IT_DOF:
         /* Confirm on a value row nudges it, so the menu is usable with a device that has no
          * left and right of its own rather than doing nothing and looking broken. */
         adjust(+1);
@@ -259,6 +256,12 @@ static void activate(void)
 
 void pause_tick(void)
 {
+    /* The RmlUi settings screen owns the frame while it is up: its input is handled by
+     * rmlui_event (before the game's message pump sees it), and the game stays frozen under
+     * it. Nothing here runs until the screen closes, or the menu would fight the document
+     * for the same keys. */
+    if (rmlui_active()) return;
+
     static int was_esc, was_start, was_up, was_down, was_left, was_right, was_confirm;
     int p_up, p_down, p_left, p_right, p_confirm, p_start;
     pad_state(&p_up, &p_down, &p_left, &p_right, &p_confirm, &p_start);
@@ -428,6 +431,10 @@ static void pause_paint(const Paint *p, int w, int h)
 
 void pause_draw(uint32_t pix, int w, int h, int pitch)
 {
+    /* The settings screen replaces the menu: the frozen frame stays untouched (nothing
+     * redraws it, so the dim cannot compound) and the RmlUi document composites over it in
+     * render_present. */
+    if (rmlui_active()) return;
     if (!paused) { free(snap); snap = NULL; snap_w = snap_h = 0; return; }
 
     const size_t n = (size_t)w * (size_t)h;
@@ -460,6 +467,10 @@ void pause_draw(uint32_t pix, int w, int h, int pitch)
  * swallowing input. */
 int pause_draw_list(uint32_t dst_pixels, int w, int h)
 {
+    /* With the settings screen up, nothing of the menu goes into the retained frame: the
+     * document is drawn over it in render_present instead. present_primary forces the GPU
+     * path on while the screen is up, so the caller still reaches that compositing step. */
+    if (rmlui_active()) return 0;
     if (!paused || !dst_pixels) return 0;
     if (!render_hold_begin()) return 0;
     const Paint p = { dst_pixels, 0, w, h, 0 };

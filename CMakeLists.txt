@@ -101,6 +101,8 @@ add_executable(lf2
     runtime/video/mesh.c
     runtime/video/engine.c
     runtime/video/stagegeom.c
+    runtime/app/rmlui.cpp
+    third_party/RmlUi/Backends/RmlUi_Platform_SDL.cpp
     runtime/app/main.c)
 # EVERY subsystem directory is on the include path, which is what lets a file say
 # #include "guest_ops.h" wherever it happens to live. The alternative -- relative "../"
@@ -108,7 +110,10 @@ add_executable(lf2
 # an edit of every header line (issue #46).
 target_include_directories(lf2 PRIVATE
     runtime runtime/cpu runtime/win32 runtime/video runtime/audio runtime/input runtime/app
-    runtime/overrides)
+    runtime/overrides
+    ${CMAKE_SOURCE_DIR}/third_party/RmlUi/Backends)
+# RmlUi's SDL backends pick SDL2 vs SDL3 by this macro (Backends/RmlUi_Platform_SDL.h).
+target_compile_definitions(lf2 PRIVATE RMLUI_SDL_VERSION_MAJOR=3)
 
 # The hand-woven stage geometry (issue #62) travels BESIDE THE BINARY.
 #

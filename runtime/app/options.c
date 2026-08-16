@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "config.h"
+
 /* -1 until first read, so the env pin is consulted exactly once and the menu owns the value
  * from then on. */
 static int renderer = -1, lighting = -1, dof = -1;
@@ -18,10 +20,16 @@ int opt_renderer_engine(void)
 {
     if (renderer < 0) {
         const char *v = getenv("LF2_ENGINE");
-        /* The default moved to the engine when the effects became engine-only (issue #69):
-         * a classic default would have been a default with no shading. =0 keeps the classic
-         * path one word away, as the A/B control arm. */
-        renderer = (v && *v && strcmp(v, "0") != 0) || !v ? 1 : 0;
+        if (v && *v) {
+            /* The env pin is the test arm, and it wins outright (tools/routes pin it). */
+            renderer = strcmp(v, "0") != 0;
+        } else {
+            const char *c = config_get("renderer");
+            if (c) renderer = strcmp(c, "classic") != 0;
+            else renderer = 1;   /* the default moved to the engine when the effects became
+                                  * engine-only (issue #69): a classic default would have
+                                  * been a default with no shading. */
+        }
     }
     return renderer;
 }
@@ -30,7 +38,14 @@ void opt_set_renderer_engine(int on) { renderer = on != 0; }
 
 int opt_lighting(void)
 {
-    if (lighting < 0) lighting = pinned_off(getenv("LF2_HD2D")) ? 0 : 1;
+    if (lighting < 0) {
+        const char *v = getenv("LF2_HD2D");
+        if (v && *v) lighting = pinned_off(v) ? 0 : 1;
+        else {
+            const char *c = config_get("lighting");
+            lighting = c ? strcmp(c, "off") != 0 : 1;
+        }
+    }
     return lighting;
 }
 
@@ -38,7 +53,14 @@ void opt_set_lighting(int on) { lighting = on != 0; }
 
 int opt_dof(void)
 {
-    if (dof < 0) dof = pinned_off(getenv("LF2_DOF")) ? 0 : 1;
+    if (dof < 0) {
+        const char *v = getenv("LF2_DOF");
+        if (v && *v) dof = pinned_off(v) ? 0 : 1;
+        else {
+            const char *c = config_get("dof");
+            dof = c ? strcmp(c, "off") != 0 : 1;
+        }
+    }
     return dof;
 }
 
