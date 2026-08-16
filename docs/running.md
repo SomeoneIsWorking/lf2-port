@@ -398,8 +398,9 @@ keyboard and pad like every other menu here.
 |---|---|
 | RESUME | |
 | DROP OUT | only when the device that OPENED the menu is driving a player this port put into the match — a drop-in. It runs the same `coop_leave` an unplugged pad does, which refuses any slot the game's own character selection filled |
-| LEAVE MATCH | drives the game's own way out of a fight — F4, then the pre-fight overlay's own Exit item — and lands on the character-select screen with the roster cleared |
+| LEAVE MATCH | calls the game's OWN exit code directly — `screens.c`'s `guest_end_match` / `guest_overlay_exit`, read off `fn_0041bc90` and `fn_00429730` — and lands on the game's own front-end menu (screen word `0x0044d020` = 10). No keystroke or button is injected (issue #22) |
 | OPTIONS | the light's direction: **LIGHT ANGLE** (which way it comes from) and **LIGHT HEIGHT** (how high it is), in degrees. Left/right adjust in 5° steps, confirm nudges, BACK returns. Both feed the *one* light vector, so the shading on the fighters, the direction their shadows point and how long those shadows are all move together — and the frame is frozen while you do it, so you watch them move |
+| SETTINGS | the RmlUi settings screen (issue #70): **GRAPHICS** — render engine / lighting / depth of field — and **CONTROLS** — the seven keyboard buttons, click a key and press the new one to rebind. It renders over the frozen frame and is engine-path only (the item is not offered on the software fallback) |
 | QUIT GAME | ends the process |
 
 Two things about it are worth knowing before changing it.
@@ -412,24 +413,18 @@ out of the fight.
 update, so anything the *game* has to do — and leaving a match is one of those — would
 otherwise be delivered to a game that never runs another frame.
 
-`LEAVE MATCH` is named for what it verifiably does. Reaching the front-end menu from the
-character-select screen is one further step that is **not** established: Escape there does
-nothing, measured, and issue #22 stays open for it. The port does not fake the transition by
-resetting its own state.
+`LEAVE MATCH` is named for what it verifiably does: it lands on the game's front-end menu,
+asserted by the screen word rather than by a picture, because character selection and the
+front-end share a blit destination and can share a picture (issue #59). `tools/e2e.sh
+exit_to_menu` is that assertion. `tools/e2e.sh pause_dropout` covers the drop-out half end to
+end, including the negative that player one is still in the match afterwards.
 
-`tools/e2e.sh pause_dropout` covers the drop-out half end to end, including the negative that
-player one is still in the match afterwards.
-
-**RmlUi was considered for the Options page and declined**, and the reasoning sits beside the
-code in `runtime/app/pause.c`. Dusklight uses RmlUi for its game-facing UI and is right to — it
-has documents, components and a whole settings tree. This is two numbers on a menu that
-already exists, already takes keyboard, pad and mouse, and is already drawn with the game's
-own glyphs so it looks like the game. RmlUi is C++ with its own build, font stack and render
-backend, and would become the largest dependency in a port whose entire build is a C compiler
-and SDL. If a real settings screen ever lands that judgement should be revisited.
-
-The setting does **not** persist across runs: there is no config file in this port yet, and
-inventing one for two numbers is the wrong order to do things in.
+The settings screen is RmlUi (issue #70) — the one C++ dependency in the port, vendored as a
+submodule at `third_party/RmlUi` (pinned to 6.2) and built with its freetype font engine; the
+screen's own text uses the port's committed Liberation face, loaded from memory. The
+settings — the seven keys, and the renderer/lighting/DOF choices — persist across runs in
+`lf2.cfg` beside the game tree (`runtime/app/config.c`). RmlUi was considered for a pause-menu
+page once and declined; a real settings screen is the case it earns its place in.
 
 ## Scripted input
 
