@@ -67,26 +67,32 @@ arm() {   # arm <dir> [VAR=value ...]
 # draws the same picture. The light gets its own arm below, which has to change the MATCH
 # frame and must NOT change the menu frame -- see the assertion for why that pair is the whole
 # point.
+#
+# THE ENGINE IS THE DEFAULT RENDERER now (issue #69). So the CLASSIC SDL_Render path is
+# pinned explicitly where it is the thing under test -- `gpu` and `skip` are the byte-identity
+# control arms for the old path, and the engine's own byte-identity arms are `engine` and
+# `engineskip`. Every arm below is spelled as the full state it wants, not as a delta from a
+# default, so the default changing cannot silently re-aim an arm.
 echo "native renderer vs the software compositor: four runs..."
 arm soft LF2_RENDERER=soft
-arm gpu  LF2_HD2D=off
-arm skip LF2_HD2D=off LF2_RENDER_SKIP=7
-arm light
+arm gpu  LF2_ENGINE=0
+arm skip LF2_ENGINE=0 LF2_RENDER_SKIP=7
+arm light LF2_DOF=off
 # THE PORT'S OWN ENGINE (issue #64), against the SAME software compositor and the SAME
 # tolerance. Its first version is deliberately a REPRODUCTION rather than an improvement --
 # one that both replaced the renderer and changed the shading would fail this comparison for
 # two reasons at once and could not be told apart from a broken one. So it has to match, and
 # `engskip` is its own negative: the engine honours LF2_RENDER_SKIP, so an engine frame with
 # every 7th entry dropped must differ, or the two engine dumps are not the engine.
-arm engine     LF2_HD2D=off LF2_ENGINE=1 LF2_DOF=off
-arm engineskip LF2_HD2D=off LF2_ENGINE=1 LF2_DOF=off LF2_RENDER_SKIP=7
+arm engine     LF2_HD2D=off LF2_DOF=off
+arm engineskip LF2_HD2D=off LF2_DOF=off LF2_RENDER_SKIP=7
 # THE DEFOCUS (issue #63), against the same engine frame with it switched off. Its two halves are
 # opposite on the two frames and that pair IS the test: a depth of field must change a frame with
 # a stage in it and change NOTHING on a frame without one. The second half is what catches an
 # effect that has spread over the whole picture, which is why the previous bloom/DOF/haze/vignette
 # cut was removed -- and it holds by construction here, because a pixel with no distance in the
 # G-buffer takes an untouched branch and a menu frame has no layers at all.
-arm dof        LF2_HD2D=off LF2_ENGINE=1
+arm dof        LF2_HD2D=off
 
 # "<maxdiff> <differing> <total>" for two PPMs, or "ERR ..." -- never silence.
 cmp_ppm() {
@@ -189,8 +195,8 @@ for f in "$OUT/soft"/*.ppm; do
                     echo "        up to $esmax, so the engine really is what drew the frame above"
                 else
                     echo "  FAIL  $n: the ENGINE with every 7th draw DROPPED still matched"
-                    echo "        software (max $esmax over $esn px) -- so LF2_ENGINE=1 did not"
-                    echo "        select it and the match above is the old path's"
+                    echo "        software (max $esmax over $esn px) -- so the engine was not"
+                    echo "        drawing and the match above is the old path's"
                     fail=1
                 fi
             fi
@@ -252,7 +258,10 @@ for f in "$OUT/soft"/*.ppm; do
     # looking washed out. A test that only checks the effect RAN cannot see that; a test that
     # also checks WHERE it stopped can.
     if [ -f "$OUT/light/$n" ]; then
-        set -- $(cmp_ppm "$OUT/gpu/$n" "$OUT/light/$n")
+        # AGAINST THE ENGINE FRAME, not the classic one: the lighting is engine-only
+        # (issue #69), so the classic path never had it and comparing against it would read
+        # "the whole shading" rather than "the lighting's own change".
+        set -- $(cmp_ppm "$OUT/engine/$n" "$OUT/light/$n")
         if [ "$1" = "ERR" ]; then echo "  FAIL  $n: light compare: $2"; fail=1; continue; fi
         hmax=$1; hn=$2
         # WHICH frame this is, by its ROLE rather than by its number. This matched the

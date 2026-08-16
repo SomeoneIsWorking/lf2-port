@@ -18,6 +18,7 @@
 #include "hostwin.h"
 #include "hd2d.h"
 #include "render.h"
+#include "options.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,10 +51,12 @@ int  hostwin_mouse_clicked(void);
  * The rows are built per pause rather than being a fixed table, so the geometry, the hit
  * test and the drawing all agree without any of them knowing which items exist. */
 enum { IT_RESUME, IT_DROP, IT_EXIT, IT_OPTIONS, IT_QUIT,
-       IT_LIGHT_ANGLE, IT_LIGHT_HEIGHT, IT_BACK, IT_KINDS };
+       IT_LIGHT_ANGLE, IT_LIGHT_HEIGHT,
+       IT_RENDERER, IT_LIGHTING, IT_DOF, IT_BACK, IT_KINDS };
 static const char *const ITEM_TEXT[IT_KINDS] = {
     "RESUME", "DROP OUT", "LEAVE MATCH", "OPTIONS", "QUIT GAME",
-    "LIGHT ANGLE", "LIGHT HEIGHT", "BACK"
+    "LIGHT ANGLE", "LIGHT HEIGHT",
+    "RENDERER", "LIGHTING", "DEPTH OF FIELD", "BACK"
 };
 
 /* ---- OPTIONS, and why it is built out of the same rows as everything else ----
@@ -85,6 +88,14 @@ static void build_rows(void)
 {
     row_n = 0;
     if (page == PAGE_OPTIONS) {
+        /* The renderer and its effects are the player's now (issue #69): the engine draws by
+         * default and the lighting and depth of field ride with it, and each row flips its
+         * own option. The RENDERER row is a trap for a reason -- switching the renderer is
+         * switching the SHADING, not just the draw, because the effects are engine-only -- so
+         * it is first, where the eye lands. */
+        rows[row_n++] = IT_RENDERER;
+        rows[row_n++] = IT_LIGHTING;
+        rows[row_n++] = IT_DOF;
         rows[row_n++] = IT_LIGHT_ANGLE;
         rows[row_n++] = IT_LIGHT_HEIGHT;
         rows[row_n++] = IT_BACK;
@@ -106,6 +117,9 @@ static const char *row_value(int kind, char *buf, size_t n)
     hd2d_light_angles(&az, &el);
     if (kind == IT_LIGHT_ANGLE)  { snprintf(buf, n, "%+d", (int)(az + (az < 0 ? -0.5f : 0.5f))); return buf; }
     if (kind == IT_LIGHT_HEIGHT) { snprintf(buf, n, "%d", (int)(el + 0.5f)); return buf; }
+    if (kind == IT_RENDERER)     { snprintf(buf, n, "%s", opt_renderer_engine() ? "ENGINE" : "CLASSIC"); return buf; }
+    if (kind == IT_LIGHTING)     { snprintf(buf, n, "%s", opt_lighting() ? "ON" : "OFF"); return buf; }
+    if (kind == IT_DOF)          { snprintf(buf, n, "%s", opt_dof() ? "ON" : "OFF"); return buf; }
     return NULL;
 }
 
@@ -118,6 +132,9 @@ static void adjust(int delta)
     hd2d_light_angles(&az, &el);
     if (kind == IT_LIGHT_ANGLE)       hd2d_light_set_angles(az + 5.0f * (float)delta, el);
     else if (kind == IT_LIGHT_HEIGHT) hd2d_light_set_angles(az, el + 5.0f * (float)delta);
+    else if (kind == IT_RENDERER)     opt_set_renderer_engine(!opt_renderer_engine());
+    else if (kind == IT_LIGHTING)     opt_set_lighting(!opt_lighting());
+    else if (kind == IT_DOF)          opt_set_dof(!opt_dof());
 }
 
 /* Panel geometry, in the primary surface's own pixels. Centred on whatever the viewport is,
@@ -225,6 +242,9 @@ static void activate(void)
         break;
     case IT_LIGHT_ANGLE:
     case IT_LIGHT_HEIGHT:
+    case IT_RENDERER:
+    case IT_LIGHTING:
+    case IT_DOF:
         /* Confirm on a value row nudges it, so the menu is usable with a device that has no
          * left and right of its own rather than doing nothing and looking broken. */
         adjust(+1);

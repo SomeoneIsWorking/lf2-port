@@ -181,7 +181,7 @@ static void h_CreateWindowExA(void)
      *
      * Asked for, then checked: if the GPU backend is not there (an old driver, a machine
      * with no Vulkan/Metal/D3D12) the port falls back to SDL's choice and says so, and
-     * hd2d_init reports that the look cannot run rather than pretending it did. */
+     * engine_init reports that the lighting cannot run rather than pretending it did. */
     hw.renderer = SDL_CreateRenderer(hw.window, SDL_GPU_RENDERER);
     if (!hw.renderer) {
         fprintf(stderr, "video: the '%s' renderer is unavailable (%s) -- falling back to "

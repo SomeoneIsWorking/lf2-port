@@ -179,6 +179,37 @@ lengths_done:
         ok("...and it is not NaN", across == across && up == up);
     }
 
+    /* ---- THE SHADOW QUAD STANDS ON ITS OWN FEET, and the light carries the rest ----
+     *
+     * The four relations a cast shadow owes the picture, stated as relations. A quad that
+     * failed the first would float beside its fighter; one that failed the second would not
+     * lengthen as the light dropped; one that failed the third would stay welded under a
+     * jumping fighter however high they went (issue #35's shape of bug). */
+    {
+        float across, up, q[8], r[8];
+        stagelight_vector(-48.7f, 70.0f, v);
+        stagelight_shadow(v, &across, &up);
+
+        /* Grounded: the foot edge IS the ground point, however the light is angled. */
+        stagelight_shadow_quad(across, up, 100.0f, 300.0f, 40.0f, 80.0f, 0.0f, q);
+        eqf("a grounded shadow's foot edge sits at the ground point (x)",
+            (q[4] + q[6]) * 0.5f, 100.0f, 0.001f);
+        eqf("...(y)", q[5], 300.0f, 0.001f);
+        eqf("...and is the sprite's own width wide", q[4] - q[6], 40.0f, 0.001f);
+
+        /* The head edge is the foot edge plus the full-height shear. */
+        eqf("the head is displaced across by h * across", q[0], q[6] + 80.0f * across, 0.001f);
+        eqf("...and up the picture by h * up", q[1], q[7] - 80.0f * up, 0.001f);
+
+        /* Airborne: the WHOLE quad moves by the lift, feet included. */
+        stagelight_shadow_quad(across, up, 100.0f, 300.0f, 40.0f, 80.0f, 25.0f, r);
+        eqf("a jump carries the foot edge across by lift * across",
+            (r[4] + r[6]) * 0.5f, 100.0f + 25.0f * across, 0.001f);
+        eqf("...and up by lift * up", r[5], 300.0f - 25.0f * up, 0.001f);
+        eqf("...and the head by the same, so the shadow keeps its shape",
+            r[1] - q[1], -25.0f * up, 0.001f);
+    }
+
     printf("stage light: %d checks, %d failure(s)\n", checks, failures);
     if (!checks) {
         printf("  FAIL  no checks ran at all, so this says NOTHING\n");

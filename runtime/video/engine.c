@@ -11,12 +11,18 @@
 
 #include "mesh.h"
 #include "hd2d.h"
+#include "stagelight.h"
+#include "options.h"
 
 #include "../shaders/gen/quad_vert_spv.h"
 #include "../shaders/gen/quad_spv.h"
 #include "../shaders/gen/mesh_vert_spv.h"
 #include "../shaders/gen/mesh_spv.h"
 #include "../shaders/gen/dof_spv.h"
+#include "../shaders/gen/hd2d_quad_vert_spv.h"
+#include "../shaders/gen/hd2d_gbuf_spv.h"
+#include "../shaders/gen/hd2d_shadow_spv.h"
+#include "../shaders/gen/hd2d_light_spv.h"
 
 /* ---- state ------------------------------------------------------------------------------ */
 
@@ -42,12 +48,40 @@ static int gvbuf_cap;
 static long stat_geom_draws, stat_geom_tris;
 
 /* THE DEFOCUS (issue #63). A render state rather than a pipeline, because it is a pass over the
- * finished frame through SDL_Render -- the same shape hd2d's lighting uses. Rebuilt whenever the
+ * finished frame through SDL_Render -- the same shape the lighting uses. Rebuilt whenever the
  * G-buffer is, since it holds a binding to it. */
 static SDL_GPUShader     *sh_dof;
 static SDL_GPURenderState *st_dof;
 static long stat_dof_frames;
-static int  dof_on = -1;
+
+/* ---- the lighting chain (issues #37, #69) ----
+ *
+ * The engine's own shading: a character mask, a cast-shadow mask and a light pass, as real
+ * SDL_GPU passes over the finished picture. This is what moved OUT of hd2d.c's SDL_Render
+ * render states and INTO the engine, which is the arrangement issue #64 replaced and #69 made
+ * the default. The shaders are the same committed blobs hd2d once ran; only the driver is
+ * different.
+ *
+ * The light pass samples the picture being lit, so it needs a SECOND colour target to write
+ * into -- a pass cannot read and write the same texture. `tex_lit` holds the lit frame and is
+ * what the defocus reads when the lighting ran. */
+static SDL_GPUTexture *tex_chars, *tex_shadow, *tex_lit;
+static SDL_Texture    *wrapped_chars, *wrapped_shadow, *wrapped_lit;
+static SDL_GPUShader     *sh_light_vert;
+static SDL_GPUGraphicsPipeline *p_chars, *p_shadow, *p_light;
+static SDL_GPUSampler   *smp_linear;
+/* The mask passes need a vertex format of their own (pos2, uv2, colour4 -- the hd2d shaders
+ * were written for SDL_Render's varying convention, see hd2d_quad.vert), so they draw from
+ * their own buffer rather than from the sprite quad buffer. */
+static SDL_GPUBuffer    *lvbuf;
+static SDL_GPUTransferBuffer *lvxfer;
+static int lvbuf_cap;
+/* Which texture the finished frame lives in right now -- tex_color until the light pass runs,
+ * then tex_lit. engine_present reads the same object. */
+static SDL_GPUTexture *cur_tex;
+static SDL_Texture    *cur_wrapped;
+static int light_ok;                 /* the light chain's shaders and pipelines exist */
+static long stat_light_frames, stat_char_quads, stat_shadow_quads;
 
 static void gbuf_report(int w, int h);
 
@@ -72,11 +106,16 @@ static SDL_GPUBuffer *vbuf;
 static SDL_GPUTransferBuffer *vxfer;
 static int vbuf_cap;
 
-static int  init_done, init_ok, enabled = -1;
+static int  init_done, init_ok;
 static const char *init_why = "not attempted";
 static long stat_frames, stat_quads, stat_batches, stat_uploads, stat_dropped;
 
 typedef struct { float x, y, depth, u, v, r, g, b, a, world; } QuadVertex;
+
+/* The vertex format the lighting passes draw from (hd2d_quad.vert): output pixels, sprite UV
+ * and a tint. The two masks and the full-screen light pass all speak it, so one buffer serves
+ * all three. */
+typedef struct { float x, y, u, v, r, g, b, a; } LightVertex;
 
 /* ---- the texture cache -------------------------------------------------------------------
  *
@@ -450,6 +489,100 @@ int engine_init(SDL_Renderer *r)
         if (gfs) SDL_ReleaseGPUShader(DEV, gfs);
     }
 
+    /* ---- the lighting chain (issues #37, #64, #69) ---- */
+    {
+        /* The hd2d fragment shaders were written for SDL_Render's varying convention (colour
+         * at location 0, uv at location 1) and speak a different vertex format from the
+         * sprite pipeline's -- hd2d_quad.vert explains. They draw into single colour targets
+         * with no depth attachment. */
+        sh_light_vert = shader_make(hd2d_quad_vert_spv, sizeof hd2d_quad_vert_spv,
+                                    SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, "lighting vertex");
+
+        SDL_GPUVertexBufferDescription lvbd;
+        SDL_zero(lvbd);
+        lvbd.slot = 0;
+        lvbd.pitch = sizeof(LightVertex);
+        lvbd.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+
+        SDL_GPUVertexAttribute la[3];
+        SDL_zero(la);
+        la[0].location = 0; la[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
+        la[0].offset = (Uint32)offsetof(LightVertex, x);
+        la[1].location = 1; la[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
+        la[1].offset = (Uint32)offsetof(LightVertex, u);
+        la[2].location = 2; la[2].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+        la[2].offset = (Uint32)offsetof(LightVertex, r);
+
+        SDL_GPUColorTargetDescription lct;
+        SDL_zero(lct);
+        lct.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        /* NONE on the masks and the lit frame alike: the mask passes write every pixel they
+         * test and clear the rest, and the light pass owns tex_lit outright. There is nothing
+         * behind any of them to blend with. */
+
+        if (sh_light_vert) {
+            SDL_GPUGraphicsPipelineCreateInfo lp;
+            SDL_zero(lp);
+            lp.vertex_shader = sh_light_vert;
+            lp.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+            lp.vertex_input_state.num_vertex_buffers = 1;
+            lp.vertex_input_state.vertex_buffer_descriptions = &lvbd;
+            lp.vertex_input_state.num_vertex_attributes = 3;
+            lp.vertex_input_state.vertex_attributes = la;
+            lp.target_info.num_color_targets = 1;
+            lp.target_info.color_target_descriptions = &lct;
+            lp.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+            lp.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+
+            lp.fragment_shader = shader_make(hd2d_gbuf_spv, sizeof hd2d_gbuf_spv,
+                                             SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1,
+                                             "character mask");
+            p_chars = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
+            if (!p_chars) {
+                fprintf(stderr, "engine: the character-mask pipeline failed: %s -- no lighting "
+                                "chain\n", SDL_GetError());
+            }
+            SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
+
+            lp.fragment_shader = shader_make(hd2d_shadow_spv, sizeof hd2d_shadow_spv,
+                                             SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1,
+                                             "cast-shadow mask");
+            p_shadow = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
+            if (!p_shadow) {
+                fprintf(stderr, "engine: the cast-shadow-mask pipeline failed: %s -- no lighting "
+                                "chain\n", SDL_GetError());
+            }
+            SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
+
+            lp.fragment_shader = shader_make(hd2d_light_spv, sizeof hd2d_light_spv,
+                                             SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, "light");
+            p_light = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
+            if (!p_light) {
+                fprintf(stderr, "engine: the light pipeline failed: %s -- no lighting chain\n",
+                        SDL_GetError());
+            }
+            SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
+        }
+
+        light_ok = sh_light_vert && p_chars && p_shadow && p_light && smp_linear;
+
+        /* LINEAR for the light pass's reads of the two masks, unlike the sprite sampler: the
+         * light pass is not a pixel-perfect blit but a per-pixel query at slightly-offset
+         * texels (the bevel ring, the feather), and stepping those over NEAREST would read the
+         * jagged edge the pass exists to soften. */
+        SDL_GPUSamplerCreateInfo lsi;
+        SDL_zero(lsi);
+        lsi.min_filter = SDL_GPU_FILTER_LINEAR;
+        lsi.mag_filter = SDL_GPU_FILTER_LINEAR;
+        lsi.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        lsi.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        smp_linear = SDL_CreateGPUSampler(DEV, &lsi);
+
+        if (!light_ok || !smp_linear)
+            fprintf(stderr, "engine: the lighting chain did not come up -- frames are presented "
+                            "unlit, which is a picture without shading rather than a broken one\n");
+    }
+
     sh_dof = shader_make(dof_spv, sizeof dof_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1, "defocus");
     if (!sh_dof)
         fprintf(stderr, "engine: no defocus shader -- frames are presented unblurred, which is "
@@ -475,19 +608,14 @@ int engine_init(SDL_Renderer *r)
 
 int engine_ready(void) { return init_ok; }
 
-/* LF2_ENGINE selects which renderer draws. It is a DIAGNOSTIC and an A/B control arm, not a
- * feature switch: the engine becomes the default when it is shown to match the software
- * compositor on the frames tools/e2e.sh render already compares, and the old path stays
- * selectable so the two can go on being diffed -- exactly as LF2_BG_ORIG does for the
- * background override. A reimplementation that cannot be diffed against what it replaces is a
- * rewrite. */
+/* Which renderer draws. The pause menu's option owns it (issue #69); LF2_ENGINE is only the
+ * startup pin, and a route that must pin the classic path sets it to 0. It is an A/B control
+ * arm, not a feature switch: the engine is the default, and the old path stays selectable so
+ * the two can go on being diffed -- exactly as LF2_BG_ORIG does for the background override. A
+ * reimplementation that cannot be diffed against what it replaces is a rewrite. */
 int engine_enabled(void)
 {
-    if (enabled < 0) {
-        const char *v = getenv("LF2_ENGINE");
-        enabled = (v && *v && strcmp(v, "0") != 0) ? 1 : 0;
-    }
-    return enabled && init_ok;
+    return opt_renderer_engine() && init_ok;
 }
 
 /* ---- targets and buffers ------------------------------------------------------------------ */
@@ -496,9 +624,15 @@ static void targets_release(void)
 {
     if (wrapped)      { SDL_DestroyTexture(wrapped); wrapped = NULL; }
     if (wrapped_gbuf) { SDL_DestroyTexture(wrapped_gbuf); wrapped_gbuf = NULL; }
+    if (wrapped_chars)   { SDL_DestroyTexture(wrapped_chars); wrapped_chars = NULL; }
+    if (wrapped_shadow)  { SDL_DestroyTexture(wrapped_shadow); wrapped_shadow = NULL; }
+    if (wrapped_lit)     { SDL_DestroyTexture(wrapped_lit); wrapped_lit = NULL; }
     if (tex_color) { SDL_ReleaseGPUTexture(DEV, tex_color); tex_color = NULL; }
     if (tex_depth) { SDL_ReleaseGPUTexture(DEV, tex_depth); tex_depth = NULL; }
     if (tex_gbuf)  { SDL_ReleaseGPUTexture(DEV, tex_gbuf); tex_gbuf = NULL; }
+    if (tex_chars) { SDL_ReleaseGPUTexture(DEV, tex_chars); tex_chars = NULL; }
+    if (tex_shadow) { SDL_ReleaseGPUTexture(DEV, tex_shadow); tex_shadow = NULL; }
+    if (tex_lit)   { SDL_ReleaseGPUTexture(DEV, tex_lit); tex_lit = NULL; }
     tgt_w = tgt_h = 0;
 }
 
@@ -526,7 +660,16 @@ static int targets_make(int w, int h)
     ci.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
     tex_depth = SDL_CreateGPUTexture(DEV, &ci);
 
-    if (!tex_color || !tex_depth || !tex_gbuf) {
+    /* The lighting chain's three extra targets: the character mask, the cast-shadow mask and
+     * the LIT picture. All full resolution and all sampleable -- the light pass reads the two
+     * masks, and the defocus reads the lit picture. */
+    ci.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    tex_chars = SDL_CreateGPUTexture(DEV, &ci);
+    tex_shadow = SDL_CreateGPUTexture(DEV, &ci);
+    tex_lit   = SDL_CreateGPUTexture(DEV, &ci);
+
+    if (!tex_color || !tex_depth || !tex_gbuf || !tex_chars || !tex_shadow || !tex_lit) {
         fprintf(stderr, "engine: could not allocate the %dx%d target pair: %s\n",
                 w, h, SDL_GetError());
         targets_release();
@@ -581,6 +724,33 @@ static int targets_make(int w, int h)
                                 "frame is presented unblurred\n", SDL_GetError());
         }
     }
+    /* The masks and the lit frame, wrapped the same way, for the SHOW diagnostics and the
+     * defocus. The light pass samples the two masks directly (they never leave the engine
+     * through this path except when LF2_HD2D_SHOW asks to see one); the lit frame is what the
+     * defocus reads instead of the unlit picture. */
+    {
+        struct { SDL_GPUTexture *gpu; SDL_Texture **wrap; const char *what; } w3[3] = {
+            { tex_chars,  &wrapped_chars,  "character mask" },
+            { tex_shadow, &wrapped_shadow, "cast-shadow mask" },
+            { tex_lit,    &wrapped_lit,    "lit frame" },
+        };
+        for (int i = 0; i < 3; i++) {
+            SDL_PropertiesID p = SDL_CreateProperties();
+            SDL_SetPointerProperty(p, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, w3[i].gpu);
+            SDL_SetNumberProperty(p, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w);
+            SDL_SetNumberProperty(p, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h);
+            SDL_SetNumberProperty(p, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_RGBA32);
+            *w3[i].wrap = SDL_CreateTextureWithProperties(R, p);
+            SDL_DestroyProperties(p);
+            if (!*w3[i].wrap) {
+                fprintf(stderr, "engine: the %s could not be wrapped as a texture (%s) -- it "
+                                "cannot be SHOWN or (for the lit frame) defocused\n",
+                        w3[i].what, SDL_GetError());
+            } else {
+                SDL_SetTextureScaleMode(*w3[i].wrap, SDL_SCALEMODE_NEAREST);
+            }
+        }
+    }
     tgt_w = w; tgt_h = h;
     return 1;
 }
@@ -611,7 +781,38 @@ static int vbuf_reserve(int bytes)
         vbuf_cap = 0;
         return 0;
     }
-    vbuf_cap = bytes;
+vbuf_cap = bytes;
+    return 1;
+}
+
+/* The lighting passes' vertex buffer, same shape as the sprite buffer but LightVertex-sized. */
+static int lvbuf_reserve(int bytes)
+{
+    if (lvbuf && lvbuf_cap >= bytes) return 1;
+    if (lvbuf)  { SDL_ReleaseGPUBuffer(DEV, lvbuf); lvbuf = NULL; }
+    if (lvxfer) { SDL_ReleaseGPUTransferBuffer(DEV, lvxfer); lvxfer = NULL; }
+
+    SDL_GPUBufferCreateInfo bi;
+    SDL_zero(bi);
+    bi.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+    bi.size = (Uint32)bytes;
+    lvbuf = SDL_CreateGPUBuffer(DEV, &bi);
+
+    SDL_GPUTransferBufferCreateInfo ti;
+    SDL_zero(ti);
+    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    ti.size = (Uint32)bytes;
+    lvxfer = SDL_CreateGPUTransferBuffer(DEV, &ti);
+
+    if (!lvbuf || !lvxfer) {
+        fprintf(stderr, "engine: could not allocate a %d-byte light vertex buffer: %s\n",
+                bytes, SDL_GetError());
+        if (lvbuf)  { SDL_ReleaseGPUBuffer(DEV, lvbuf); lvbuf = NULL; }
+        if (lvxfer) { SDL_ReleaseGPUTransferBuffer(DEV, lvxfer); lvxfer = NULL; }
+        lvbuf_cap = 0;
+        return 0;
+    }
+    lvbuf_cap = bytes;
     return 1;
 }
 
@@ -677,7 +878,238 @@ static GeomLight geom_light(void)
     return u;
 }
 
-SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng, int w, int h)
+/* ---- the lighting chain ----
+ *
+ * Three passes over the finished picture, all drawing from one LightVertex buffer:
+ *
+ *   CHARS   the object quads again, through hd2d_gbuf.frag, into a mask that says which
+ *           pixels are a fighter and how high off the ground each is.
+ *   SHADOW  the same objects' SHEARED silhouettes, through hd2d_shadow.frag, into the mask
+ *           the light is taken away through.
+ *   LIGHT   a full-screen pass through hd2d_light.frag that re-lights the picture from the
+ *           one key light (hd2d.c), using the two masks, into tex_lit.
+ *
+ * The shaders were written for SDL_Render's render states and are driven here as raw SDL_GPU
+ * passes -- the thing issue #64 replaced and #69 made the default. */
+
+/* The sprite quad, in the mask pass's own vertex format. The shader only alpha-tests the
+ * texture, so the tint is white and the quad is the object's own rect. */
+static void light_emit_char(LightVertex *v, const EngineQuad *q)
+{
+    const LightVertex a = { q->x, q->y, q->u0, q->v0, 1, 1, 1, 1 };
+    const LightVertex b = { q->x + q->w, q->y, q->u1, q->v0, 1, 1, 1, 1 };
+    const LightVertex c = { q->x + q->w, q->y + q->h, q->u1, q->v1, 1, 1, 1, 1 };
+    const LightVertex d = { q->x, q->y + q->h, q->u0, q->v1, 1, 1, 1, 1 };
+    v[0] = a; v[1] = b; v[2] = c;
+    v[3] = a; v[4] = c; v[5] = d;
+}
+
+/* The same object laid down as its cast shadow: the sheared quad from the one shared light
+ * projection. The ground height is the ellipse's bottom edge, but the horizontal anchor is the
+ * OBJECT'S OWN BASE (q.x + q.w/2) rather than the ellipse's centre -- a shadow must stand under
+ * the character, and the ellipse is only where the floor is. On the ground that makes the foot
+ * edge sit exactly at the character's feet; airborne, the lift carries the whole quad along the
+ * light. */
+static void light_emit_shadow(LightVertex *v, const EngineQuad *q, float across, float up)
+{
+    const float cx = q->x + q->w * 0.5f;
+    const float gy = q->ground_gy;
+    const float air = gy - (q->y + q->h);
+    const float lift = air > 0.0f ? air : 0.0f;
+    float o[8];
+    stagelight_shadow_quad(across, up, cx, gy, q->w, q->h, lift, o);
+    /* The corners come back in the order the sprite's UVs map onto: head-TL, head-TR, foot-BR,
+     * foot-BL, and the triangle fan below preserves it. */
+    const LightVertex tl = { o[0], o[1], q->u0, q->v0, 1, 1, 1, 1 };
+    const LightVertex tr = { o[2], o[3], q->u1, q->v0, 1, 1, 1, 1 };
+    const LightVertex br = { o[4], o[5], q->u1, q->v1, 1, 1, 1, 1 };
+    const LightVertex bl = { o[6], o[7], q->u0, q->v1, 1, 1, 1, 1 };
+    v[0] = tl; v[1] = tr; v[2] = br;
+    v[3] = tl; v[4] = br; v[5] = bl;
+}
+
+/* The full-screen quad the light pass draws. */
+static void light_emit_full(LightVertex *v, int w, int h)
+{
+    const LightVertex a = { 0, 0, 0, 0, 1, 1, 1, 1 };
+    const LightVertex b = { (float)w, 0, 1, 0, 1, 1, 1, 1 };
+    const LightVertex c = { (float)w, (float)h, 1, 1, 1, 1, 1, 1 };
+    const LightVertex d = { 0, (float)h, 0, 1, 1, 1, 1, 1 };
+    v[0] = a; v[1] = b; v[2] = c;
+    v[3] = a; v[4] = c; v[5] = d;
+}
+
+/* LF2_HD2D_SHOW=chars|shadow: present that mask instead of the lit frame, so a wrong-looking
+ * picture can be told apart from an empty mask (the old hd2d chain's diagnostic, kept for the
+ * same reason). There is no `albedo` any more: with the lighting engine-only, the unlit
+ * picture IS the frame when the lighting is off, so the diagnostic would show nothing the
+ * normal run does not. */
+static int show_stage_name(void)
+{
+    static int looked, show;
+    if (!looked) {
+        looked = 1;
+        const char *v = getenv("LF2_HD2D_SHOW");
+        show = v && strcmp(v, "chars") == 0 ? 1 : (v && strcmp(v, "shadow") == 0 ? 2 : 0);
+    }
+    return show;
+}
+
+/* Run the chain, from the objects in `q`, into tex_lit (or the requested mask). Returns the
+ * GPU texture that now holds the frame to present. */
+static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h,
+                                       float floor_row, int have_floor)
+{
+    const int show = show_stage_name();
+    const int want_chars  = show == 1 || show == 2 || !show;
+    const int want_shadow = show == 2 || !show;
+    const int want_light  = !show;
+
+    if (!light_ok) return tex_color;
+    /* With the lighting off there is nothing to shade, and the masks' only reader is the light
+     * pass -- building them would be work the frame does not use. The game's own ellipse was
+     * recorded as a picture when the lighting was off (render_shadows_enabled), so the plain
+     * picture is already the whole story. */
+    if (want_light && !opt_lighting()) return tex_color;
+
+    int no = 0;
+    for (int i = 0; i < n; i++) if (q[i].is_object) no++;
+    if (!want_chars || no == 0) {
+        if (!want_light) {
+            /* Showing a mask that has nothing in it: an empty mask is the DIAGNOSTIC's answer,
+             * not a reason to fall back to the picture -- and it must be the mask that was
+             * ASKED FOR, or SHOW=shadow would hand back the character buffer. */
+            return show == 2 ? tex_shadow : tex_chars;
+        }
+        /* No objects, but the light pass still runs for the floor tint -- it must agree with
+         * what a frame WITH fighters does, or toggling who is on screen would move the floor. */
+    }
+
+    /* One buffer: chars quads, then shadow quads, then the full-screen light quad. */
+    const int chars_v = no * 6, shadow_v = no * 6;
+    if (!lvbuf_reserve((chars_v + shadow_v + 6) * (int)sizeof(LightVertex))) return tex_color;
+
+    float across = 0.0f, up = 0.0f;
+    hd2d_shadow_project(&across, &up);
+
+    void *map = SDL_MapGPUTransferBuffer(DEV, lvxfer, false);
+    if (!map) return tex_color;
+    LightVertex *p = (LightVertex *)map;
+    int on = 0;
+    for (int i = 0; i < n; i++) {
+        if (!q[i].is_object) continue;
+        light_emit_char(p + (size_t)on * 6, &q[i]);
+        light_emit_shadow(p + (size_t)(no + on) * 6, &q[i], across, up);
+        on++;
+    }
+    light_emit_full(p + (size_t)(no + no) * 6, w, h);
+    SDL_UnmapGPUTransferBuffer(DEV, lvxfer);
+
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
+    if (!cmd) return tex_color;
+
+    SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTransferBufferLocation from = { lvxfer, 0 };
+    SDL_GPUBufferRegion into = { lvbuf, 0,
+                                 (Uint32)((chars_v + shadow_v + 6) * (int)sizeof(LightVertex)) };
+    SDL_UploadToGPUBuffer(copy, &from, &into, false);
+    SDL_EndGPUCopyPass(copy);
+
+    const float view[4] = { (float)w, (float)h, 0.0f, 0.0f };
+    SDL_PushGPUVertexUniformData(cmd, 0, view, sizeof view);
+
+    SDL_GPUBufferBinding vb = { lvbuf, 0 };
+
+    /* ---- the character mask ---- */
+    if (want_chars) {
+        SDL_GPUColorTargetInfo ci;
+        SDL_zero(ci);
+        ci.texture = tex_chars;
+        ci.clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 0.0f };
+        ci.load_op = SDL_GPU_LOADOP_CLEAR;
+        ci.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ci, 1, NULL);
+        if (pass) {
+            SDL_BindGPUGraphicsPipeline(pass, p_chars);
+            SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+            int on = 0;
+            for (int i = 0; i < n; i++) {
+                if (!q[i].is_object) continue;
+                SDL_GPUTexture *t = tex_for(&q[i]);
+                if (!t) { on++; continue; }
+                const float geom[4] = { q[i].ground_gy, 1.0f / (float)h, 0.0f, 0.0f };
+                SDL_GPUTextureSamplerBinding tsb = { t, SMP };
+                SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
+                SDL_PushGPUFragmentUniformData(cmd, 0, geom, sizeof geom);
+                SDL_DrawGPUPrimitives(pass, 6, 1, (Uint32)(on * 6), 0);
+                stat_char_quads++;
+                on++;
+            }
+            SDL_EndGPURenderPass(pass);
+        }
+    }
+
+    /* ---- the cast-shadow mask ---- */
+    if (want_shadow) {
+        SDL_GPUColorTargetInfo ci;
+        SDL_zero(ci);
+        ci.texture = tex_shadow;
+        ci.clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 0.0f };
+        ci.load_op = SDL_GPU_LOADOP_CLEAR;
+        ci.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ci, 1, NULL);
+        if (pass) {
+            SDL_BindGPUGraphicsPipeline(pass, p_shadow);
+            SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+            const float unused[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            int on = 0;
+            for (int i = 0; i < n; i++) {
+                if (!q[i].is_object) continue;
+                SDL_GPUTexture *t = tex_for(&q[i]);
+                if (!t) { on++; continue; }
+                SDL_GPUTextureSamplerBinding tsb = { t, SMP };
+                SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
+                SDL_PushGPUFragmentUniformData(cmd, 0, unused, sizeof unused);
+                SDL_DrawGPUPrimitives(pass, 6, 1, (Uint32)((no + on) * 6), 0);
+                stat_shadow_quads++;
+                on++;
+            }
+            SDL_EndGPURenderPass(pass);
+        }
+    }
+
+    /* ---- the light pass ---- */
+    if (want_light) {
+        SDL_GPUColorTargetInfo ci;
+        SDL_zero(ci);
+        ci.texture = tex_lit;
+        ci.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        ci.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ci, 1, NULL);
+        if (pass) {
+            SDL_BindGPUGraphicsPipeline(pass, p_light);
+            SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+            SDL_GPUTextureSamplerBinding lb[3] = {
+                { tex_color, SMP },
+                { tex_chars, smp_linear },
+                { tex_shadow, smp_linear },
+            };
+            SDL_BindGPUFragmentSamplers(pass, 0, lb, 3);
+            float u[24];
+            hd2d_light_uniforms(u, w, h, floor_row, have_floor);
+            SDL_PushGPUFragmentUniformData(cmd, 0, u, sizeof u);
+            SDL_DrawGPUPrimitives(pass, 6, 1, (Uint32)((no + no) * 6), 0);
+            SDL_EndGPURenderPass(pass);
+        }
+        stat_light_frames++;
+    }
+
+    SDL_SubmitGPUCommandBuffer(cmd);
+    return want_light ? tex_lit : (want_chars ? tex_chars : tex_shadow);
+}
+
+SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng, int w, int h,
+                         float floor_row, int have_floor)
 {
     if (!init_ok || n <= 0 || w <= 0 || h <= 0) return NULL;
     if (!targets_make(w, h)) return NULL;
@@ -891,7 +1323,17 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
     stat_frames++;
     stat_quads += n;
     gbuf_report(w, h);
-    return wrapped;
+
+    /* The frame is the unlit picture until the light pass has run over it; a frame whose
+     * lighting is off stays that. engine_present and the defocus read the same pair, so the
+     * whole frame after this point is whatever lighting_passes picked. */
+    cur_tex = tex_color;
+    cur_wrapped = wrapped;
+    cur_tex = lighting_passes(q, n, w, h, floor_row, have_floor);
+    cur_wrapped = cur_tex == tex_color ? wrapped
+                : cur_tex == tex_chars  ? wrapped_chars
+                : cur_tex == tex_shadow ? wrapped_shadow : wrapped_lit;
+    return cur_wrapped;
 }
 
 /* IEEE half to float. Written out rather than reached for, because the G-buffer readback is the
@@ -1100,23 +1542,20 @@ static void gbuf_report(int w, int h)
                 nb == BUCKETS && b == nb - 1 ? "   (bucket list FULL -- more may exist)" : "");
 }
 
-/* Is the defocus running? ON by default, because a feature nobody can find is not a feature --
- * `LF2_DOF=off` is the A/B control arm, the same shape LF2_HD2D=off has for the lighting, and it
- * is what tools/e2e.sh render diffs against. */
+/* Is the defocus running? The pause menu's DOF option owns it (issue #69): ON by default,
+ * because a feature nobody can find is not a feature -- and LF2_DOF stays as the A/B control
+ * arm, the same shape LF2_HD2D=off has for the lighting, and it is what tools/e2e.sh render
+ * diffs against. */
 int engine_dof_enabled(void)
 {
-    if (dof_on < 0) {
-        const char *v = getenv("LF2_DOF");
-        dof_on = (v && (strcmp(v, "off") == 0 || strcmp(v, "0") == 0)) ? 0 : 1;
-    }
-    return dof_on && st_dof != NULL;
+    return opt_dof() && st_dof != NULL;
 }
 
 /* Present the engine's finished frame onto `dst`, through the defocus when it is available.
  * Returns 0 if the caller should do a plain copy instead. */
 int engine_present(SDL_Texture *dst, float max_radius)
 {
-    if (!init_ok || !wrapped) return 0;
+    if (!init_ok || !cur_wrapped) return 0;
     if (!engine_dof_enabled()) return 0;    /* nothing to do: the caller copies the frame */
     struct { float params[4], focus[4]; } u;
     u.params[0] = 1.0f / (float)tgt_w;
@@ -1131,11 +1570,14 @@ int engine_present(SDL_Texture *dst, float max_radius)
     u.focus[1] = u.focus[2] = u.focus[3] = 0.0f;
     SDL_SetGPURenderStateFragmentUniforms(st_dof, 0, &u, sizeof u);
 
+    /* The defocus blurs whatever the frame is RIGHT NOW -- the lit picture when the lighting
+     * ran, the plain picture when it did not. `cur_wrapped` is that object; `wrapped` alone
+     * would blur the unlit picture over the lit one. */
     SDL_SetRenderTarget(R, dst);
     SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
     SDL_SetGPURenderState(R, st_dof);
-    SDL_SetTextureBlendMode(wrapped, SDL_BLENDMODE_NONE);
-    SDL_RenderTexture(R, wrapped, NULL, NULL);
+    SDL_SetTextureBlendMode(cur_wrapped, SDL_BLENDMODE_NONE);
+    SDL_RenderTexture(R, cur_wrapped, NULL, NULL);
     SDL_SetGPURenderState(R, NULL);
     stat_dof_frames++;
     return 1;
@@ -1160,6 +1602,11 @@ void engine_report(void)
     fprintf(stderr, "engine: defocus %s -- %ld frame(s) presented through it%s\n",
             engine_dof_enabled() ? "ON" : "off", stat_dof_frames,
             sh_dof ? "" : "  (NO defocus shader: frames are presented unblurred)");
+    fprintf(stderr, "engine: lighting %s -- %ld frame(s) lit, %ld character quad(s) into the "
+                    "mask, %ld shadow quad(s)%s\n",
+            (light_ok && opt_lighting()) ? "ON" : "off", stat_light_frames,
+            stat_char_quads, stat_shadow_quads,
+            light_ok ? "" : "  (NO lighting chain: frames are presented unlit)");
     if (stat_dropped)
         fprintf(stderr, "engine: %ld quad(s) were dropped for want of a texture; art is MISSING "
                         "from those frames\n", stat_dropped);
@@ -1179,6 +1626,13 @@ void engine_shutdown(void)
     if (GPIPE) { SDL_ReleaseGPUGraphicsPipeline(DEV, GPIPE); GPIPE = NULL; }
     if (st_dof) { SDL_DestroyGPURenderState(st_dof); st_dof = NULL; }
     if (sh_dof) { SDL_ReleaseGPUShader(DEV, sh_dof); sh_dof = NULL; }
+    if (p_chars)   { SDL_ReleaseGPUGraphicsPipeline(DEV, p_chars); p_chars = NULL; }
+    if (p_shadow)  { SDL_ReleaseGPUGraphicsPipeline(DEV, p_shadow); p_shadow = NULL; }
+    if (p_light)   { SDL_ReleaseGPUGraphicsPipeline(DEV, p_light); p_light = NULL; }
+    if (sh_light_vert) { SDL_ReleaseGPUShader(DEV, sh_light_vert); sh_light_vert = NULL; }
+    if (smp_linear) { SDL_ReleaseGPUSampler(DEV, smp_linear); smp_linear = NULL; }
+    if (lvbuf)  { SDL_ReleaseGPUBuffer(DEV, lvbuf); lvbuf = NULL; }
+    if (lvxfer) { SDL_ReleaseGPUTransferBuffer(DEV, lvxfer); lvxfer = NULL; }
     if (SMP)   { SDL_ReleaseGPUSampler(DEV, SMP); SMP = NULL; }
     for (int k = 0; k < BLEND_KINDS; k++)
         if (PIPE[k]) { SDL_ReleaseGPUGraphicsPipeline(DEV, PIPE[k]); PIPE[k] = NULL; }

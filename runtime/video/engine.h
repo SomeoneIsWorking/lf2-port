@@ -68,6 +68,19 @@ typedef struct {
      * src_pixels. */
     const void *host_argb;
     int         host_w, host_h, host_pitch;
+    /* ---- the lighting chain (issues #37, #69) ----
+     *
+     * The engine shades the OBJECTS STANDING IN THE STAGE and nothing else, and "object" is
+     * the game's own answer: a sprite with a ground marker (its shadow ellipse) drawn in front
+     * of it. `is_object` marks such a quad -- it is drawn again into the character mask and,
+     * as its sheared silhouette, into the cast-shadow mask -- and `ground_gy` is the bottom
+     * edge of that ellipse in output pixels, which is where the object meets the floor.
+     *
+     * The shadow quad's horizontal anchor is the object's OWN base (q.x + q.w/2), not the
+     * ellipse's centre: the ellipse is the floor height, but what the shadow must stand under
+     * is the character. */
+    int      is_object;
+    float    ground_gy;
 } EngineQuad;
 
 /* Hand-woven stage geometry, submitted into the SAME pass as the sprites (issue #64).
@@ -108,9 +121,17 @@ int  engine_enabled(void);
 
 /* Draw `n` quads into an offscreen target `w` x `h` and return it as a texture the caller can
  * present. NULL if the engine is unavailable or n is 0. Owned by the engine, valid until the
- * next call. */
+ * next call.
+ *
+ * With the lighting option on (issue #69), the object quads are additionally drawn into a
+ * character mask and a cast-shadow mask, and a light pass re-lights the finished picture into
+ * a second target -- the returned texture is the LIT frame, and the masks never leave the
+ * engine. `floor_row`/`have_floor` are the stage's answer for where its walkable floor begins,
+ * in output rows (0/0 when the frame has no stage in it); the light pass needs them to tell a
+ * floor from a backdrop. */
 struct SDL_Texture *engine_draw(const EngineQuad *q, int n,
-                               const EngineGeom *g, int ng, int w, int h);
+                               const EngineGeom *g, int ng, int w, int h,
+                               float floor_row, int have_floor);
 
 /* A guest surface was written to, so any cached upload of it is stale. Same contract as
  * render_surface_dirty -- the cache is validated by content hash as well, and this is the cheap
