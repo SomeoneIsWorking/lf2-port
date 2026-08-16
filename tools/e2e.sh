@@ -63,6 +63,11 @@ cd "$(dirname "$0")/.."
 BUILD=${BUILD:-scratch/build}
 GAME=${GAME:-game}
 export BUILD GAME
+# Routes must be deterministic: a developer's personal settings file (device
+# mapping in runtime/app/config.c, issue #70) must never re-aim a route's
+# scripted key presses or change the renderer an arm pins. An empty LF2_CONFIG
+# disables the file for every route.
+export LF2_CONFIG=
 
 # Ordered cheapest-first, so a broken build fails in seconds rather than after the renderer
 # comparison. One line each on what only a running game can say:
