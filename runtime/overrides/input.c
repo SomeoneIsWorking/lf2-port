@@ -10,6 +10,7 @@
 #include "guest_ops.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +41,7 @@ void input_report(void)
 
 /* ---- devices, first come first served ----
  *
- * One keyboard layout (arrows to move, Z attack, X jump, C defend) plus every connected
+ * One keyboard layout (remappable now: config.h, issue #70) plus every connected
  * pad form a pool of DEVICES. Outside the game proper every device drives player one, so
  * anyone can work the menus. Inside it (top-level mode 2: character selection and the
  * match) the first device to press anything claims player one, the next player two, and
@@ -136,9 +137,9 @@ static int synth_active(void)
 static int device_buttons(int dev, unsigned char out[7])
 {
     if (dev == 0) {
-        /* up, down, left, right, attack, jump, defend -- the game's button order */
-        static const uint8_t VKS[7] = { 0x26, 0x28, 0x25, 0x27, 0x5A, 0x58, 0x43 };
-        for (int b = 0; b < 7; b++) out[b] = (unsigned char)(hostwin_key_held(VKS[b]) != 0);
+        /* up, down, left, right, attack, jump, defend -- the game's button order, read from
+         * the settings file so a player can remap them (config.h, issue #70). */
+        for (int b = 0; b < 7; b++) out[b] = (unsigned char)(hostwin_key_held(config_key_vk(b)) != 0);
         /* A mouse click on a ported menu reads as this device's attack, so the game does
          * its own dispatch, sound and screen change rather than the port simulating them. */
         if (mouse_confirm_frames > 0) { mouse_confirm_frames--; out[4] = 1; }
