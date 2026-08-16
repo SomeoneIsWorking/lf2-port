@@ -42,12 +42,12 @@ int  hostwin_mouse_clicked(void);
  * the menu records which device opened it: the menu is one screen, but drop-out is per
  * player, and one that guessed would drop the wrong fighter out of the fight.
  *
- * LEAVE MATCH is named for what it VERIFIABLY does, which is not quite what was asked for.
- * It drives the game's own way out of a fight -- F4, then the pre-fight overlay's own Exit
- * item -- and the game lands on its own character-select screen with the roster cleared,
- * ready for another match. Reaching the FRONT-END menu from there is one more step that has
- * not been established (Escape at that screen does nothing, measured), so the item does not
- * claim it. See issue #22.
+ * LEAVE MATCH is named for what it VERIFIABLY does. It calls the game's OWN exit code
+ * directly -- screens.c's guest_end_match and guest_overlay_exit, read off the decompilation
+ * of fn_0041bc90 and fn_00429730 -- so no keystroke or button is injected (issue #22, the
+ * port used to fake F4 and the overlay's attack, and does not any more). The game lands on
+ * its own FRONT-END menu, screen word 10, which is what tools/e2e.sh exit_to_menu asserts
+ * by the word rather than by a picture (the two candidate screens share a blit destination).
  *
  * The rows are built per pause rather than being a fixed table, so the geometry, the hit
  * test and the drawing all agree without any of them knowing which items exist. */

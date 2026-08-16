@@ -8,13 +8,16 @@
 # share a picture, so a frame dump cannot tell them apart (issue #59); the word can, and the
 # word is what the game itself branches on. runtime/overrides/screens.c reports it.
 #
-# THE FAILURE THIS EXISTS TO CATCH. The exit places the post-match overlay's Exit item and
-# lets the GAME's own attack dispatch it. That synthetic press used to run for two gathers
-# unconditionally, and fn_00431c70 -- which the game runs on every way out of a match --
-# clears the held-button latch fn_00431b70 edge-detects against. So the second gather landed
-# on the front-end menu as a FRESH press, the menu confirmed whatever the cursor was on, and
-# the exit sailed straight through 10 to character selection. A run that lands on 1 is that
-# bug, and the route is deliberately the plain one-player case where it always reproduced.
+# WHAT THE EXIT IS, and what this guards. LEAVE MATCH calls the game's OWN exit code now
+# (screens.c's guest_end_match + guest_overlay_exit, read off the decompilation of
+# fn_0041bc90 and fn_00429730) instead of injecting an F4 keystroke and a synthetic attack.
+# The old failure it replaces: the synthetic press ran for two gathers and fn_00431c70 --
+# which the game runs on every way out of a match -- cleared the held-button latch
+# fn_00431b70 edge-detects against, so the second gather landed on the front-end menu as a
+# FRESH press, the menu confirmed whatever the cursor was on, and the exit sailed straight
+# through 10 to character selection. A run that lands on 1 is that bug. The route is
+# deliberately the plain one-player case where it always reproduced, and it is the same
+# verdict now: does LEAVE MATCH land on 10, or does it overshoot?
 set -eu
 
 BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
@@ -46,24 +49,24 @@ say_ok()   { echo "  ok    $1"; }
 say_fail() { echo "  FAIL  $1"; fail=1; }
 
 # The chain first, because a break anywhere in it makes the verdict vacuous rather than wrong.
-if ! grep -q "exit to menu: F4 sent" "$LOG"; then
+if ! grep -q "exit to menu: the game's own match-end ran" "$LOG"; then
     echo "  FAIL  the pause menu's LEAVE MATCH was never taken, so this run proves NOTHING"
     echo "        about where the exit lands"
     grep -m3 "^pause" "$LOG" || echo "        no pause-menu output at all"
     exit 1
 fi
-say_ok "taken: $(grep -m1 'exit to menu: F4 sent' "$LOG")"
+say_ok "taken: $(grep -m1 "exit to menu: the game's own match-end ran" "$LOG")"
 
 if ! grep -q "exit to menu: the overlay is up" "$LOG"; then
-    say_fail "overlay: the game's post-match overlay never appeared, so F4 did not land"
+    say_fail "overlay: the game's post-match overlay never appeared, so the match-end did not land"
 else
     say_ok "overlay: $(grep -m1 'exit to menu: the overlay is up' "$LOG")"
 fi
 
-if ! grep -q "exit to menu: overlay selection set to Exit" "$LOG"; then
-    say_fail "confirm: the Exit item was never placed and confirmed"
+if ! grep -q "exit to menu: the game's own Exit dispatch ran" "$LOG"; then
+    say_fail "confirm: the game's own Exit dispatch never ran"
 else
-    say_ok "confirm: $(grep -m1 'exit to menu: overlay selection set to Exit' "$LOG")"
+    say_ok "confirm: $(grep -m1 "exit to menu: the game's own Exit dispatch ran" "$LOG")"
 fi
 
 # THE VERDICT. It names the screen either way -- a landing report that only ever printed on
@@ -79,16 +82,11 @@ else
     1|2|3)
         say_fail "landing: $land"
         say_fail "         that is CHARACTER SELECTION -- the exit passed through the"
-        say_fail "         front-end menu and a press confirmed its cursor (issue #22)" ;;
+        say_fail "         front-end menu and confirmed something on it (issue #22)" ;;
     *)  say_fail "landing: $land"
         say_fail "         which is neither the front-end menu (10) nor character selection" ;;
     esac
 fi
-
-# The negative that keeps the synthetic press honest: if it was dropped at the screen change,
-# it says so, and that is the mechanism this route asserts rather than the symptom.
-drop=$(grep -m1 "synthetic attack had .* gather(s) left when the game moved" "$LOG" || true)
-[ -n "$drop" ] && say_ok "scope: $drop"
 
 [ "$fail" = 0 ] && echo "exit to menu: ok" || echo "exit to menu: FAILED"
 exit "$fail"
