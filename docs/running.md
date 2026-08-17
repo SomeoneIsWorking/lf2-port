@@ -228,6 +228,7 @@ composed alike and the binary says so:
 | mode menu | its full-screen fill `0x122565` | **left**-aligned |
 | loading | a whole-screen **picture** (`MENU_WAIT`), no fill of its own | centred, side bands extended from its own edge columns |
 | character selection | its full-screen fill `0x000000` | centred (unchanged) |
+| stage-intro banner + swipe (`FUN_00437860`) | the `794x600` banner sheet blitted into y 299..340; the swipe is `FUN_00415160` full-screen fills | centred / the wipe widened to the composition (issue #73) |
 
 The two menus are left-aligned because their character portrait (`MENU_BACK<n>`, the same
 sprite on both screens) is drawn at a **hard literal x = 0** and hangs on the screen's left
