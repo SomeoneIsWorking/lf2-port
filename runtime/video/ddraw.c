@@ -705,37 +705,72 @@ static void controls_hint_draw(const Surface *s)
     }
 }
 
-/* ---- the device labels on the in-match HUD (issue #74) ----
+/* ---- the device labels (issue #74) ----
  *
- * Each of the eight HUD panels is a human player or a computer, and nothing on the panel
- * says which device is driving a human one. The label does: "K" for the keyboard, "P1"..
- * "P4" for the pads. It is drawn here, at the present, because this is where the port knows
- * both the panel's place on the screen AND which device claimed which slot (input.c's
- * dev_player table, reversed by device_for_player).
+ * The in-match HUD panels and the character-select portraits are each a human or a computer,
+ * and nothing on either says which device drives a human one. The label does: "K" for the
+ * keyboard, "P1".."P4" for the pads. It is drawn here, at the present, because this is where
+ * the port knows both the panel's place on the screen AND which device claimed which slot
+ * (input.c's dev_player table, reversed by device_for_player).
  *
- * THE PANELS' OWN GEOMETRY, read off fn_0041ae60's decompilation: slot i sits at
+ * THE HUD PANELS' OWN GEOMETRY, read off fn_0041ae60's decompilation: slot i sits at
  * ((i & 3) * 0xc6, (i >> 2) * 0x36) -- 198 px wide, 54 tall, two rows of four -- and on a
  * wide view the whole strip takes the HUD's centring offset (hud_offset_x), which is the
- * same number the panels' own blits got. A computer slot carries no device and gets nothing. */
+ * same number the panels' own blits got. A computer slot carries no device and gets nothing.
+ *
+ * THE CHARACTER-SELECT SLOTS are the same 2x4 grid of portraits (screens.c's CS_COL/CS_ROW),
+ * so the same (col, row) cell and the same label work for both screens; charselect is
+ * centred by screen_offset_x() like the other fixed-794 screens. The character-select gate is
+ * `panel_charselect_up() && !panel_overlay_up()` -- the overlay sits on character selection,
+ * and its own panels must not be mistaken for the slot portraits. */
+static void device_label_paint(const Surface *s, int x, int y, int dev)
+{
+    char label[16];
+    if (dev == 0)       snprintf(label, sizeof label, "K");
+    else if (dev <= 4)  snprintf(label, sizeof label, "P%d", dev);
+    else                return;
+    for (int c = 0; label[c]; c++) {
+        const int gx = x + c * 8;
+        if (frame_src_pixels && frame_src_pixels != s->pixels)
+            game_glyph_tile(label[c], gx, y, 0xffffffu, frame_src_pixels);
+        game_glyph_draw(label[c], gx, y, 0xffffffu, s->pixels, s->w, s->h, s->pitch);
+    }
+}
+
 static void hud_device_labels(const Surface *s)
 {
     if (!panel_hud_up()) return;
     for (int i = 0; i < 8; i++) {
         const int dev = device_for_player(i);
         if (dev < 0) continue;                       /* a computer, or nobody claimed it */
-        char label[8];
-        if (dev == 0)       snprintf(label, sizeof label, "K");
-        else if (dev <= 4)  snprintf(label, sizeof label, "P%d", dev);
-        else                continue;
-        const int row = i >> 2, col = i & 3;
-        const int x = col * 198 + hud_offset_x(s->w, row * 54 + 54) + 2;
-        const int y = row * 54 + 2;
-        for (int c = 0; label[c]; c++) {
-            const int gx = x + c * 8;
-            if (frame_src_pixels && frame_src_pixels != s->pixels)
-                game_glyph_tile(label[c], gx, y, 0xffffffu, frame_src_pixels);
-            game_glyph_draw(label[c], gx, y, 0xffffffu, s->pixels, s->w, s->h, s->pitch);
-        }
+        const int off = hud_offset_x(s->w, (i >> 2) * 54 + 54);
+        device_label_paint(s, (i & 3) * 198 + off + 2, (i >> 2) * 54 + 2, dev);
+    }
+}
+
+/* Character-select rows and columns are NOT the HUD's grid: the portraits sit at x
+ * {147,300,453,606} and y {95,306} (screens.c's CS_COL/CS_ROW), each 153 px wide -- the HUD's
+ * 198-wide panels are only the strip along the top. */
+static const int CS_XBASE[4] = { 147, 300, 453, 606 };
+static const int CS_YBASE[2] = { 95, 306 };
+
+static void charselect_device_labels(const Surface *s)
+{
+    /* The game's own screen word, not the 2-frame panel_blit window: character selection
+     * holds 1 (world.h SCREEN_CHARSELECT) the whole time it is up, and the overlay -- which
+     * sits on top of it and must not be labelled -- raises 0 (SCREEN_MATCH) in fn_0041bc90.
+     * The overlay's own panels would otherwise be mistaken for the slot portraits. */
+    if (LD32(0x0044d020u) != 1) return;
+    /* Mark the entries as OVERLAY so the game's own charselect redraws (which record over
+     * the composition list each frame) do not wipe the labels: the controls hint does the
+     * same before its tiles, issue #52. */
+    if (frame_src_pixels && frame_src_pixels != s->pixels)
+        render_overlay_mark(frame_src_pixels);
+    const int off = screen_offset_x();
+    for (int i = 0; i < 8; i++) {
+        const int dev = device_for_player(i);
+        if (dev < 0) continue;
+        device_label_paint(s, CS_XBASE[i & 3] + off + 2, CS_YBASE[i >> 2] + 2, dev);
     }
 }
 
@@ -753,6 +788,7 @@ static void present_primary(void)
     Surface *s = com_host(primary_surface);
     if (hint_on) controls_hint_draw(s);
     hud_device_labels(s);
+    charselect_device_labels(s);
     /* After the frame is assembled and before it is shown. The pixels go on the primary for
      * the software compositor; the same menu is also recorded over the renderer's RETAINED
      * frame, and whether that worked is what decides which path may present (issue #52).
