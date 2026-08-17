@@ -76,11 +76,15 @@ typedef struct {
      * as its sheared silhouette, into the cast-shadow mask -- and `ground_gy` is the bottom
      * edge of that ellipse in output pixels, which is where the object meets the floor.
      *
-     * The shadow quad's horizontal anchor is the object's OWN base (q.x + q.w/2), not the
-     * ellipse's centre: the ellipse is the floor height, but what the shadow must stand under
-     * is the character. */
+     * `ground_cx` is the ellipse's HORIZONTAL centre, and it is the anchor the cast shadow
+     * stands under. The sprite quad's own centre is NOT the same point: LF2's frame art carries
+     * a per-frame offset inside its rectangle, so the character's feet sit wherever the game
+     * drew the ellipse, not at the middle of the frame that happens to hold them (issue #72 --
+     * anchoring at q.x + q.w/2 put the shadow up to a sprite-width to the side of the fighter).
+     * The ellipse centre is the object's true base and is what the game's own draw used. */
     int      is_object;
     float    ground_gy;
+    float    ground_cx;
 } EngineQuad;
 
 /* Hand-woven stage geometry, submitted into the SAME pass as the sprites (issue #64).

@@ -844,10 +844,13 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
                 q->world_depth = 1.0f;      /* an object, standing in the fighters' plane */
                 /* MARKED FOR THE LIGHTING CHAIN, with the ground it stands on: the engine
                  * draws the object's own quad into the character mask and its sheared
-                 * silhouette into the cast-shadow mask, and the shadow must be anchored to
-                 * the CHARACTER's base (issue #69), not to the ellipse's centre. */
+                 * silhouette into the cast-shadow mask. The shadow is anchored to the GROUND
+                 * ELLIPSE's centre (issue #72) -- the ellipse is the game's own answer for
+                 * where the character's feet are -- not to the sprite quad's centre, which
+                 * carries a per-frame offset from the feet (measured 9 px on one frame). */
                 q->is_object = 1;
                 q->ground_gy = ground.y + ground.h;
+                q->ground_cx = ground.x + ground.w * 0.5f;
                 /* One cast shadow per object -- the count draw_list's PASS_SHADOW used to
                  * keep, moved here with the shadow itself. */
                 stat_shadow++;

@@ -564,8 +564,6 @@ int engine_init(SDL_Renderer *r)
             SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
         }
 
-        light_ok = sh_light_vert && p_chars && p_shadow && p_light && smp_linear;
-
         /* LINEAR for the light pass's reads of the two masks, unlike the sprite sampler: the
          * light pass is not a pixel-perfect blit but a per-pixel query at slightly-offset
          * texels (the bevel ring, the feather), and stepping those over NEAREST would read the
@@ -577,6 +575,13 @@ int engine_init(SDL_Renderer *r)
         lsi.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
         lsi.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
         smp_linear = SDL_CreateGPUSampler(DEV, &lsi);
+
+        /* AFTER the sampler, not before: light_ok used to be computed while smp_linear was
+         * still NULL, so it was always 0 and the whole chain -- character mask, cast-shadow
+         * mask, light pass -- reported "did not come up" and never ran on any backend. A frame
+         * is then presented unlit with the game's own ellipse deleted, which reads as a fighter
+         * with no shadow rather than as a broken effect (issue #72's picture). */
+        light_ok = sh_light_vert && p_chars && p_shadow && p_light && smp_linear;
 
         if (!light_ok || !smp_linear)
             fprintf(stderr, "engine: the lighting chain did not come up -- frames are presented "
@@ -905,14 +910,15 @@ static void light_emit_char(LightVertex *v, const EngineQuad *q)
 }
 
 /* The same object laid down as its cast shadow: the sheared quad from the one shared light
- * projection. The ground height is the ellipse's bottom edge, but the horizontal anchor is the
- * OBJECT'S OWN BASE (q.x + q.w/2) rather than the ellipse's centre -- a shadow must stand under
- * the character, and the ellipse is only where the floor is. On the ground that makes the foot
- * edge sit exactly at the character's feet; airborne, the lift carries the whole quad along the
- * light. */
+ * projection. The ground point is the ellipse the game drew at the object's feet -- its bottom
+ * edge for the height and its HORIZONTAL CENTRE for the anchor (issue #72). The sprite quad's
+ * own centre is not that point: LF2's frame art is offset inside its rectangle, so a shadow
+ * anchored there stood up to a sprite-width to the side of the fighter. On the ground the foot
+ * edge then sits exactly at the character's feet; airborne, the lift carries the whole quad
+ * along the light. */
 static void light_emit_shadow(LightVertex *v, const EngineQuad *q, float across, float up)
 {
-    const float cx = q->x + q->w * 0.5f;
+    const float cx = q->ground_cx;
     const float gy = q->ground_gy;
     const float air = gy - (q->y + q->h);
     const float lift = air > 0.0f ? air : 0.0f;
@@ -1105,7 +1111,11 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h,
     }
 
     SDL_SubmitGPUCommandBuffer(cmd);
-    return want_light ? tex_lit : (want_chars ? tex_chars : tex_shadow);
+    /* The mask the SHOW diagnostic asked for, not the one the light pass would read:
+     * `want_chars` is true for both SHOW=chars and SHOW=shadow (a shadow needs the character
+     * pass's mask to shade against), so the plain want-chars test handed SHOW=shadow the
+     * CHARACTER mask and the diagnostic could never show a cast shadow (issue #72). */
+    return want_light ? tex_lit : (show == 2 ? tex_shadow : tex_chars);
 }
 
 SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng, int w, int h,
