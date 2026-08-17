@@ -125,6 +125,7 @@ int  gamepad_start_index(void);   /* which pad, or -1; drop-out is per player */
  * game's exit code directly -- the synthetic-attack path that used to dispatch the overlay
  * is gone, issue #22). */
 int  device_player(int dev);
+int  device_for_player(int slot); /* the device driving a slot, -1 = none (issue #74) */
 int  coop_owns(int slot);         /* is this slot the port's to release? */
 int  coop_drop_out(int slot);
 void exit_to_menu_begin(int dev);
