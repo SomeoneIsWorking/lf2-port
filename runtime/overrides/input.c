@@ -69,6 +69,16 @@ int device_player(int dev)
     return dev >= 0 && dev < MAX_DEV ? dev_player[dev] : -1;
 }
 
+/* The reverse, for the HUD: which DEVICE is driving a player slot (issue #74). 0 is the
+ * keyboard, 1..4 the pads; -1 when no device drives it -- a computer slot, or one nobody
+ * claimed. */
+int device_for_player(int slot)
+{
+    for (int d = 0; d < MAX_DEV; d++)
+        if (dev_player[d] == slot) return d;
+    return -1;
+}
+
 static int device_buttons(int dev, unsigned char out[7])
 {
     if (dev == 0) {

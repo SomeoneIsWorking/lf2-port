@@ -705,6 +705,40 @@ static void controls_hint_draw(const Surface *s)
     }
 }
 
+/* ---- the device labels on the in-match HUD (issue #74) ----
+ *
+ * Each of the eight HUD panels is a human player or a computer, and nothing on the panel
+ * says which device is driving a human one. The label does: "K" for the keyboard, "P1"..
+ * "P4" for the pads. It is drawn here, at the present, because this is where the port knows
+ * both the panel's place on the screen AND which device claimed which slot (input.c's
+ * dev_player table, reversed by device_for_player).
+ *
+ * THE PANELS' OWN GEOMETRY, read off fn_0041ae60's decompilation: slot i sits at
+ * ((i & 3) * 0xc6, (i >> 2) * 0x36) -- 198 px wide, 54 tall, two rows of four -- and on a
+ * wide view the whole strip takes the HUD's centring offset (hud_offset_x), which is the
+ * same number the panels' own blits got. A computer slot carries no device and gets nothing. */
+static void hud_device_labels(const Surface *s)
+{
+    if (!panel_hud_up()) return;
+    for (int i = 0; i < 8; i++) {
+        const int dev = device_for_player(i);
+        if (dev < 0) continue;                       /* a computer, or nobody claimed it */
+        char label[8];
+        if (dev == 0)       snprintf(label, sizeof label, "K");
+        else if (dev <= 4)  snprintf(label, sizeof label, "P%d", dev);
+        else                continue;
+        const int row = i >> 2, col = i & 3;
+        const int x = col * 198 + hud_offset_x(s->w, row * 54 + 54) + 2;
+        const int y = row * 54 + 2;
+        for (int c = 0; label[c]; c++) {
+            const int gx = x + c * 8;
+            if (frame_src_pixels && frame_src_pixels != s->pixels)
+                game_glyph_tile(label[c], gx, y, 0xffffffu, frame_src_pixels);
+            game_glyph_draw(label[c], gx, y, 0xffffffu, s->pixels, s->w, s->h, s->pitch);
+        }
+    }
+}
+
 /* The pause menu needs the frame to keep being shown while the game's update is not
  * running -- and the present turned out to live INSIDE that update, so freezing it stopped
  * the picture entirely (frames simply stopped at the pause). This is the same present, on
@@ -718,6 +752,7 @@ static void present_primary(void)
     LOADPROF_SCOPE(LP_PRESENT);
     Surface *s = com_host(primary_surface);
     if (hint_on) controls_hint_draw(s);
+    hud_device_labels(s);
     /* After the frame is assembled and before it is shown. The pixels go on the primary for
      * the software compositor; the same menu is also recorded over the renderer's RETAINED
      * frame, and whether that worked is what decides which path may present (issue #52).
