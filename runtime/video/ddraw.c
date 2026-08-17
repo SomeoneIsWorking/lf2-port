@@ -1545,13 +1545,13 @@ static void surf_Blt(uint32_t self)
         if (world_band_hint && spans_screen) {
             dr = d->w;
             world_band_widened++;
-        } else if (spans_screen && !panel_hud_up()) {
+        } else if (spans_screen) {
             /* THE SCREEN'S OWN BACKDROP, and this is what the reporter asked for: a fill of
-             * the game's whole screen on a screen that is not the world view is the
-             * BACKGROUND, so it covers the composition and starts at the left edge rather than
-             * moving with the content. Nothing is invented -- it is the same flat colour the
-             * game chose for its screen, over more of the window. The art on top of it (the
-             * logo, the character, the menu) is a set of smaller draws and IS placed, below.
+             * the game's whole screen is the BACKGROUND, so it covers the composition and
+             * starts at the left edge rather than moving with the content. Nothing is invented
+             * -- it is the same flat colour the game chose, over more of the window. The art
+             * on top of it (the logo, the character, the menu) is a set of smaller draws and
+             * IS placed, below.
              *
              * THE GATE USED TO BE `compose_off`, i.e. the offset being non-zero, and issue #44
              * is what makes that wrong: a left-aligned screen HAS no offset, so widening its
@@ -1559,8 +1559,20 @@ static void surf_Blt(uint32_t self)
              * the front end would have gone back to 794 columns of blue with black beside it --
              * issue #42's symptom, reintroduced by the fix for #44. What the test means is
              * "this is a fixed-794 screen rather than the world view", so that is what it now
-             * says. It is the same set of frames as before: compose_off is zero during a match
-             * exactly because panel_hud_up() is true. */
+             * says.
+             *
+             * AND THEN IT HAD `!panel_hud_up()` ADDED, and the stage-mode swipe is why that is
+             * gone again (issue #73). A stage-intro transition is the same "full screen, flat
+             * colour" shape as a menu backdrop -- FUN_00437860 wipes the screen with 794-wide
+             * horizontal bands -- and it runs DURING the match, where the gate above declined.
+             * A wide view left the wipe 184 px short of the composition edge at 978, showing
+             * the stage it was supposed to cover. On the frames the gate was written for the
+             * gate never mattered: compose_off is zero during a match, and the stage's own
+             * full-width bands (the ground, the sky) are already widened above by
+             * world_band_hint, so the only fills this newly reaches are the swipe's. The full
+             * clear arrives already spanning the surface (the game clears by surface width),
+             * so it does not even match `dr == NATIVE_W` here. At 794 none of it applies: the
+             * rule requires `d->w > NATIVE_W` up front. */
             dr = d->w;
         } else if (compose_off && dl >= 0 && dr <= NATIVE_W) {
             dl += compose_off; dr += compose_off;
@@ -1629,6 +1641,33 @@ static void surf_Blt(uint32_t self)
     if (lf2_wide_width() && panel_hud_up() && d->w > NATIVE_W && db <= HUD_BAND_H) {
         const int off = (d->w - HUD_W) / 2;
         dl += off; dr += off;
+    }
+
+    /* Widescreen: the STAGE n-n ANNOUNCEMENT banner (issue #73).
+     *
+     * The stage-intro logo is a fixed 794-wide piece of art -- a bitmap banner showing the
+     * stage number -- that FUN_00437860 draws at the START of a stage, in the world band
+     * (y 299..340, below the HUD, above the ground fill at y 356). It is composed at fixed
+     * 794 coordinates against the game's own screen, so on a wider composition it sits 184
+     * px short of the left edge at 978 -- the same mistake the name tags made before issue
+     * #55 -- and it is a BLIT, so the GDI band that settled the persistent STAGE n-n text
+     * (issue #54) does not reach it.
+     *
+     * It is identified the same way the banner's own draw is: its source sheet is the one
+     * surface in the whole game that is 794 wide and 600 tall, and the draw lands in the
+     * banner's band. Both halves are the game's own geometry -- the sheet's size from the
+     * blit, the band from the drawn logo -- so a wrong identification would be a size and a
+     * row agreeing by coincidence. It is a FULL-SCREEN wipe's banner, so it is CENTRED like
+     * every other fixed-794 screen furniture, against the composition. At 794 none of this
+     * fires (the rule requires d->w > NATIVE_W up front). */
+    {
+        const Surface *banner = srcobj ? com_host(srcobj) : NULL;
+        if (lf2_wide_width() && banner && !d->primary && d->w > NATIVE_W
+            && banner->w == 794 && banner->h == 600
+            && dt >= 294 && dt <= 341) {
+            const int off = (d->w - NATIVE_W) / 2;
+            dl += off; dr += off;
+        }
     }
 
     /* Widescreen: a background layer drawn from x 0 across the whole native width is a
