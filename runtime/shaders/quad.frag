@@ -2,7 +2,7 @@
  *
  * WHY THERE IS NO LIGHTING HERE, when the whole reason for a new engine is to light properly.
  * The engine has to be shown to draw what the renderer it replaces draws before it is allowed
- * to draw anything better: `tools/e2e.sh render` diffs the GPU frame against the software
+ * to draw anything better: `tools/e2e.py render` diffs the GPU frame against the software
  * compositor to within a level or two of 255, and that comparison is the only reason any of
  * this can be believed. A first version that both replaced the renderer AND changed the shading
  * would fail that test for two reasons at once and could not be told apart from a broken one.

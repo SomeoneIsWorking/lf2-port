@@ -6,10 +6,13 @@
  * second, hand-painted Escape menu here.
  */
 #include "hostwin.h"
+#include "keyboard.h"
 #include "render.h"
 #include "rmlui.h"
 
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 static int frozen;
 static int opened_in_match;
@@ -39,15 +42,9 @@ static void open_menu(void)
     frozen = rmlui_active() && opened_in_match;
 }
 
-int pause_active(void)
-{
-    return frozen;
-}
+int pause_active(void) { return frozen; }
 
-int pause_menu_in_match(void)
-{
-    return opened_in_match;
-}
+int pause_menu_in_match(void) { return opened_in_match; }
 
 int pause_menu_can_drop(void)
 {
@@ -81,10 +78,14 @@ void pause_menu_leave_match(void)
 
 void pause_tick(void)
 {
-    static int was_escape;
     static int was_start;
-    const int toggle = edge(&was_escape, hostwin_key_held(0x1b) != 0) |
-                       edge(&was_start, gamepad_start_held() != 0);
+    const int escape_edge = keyboard_take_escape();
+    const int start = gamepad_start_held() != 0;
+    const int start_edge = edge(&was_start, start);
+    const int toggle = escape_edge | start_edge;
+
+    if (getenv("LF2_RMLUI_DEBUG") && (escape_edge || start_edge))
+        fprintf(stderr, "rmlui menu command: escape=%d start=%d active=%d\n", escape_edge, start_edge, rmlui_active());
 
     if (!toggle) return;
     if (rmlui_active()) pause_menu_close();

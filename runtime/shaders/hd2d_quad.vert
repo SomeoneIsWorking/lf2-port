@@ -5,7 +5,7 @@
  * states, whose vertex stage uses SDL's own varying convention: colour at location 0, uv at
  * location 1. The engine's quad.vert answers the same two questions in the opposite order, so
  * it cannot drive them, and swapping quad.vert's outputs would touch the one pipeline the
- * byte-identity arms of tools/e2e.sh render verify. This is quad.vert's mapping with SDL's
+ * byte-identity arms of tools/e2e.py render verify. This is quad.vert's mapping with SDL's
  * convention -- three lines of arithmetic already shared with mesh.vert by design, so the
  * verified pipeline is not moved for a convenience.
  *

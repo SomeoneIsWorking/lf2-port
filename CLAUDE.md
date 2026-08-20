@@ -27,21 +27,22 @@ grepping these — nearly all of them are already recorded with the measurement 
 curl -O https://lf2.net/LF2_v2.0a.exe
 python3 tools/extract_game.py LF2_v2.0a.exe game/
 
-cmake -S . -B scratch/build && cmake --build scratch/build -j
-cd game && ../scratch/build/lf2 lf2.exe      # cwd MUST be the game tree — data is opened by relative path
+python3 tools/build/build.py
+cd game && ../scratch/build-clang/lf2 lf2.exe      # cwd MUST be the game tree — data is opened by relative path
 ./run.sh                                     # extract-if-needed + build + run, from anywhere
 ```
 
 Build artefacts go in the gitignored `scratch/`, never `/tmp`.
 
 ```sh
-cd scratch/build && ctest                      # THE suite: ~1.3 s, run it after every edit
-tools/e2e.sh                                   # the scripts that boot the game (minutes)
-tools/e2e.sh mouse render                      # one or more of them by name
+ctest --test-dir scratch/build-clang                 # offline suite + Clang gates, about 15 s
+tools/e2e.py                                   # the scripts that boot the game (minutes)
+tools/e2e.py mouse render                      # one or more of them by name
 ```
 
-- **`ctest` is one suite and it is fast.** Nothing in it boots the game, nothing in it takes
-  half a second, and the whole set is under two. That bar is the point: a suite with a
+- **`ctest` is one suite and it is fast.** Nothing in it boots the game; the gameplay checks
+  stay sub-second, and the two-source Clang lint gate keeps the whole set around fifteen seconds.
+  That bar is the point: a suite with a
   five-minute test in it stops being run, which is how the mouse route stayed green and broken
   for as long as it existed (issue #26).
 - **A claim that can be checked offline must be.** `runtime/overrides/geom.h` holds the port's
@@ -49,7 +50,7 @@ tools/e2e.sh mouse render                      # one or more of them by name
   centring, the overlay's rows, the stereo pan — and `tests/test_geom.c` walks it in a
   millisecond. The overrides *include* that header, so the test is not exercising a copy. The
   audio pan moved this way: a three-run, 270-second script became 20 assertions.
-- **`tools/e2e.sh` is for what genuinely needs a running game** — whether a route reaches a
+- **`tools/e2e.py` is for what genuinely needs a running game** — whether a route reaches a
   screen, whether a second pad drives its fighter, whether the GPU renderer matches the
   software one. It runs them one at a time; each wraps its instance in a wall-clock `timeout`
   and two instances on one machine trip it.
@@ -64,7 +65,7 @@ tools/e2e.sh mouse render                      # one or more of them by name
   re/entries.tsv  +  game/lf2.exe
         |  recompiler/lift.c  (x86 -> C, using recompiler/x86_decode.c)
         v
-  scratch/build/gen/lf2_recomp.c        the game's own logic, machine-generated, never edited
+  scratch/build-clang/gen/lf2_recomp.c        the game's own logic, machine-generated, never edited
         |  calls fn_<addr>() and the imports below
         v
   runtime/{cpu,win32,video,audio,input,app}/   the platform: guest CPU/memory +
@@ -138,7 +139,7 @@ consequences at the Win32 boundary.** That is why the port has real drop-in coop
 and a live-resizing widescreen rather than a shim's approximation of them.
 
 `tools/` is grouped too: `tools/routes/` holds the scripts that boot the game (run them with
-`tools/e2e.sh`), `tools/build/` the build helpers, `tools/re/` the Ghidra scripts and the
+`tools/e2e.py`), `tools/build/` the build helpers, `tools/re/` the Ghidra scripts and the
 memory/trace diff tools. The two a new user actually runs — `extract_game.py` and
 `unpack_installer.py` — stay at the top.
 

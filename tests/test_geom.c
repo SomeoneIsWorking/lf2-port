@@ -42,7 +42,7 @@ static void eqf(const char *what, float got, float want)
 static void test_scale(void)
 {
     /* The game's own window is 1:1 exactly. This is the property that keeps every byte-identity
-     * arm true -- tools/e2e.sh background and tools/e2e.sh render both run at 794x550, and a
+     * arm true -- tools/e2e.py background and tools/e2e.py render both run at 794x550, and a
      * scale of anything but exactly 1 there would change every pixel of both. */
     eqf("794x550 is exactly 1:1", geom_world_scale(794, 550), 1.0f);
     /* The height binds whenever the window is wider in aspect than the game. 1080/550. */

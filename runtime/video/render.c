@@ -705,7 +705,7 @@ static void clear_to(SDL_Texture *rt, uint8_t r, uint8_t g, uint8_t b, uint8_t a
  *
  * IT MUST PRODUCE THE SAME PICTURE, and that is the whole of this first version. The engine
  * exists to light the scene with a real depth buffer, but a first version that both replaced
- * the renderer AND changed the shading would fail tools/e2e.sh render for two reasons at once
+ * the renderer AND changed the shading would fail tools/e2e.py render for two reasons at once
  * and could not be told apart from a broken one. So this is a TRANSLATION of draw_list's colour
  * pass, entry kind for entry kind, and nothing more.
  *

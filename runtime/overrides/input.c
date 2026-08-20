@@ -10,6 +10,7 @@
 #include "guest_ops.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "keyboard.h"
 #include "bindings.h"
 #include "rmlui.h"
 
@@ -23,20 +24,21 @@ void fn_00419a60__orig(void);
  * overrides.h. Defined here, where it is spent. */
 int mouse_confirm_frames;
 
-enum { NET_OR_RECORD = 0x00450b80 };   /* non-zero: the packed masks are being consumed */
+enum { NET_OR_RECORD = 0x00450b80 }; /* non-zero: the packed masks are being consumed */
 enum { RECORDING = 0x0044f1af, MASK_MIRROR = 0x0044d040 };
 
 /* Bit for each of the seven buttons in the packed mask, in button order. The game writes
  * these itself further down its own loop; a pad press has to appear in them too, or a
  * recording made with a controller would replay as a player standing still. */
-static const uint8_t BTN_BIT[7] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02 };
+static const uint8_t BTN_BIT[7] = {0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02};
 
 static long in_frames, in_live, in_padded, in_presses;
 
 void input_report(void)
 {
-    fprintf(stderr, "input: %ld gathers, %ld live player-slots, %ld of them with a pad, "
-                    "%ld button presses merged\n",
+    fprintf(stderr,
+            "input: %ld gathers, %ld live player-slots, %ld of them with a pad, "
+            "%ld button presses merged\n",
             in_frames, in_live, in_padded, in_presses);
 }
 
@@ -54,9 +56,9 @@ void input_report(void)
  * bookkeeping, recording playback (device selector -1) and the packed-mask plumbing. Its
  * BUTTONS for live slots are then overwritten, not merged -- the control.txt keyboard
  * layouts are exactly what "only one keyboard layout" removes. */
-enum { MAX_DEV = 5 };                    /* the keyboard, then up to four pads */
+enum { MAX_DEV = 5 }; /* the keyboard, then up to four pads */
 
-static int dev_player[MAX_DEV] = { -1, -1, -1, -1, -1 };
+static int dev_player[MAX_DEV] = {-1, -1, -1, -1, -1};
 static unsigned char dev_prev[MAX_DEV][7];
 
 /* Which player the keyboard claimed, or -1. The mouse drives the same one, so the two
@@ -65,10 +67,7 @@ int keyboard_player(void) { return dev_player[0]; }
 
 /* Which player a device is driving, for the pause menu: drop-out is per player, and the
  * player it drops out is the one belonging to whoever opened the menu. */
-int device_player(int dev)
-{
-    return dev >= 0 && dev < MAX_DEV ? dev_player[dev] : -1;
-}
+int device_player(int dev) { return dev >= 0 && dev < MAX_DEV ? dev_player[dev] : -1; }
 
 /* The reverse, for the HUD: which DEVICE is driving a player slot (issue #74). 0 is the
  * keyboard, 1..4 the pads; -1 when no device drives it -- a computer slot, or one nobody
@@ -94,26 +93,28 @@ static int device_buttons(int dev, unsigned char out[7])
     if (dev == 0) {
         /* up, down, left, right, attack, jump, defend -- the game's button order, read from
          * the settings file so a player can remap them (config.h, issue #70). */
-        for (int b = 0; b < B_N; b++)
-            out[b] = (unsigned char)(hostwin_key_held(binding_key_vk(b)) != 0);
+        for (int b = 0; b < B_N; b++) out[b] = (unsigned char)(keyboard_held(binding_key_vk(b)) != 0);
         /* A mouse click on a ported menu reads as this device's attack, so the game does
          * its own dispatch, sound and screen change rather than the port simulating them. */
-        if (mouse_confirm_frames > 0) { mouse_confirm_frames--; out[4] = 1; }
-        return 1;                        /* a keyboard is always there */
+        if (mouse_confirm_frames > 0) {
+            mouse_confirm_frames--;
+            out[4] = 1;
+        }
+        return 1; /* a keyboard is always there */
     }
     return gamepad_player_buttons(dev - 1, out);
 }
 
 void fn_00419a60(void)
 {
-    const uint32_t self = R(ECX);              /* __thiscall */
+    const uint32_t self = R(ECX); /* __thiscall */
     const uint32_t mask_buf = LD32(R(ESP) + 12);
 
-    fn_00419a60__orig();                       /* slots, recording, masks, unchanged */
+    fn_00419a60__orig(); /* slots, recording, masks, unchanged */
 
-    const int want_mask   = LD32(NET_OR_RECORD) != 0;
+    const int want_mask = LD32(NET_OR_RECORD) != 0;
     const int want_mirror = (int8_t)LD8(RECORDING) > 0;
-    const int in_game     = game_top_mode() == MODE_IN_GAME;
+    const int in_game = game_top_mode() == MODE_IN_GAME;
 
     in_frames++;
 
@@ -150,12 +151,14 @@ void fn_00419a60(void)
             int fresh = 0;
             for (int b = 0; b < 7; b++) fresh |= btn[d][b] && !dev_prev[d][b];
             if (fresh) {
-                int used[PLAYER_SLOTS] = { 0 };
+                int used[PLAYER_SLOTS] = {0};
                 for (int e = 0; e < MAX_DEV; e++)
-                    if (dev_player[e] >= 0 && dev_player[e] < PLAYER_SLOTS)
-                        used[dev_player[e]] = 1;
+                    if (dev_player[e] >= 0 && dev_player[e] < PLAYER_SLOTS) used[dev_player[e]] = 1;
                 for (int p = 0; p < PLAYER_SLOTS; p++)
-                    if (!used[p]) { dev_player[d] = p; break; }
+                    if (!used[p]) {
+                        dev_player[d] = p;
+                        break;
+                    }
 
                 /* DROP-IN: a device that claims a slot while a match is ALREADY running
                  * has no fighter waiting for it -- character selection is over -- so one is
@@ -198,25 +201,31 @@ void fn_00419a60(void)
                     for (int q = 0; q < PLAYER_SLOTS; q++) {
                         if (LD8(EXISTS + (uint32_t)q)) continue;
                         int taken = 0;
-                        for (int e = 0; e < MAX_DEV; e++) if (dev_player[e] == q) taken = 1;
-                        if (!taken) { low = q; break; }
+                        for (int e = 0; e < MAX_DEV; e++)
+                            if (dev_player[e] == q) taken = 1;
+                        if (!taken) {
+                            low = q;
+                            break;
+                        }
                     }
                     if (low >= 0 && low != p) {
                         /* Not necessarily LOWER than the claim loop's pick: that loop only
                          * skips slots another device holds, so it can land on one that has
                          * a fighter standing in it. This is the lowest slot that is
                          * genuinely empty, which is above it in exactly that case. */
-                        fprintf(stderr, "coop: slot %d is the lowest with no fighter in it, "
-                                        "so device %d takes it instead of slot %d\n",
+                        fprintf(stderr,
+                                "coop: slot %d is the lowest with no fighter in it, "
+                                "so device %d takes it instead of slot %d\n",
                                 low, d, p);
                         dev_player[d] = low;
                         p = low;
                     }
                     if ((int32_t)LD32(DEVSEL + 4u * (uint32_t)p) != 0)
-                        fprintf(stderr, "coop: slot %d carries selector %d, so character "
-                                        "selection listed a computer there -- its fighter "
-                                        "is at its own index and stays; the match gains a "
-                                        "fighter rather than swapping one\n",
+                        fprintf(stderr,
+                                "coop: slot %d carries selector %d, so character "
+                                "selection listed a computer there -- its fighter "
+                                "is at its own index and stays; the match gains a "
+                                "fighter rather than swapping one\n",
                                 p, (int32_t)LD32(DEVSEL + 4u * (uint32_t)p));
                     /* The joiner CHOOSES: a fighter appears flashing and its device
                      * cycles the game's roster with left/right and confirms with attack.
@@ -225,8 +234,10 @@ void fn_00419a60(void)
                      * No early exit here: this sits inside the per-device loop, and leaving
                      * it would skip the remaining devices' button bookkeeping for the
                      * frame. */
-                    fprintf(stderr, "coop: device %d claimed player slot %d mid-match, "
-                                    "opening its character selection\n", d, p);
+                    fprintf(stderr,
+                            "coop: device %d claimed player slot %d mid-match, "
+                            "opening its character selection\n",
+                            d, p);
                     coop_select_begin(self, p, d);
                 }
             }
@@ -252,7 +263,7 @@ void fn_00419a60(void)
      * writes an all-zero button set exactly as it did before -- which is what the slots
      * beyond the first two in tools/routes/controller_2p_test.sh have always been. */
     for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END && i < PLAYER_SLOTS; sel += 4, i++) {
-        if ((int32_t)LD32(sel) <= 0) continue;         /* recording or demo: not ours */
+        if ((int32_t)LD32(sel) <= 0) continue; /* recording or demo: not ours */
         in_live++;
 
         /* This slot's buttons from OUR devices only: outside the game everything routes
@@ -260,7 +271,7 @@ void fn_00419a60(void)
          * has filled with a computer is still a live slot and its AI writes its buttons
          * after this gather, so writing here is harmless -- measured back when pads
          * merged by slot order (see tools/routes/controller_2p_test.sh). */
-        unsigned char out[7] = { 0, 0, 0, 0, 0, 0, 0 };
+        unsigned char out[7] = {0, 0, 0, 0, 0, 0, 0};
         int fed = 0;
         for (int d = 0; d < MAX_DEV; d++) {
             if (!present[d]) continue;
@@ -284,9 +295,12 @@ void fn_00419a60(void)
         uint8_t mask = 0;
         for (int b = 0; b < 7; b++) {
             ST8(obj + BTN_CUR + b, out[b]);
-            if (out[b]) { mask |= BTN_BIT[b]; in_presses++; }
+            if (out[b]) {
+                mask |= BTN_BIT[b];
+                in_presses++;
+            }
         }
-        if (want_mask)   ST8(mask_buf + i, mask);
+        if (want_mask) ST8(mask_buf + i, mask);
         if (want_mirror) ST8(MASK_MIRROR + i, mask);
     }
 }

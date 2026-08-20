@@ -5,6 +5,13 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR
+            "LF2 requires Clang for both C and C++. Configure a clean tree with "
+            "tools/build/build.py; GCC and G++ are not supported build evidence.")
+endif()
 
 add_library(x86_decode recompiler/x86_decode.c)
 target_include_directories(x86_decode PUBLIC recompiler)
@@ -18,7 +25,7 @@ enable_testing()
 
 # ---- THERE IS ONE SUITE AND IT IS FAST ----
 #
-# `ctest` finishes in about a second and a half, and no single test in it takes half a second.
+# `ctest` finishes in about fifteen seconds, including formatting and clang-tidy, and nothing in it boots the game.
 # That is the whole bar: this is a 2001 game whose entire logic is arithmetic over a few
 # megabytes, so anything here that took minutes was measuring the wrong thing in the wrong
 # place. Run it after every edit; it is what is allowed to be the reason you believe something.
@@ -29,8 +36,8 @@ enable_testing()
 # renderer draw what the software one draws -- and costs seconds to minutes each. They live
 # behind one command:
 #
-#     tools/e2e.sh              # all of them, serially
-#     tools/e2e.sh mouse render # by name
+#     tools/e2e.py              # all of them, serially
+#     tools/e2e.py mouse render # by name
 #
 # A claim that COULD be checked offline belongs in runtime/overrides/geom.h and
 # tests/test_geom.c rather than in a script. The audio pan is the worked example: a
@@ -85,6 +92,7 @@ add_executable(lf2
     runtime/app/startup.c
     runtime/input/gamepad.c
     runtime/input/bindings.c
+    runtime/input/keyboard.c
     runtime/app/script.c
     runtime/win32/wsock.c
     runtime/overrides/boot_guest.c
@@ -153,7 +161,7 @@ add_dependencies(lf2 stages)
 set_source_files_properties(
     runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c
     runtime/win32/com.c runtime/win32/win32.c runtime/video/ddraw.c runtime/audio/dsound.c runtime/win32/dshow.c
-    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/input/gamepad.c runtime/input/bindings.c runtime/app/script.c
+    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/app/script.c
     runtime/app/options.c
     runtime/app/config.c
     runtime/app/startup.c
@@ -202,9 +210,20 @@ add_test(NAME bindings_write COMMAND test_bindings write ${LF2_BINDINGS_TEST_CON
 add_test(NAME bindings_read COMMAND test_bindings read ${LF2_BINDINGS_TEST_CONFIG})
 set_tests_properties(bindings_read PROPERTIES DEPENDS bindings_write)
 
+add_executable(test_keyboard tests/test_keyboard.c runtime/input/keyboard.c)
+target_include_directories(test_keyboard PRIVATE runtime/input)
+target_link_libraries(test_keyboard PRIVATE SDL3::SDL3)
+target_compile_options(test_keyboard PRIVATE -Wall -Wextra)
+add_test(NAME keyboard COMMAND test_keyboard)
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME structure COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tools/build/check_structure.py)
+add_test(NAME clang_format COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tools/build/check_cpp_quality.py format)
+add_test(NAME clang_tidy COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tools/build/check_cpp_quality.py tidy
+         --build-dir ${CMAKE_BINARY_DIR})
 
 # ---- RmlUi (issue #70) ----
 #
