@@ -1,10 +1,11 @@
 ---
 id: C035
 kind: claim
-status: holds
+status: falsified
 created: 2026-08-20
 tags: startup
 depends: runtime/app/startup.c#startup_before_game_frame, runtime/overrides/boot_guest.c#boot_guest_enter_loader, runtime/video/ddraw.c
+falsified_on: 2026-08-20
 ---
 
 ## Claim
@@ -18,3 +19,9 @@ tools/e2e.sh smoke: first script-visible screen modemenu; startup logs both dire
 ## What would falsify it
 
 a zero-input normal boot presents either retired picture, requires a key/click/pad event, or reaches a screen before modemenu
+
+## FALSIFIED 2026-08-20
+
+USER 2026-08-20 observed the loading screen still visible and startup still behaving like a button-driven skip. The old smoke evidence only proved the script-visible screen label; it did not observe window visibility or establish a state transition independent of the front-end Game Start branch.
+
+> Anything that cited this claim as proof must be re-checked. Grep the repo for it.

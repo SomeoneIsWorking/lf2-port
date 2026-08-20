@@ -101,7 +101,7 @@ check "device pulls"       "$(num "$au" 'device-pulls')" 100
 
 first_screen=$(grep '^scripted input: screen ' "$LOG" | head -1 | sed -n 's/.*screen \([^ ]*\) first.*/\1/p')
 if [ "$first_screen" = "modemenu" ] \
-   && grep -q '^startup: guest initialised; entering its loader directly$' "$LOG" \
+   && grep -q '^startup: world constructed in local-loader state$' "$LOG" \
    && grep -q '^startup: data loaded; presenting the mode menu$' "$LOG"; then
     echo "  ok    startup: the first script-visible screen is the post-load mode menu"
 else

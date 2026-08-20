@@ -5,7 +5,7 @@ status: resolved
 symptom: The keyboard layout is one hardcoded set (arrows+Z/X/C in runtime/overrides/input.c) with no way to remap, and the renderer/light/DOF options live in a hand-rolled pause-menu page that cannot grow a real settings tree
 tags: reported,feature,ui,rmlui,input,options
 created: 2026-08-16
-updated: 2026-08-20
+updated: 2026-08-21
 ---
 
 ## Reported
@@ -49,3 +49,9 @@ USER 2026-08-20: copy the RmlUi integration from Dusklight. The LF2 implementati
 
 ### Resolution (2026-08-20)
 RmlUi now owns a persistent keyboard/controller mapper and graphical settings document. Its SDL backend is a separate UI module, controller capture is release-gated, the shipping input gather consumes the mappings, ctest bindings passes, and the settings route opens and renders the real document.
+
+### Reopened (2026-08-20)
+USER 2026-08-20 reports the shipped RmlUi is completely broken and is only reachable by opening the legacy Escape menu first. Reproduce through the default launcher; repair rendering and mapped input through the real shipping path, and do not count a scripted texture-load assertion as proof of usability.
+
+### Resolution (2026-08-21)
+RmlUi was broken for three independent integration reasons: SDL_UpdateTexture's SDL3 bool result was inverted so successful font-atlas uploads were destroyed; the backend leaked viewport/clip state into the shared renderer; and the document used browser-like bindings unsupported by RmlUi. Replaced the legacy pause painter with one global Dusklight-structured RmlUi document, corrected atlas/upload and render-state ownership, used RmlUi data-model syntax and tabbable controls, blocked guest input while modal, and verified mapped pad navigation plus rendering through settings and ui_global routes.

@@ -5,7 +5,7 @@ status: resolved
 symptom: Every run boots to the front-end menu on frame 1, then the mode menu, then a long data load before gameplay. There is no way to jump straight into a match
 tags: reported,feature,startup
 created: 2026-08-16
-updated: 2026-08-20
+updated: 2026-08-21
 ---
 
 ## Reported
@@ -41,3 +41,12 @@ USER 2026-08-20: the skipped front end has no retained function. Its input setup
 
 ### Resolution (2026-08-20)
 Startup now executes the original Game Start branch's non-rendering state transition at the guest boundary after platform initialization, then runs the real loader while suppressing the retired first/loading pictures. No input is injected; smoke proves the first visible/script screen is modemenu and reaches a match.
+
+### Reopened (2026-08-20)
+USER 2026-08-20 reports startup still skips screens by injecting a button. The resolution claim is therefore untrusted: trace the default boot path and replace any synthetic confirm/button state with the game's actual post-platform loader/menu state transition.
+
+### Note (2026-08-20)
+USER 2026-08-20 additionally reports the loading screen itself is still visible. Required observable remains: the real loader runs, but no front-end or loading frame is presented; the first visible interactive frame is the mode menu.
+
+### Resolution (2026-08-21)
+The rejected startup path reproduced the launcher's Game Start transition after initialization, so it still encoded frontend selection semantics and allowed loader presentation. fn_00419e40 now runs the original world constructor then establishes loader mode as the port's initial state before the first update; no input or launcher branch is synthesized. Loader frames are discarded while SDL stays hidden, and the window is revealed only after the first mode-menu frame is presented. Smoke and the default launcher verify modemenu is first.

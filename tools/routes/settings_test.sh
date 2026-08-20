@@ -1,7 +1,7 @@
 #!/bin/sh
-# The RmlUi settings document opens from the real pause menu and renders the shared keyboard
-# and gamepad SVGs. This route stops at the document: mapping semantics are covered by the fast
-# bindings test, while only a running renderer can prove the document and its assets are live.
+# The Dusklight-style RmlUi shell opens directly from the first post-load menu and reaches its
+# input-mapping page with controller navigation. This proves there is no legacy Escape menu in
+# front of it and that the shared keyboard/gamepad SVGs are live at the document boundary.
 set -eu
 
 BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
@@ -14,12 +14,9 @@ LOG="$OUT/run.log"
 if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi
 if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; fi
 
-PAD="south@modemenu+60"
-PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238"
-PAD="$PAD,up@charselect+298,up@charselect+358,south@charselect+418,south@charselect+618"
-PAD="$PAD,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
-# Main pause rows for a normal player: RESUME, LEAVE MATCH, OPTIONS, SETTINGS, QUIT.
-PAD="$PAD,start@match+300,down@match+360,down@match+420,down@match+480,south@match+540"
+# Continue -> Quit -> Game tab -> Graphics tab -> Controls tab, then activate it.
+PAD="start@modemenu+60,down@modemenu+100,down@modemenu+140"
+PAD="$PAD,down@modemenu+180,down@modemenu+220,south@modemenu+260"
 
 echo "RmlUi settings: opening the mapper and shared device artwork..."
 ( cd "$GAME" && \
@@ -38,12 +35,12 @@ frames=$(echo "$line" | sed 's/.*open(s), \([0-9]*\) rendered.*/\1/')
 textures=$(echo "$line" | sed 's/.*frame(s), \([0-9]*\) shared.*/\1/')
 fail=0
 if [ "$opens" -ge 1 ] 2>/dev/null; then
-    echo "  ok    settings document opened: $opens"
+    echo "  ok    global RmlUi shell opened directly: $opens"
 else
     echo "  FAIL  settings document never opened: $line"; fail=1
 fi
 if [ "$frames" -ge 1 ] 2>/dev/null; then
-    echo "  ok    RmlUi rendered while the match stayed paused: $frames frame(s)"
+    echo "  ok    RmlUi rendered over the first game menu: $frames frame(s)"
 else
     echo "  FAIL  the document opened but rendered no frames: $line"; fail=1
 fi

@@ -2,6 +2,7 @@
 
 #include "device_assets.h"
 #include "guest.h"
+#include "hostwin.h"
 #include "render.h"
 
 #include <SDL3/SDL.h>
@@ -9,7 +10,10 @@
 #include <stdio.h>
 
 static SDL_Surface *icons[DEVICE_ASSET_COUNT];
+static SDL_Surface *native_icons[DEVICE_ASSET_COUNT];
 static int load_failed[DEVICE_ASSET_COUNT];
+static int native_failed[DEVICE_ASSET_COUNT];
+static int native_scale_x100 = -1;
 
 static DeviceAsset asset_for_device(int dev)
 {
@@ -30,6 +34,34 @@ static SDL_Surface *icon_surface(DeviceAsset asset)
         }
     }
     return icons[asset];
+}
+
+static void native_icons_reset(int scale_x100)
+{
+    for (int i = 0; i < DEVICE_ASSET_COUNT; i++) {
+        if (native_icons[i]) SDL_DestroySurface(native_icons[i]);
+        native_icons[i] = NULL;
+        native_failed[i] = 0;
+    }
+    native_scale_x100 = scale_x100;
+}
+
+static SDL_Surface *native_icon_surface(DeviceAsset asset, float scale)
+{
+    if (asset < 0 || asset >= DEVICE_ASSET_COUNT) return NULL;
+    const int key = (int)(scale * 100.0f + 0.5f);
+    if (key != native_scale_x100) native_icons_reset(key);
+    if (!native_icons[asset] && !native_failed[asset]) {
+        /* Follow the renderer's existing high-resolution text path: rasterise at the final
+         * output footprint, while the quad stays 18 composition pixels. Its NEAREST sampler
+         * then performs an approximately 1:1 copy instead of magnifying an 18x18 bitmap or
+         * minifying an arbitrary oversized one. Re-rasterise when a resize changes scale. */
+        int pixels = (int)((float)DEVICE_ICON_SIZE * scale + 0.5f);
+        if (pixels < 1) pixels = 1;
+        native_icons[asset] = device_asset_rasterize(asset, pixels, pixels);
+        if (!native_icons[asset]) native_failed[asset] = 1;
+    }
+    return native_icons[asset];
 }
 
 static uint32_t premultiply(uint32_t source)
@@ -76,9 +108,11 @@ int device_icon_paint(uint32_t dst_pixels, int dst_w, int dst_h, int dst_pitch,
 
 int device_icon_record(uint32_t dst_pixels, int x, int y, int dev)
 {
-    SDL_Surface *icon = icon_surface(asset_for_device(dev));
+    SDL_Surface *icon = native_icon_surface(asset_for_device(dev), lf2_world_scale());
     if (!icon) return 0;
-    uint32_t *tile = render_tile_begin(dst_pixels, x, y, icon->w, icon->h, 0, 0);
+    uint32_t *tile = render_tile_begin(dst_pixels, x, y,
+                                      DEVICE_ICON_SIZE, DEVICE_ICON_SIZE,
+                                      icon->w, icon->h);
     if (!tile) return 0;
     for (int iy = 0; iy < icon->h; iy++) {
         const uint32_t *src = (const uint32_t *)((const unsigned char *)icon->pixels
@@ -94,7 +128,11 @@ void device_icons_shutdown(void)
 {
     for (int i = 0; i < DEVICE_ASSET_COUNT; i++) {
         if (icons[i]) SDL_DestroySurface(icons[i]);
+        if (native_icons[i]) SDL_DestroySurface(native_icons[i]);
         icons[i] = NULL;
+        native_icons[i] = NULL;
         load_failed[i] = 0;
+        native_failed[i] = 0;
     }
+    native_scale_x100 = -1;
 }

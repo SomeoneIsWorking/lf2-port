@@ -389,19 +389,22 @@ draw calls at y 16, 39, 64, 87, 111, 137. The three rows that had been sampled a
 three a uniform step gets nearly right, so no amount of re-measuring by that method would have
 found it.
 
-## The pause menu
+## The global RmlUi menu
 
-The game has no pause; this is the port's, built on declining to call the game's own
-per-frame update. **Escape** or **Start** during a match opens it, and it takes mouse,
-keyboard and pad like every other menu here.
+**Escape** or **Start** opens the same RmlUi document directly from the mode menu, character
+selection, pre-fight overlay, or a running match. There is no hand-painted prerequisite menu.
+While the document is open, keyboard, mouse, and controller input belongs exclusively to
+RmlUi; a running match is frozen by declining its per-frame update, while non-gameplay screens
+keep drawing behind the modal document.
 
 | Item | |
 |---|---|
-| RESUME | |
+| CONTINUE | closes RmlUi and returns to the underlying screen |
 | DROP OUT | only when the device that OPENED the menu is driving a player this port put into the match — a drop-in. It runs the same `coop_leave` an unplugged pad does, which refuses any slot the game's own character selection filled |
-| LEAVE MATCH | calls the game's OWN exit code directly — `screens.c`'s `guest_end_match` / `guest_overlay_exit`, read off `fn_0041bc90` and `fn_00429730` — and lands on the game's own front-end menu (screen word `0x0044d020` = 10). No keystroke or button is injected (issue #22) |
-| OPTIONS | the light's direction: **LIGHT ANGLE** (which way it comes from) and **LIGHT HEIGHT** (how high it is), in degrees. Left/right adjust in 5° steps, confirm nudges, BACK returns. Both feed the *one* light vector, so the shading on the fighters, the direction their shadows point and how long those shadows are all move together — and the frame is frozen while you do it, so you watch them move |
-| SETTINGS | the RmlUi settings screen (issue #70): **GRAPHICS** — render engine / character lighting — and **CONTROLS** — keyboard and controller bindings for all seven actions. Select a binding, then press its replacement. It renders over the frozen frame and is engine-path only (the item is not offered on the software fallback) |
+| LEAVE MATCH | starts the game's own match-exit flow. No keystroke or button is injected (issue #22) |
+| GAME | the actions above plus Quit |
+| GRAPHICS | native renderer, character shading/shadows, and light angle/height. No DoF or other post-processing controls exist |
+| CONTROLS | persistent keyboard and controller bindings for all seven actions. Select a binding, then press its replacement |
 | QUIT GAME | ends the process |
 
 Two things about it are worth knowing before changing it.
@@ -410,26 +413,32 @@ Two things about it are worth knowing before changing it.
 keyboard, Start means the pad holding it. A menu that guessed would take the wrong fighter
 out of the fight.
 
-**Both DROP OUT and LEAVE MATCH unpause first.** Pausing works by not calling the game's
+**Both DROP OUT and LEAVE MATCH close the modal first.** Pausing works by not calling the game's
 update, so anything the *game* has to do — and leaving a match is one of those — would
 otherwise be delivered to a game that never runs another frame.
 
-`LEAVE MATCH` is named for what it verifiably does: it lands on the game's front-end menu,
+`LEAVE MATCH` is named for what it verifiably does: it lands on the post-load mode menu,
 asserted by the screen word rather than by a picture, because character selection and the
-front-end share a blit destination and can share a picture (issue #59). `tools/e2e.sh
+mode menu share a blit destination and can share a picture (issue #59). `tools/e2e.sh
 exit_to_menu` is that assertion. `tools/e2e.sh pause_dropout` covers the drop-out half end to
 end, including the negative that player one is still in the match afterwards.
 
-The settings screen is RmlUi (issue #70) — the one C++ dependency in the port, vendored as a
+The global menu is RmlUi (issues #70 and #79) — the one C++ dependency in the port, vendored as a
 submodule at `third_party/RmlUi` (pinned to 6.2) and built with its freetype font engine; the
-screen's own text uses the port's committed Liberation face, loaded from memory. The
-settings — seven keyboard bindings, seven controller bindings, renderer and character lighting —
-persist across runs in `lf2.cfg` beside the game tree (`runtime/app/config.c`). The keyboard and
-gamepad column headers are SVGs from the shared `port-assets` repository, embedded at build time
-rather than copied into this tree. The same embedded SVGs replace the old `K`/`P1..P4` text
-indicators on character-select portraits and the in-match HUD. One asset loader rasterizes them
-for RmlUi, the software compositor, and native display-list tiles; `tools/e2e.sh settings` proves
-the document renders both shared textures.
+document's text uses the port's committed Liberation face, loaded from memory. Its window,
+tabs, document model, controlled values, and live input navigation follow Dusklight's RmlUi
+ownership pattern; the SDL rendering adapter remains separate. The settings — seven keyboard
+bindings, seven controller bindings, renderer, and character lighting — persist across runs in
+`lf2.cfg` beside the game tree (`runtime/app/config.c`).
+
+The keyboard/gamepad headers and in-game device indicators are SVGs from the shared
+`port-assets` repository, embedded at build time rather than copied into this tree. The
+software compositor rasterizes them at logical size. The existing native high-resolution
+display-list path receives a vector raster matched to the quad's current output-pixel footprint
+behind the same 18x18 logical cell, and RmlUi receives a 120x120 linear-filtered raster, so
+neither path first reduces the SVG to a tiny bitmap.
+`tools/e2e.sh settings ui_global` proves the document renders both shared textures and opens on
+all four screens.
 
 ## Scripted input
 
@@ -443,10 +452,12 @@ and with how busy the machine is, and every regression test's route was once a s
 at a moving target (issue #18, which went red three times for that reason and never for a real
 one). Every route in `tools/` is screen-keyed end to end, the opening press included.
 
-**There is no opening press.** Startup executes the original Game Start state transition at the
-guest boundary, runs the real loader, suppresses both retired pictures, and presents the mode
-menu as the first screen. Routes therefore begin at `@modemenu`; a click/key/button aimed at a
-hidden launcher is a regression, not a boot mechanism (issue #71).
+**There is no opening press or emulated Game Start branch.** The overridden world constructor
+establishes loader mode as its initial state before the first update can accept input. The real
+loader runs, but its presentation is discarded while the SDL window remains hidden. The window
+is revealed only after the first mode-menu frame has been rendered and presented. Routes
+therefore begin at `@modemenu`; a click/key/button aimed at a hidden launcher is a regression,
+not a boot mechanism (issue #71).
 
 A press whose screen never appears **never fires**, and the run says so at exit along with the
 screens that did appear — silently not pressing is how a route that missed its screen reads as
@@ -1455,22 +1466,19 @@ by nothing measurable (10.1 s / 10.3 s against 10.2 s). glibc's `getenv` is chea
 surrounding parse. The caching was kept because it is the right shape for a flag on a hot
 path, not because it bought anything.
 
-## One keyboard, first come first served
+## Persistent mappings, first come first served
 
-There is exactly one keyboard layout, and it is drawn along the bottom of the front end:
-
-    arrows move | Z attack | X jump | C defend
-
-The four per-player layouts from `data/control.txt` no longer reach the game; the control
-settings screen still edits them, but the input gather override replaces every live
-player's buttons with the port's own device routing (`runtime/overrides/input.c`).
+RmlUi's **Controls** tab owns one keyboard mapping and one controller mapping for Up, Down,
+Left, Right, Attack, Jump, and Defend. They persist in `lf2.cfg`; the four legacy layouts in
+`data/control.txt` and the discarded launcher's control screen no longer reach live input.
+The native input gather reads the same mapping that RmlUi edits
+(`runtime/input/bindings.c`, `runtime/overrides/input.c`).
 
 Devices — the keyboard and every connected pad — are handed to players **first come,
-first served**: outside the game proper every device drives player one, so anyone can
-work the front-end menus; from the mode menu onward the first device to press anything
+first served**: on menus every device can navigate; from the mode menu onward the first device to press anything
 becomes player 1, the next player 2, and so on, and pressing attack on the join screen
 claims and joins in one stroke. Assignments clear when the game returns to the front
-end, so the next session reassigns from scratch. Held keyboard state comes from a
+end of a session, so the next session reassigns from scratch. Held keyboard state comes from a
 host-side ledger fed by the same message stream as everything else
 (`hostwin_key_held`), which is what makes the scripted-key tests exercise the identical
 path a human uses.
@@ -1482,10 +1490,10 @@ time.
 
 | control | effect |
 |---|---|
-| d-pad / left stick | the player's directions; in the front-end menu, moves the selection |
-| A (south) | attack; in the front-end menu, activates the selection |
+| d-pad / left stick | the player's directions; in RmlUi, moves focus |
+| A (south) | attack; in RmlUi, activates the focused control |
 | B / X | jump / defend |
-| Start | activates the front-end menu's selection |
+| Start | opens or closes the global RmlUi menu |
 
 Pads are handed to live player slots in order, so **a second controller is player two**,
 with no configuration either. `LF2_VIRTUAL_PAD2` attaches a second software pad and
@@ -1541,11 +1549,9 @@ player standing still.
 Everything the game drives from those buttons then follows for free: mode select, character
 selection, the pre-fight overlay and the match itself.
 
-The front-end menu is the one exception, because it is mouse-driven rather than
-button-driven, so what a pad moves there is the ported menu's selection index. Selecting
-works by placing the pointer, so the game highlights the entry exactly as a mouse would —
-the highlight is the game's, not something drawn on top. The band coordinates come from the
-game's own hit-test constants (`tools/re/click_bands.py`).
+The retired launcher was mouse-driven rather than button-driven. It is no longer on the port's
+route; global navigation and mapping are owned by RmlUi, while the post-load game screens keep
+their native button flow.
 
 This replaced an earlier version that synthesised player-1 keypresses at the window
 boundary for all of it. That worked, but it made a controller pretend to be a keyboard
@@ -1756,7 +1762,7 @@ Three hooks in `runtime/video/ddraw.c`:
   version showed them all at the end of the chain, by which time the shadow scratch had been
   reused, and `SHOW=shadow` confidently displayed a blurred copy of the scene.
 - **`LF2_HD2D_LIGHT=<azimuth>,<elevation>`** puts the key light at a known angle, in degrees.
-  The light is the *player's* — it is set from the pause menu's **Options** page — and this
+  The light is the *player's* — it is set from RmlUi's **Graphics** tab — and this
   exists so a test can place it and check the shadows actually followed. "The shadow's shape
   responds to the light" is not something one screenshot can show; two are needed, and this is
   how they are taken.
