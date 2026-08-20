@@ -9,7 +9,7 @@
  *
  * THE FILE is `lf2.cfg` beside the game tree (the port runs with the game tree as its cwd),
  * overridable with LF2_CONFIG. An EMPTY LF2_CONFIG disables the file entirely, which is how the
- * scripted routes stay deterministic: tools/e2e.sh exports it, so a developer's personal key
+ * scripted routes stay deterministic: tools/e2e.py exports it, so a developer's personal key
  * bindings can never re-aim a route's scripted key presses.
  *
  * The format is one `name value` per line, `#` comments. It is deliberately the seed for the

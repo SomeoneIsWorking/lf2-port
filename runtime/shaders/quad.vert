@@ -40,7 +40,7 @@ void main()
     /* Composition pixels to clip space, y down. No half-pixel offset: the quads arrive on
      * integer pixel boundaries from the game's own rectangles, and adding one here would put
      * every sprite half a texel off its stated place -- which at a scale of 1 is exactly the
-     * kind of drift the byte-identity arm of tools/e2e.sh background exists to catch. */
+     * kind of drift the byte-identity arm of tools/e2e.py background exists to catch. */
     gl_Position = vec4(2.0 * a_pos.x / view.u_view.x - 1.0,
                        1.0 - 2.0 * a_pos.y / view.u_view.y,
                        a_depth, 1.0);

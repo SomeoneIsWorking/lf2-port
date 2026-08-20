@@ -30,4 +30,4 @@ coverage is handled by their layer composition, not by replacement geometry.
 CMake copies this directory next to the built binary after every build, and that is where the
 running port looks first — its working directory is the *game* tree, which is not part of this
 repo. `LF2_STAGE_GEOM=1` makes a stage with no geometry say so and name every directory it
-looked in; `tools/e2e.sh stage_geom` asserts that end to end.
+looked in; `tools/e2e.py stage_geom` asserts that end to end.

@@ -22,7 +22,7 @@
  * ordered scene is the part that came out of measurement and is right. This replaces what
  * DRAWS that list, not what records it.
  *
- * THE ACCEPTANCE GATE EXISTS ALREADY, which is what makes this safe. `tools/e2e.sh render`
+ * THE ACCEPTANCE GATE EXISTS ALREADY, which is what makes this safe. `tools/e2e.py render`
  * diffs the GPU frame against the software compositor, with a dropped-draw arm proving the
  * comparison can fail. The engine has to pass the SAME test against the SAME compositor before
  * it draws anything the old path could not -- so its first version is deliberately a

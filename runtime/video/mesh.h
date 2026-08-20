@@ -19,7 +19,7 @@
  *
  * So `render.c` is untouched, the software compositor is untouched, and a stage with no
  * authored geometry allocates nothing and submits nothing. That last part is what keeps
- * `tools/e2e.sh background`'s byte-identity arm true.
+ * `tools/e2e.py background`'s byte-identity arm true.
  *
  * WHY A SET NEEDS NO SHARED DEPTH BUFFER WITH THE SPRITES: it is BEHIND all of them. The
  * interpenetration that would need one is mesh-against-mesh, and that is entirely inside this
@@ -111,7 +111,7 @@ SDL_Texture *mesh_draw(int slot, const MeshVertex *v, int n, int w, int h,
  * one second -- and report whether the near one survived. A depth pass that is not actually
  * testing draws the far one over the near one and looks perfectly fine on any single frame, so
  * this is the case that MUST come out one way and is what makes an ordinary run's silence
- * mean something. Wired into tools/e2e.sh mesh. */
+ * mean something. Wired into tools/e2e.py mesh. */
 void mesh_report(void);
 
 #endif

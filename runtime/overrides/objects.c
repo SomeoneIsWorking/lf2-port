@@ -12,7 +12,7 @@
  * instructions and it WRITES BACK -- the effects loop advances per-effect counters and
  * decrements obj[0x36c] -- so this is not a drawing routine that can be approximated.
  *
- * HOW IT IS ACCEPTED. `tools/e2e.sh objects` compares this against fn_0041a5a0__orig at a 794
+ * HOW IT IS ACCEPTED. `tools/e2e.py objects` compares this against fn_0041a5a0__orig at a 794
  * view where bg_view_width() IS 794 and the port must therefore be byte-identical -- in PIXELS
  * and in STATE (.data and the guest heap, which is deterministic to one byte in 106 MB, claim
  * C026). LF2_OBJ_ORIG=1 selects the recompiled body, which is what the gate's control arm uses.
