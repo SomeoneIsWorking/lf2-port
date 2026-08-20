@@ -30,10 +30,10 @@ GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
 #   per arm -- the project's rule is that run artefacts go to the gitignored scratch/, which is
 #   on the real disk.
 #   And a route that deletes its evidence on EXIT makes a failure unexaminable: the one thing
-#   anybody wants after "FAIL: the defocus changed 0 px" is the two frames it compared. They are
+#   anybody wants after a failed frame comparison is the two frames it compared. They are
 #   cleared at the START of the next run instead, so the last run's frames are always there.
 OUT=${LF2_SCRATCH:-scratch}/render_test
-rm -rf "$OUT"
+tools/build/scratch_clean.sh "$OUT"
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)          # absolute: each arm runs with cwd inside the game tree
 
@@ -48,7 +48,7 @@ python3 -c "" 2>/dev/null || { echo "SKIP: no python3 to read the frame dumps"; 
 # different point in the match and the arm failed for a reason that had nothing to do with the
 # renderer. The offsets below are the SAME two moments, expressed against the screens.
 FRAMES=@charselect+394,@match+282
-PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
+PAD="south@modemenu+60"
 PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238"
 PAD="$PAD,up@charselect+298,up@charselect+358,south@charselect+418,south@charselect+618"
 PAD="$PAD,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
@@ -77,22 +77,15 @@ echo "native renderer vs the software compositor: four runs..."
 arm soft LF2_RENDERER=soft
 arm gpu  LF2_ENGINE=0
 arm skip LF2_ENGINE=0 LF2_RENDER_SKIP=7
-arm light LF2_DOF=off
+arm light
 # THE PORT'S OWN ENGINE (issue #64), against the SAME software compositor and the SAME
 # tolerance. Its first version is deliberately a REPRODUCTION rather than an improvement --
 # one that both replaced the renderer and changed the shading would fail this comparison for
 # two reasons at once and could not be told apart from a broken one. So it has to match, and
 # `engskip` is its own negative: the engine honours LF2_RENDER_SKIP, so an engine frame with
 # every 7th entry dropped must differ, or the two engine dumps are not the engine.
-arm engine     LF2_HD2D=off LF2_DOF=off
-arm engineskip LF2_HD2D=off LF2_DOF=off LF2_RENDER_SKIP=7
-# THE DEFOCUS (issue #63), against the same engine frame with it switched off. Its two halves are
-# opposite on the two frames and that pair IS the test: a depth of field must change a frame with
-# a stage in it and change NOTHING on a frame without one. The second half is what catches an
-# effect that has spread over the whole picture, which is why the previous bloom/DOF/haze/vignette
-# cut was removed -- and it holds by construction here, because a pixel with no distance in the
-# G-buffer takes an untouched branch and a menu frame has no layers at all.
-arm dof        LF2_HD2D=off
+arm engine     LF2_HD2D=off
+arm engineskip LF2_HD2D=off LF2_RENDER_SKIP=7
 
 # "<maxdiff> <differing> <total>" for two PPMs, or "ERR ..." -- never silence.
 cmp_ppm() {
@@ -136,7 +129,7 @@ for f in "$OUT/soft"/*.ppm; do
     # EVERY arm that is later compared, including `light` -- the comparisons below are
     # guarded by a bare `[ -f ]`, so an arm whose run died produced no frame, the guard
     # skipped its assertion, and the route stayed green having tested nothing.
-    for arm_dir in gpu skip engine engineskip dof light; do
+    for arm_dir in gpu skip engine engineskip light; do
         if [ ! -f "$OUT/$arm_dir/$n" ]; then
             echo "  FAIL  $n: the $arm_dir arm produced no such frame"; fail=1
         fi
@@ -200,47 +193,6 @@ for f in "$OUT/soft"/*.ppm; do
                     fail=1
                 fi
             fi
-        fi
-    fi
-
-    # ---- THE DEFOCUS, asserted the way the light arm is: opposite on the two frames ----
-    if [ -f "$OUT/dof/$n" ] && [ -f "$OUT/engine/$n" ]; then
-        set -- $(cmp_ppm "$OUT/engine/$n" "$OUT/dof/$n")
-        if [ "$1" = "ERR" ]; then echo "  FAIL  $n: dof compare: $2"; fail=1; else
-            dmax=$1; dn=$2
-            # SELECTED BY WHICH FRAME THIS IS, not by its filename. The frame numbers are an
-            # OUTPUT of the route -- they move whenever the pad script or the machine's speed
-            # moves -- so `*000401*` silently matched nothing the moment they did, and a case
-            # that matches nothing falls to the other arm and asserts the OPPOSITE thing. That
-            # is the mistake the light arm below was fixed away from; this one still had it.
-            case "$frames_done" in
-            2)
-                # The match: the stage's layers carry real distances, so the defocus must bite.
-                if [ "$dmax" -gt 0 ] && [ "$dn" -gt 1000 ]; then
-                    echo "  ok    $n: the defocus changes $dn px by up to $dmax on a frame with a"
-                    echo "        stage in it, so it is running"
-                else
-                    echo "  FAIL  $n: the defocus changed $dn px by up to $dmax in a MATCH, where"
-                    echo "        the layers carry real distances -- it is not running, or the"
-                    echo "        G-buffer reached it empty"
-                    fail=1
-                fi ;;
-            *)
-                # Character selection: no stage, so no layer carries a distance and every pixel
-                # takes the untouched branch. A single changed pixel here is an effect that has
-                # escaped the depth it is supposed to be a function of.
-                if [ "$dmax" = 0 ]; then
-                    say_ok_dof="  ok    $n: the defocus changes NOTHING on a frame with no stage"
-                    echo "$say_ok_dof"
-                    echo "        in it, so it is a function of distance and not of the screen"
-                else
-                    echo "  FAIL  $n: the defocus changed $dn px by up to $dmax on a frame with"
-                    echo "        NO stage in it. Every pixel there has no distance and must take"
-                    echo "        the untouched branch -- this is the effect spreading over the"
-                    echo "        whole picture, which is why the last one was deleted."
-                    fail=1
-                fi ;;
-            esac
         fi
     fi
 

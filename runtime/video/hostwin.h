@@ -44,7 +44,6 @@ void hostwin_window_geometry(int win_w, int win_h);
 int  panel_charselect_up(void);
 int  panel_overlay_up(void);
 int  panel_hud_up(void);
-int  panel_frontend_up(void); /* the FIRST screen, from the flat colour only it paints */
 int  panel_modemenu_up(void); /* the MODE menu, likewise -- not the game-mode word (issue #51) */
 int  lf2_wide_width(void);    /* the composition's width when it is wider than 794, else 0 */
 
@@ -65,8 +64,6 @@ void hostwin_shutdown(void);
 void hostwin_inject_key(uint32_t vk, int down);
 void hostwin_inject_pointer(int x, int y, int down);
 int  hostwin_injected_key(uint32_t vk);
-int  menu_move(int delta);
-void menu_confirm(void);
 int  gamepad_player_buttons(int index, unsigned char out[7]);
 void input_report(void);
 void audio_pan_report(void);
@@ -111,7 +108,7 @@ uint32_t bg_shadow_stage(void);
 int      bg_z_bounds(int *zmin, int *zmax);
 int  hostwin_key_held(uint32_t vk);
 /* The one scancode -> Windows VK table, shared with the RmlUi settings screen's key rebind
- * (runtime/app/rmlui.cpp, issue #70). */
+ * (runtime/ui/settings_ui.cpp, issue #70). */
 uint32_t hostwin_key_from_scancode(SDL_Scancode sc);
 void hostwin_request_quit(void);
 int  hostwin_width(void);

@@ -1,12 +1,13 @@
 ---
 id: C010
 kind: claim
-status: holds
+status: falsified
 created: 2026-08-05
 tags: rendering,coop
 depends: runtime/video/ddraw.c
 reconfirmed: 2026-08-06
 verified_at: 2026-08-06 13:29:33
+falsified_on: 2026-08-20
 ---
 
 ## Claim
@@ -28,3 +29,9 @@ Re-verified 2026-08-06 by reading the two places a blend could live, after six c
 ## Re-confirmed 2026-08-06
 
 Baseline re-stamped with a second-precision timestamp; the evidence is the re-verification recorded immediately above (blit() has only copy and colour-key-skip; no BlendMode/alpha anywhere in ddraw.c or win32.c).
+
+## FALSIFIED 2026-08-20
+
+The native renderer and the port-owned UI now have real alpha blending: premultiplied display-list tiles carry antialiased text and shared SVG device icons. The stock game's indexed software blits remain copy/colour-key operations, but the claim's port-wide wording is false.
+
+> Anything that cited this claim as proof must be re-checked. Grep the repo for it.

@@ -1,6 +1,7 @@
 #include "guest.h"
 #include "com.h"
 #include "hostwin.h"
+#include "config.h"
 
 void import_stats_report(void);
 void scan_prof_report(void);
@@ -22,6 +23,7 @@ enum { ENTRY = 0x445560 };
 int main(int argc, char **argv)
 {
     const char *exe = argc > 1 ? argv[1] : "game/lf2.exe";
+    config_load();
     guest_init();
     ddraw_register();
     dsound_register();

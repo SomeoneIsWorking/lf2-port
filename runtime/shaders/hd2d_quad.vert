@@ -1,7 +1,7 @@
 /* The vertex shader for the engine's lighting passes (issue #64).
  *
  * WHY A THIRD VERTEX SHADER, beside quad.vert and mesh.vert. The hd2d fragment shaders
- * (hd2d_gbuf.frag, hd2d_shadow.frag, hd2d_light.frag) were written for SDL_Render's GPU render
+ * (hd2d_character.frag, hd2d_shadow.frag, hd2d_light.frag) were written for SDL_Render's GPU render
  * states, whose vertex stage uses SDL's own varying convention: colour at location 0, uv at
  * location 1. The engine's quad.vert answers the same two questions in the opposite order, so
  * it cannot drive them, and swapping quad.vert's outputs would touch the one pipeline the

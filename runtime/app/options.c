@@ -9,7 +9,7 @@
 
 /* -1 until first read, so the env pin is consulted exactly once and the menu owns the value
  * from then on. */
-static int renderer = -1, lighting = -1, dof = -1;
+static int renderer = -1, lighting = -1;
 
 static int pinned_off(const char *v)
 {
@@ -50,18 +50,3 @@ int opt_lighting(void)
 }
 
 void opt_set_lighting(int on) { lighting = on != 0; }
-
-int opt_dof(void)
-{
-    if (dof < 0) {
-        const char *v = getenv("LF2_DOF");
-        if (v && *v) dof = pinned_off(v) ? 0 : 1;
-        else {
-            const char *c = config_get("dof");
-            dof = c ? strcmp(c, "off") != 0 : 1;
-        }
-    }
-    return dof;
-}
-
-void opt_set_dof(int on) { dof = on != 0; }

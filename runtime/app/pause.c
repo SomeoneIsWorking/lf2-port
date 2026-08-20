@@ -66,14 +66,9 @@ static const char *const ITEM_TEXT[IT_KINDS] = {
  * you want to see change while you look at the picture, which is exactly what a pause menu
  * over a frozen frame gives for free.
  *
- * RmlUi was raised for this, as Dusklight uses it for its game-facing UI. It is the right
- * answer to the problem Dusklight has and the wrong one here. That port has a whole UI to
- * build -- documents, components, a settings tree -- and RmlUi earns its place. This is two
- * numbers on a menu that already exists, already takes keyboard, pad and mouse, and is
- * already drawn with the game's own glyphs so it looks like the game. RmlUi is C++ with its
- * own build, font stack and render backend; adding it would make it the largest dependency in
- * a port whose whole build is a C compiler and SDL. If the port ever grows a real settings
- * screen that judgement should be revisited, and Dusklight's src/dusk/ui is where to start.
+ * These two live-preview numbers stay in the lightweight pause overlay. The scalable settings
+ * tree and input mapper use RmlUi, with the document/controller separate from its SDL render
+ * backend in the same ownership pattern Dusklight uses for game-facing UI (issue #70).
  */
 enum { PAGE_MAIN, PAGE_OPTIONS };
 
@@ -88,8 +83,8 @@ static void build_rows(void)
 {
     row_n = 0;
     if (page == PAGE_OPTIONS) {
-        /* The light's direction only. The renderer and its effects moved to the RmlUi
-         * settings screen (issue #70) -- they are toggles on a document now -- while the two
+        /* The light's direction only. Renderer and character-lighting toggles moved to the
+         * RmlUi settings screen (issue #70), while the two
          * angles stay here because they are NUMBERS you want to watch the picture move while
          * you change them, which is what a pause over a frozen frame is for (issue #37). */
         rows[row_n++] = IT_LIGHT_ANGLE;

@@ -10,7 +10,7 @@
 # What it covers:
 #   attach       -- the pad is attached AFTER startup, which is the hotswap case the stock
 #                   game cannot handle (it probes joysticks once and never looks again)
-#   front end    -- the ported menu's selection index moves and activates from the pad
+#   mode menu    -- the game's post-load selection moves and activates from the pad
 #   input gather -- the ported fn_00419a60 merges the pad into the game's own player
 #                   buttons, which is what carries mode select and character selection
 #   a match      -- the run goes all the way into VS mode and plays, so the assertions
@@ -34,7 +34,7 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 # stays put. That is now deterministic, because the overlay's selection index was located
 # (0x0044d06c, see docs/running.md) and MEASURED to start at 2. Two ups reach Fight!, every
 # run.
-PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"        # the front end, before any screen
+PAD="south@modemenu+60"        # first visible screen: the mode menu
 PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358,south@charselect+418"
 PAD="$PAD,south@charselect+618,south@charselect+838"   # join, then open the overlay
 PAD="$PAD,up@overlay+99,up@overlay+159,south@overlay+219"    # 2 -> 1 -> 0 = Fight!

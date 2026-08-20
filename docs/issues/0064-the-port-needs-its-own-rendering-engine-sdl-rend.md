@@ -1,11 +1,11 @@
 ---
 id: 64
 title: The port needs its OWN rendering engine: SDL_Render cannot express what this port draws
-status: open
+status: resolved
 symptom: Three consecutive fixes were each a symptom of the same cause: depth, geometry and lighting are bolted on beside SDL_Render rather than done by it.
 tags: reported,renderer,engine,hd2d
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-20
 ---
 
 ## What was reported
@@ -307,3 +307,6 @@ Caveat on the design's provenance, stated because it affects how much it should 
 confirmed by CODE and not by an independent visual argument; and the "light inside the engine's
 fragment stage" design never returned, so that alternative is rejected unopposed rather than
 beaten. Full plan: scratch is transient -- the shape is above.
+
+### Resolution (2026-08-20)
+The native engine owns the display-list colour pass, depth-tested stage geometry, character/shadow masks and final composition. It now composes on the native integer grid and scales once, while the retained software renderer remains its differential oracle; render and background routes pass.

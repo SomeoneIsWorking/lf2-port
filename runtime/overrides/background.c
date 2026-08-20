@@ -855,12 +855,7 @@ void fn_0041a250(void)
 
         const uint32_t tint = lf(registry, bg, BG_LAYER_TINT, i);
         if (tint) {
-            /* A tinted layer is a colour fill rather than a picture, but it is still a LAYER
-             * standing at a distance, so it carries the same depth as one that draws art. */
-            render_depth_hint_set(geom_layer_depth(
-                (int)(int32_t)lf(registry, bg, BG_LAYER_SPAN, i), (int)stage_width));
             fill_layer(registry, bg, i, tint);
-            render_depth_hint_set(0.0f);
             continue;
         }
 
@@ -883,16 +878,6 @@ void fn_0041a250(void)
         const int32_t lx = (int32_t)lf(registry, bg, BG_LAYER_X, i);
         const int32_t loop = (int32_t)lf(registry, bg, BG_LAYER_LOOP, i);
 
-        /* THIS LAYER'S REAL DISTANCE, for anything that must be a function of distance rather
-         * than of screen position (issue #63). It is not authored and not guessed: a layer's
-         * scroll rate IS a perspective divide written as a ratio, so its depth falls out of the
-         * shipped data (C031). Set around the draw and cleared after -- the draw itself goes
-         * through the guest, so there is no argument to add.
-         *
-         * The same geom_layer_depth the placement uses, so a layer and a solid authored to sit
-         * in its plane cannot disagree about how far away that plane is. */
-        render_depth_hint_set(geom_layer_depth((int)span, (int)stage_width));
-
         if (loop > 0) {
             /* The game stops at the layer's span, which is exactly enough to fill 794. A
              * wider view needs more copies, and a LOOPING layer is the one kind that can
@@ -914,7 +899,6 @@ void fn_0041a250(void)
             draw_layer(obj, off + lx, y, transparent, arg0);
             world_backdrop_hint_set(0);
         }
-        render_depth_hint_set(0.0f);
     }
     /* Anything nearer than every layer -- still behind the sprites, which the game goes on
      * placing itself. */

@@ -13,6 +13,8 @@
 #include "framespec.h"
 #include "script.h"
 #include "rmlui.h"
+#include "startup.h"
+#include "device_icons.h"
 
 void menu_click_report(void);   /* issue #27: the click flag as the front-end menu sees it */
 
@@ -441,6 +443,8 @@ void hostwin_shutdown(void)
     clock_sites_report();
     window_resize_report();
     if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
+    render_shutdown();
+    device_icons_shutdown();
     if (hw.texture)  { SDL_DestroyTexture(hw.texture);   hw.texture = NULL; }
     if (hw.renderer) { SDL_DestroyRenderer(hw.renderer); hw.renderer = NULL; }
     if (hw.window)   { SDL_DestroyWindow(hw.window);     hw.window = NULL; }
@@ -481,6 +485,15 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
 {
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
+    /* Boot still executes the guest's real front-end initialisation and loader, but neither is
+     * part of the port's presentation. Reset the retained draw list so their pictures cannot
+     * leak into the first visible frame; keep the ordinary host pacing and guest frame boundary
+     * so loading semantics are unchanged. */
+    if (!startup_present_enabled()) {
+        render_frame_reset();
+        frame_pace();
+        return;
+    }
     /* DRAW FIRST, then look at what was drawn. The GPU frame has to exist before it can be
      * read back, and getting this order wrong is not a subtle bug with an obvious symptom:
      * reading the target before drawing dumps the PREVIOUS frame, and with the camera
@@ -705,11 +718,11 @@ static void controls_hint_draw(const Surface *s)
     }
 }
 
-/* ---- the device labels (issue #74) ----
+/* ---- the device icons (issues #74, #77) ----
  *
  * The in-match HUD panels and the character-select portraits are each a human or a computer,
- * and nothing on either says which device drives a human one. The label does: "K" for the
- * keyboard, "P1".."P4" for the pads. It is drawn here, at the present, because this is where
+ * and nothing on either says which device drives a human one. The shared keyboard/gamepad SVG
+ * does. It is drawn here, at the present, because this is where
  * the port knows both the panel's place on the screen AND which device claimed which slot
  * (input.c's dev_player table, reversed by device_for_player).
  *
@@ -719,22 +732,17 @@ static void controls_hint_draw(const Surface *s)
  * same number the panels' own blits got. A computer slot carries no device and gets nothing.
  *
  * THE CHARACTER-SELECT SLOTS are the same 2x4 grid of portraits (screens.c's CS_COL/CS_ROW),
- * so the same (col, row) cell and the same label work for both screens; charselect is
+ * so the same (col, row) cell and the same icon work for both screens; charselect is
  * centred by screen_offset_x() like the other fixed-794 screens. The character-select gate is
  * `panel_charselect_up() && !panel_overlay_up()` -- the overlay sits on character selection,
  * and its own panels must not be mistaken for the slot portraits. */
-static void device_label_paint(const Surface *s, int x, int y, int dev)
+static void device_icon_draw(const Surface *s, int x, int y, int dev)
 {
-    char label[16];
-    if (dev == 0)       snprintf(label, sizeof label, "K");
-    else if (dev <= 4)  snprintf(label, sizeof label, "P%d", dev);
-    else                return;
-    for (int c = 0; label[c]; c++) {
-        const int gx = x + c * 8;
-        if (frame_src_pixels && frame_src_pixels != s->pixels)
-            game_glyph_tile(label[c], gx, y, 0xffffffu, frame_src_pixels);
-        game_glyph_draw(label[c], gx, y, 0xffffffu, s->pixels, s->w, s->h, s->pitch);
-    }
+    /* The helper records a premultiplied display-list tile and composites the same decoded
+     * pixels into the software primary. Both renderer paths therefore use one rasterisation. */
+    if (frame_src_pixels && frame_src_pixels != s->pixels)
+        device_icon_record(frame_src_pixels, x, y, dev);
+    device_icon_paint(s->pixels, s->w, s->h, s->pitch, x, y, dev);
 }
 
 static void hud_device_labels(const Surface *s)
@@ -744,7 +752,7 @@ static void hud_device_labels(const Surface *s)
         const int dev = device_for_player(i);
         if (dev < 0) continue;                       /* a computer, or nobody claimed it */
         const int off = hud_offset_x(s->w, (i >> 2) * 54 + 54);
-        device_label_paint(s, (i & 3) * 198 + off + 2, (i >> 2) * 54 + 2, dev);
+        device_icon_draw(s, (i & 3) * 198 + off + 2, (i >> 2) * 54 + 2, dev);
     }
 }
 
@@ -770,7 +778,7 @@ static void charselect_device_labels(const Surface *s)
     for (int i = 0; i < 8; i++) {
         const int dev = device_for_player(i);
         if (dev < 0) continue;
-        device_label_paint(s, CS_XBASE[i & 3] + off + 2, CS_YBASE[i >> 2] + 2, dev);
+        device_icon_draw(s, CS_XBASE[i & 3] + off + 2, CS_YBASE[i >> 2] + 2, dev);
     }
 }
 
@@ -1189,7 +1197,6 @@ void cursor_find_note(int dl, int dt, const char *via)
 enum { PANEL_FRESH = 2 };
 static long panel_charselect_frame = -1000, panel_overlay_frame = -1000;
 static long panel_hud_frame = -1000;
-static long panel_frontend_frame = -1000;
 static long panel_modemenu_frame = -1000;
 
 static void panel_note(int l, int t, int r, int b)
@@ -1272,12 +1279,6 @@ static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
     const uint32_t c = colour & 0x00ffffffu;
     const int left = (c == FILL_FRONT_END || c == FILL_MODE_MENU);
     screen_align_left = left;
-    /* The front end's own colour is also the only DRAWN signal for "the game is up and taking
-     * input", which is what every route needs and none of them had: they pressed at a counted
-     * frame 900 chosen for safety, and 840 of those frames were the run waiting for nothing.
-     * Recorded here rather than in panel_note because the front end has no panel -- it paints
-     * a backdrop and nothing panel-shaped. See script.c's `frontend` anchor. */
-    if (c == FILL_FRONT_END) panel_frontend_frame = frames;
     /* The mode menu's own colour, for the same reason: it is the only honest way to
      * say "the mode menu is on screen". The word screens.c used to gate on is the game
      * MODE, which reads 1/4/5 during a match (issue #51). */
@@ -1309,7 +1310,6 @@ int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_
  * suits the panels suits it. It is deliberately NOT the loading screen or the mode menu: those
  * paint other colours, and a route anchored here means "the first screen, before anything has
  * been chosen". */
-int panel_frontend_up(void)   { return frames - panel_frontend_frame   <= PANEL_FRESH; }
 int panel_modemenu_up(void)   { return frames - panel_modemenu_frame   <= PANEL_FRESH; }
 
 /* ---- centring what cannot be made wide ----
