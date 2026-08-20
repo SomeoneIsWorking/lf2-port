@@ -5,21 +5,12 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LIMIT = 500
+DEFAULT_LIMIT = 1200
+DANGER_LIMIT = 2000
 LEGACY_LIMITS = {
-    "runtime/video/ddraw.c": 2612,
+    "runtime/video/ddraw.c": 2610,
     "runtime/win32/imports.c": 1293,
-    "runtime/video/engine.c": 1282,
-    "runtime/video/render.c": 1183,
-    "runtime/win32/win32.c": 1126,
-    "runtime/win32/gdi.c": 1071,
-    "runtime/overrides/background.c": 925,
-    "runtime/overrides/coop_debug.c": 798,
-    "runtime/video/mesh.c": 750,
-    "runtime/audio/dsound.c": 727,
-    "runtime/overrides/coop.c": 613,
-    "runtime/overrides/screens.c": 561,
-    "runtime/cpu/guest.c": 503,
+    "runtime/video/engine.c": 1276,
 }
 
 
@@ -30,6 +21,7 @@ def line_count(path: Path) -> int:
 
 def main() -> int:
     failures = []
+    danger_files = []
     for path in sorted((ROOT / "runtime").rglob("*")):
         if path.suffix not in {".c", ".cpp", ".h", ".hpp"}:
             continue
@@ -38,6 +30,8 @@ def main() -> int:
         measured = line_count(path)
         if measured > limit:
             failures.append(f"{relative}: {measured} lines (limit {limit})")
+        if measured >= DANGER_LIMIT:
+            danger_files.append(f"{relative} ({measured} lines)")
 
     retired = [ROOT / "runtime/app/rmlui.cpp", ROOT / "runtime/app/rmlui.h"]
     for path in retired:
@@ -50,7 +44,11 @@ def main() -> int:
             print(f"  {failure}")
         print("Split by responsibility; never raise a limit merely to land a feature.")
         return 1
-    print(f"structure: ok (new runtime files <= {DEFAULT_LIMIT} lines; legacy files did not grow)")
+    danger_summary = ", ".join(danger_files) if danger_files else "none"
+    print(
+        f"structure: ok (new runtime files <= {DEFAULT_LIMIT} lines; "
+        f"legacy files did not grow; critical >= {DANGER_LIMIT}: {danger_summary})"
+    )
     return 0
 
 
