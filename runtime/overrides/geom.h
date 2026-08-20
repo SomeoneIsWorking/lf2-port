@@ -319,7 +319,7 @@ static inline int geom_camera_max(int stage_width, int view, int lock)
  * WHY THE GUARD IS NOT BELT-AND-BRACES. At view == 794 this returns the game's own B
  * untouched, by construction rather than by arithmetic that happens to agree -- and it has to,
  * because the game has this same situation at 4:3 whenever a section's B is under 794, and
- * matching the game there is not optional. tools/e2e.sh background's byte-identity arm is what
+ * matching the game there is not optional. tools/e2e.py background's byte-identity arm is what
  * would catch it. */
 static inline int geom_walk_max(int walk, int camera_max, int view)
 {

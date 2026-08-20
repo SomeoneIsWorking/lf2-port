@@ -2,6 +2,7 @@
 #include "com.h"
 #include "guest_ops.h"
 #include "hostwin.h"
+#include "keyboard.h"
 #include "render.h"
 #include "script.h"
 #include "config.h"
@@ -24,13 +25,19 @@ HostWin hw;
 
 static void queue_startup_messages(void);
 static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam);
-static uint32_t scancode_to_vk(SDL_Scancode sc);
+static void queue_message(uint32_t msg, uint32_t wparam, uint32_t lparam);
 static uint32_t mouse_lparam(float wx, float wy);
 static int port_owns_key(uint32_t vk);
 
-enum { WM_KEYDOWN_FWD = 0x0100, WM_KEYUP_FWD = 0x0101,
-       WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202,
-       WM_RBUTTONDOWN = 0x0204, WM_RBUTTONUP = 0x0205 };
+enum {
+    WM_KEYDOWN_FWD = 0x0100,
+    WM_KEYUP_FWD = 0x0101,
+    WM_MOUSEMOVE = 0x0200,
+    WM_LBUTTONDOWN = 0x0201,
+    WM_LBUTTONUP = 0x0202,
+    WM_RBUTTONDOWN = 0x0204,
+    WM_RBUTTONUP = 0x0205
+};
 
 static int mouse_left_down, mouse_right_down;
 
@@ -56,7 +63,7 @@ static int host_ptr_x = -1, host_ptr_y = -1;
  * was not for one, and holding it is how a stale input reaches a screen that did not exist
  * when the button went down. One frame of slack because the menu override and the present
  * do not run in a fixed order within a frame. */
-static int  mouse_click_pending;
+static int mouse_click_pending;
 static long mouse_click_frame = -1;
 
 static void mouse_click_arm(void)
@@ -75,7 +82,8 @@ int hostwin_mouse_clicked(void)
 int hostwin_pointer(int *x, int *y)
 {
     if (host_ptr_x < 0) return 0;
-    *x = host_ptr_x; *y = host_ptr_y;
+    *x = host_ptr_x;
+    *y = host_ptr_y;
     return 1;
 }
 static unsigned autokey_pumps;
@@ -112,14 +120,15 @@ static void apply_initial_window_size(void)
     if (!spec) return;
     int w = 0, h = 0;
     if (sscanf(spec, "%dx%d", &w, &h) != 2 || w < 320 || w > 8192 || h < 200 || h > 8192) {
-        fprintf(stderr, "LF2_WINDOW_SIZE=\"%s\" is not <w>x<h> with w in 320..8192 and h in "
-                        "200..8192; the window keeps the %dx%d the game asked for\n",
+        fprintf(stderr,
+                "LF2_WINDOW_SIZE=\"%s\" is not <w>x<h> with w in 320..8192 and h in "
+                "200..8192; the window keeps the %dx%d the game asked for\n",
                 spec, hw.win_w, hw.win_h);
         return;
     }
-    fprintf(stderr, "window: starting at %dx%d (the game asked for %dx%d)\n",
-            w, h, hw.win_w, hw.win_h);
-    hw.win_w = w; hw.win_h = h;
+    fprintf(stderr, "window: starting at %dx%d (the game asked for %dx%d)\n", w, h, hw.win_w, hw.win_h);
+    hw.win_w = w;
+    hw.win_h = h;
 }
 
 static void apply_window_mode(void)
@@ -133,8 +142,10 @@ static void apply_window_mode(void)
         SDL_SetWindowBordered(hw.window, false);
         SDL_SetWindowFullscreen(hw.window, true);
     } else if (strcmp(mode, "windowed") != 0) {
-        fprintf(stderr, "LF2_WINDOW: unknown mode \"%s\" "
-                        "(windowed, borderless, fullscreen)\n", mode);
+        fprintf(stderr,
+                "LF2_WINDOW: unknown mode \"%s\" "
+                "(windowed, borderless, fullscreen)\n",
+                mode);
     }
 }
 
@@ -143,7 +154,7 @@ static void toggle_fullscreen(void)
     const bool now = (SDL_GetWindowFlags(hw.window) & SDL_WINDOW_FULLSCREEN) != 0;
     SDL_SetWindowFullscreen(hw.window, !now);
     if (now) SDL_SetWindowBordered(hw.window, true);
-    else     SDL_SetWindowBordered(hw.window, false);
+    else SDL_SetWindowBordered(hw.window, false);
 }
 
 static void h_CreateWindowExA(void)
@@ -173,9 +184,11 @@ static void h_CreateWindowExA(void)
      * 2 and the game's own 794 columns of world -- the picture the player asked for, drawn at
      * twice the resolution rather than blown up to it. */
     hw.window = SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h,
-                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
-                                 SDL_WINDOW_HIDDEN);
-    if (!hw.window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); abort(); }
+                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
+    if (!hw.window) {
+        fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
+        abort();
+    }
     /* THE GPU RENDERER BY NAME, not whichever SDL picks. SDL's default order puts the
      * OpenGL backend first, and that one has no SDL_GPUDevice -- so SDL_GPURenderState, and
      * with it every shader the HD2D pass is made of, is simply unavailable on it. The
@@ -187,12 +200,17 @@ static void h_CreateWindowExA(void)
      * engine_init reports that the lighting cannot run rather than pretending it did. */
     hw.renderer = SDL_CreateRenderer(hw.window, SDL_GPU_RENDERER);
     if (!hw.renderer) {
-        fprintf(stderr, "video: the '%s' renderer is unavailable (%s) -- falling back to "
-                        "SDL's choice. The HD2D pass needs a GPU device and will report "
-                        "itself off.\n", SDL_GPU_RENDERER, SDL_GetError());
+        fprintf(stderr,
+                "video: the '%s' renderer is unavailable (%s) -- falling back to "
+                "SDL's choice. The HD2D pass needs a GPU device and will report "
+                "itself off.\n",
+                SDL_GPU_RENDERER, SDL_GetError());
         hw.renderer = SDL_CreateRenderer(hw.window, NULL);
     }
-    if (!hw.renderer) { fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError()); abort(); }
+    if (!hw.renderer) {
+        fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
+        abort();
+    }
     render_init(hw.renderer);
     /* Before apply_window_mode: going fullscreen changes the size, and the geometry has to
      * exist before anything can follow a change to it. */
@@ -204,12 +222,14 @@ static void h_CreateWindowExA(void)
     {
         int pw = hw.win_w, ph = hw.win_h;
         SDL_GetWindowSizeInPixels(hw.window, &pw, &ph);
-        if (pw <= 0 || ph <= 0) { pw = hw.win_w; ph = hw.win_h; }
-        fprintf(stderr, "window: %dx%d points -> %dx%d pixels (display scale %.2f)%s\n",
-                hw.win_w, hw.win_h, pw, ph, (double)SDL_GetWindowPixelDensity(hw.window),
-                (pw == hw.win_w && ph == hw.win_h)
-                    ? " -- unscaled, so this run says nothing about HiDPI"
-                    : " -- a SCALED display: the frame is composed at the pixel size");
+        if (pw <= 0 || ph <= 0) {
+            pw = hw.win_w;
+            ph = hw.win_h;
+        }
+        fprintf(stderr, "window: %dx%d points -> %dx%d pixels (display scale %.2f)%s\n", hw.win_w, hw.win_h, pw, ph,
+                (double)SDL_GetWindowPixelDensity(hw.window),
+                (pw == hw.win_w && ph == hw.win_h) ? " -- unscaled, so this run says nothing about HiDPI"
+                                                   : " -- a SCALED display: the frame is composed at the pixel size");
         hostwin_window_geometry(pw, ph);
     }
     apply_window_mode();
@@ -221,18 +241,19 @@ static void h_CreateWindowExA(void)
 static void h_GetClientRect(void)
 {
     uint32_t r = ARG(1);
-    if (getenv("LF2_BLT_DEBUG"))
-        fprintf(stderr, "GetClientRect -> %08x (%dx%d)\n", r, hw.width, hw.height);
-    ST32(r, 0); ST32(r + 4, 0);
-    ST32(r + 8, (uint32_t)hw.width); ST32(r + 12, (uint32_t)hw.height);
+    if (getenv("LF2_BLT_DEBUG")) fprintf(stderr, "GetClientRect -> %08x (%dx%d)\n", r, hw.width, hw.height);
+    ST32(r, 0);
+    ST32(r + 4, 0);
+    ST32(r + 8, (uint32_t)hw.width);
+    ST32(r + 12, (uint32_t)hw.height);
     ret_stdcall(2, 1);
 }
 
 static void h_GetSystemMetrics(void)
 {
     switch (ARG(0)) {
-    case 0:  ret_stdcall(1, 1920); return;   /* SM_CXSCREEN */
-    case 1:  ret_stdcall(1, 1080); return;   /* SM_CYSCREEN */
+    case 0: ret_stdcall(1, 1920); return; /* SM_CXSCREEN */
+    case 1: ret_stdcall(1, 1080); return; /* SM_CYSCREEN */
     default: ret_stdcall(1, 0); return;
     }
 }
@@ -266,31 +287,39 @@ static int click_script_state(int *x, int *y)
     const long frame = hostwin_frames();
 
     int idx = 0;
-    for (const char *c = spec; *c; ) {
+    for (const char *c = spec; *c;) {
         const int px = (int)strtol(c, (char **)&c, 10);
         while (*c == ',' || *c == ' ') c++;
         const int py = (int)strtol(c, (char **)&c, 10);
         const char *when = c;
-        if (*c == ':') { c++; when = c; }
+        if (*c == ':') {
+            c++;
+            when = c;
+        }
         char buf[64];
         while (*c && *c != ';' && *c != ' ') c++;
         size_t n = (size_t)(c - when);
         if (n >= sizeof buf) n = sizeof buf - 1;
-        memcpy(buf, when, n); buf[n] = 0;
+        memcpy(buf, when, n);
+        buf[n] = 0;
         while (*c == ';' || *c == ' ') c++;
 
         const int i = idx++;
         script_seen(SCRIPT_CLICKS, i);
         int un = 0;
         const long at = script_when(buf, &un);
-        if (un) continue;              /* its screen has not appeared YET -- not never */
+        if (un) continue; /* its screen has not appeared YET -- not never */
 
         /* The pointer is placed a few frames early and the button pressed after, because
          * the menu hit-tests where the pointer IS when the click arrives -- moving and
          * clicking on the same frame races the game's own read. */
         if (frame >= at - 4 && frame < at + KEY_SCRIPT_HOLD) {
-            *x = px; *y = py;
-            if (frame >= at) { script_fired(SCRIPT_CLICKS, i); return 1; }
+            *x = px;
+            *y = py;
+            if (frame >= at) {
+                script_fired(SCRIPT_CLICKS, i);
+                return 1;
+            }
             return 0;
         }
     }
@@ -305,7 +334,8 @@ static int autoclick_state(int *x, int *y)
     if (!spec) return 0;
 
     unsigned points = 1;
-    for (const char *c = spec; *c; c++) if (*c == ';') points++;
+    for (const char *c = spec; *c; c++)
+        if (*c == ';') points++;
 
     static uint64_t start_ms;
     if (!start_ms) start_ms = SDL_GetTicks();
@@ -331,15 +361,19 @@ static int autoclick_state(int *x, int *y)
     if (getenv("LF2_AUTOCLICK_ONCE") && step >= points) return 0;
     const unsigned want = step % points;
     unsigned i = 0;
-    for (const char *c = spec; *c; ) {
+    for (const char *c = spec; *c;) {
         const int px = (int)strtol(c, (char **)&c, 10);
         while (*c == ',' || *c == ' ') c++;
         const int py = (int)strtol(c, (char **)&c, 10);
-        if (i == want) { *x = px; *y = py; break; }
+        if (i == want) {
+            *x = px;
+            *y = py;
+            break;
+        }
         i++;
         while (*c == ';' || *c == ' ') c++;
     }
-    return (elapsed % every) < 150;                /* button held briefly */
+    return (elapsed % every) < 150; /* button held briefly */
 }
 
 /* LF2_WINDOW_RESIZE=<frame>:<w>x<h>[,...] -- resize the window part-way through a run.
@@ -358,7 +392,10 @@ static int autoclick_state(int *x, int *y)
  * frame the run never reaches says that at exit rather than leaving the run looking as though
  * it resized. */
 enum { RESIZE_MAX = 8 };
-static struct { long frame; int w, h, fired; } resizes[RESIZE_MAX];
+static struct {
+    long frame;
+    int w, h, fired;
+} resizes[RESIZE_MAX];
 static int resize_n = -1;
 
 static void pump_scripted_resize(void)
@@ -366,16 +403,21 @@ static void pump_scripted_resize(void)
     if (resize_n < 0) {
         resize_n = 0;
         const char *spec = getenv("LF2_WINDOW_RESIZE");
-        for (const char *c = spec; c && *c; ) {
-            long f = 0; int w = 0, h = 0, used = 0;
+        for (const char *c = spec; c && *c;) {
+            long f = 0;
+            int w = 0, h = 0, used = 0;
             if (sscanf(c, "%ld:%dx%d%n", &f, &w, &h, &used) < 3 || w <= 0 || h <= 0) {
-                fprintf(stderr, "LF2_WINDOW_RESIZE: \"%s\" is not <frame>:<w>x<h>; the rest "
-                                "of the script is IGNORED and no resize will happen there\n", c);
+                fprintf(stderr,
+                        "LF2_WINDOW_RESIZE: \"%s\" is not <frame>:<w>x<h>; the rest "
+                        "of the script is IGNORED and no resize will happen there\n",
+                        c);
                 break;
             }
             if (resize_n >= RESIZE_MAX) {
-                fprintf(stderr, "LF2_WINDOW_RESIZE: more than %d steps; \"%s\" and anything "
-                                "after it are IGNORED\n", RESIZE_MAX, c);
+                fprintf(stderr,
+                        "LF2_WINDOW_RESIZE: more than %d steps; \"%s\" and anything "
+                        "after it are IGNORED\n",
+                        RESIZE_MAX, c);
                 break;
             }
             resizes[resize_n].frame = f;
@@ -385,15 +427,14 @@ static void pump_scripted_resize(void)
             c += used;
             while (*c == ',' || *c == ' ') c++;
         }
-        if (resize_n)
-            fprintf(stderr, "window resize script: %d step(s)\n", resize_n);
+        if (resize_n) fprintf(stderr, "window resize script: %d step(s)\n", resize_n);
     }
     const long f = hostwin_frames();
     for (int i = 0; i < resize_n; i++) {
         if (resizes[i].fired || f < resizes[i].frame) continue;
         resizes[i].fired = 1;
-        fprintf(stderr, "window resize script: frame %ld (asked for %ld) -- %dx%d\n",
-                f, resizes[i].frame, resizes[i].w, resizes[i].h);
+        fprintf(stderr, "window resize script: frame %ld (asked for %ld) -- %dx%d\n", f, resizes[i].frame, resizes[i].w,
+                resizes[i].h);
         if (hw.window) SDL_SetWindowSize(hw.window, resizes[i].w, resizes[i].h);
         hostwin_window_geometry(resizes[i].w, resizes[i].h);
     }
@@ -403,8 +444,9 @@ void window_resize_report(void)
 {
     for (int i = 0; i < resize_n; i++)
         if (!resizes[i].fired)
-            fprintf(stderr, "window resize script: step %d (frame %ld -> %dx%d) NEVER FIRED "
-                            "-- the run ended at frame %ld\n",
+            fprintf(stderr,
+                    "window resize script: step %d (frame %ld -> %dx%d) NEVER FIRED "
+                    "-- the run ended at frame %ld\n",
                     i, resizes[i].frame, resizes[i].w, resizes[i].h, hostwin_frames());
 }
 
@@ -420,8 +462,9 @@ static void pump_autoclick(void)
     static int was_down, announced;
     if (!getenv("LF2_AUTOCLICK") && !getenv("LF2_CLICK_SCRIPT")) return;
     const int down = autoclick_state(&x, &y);
-    last_x = x; last_y = y;
-    if (x < 0) return;                  /* no scripted point yet: nothing to report */
+    last_x = x;
+    last_y = y;
+    if (x < 0) return; /* no scripted point yet: nothing to report */
 
     /* Resend periodically rather than once: a single move pushed before the game starts
      * draining its queue is simply lost. Every pump is far too often -- that floods the
@@ -429,7 +472,8 @@ static void pump_autoclick(void)
     /* The scripted pointer is the pointer, as far as the rest of the port is concerned.
      * This path built the lparam inline and bypassed both mouse_lparam and
      * hostwin_inject_pointer, so hostwin_pointer() stayed unset for the whole run. */
-    host_ptr_x = x; host_ptr_y = y;
+    host_ptr_x = x;
+    host_ptr_y = y;
     const uint32_t lp = ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
     static uint64_t last_sent;
     const uint64_t now_ms = SDL_GetTicks();
@@ -489,7 +533,8 @@ void hostwin_inject_pointer(int x, int y, int down)
      * the port, so it updates hostwin_pointer() exactly as a real motion event does.
      * Without this the scripted pointer moved the GAME's copy but not the port's, and
      * anything reading the port's copy saw a pointer that never moved. */
-    host_ptr_x = x; host_ptr_y = y;
+    host_ptr_x = x;
+    host_ptr_y = y;
     const uint32_t lp = ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
     push_message(WM_MOUSEMOVE, (uint32_t)(mouse_left_down ? 1 : 0), lp);
     if (down < 0) return;
@@ -509,7 +554,7 @@ void hostwin_pump(void)
      * Xlib kills the process, so the game's own shutdown never runs. This drives the same
      * path the game takes when the user quits. */
     {
-        static long qa_frames = -2;                 /* -2 unread, -1 unset */
+        static long qa_frames = -2; /* -2 unread, -1 unset */
         if (qa_frames == -2) {
             const char *qa = getenv("LF2_QUIT_AFTER");
             qa_frames = qa ? strtol(qa, NULL, 10) : -1;
@@ -529,30 +574,40 @@ void hostwin_pump(void)
     pump_scripted_resize();
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-        gamepad_handle_event(&e);          /* controllers may come and go at any time */
+        /* Update the port's physical-key ledger before any modal owner consumes the event.
+         * Scripted keys already pass through push_message(), but a real Escape key used to
+         * be continued below before reaching that function. The scripted UI route therefore
+         * passed while a keyboard could never open it. All key-up events must be noted here
+         * too, or a key released under RmlUi remains held after the document closes. */
+        uint32_t key_msg = 0;
+        uint32_t key_vk = 0;
+        if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) {
+            key_msg = e.type == SDL_EVENT_KEY_DOWN ? WM_KEYDOWN_FWD : WM_KEYUP_FWD;
+            key_vk = keyboard_vk_from_scancode(e.key.scancode);
+            if (key_vk) keyboard_note(key_vk, key_msg == WM_KEYDOWN_FWD);
+            if (getenv("LF2_RMLUI_DEBUG"))
+                fprintf(stderr, "rmlui physical key: vk=%02x %s\n", key_vk,
+                        e.type == SDL_EVENT_KEY_DOWN ? "down" : "up");
+        }
+        gamepad_handle_event(&e); /* controllers may come and go at any time */
         /* The RmlUi settings screen takes its own input while it is up; an event it consumed
          * -- a key rebind, an Escape that closed it -- must not also reach the game's message
          * pump or the pause menu's key ledger. */
         if (rmlui_event(&e)) continue;
-        /* Escape is the port menu command on every screen. Never enqueue it in LF2's own key
-         * array; pause_tick observes SDL's physical state and opens the document directly. */
-        if ((e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) &&
-            e.key.scancode == SDL_SCANCODE_ESCAPE)
-            continue;
         if (e.type == SDL_EVENT_QUIT) quit_posted = 1;
         /* Alt+Enter is what players expect, and the game cannot ask for it itself. */
-        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_RETURN &&
-            (e.key.mod & SDL_KMOD_ALT)) { toggle_fullscreen(); continue; }
+        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT)) {
+            toggle_fullscreen();
+            continue;
+        }
 
         /* THE WINDOW DRIVES THE FIELD OF VIEW (issue #20). PIXEL_SIZE_CHANGED rather than
          * RESIZED: on a scaled display the two differ, and everything downstream -- the
          * surfaces, the presentation, the texture -- is in pixels. */
-        if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
-            hostwin_window_geometry(e.window.data1, e.window.data2);
+        if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) hostwin_window_geometry(e.window.data1, e.window.data2);
 
         if (e.type == SDL_EVENT_MOUSE_MOTION)
-            push_message(WM_MOUSEMOVE, (uint32_t)(mouse_left_down ? 1 : 0),
-                         mouse_lparam(e.motion.x, e.motion.y));
+            push_message(WM_MOUSEMOVE, (uint32_t)(mouse_left_down ? 1 : 0), mouse_lparam(e.motion.x, e.motion.y));
         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
             const int down = (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
             const uint32_t lp = mouse_lparam(e.button.x, e.button.y);
@@ -565,11 +620,9 @@ void hostwin_pump(void)
                 push_message(down ? WM_RBUTTONDOWN : WM_RBUTTONUP, down ? 2 : 0, lp);
             }
         }
-        if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) {
-            const uint32_t vk = scancode_to_vk(e.key.scancode);
-            if (vk) push_message(e.type == SDL_EVENT_KEY_DOWN ? WM_KEYDOWN_FWD : WM_KEYUP_FWD,
-                                 vk, 1);
-        }
+        /* The ledger was updated above. Forward the event only when the port does not own it;
+         * Escape and every key under an active RmlUi document stay out of LF2's key array. */
+        if (key_vk && !port_owns_key(key_vk)) queue_message(key_msg, key_vk, 1);
     }
 
     virtual_pad_tick(hostwin_frames());
@@ -577,13 +630,23 @@ void hostwin_pump(void)
 
 static void fill_msg(uint32_t p, uint32_t msg)
 {
-    ST32(p, hw.hwnd); ST32(p + 4, msg);
-    ST32(p + 8, 0); ST32(p + 12, 0);
-    ST32(p + 16, 0); ST32(p + 20, 0); ST32(p + 24, 0);
+    ST32(p, hw.hwnd);
+    ST32(p + 4, msg);
+    ST32(p + 8, 0);
+    ST32(p + 12, 0);
+    ST32(p + 16, 0);
+    ST32(p + 20, 0);
+    ST32(p + 24, 0);
 }
 
-enum { WM_QUIT = 0x0012, WM_MOVE = 0x0003, WM_SIZE = 0x0005,
-       WM_ACTIVATE = 0x0006, WM_ACTIVATEAPP = 0x001C, WM_SHOWWINDOW = 0x0018 };
+enum {
+    WM_QUIT = 0x0012,
+    WM_MOVE = 0x0003,
+    WM_SIZE = 0x0005,
+    WM_ACTIVATE = 0x0006,
+    WM_ACTIVATEAPP = 0x001C,
+    WM_SHOWWINDOW = 0x0018
+};
 
 /* Key messages. The port previously delivered only the startup batch, so the game never
  * saw a keystroke as an event -- it could poll GetKeyState but nothing that reacts to
@@ -593,48 +656,47 @@ enum { WM_QUIT = 0x0012, WM_MOVE = 0x0003, WM_SIZE = 0x0005,
  * window's, because the renderer letterboxes. */
 enum { WM_CHAR = 0x0102, MSG_RING = 64 };
 
-static struct { uint32_t msg, wparam, lparam; } msg_ring[MSG_RING];
+static struct {
+    uint32_t msg, wparam, lparam;
+} msg_ring[MSG_RING];
 static int ring_head, ring_tail;
 
-/* Held state for every virtual key, maintained at the ONE point all key sources pass
- * through -- real SDL keys, scripted keys and injected ones alike. The game's own key
- * array (0x455378) is edge-flushed every frame, so it cannot answer "is this key held",
- * which is exactly what the single-layout input routing needs for walking. Updated even
- * when the ring is full: the ring dropping a message must not wedge a key down. */
-static uint8_t vk_held[256];
-int hostwin_key_held(uint32_t vk) { return vk < 256 && vk_held[vk]; }
-
-static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam)
+static void queue_message(uint32_t msg, uint32_t wparam, uint32_t lparam)
 {
-    if (msg == WM_KEYDOWN_FWD && wparam < 256) vk_held[wparam] = 1;
-    if (msg == WM_KEYUP_FWD   && wparam < 256) vk_held[wparam] = 0;
-    /* The port's own ledger is updated first, then the message is dropped if the port owns
-     * the key -- so the pause menu still sees Escape while the game never does. */
-    if ((msg == WM_KEYDOWN_FWD || msg == WM_KEYUP_FWD) && port_owns_key(wparam)) return;
     const int next = (ring_tail + 1) % MSG_RING;
-    if (next == ring_head) return;              /* full: drop rather than overwrite */
+    if (next == ring_head) return; /* full: drop rather than overwrite */
     msg_ring[ring_tail].msg = msg;
     msg_ring[ring_tail].wparam = wparam;
     msg_ring[ring_tail].lparam = lparam;
     ring_tail = next;
 }
 
+static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam)
+{
+    if (msg == WM_KEYDOWN_FWD || msg == WM_KEYUP_FWD) keyboard_note(wparam, msg == WM_KEYDOWN_FWD);
+    /* The port's own ledger is updated first, then the message is dropped if the port owns
+     * the key -- so the pause menu still sees Escape while the game never does. */
+    if ((msg == WM_KEYDOWN_FWD || msg == WM_KEYUP_FWD) && port_owns_key(wparam)) return;
+    queue_message(msg, wparam, lparam);
+}
+
 /* A real window receives these as it is created and shown, and the game acts on them --
  * its WNDPROC is where it works out the rectangle it blits the back buffer into. With no
  * messages ever delivered that rectangle stayed (0,0,0,0), so the final blit to the
  * primary copied nothing. */
-static struct { uint32_t msg, wparam, lparam; } startup_queue[8];
+static struct {
+    uint32_t msg, wparam, lparam;
+} startup_queue[8];
 static int startup_head, startup_count;
 
 static void queue_startup_messages(void)
 {
     const uint32_t size_lparam = ((uint32_t)hw.height << 16) | (uint32_t)hw.width;
-    const struct { uint32_t m, w, l; } msgs[] = {
-        { WM_SHOWWINDOW,  1, 0 },
-        { WM_MOVE,        0, 0 },
-        { WM_SIZE,        0, size_lparam },   /* SIZE_RESTORED */
-        { WM_ACTIVATEAPP, 1, 0 },
-        { WM_ACTIVATE,    1, 0 },             /* WA_ACTIVE */
+    const struct {
+        uint32_t m, w, l;
+    } msgs[] = {
+        {WM_SHOWWINDOW, 1, 0},  {WM_MOVE, 0, 0},     {WM_SIZE, 0, size_lparam}, /* SIZE_RESTORED */
+        {WM_ACTIVATEAPP, 1, 0}, {WM_ACTIVATE, 1, 0},                            /* WA_ACTIVE */
     };
     for (unsigned i = 0; i < sizeof msgs / sizeof msgs[0]; i++) {
         startup_queue[startup_count].msg = msgs[i].m;
@@ -654,7 +716,9 @@ static int next_queued_message(uint32_t p, int remove)
         ST32(p + 4, msg_ring[ring_head].msg);
         ST32(p + 8, msg_ring[ring_head].wparam);
         ST32(p + 12, msg_ring[ring_head].lparam);
-        ST32(p + 16, 0); ST32(p + 20, 0); ST32(p + 24, 0);
+        ST32(p + 16, 0);
+        ST32(p + 20, 0);
+        ST32(p + 24, 0);
         if (remove) ring_head = (ring_head + 1) % MSG_RING;
         return 1;
     }
@@ -663,7 +727,9 @@ static int next_queued_message(uint32_t p, int remove)
     ST32(p + 4, startup_queue[startup_head].msg);
     ST32(p + 8, startup_queue[startup_head].wparam);
     ST32(p + 12, startup_queue[startup_head].lparam);
-    ST32(p + 16, 0); ST32(p + 20, 0); ST32(p + 24, 0);
+    ST32(p + 16, 0);
+    ST32(p + 20, 0);
+    ST32(p + 24, 0);
     if (remove) startup_head++;
     return 1;
 }
@@ -674,22 +740,39 @@ static void h_PeekMessageA(void)
     if (getenv("LF2_MSG_DEBUG")) {
         static uint8_t seen[8];
         const uint32_t f = ARG(4) & 7;
-        if (!seen[f]) { seen[f] = 1;
-            fprintf(stderr, "PeekMessage flags=%u hwnd=%08x filter=%u..%u\n",
-                    ARG(4), ARG(1), ARG(2), ARG(3)); }
+        if (!seen[f]) {
+            seen[f] = 1;
+            fprintf(stderr, "PeekMessage flags=%u hwnd=%08x filter=%u..%u\n", ARG(4), ARG(1), ARG(2), ARG(3));
+        }
     }
-    if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(5, 1); return; }
-    if (next_queued_message(ARG(0), (int)(ARG(4) & 1))) { ret_stdcall(5, 1); return; }
+    if (quit_posted) {
+        fill_msg(ARG(0), WM_QUIT);
+        ret_stdcall(5, 1);
+        return;
+    }
+    if (next_queued_message(ARG(0), (int)(ARG(4) & 1))) {
+        ret_stdcall(5, 1);
+        return;
+    }
     ret_stdcall(5, 0);
 }
 
 static void h_GetMessageA(void)
 {
     hostwin_pump();
-    if (getenv("LF2_MSG_DEBUG")) { static long n; if (++n % 500 == 1)
-        fprintf(stderr, "GetMessage call #%ld\n", n); }
-    if (quit_posted) { fill_msg(ARG(0), WM_QUIT); ret_stdcall(4, 0); return; }
-    if (next_queued_message(ARG(0), 1)) { ret_stdcall(4, 1); return; }
+    if (getenv("LF2_MSG_DEBUG")) {
+        static long n;
+        if (++n % 500 == 1) fprintf(stderr, "GetMessage call #%ld\n", n);
+    }
+    if (quit_posted) {
+        fill_msg(ARG(0), WM_QUIT);
+        ret_stdcall(4, 0);
+        return;
+    }
+    if (next_queued_message(ARG(0), 1)) {
+        ret_stdcall(4, 1);
+        return;
+    }
     fill_msg(ARG(0), 0);
     ret_stdcall(4, 1);
 }
@@ -702,81 +785,13 @@ static void h_DispatchMessageA(void)
     const uint32_t p = ARG(0);
     const uint32_t msg = LD32(p + 4);
     if (getenv("LF2_MSG_DEBUG"))
-        fprintf(stderr, "dispatch msg=%04x wparam=%08x lparam=%08x wndproc=%08x\n",
-                msg, LD32(p + 8), LD32(p + 12), hw.wndproc);
+        fprintf(stderr, "dispatch msg=%04x wparam=%08x lparam=%08x wndproc=%08x\n", msg, LD32(p + 8), LD32(p + 12),
+                hw.wndproc);
     if (msg && hw.wndproc) {
-        const uint32_t args[4] = { LD32(p), msg, LD32(p + 8), LD32(p + 12) };
+        const uint32_t args[4] = {LD32(p), msg, LD32(p + 8), LD32(p + 12)};
         guest_call(hw.wndproc, args, 4);
     }
     ret_stdcall(1, 0);
-}
-
-/* ---- keyboard ----
- * Virtual-key codes the game polls, mapped to SDL scancodes. */
-/* The inverse of vk_to_scancode, for turning SDL key events into window messages. */
-static uint32_t scancode_to_vk(SDL_Scancode sc)
-{
-    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z)
-        return (uint32_t)('A' + (sc - SDL_SCANCODE_A));
-    if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9)
-        return (uint32_t)('1' + (sc - SDL_SCANCODE_1));
-    if (sc >= SDL_SCANCODE_KP_1 && sc <= SDL_SCANCODE_KP_9)
-        return 0x61 + (uint32_t)(sc - SDL_SCANCODE_KP_1);
-    switch (sc) {
-    case SDL_SCANCODE_0:      return '0';
-    case SDL_SCANCODE_KP_0:   return 0x60;
-    case SDL_SCANCODE_LEFT:   return 0x25;
-    case SDL_SCANCODE_UP:     return 0x26;
-    case SDL_SCANCODE_RIGHT:  return 0x27;
-    case SDL_SCANCODE_DOWN:   return 0x28;
-    case SDL_SCANCODE_RETURN: return 0x0D;
-    case SDL_SCANCODE_ESCAPE: return 0x1B;
-    case SDL_SCANCODE_SPACE:  return 0x20;
-    case SDL_SCANCODE_LSHIFT: case SDL_SCANCODE_RSHIFT: return 0x10;
-    case SDL_SCANCODE_LCTRL:  case SDL_SCANCODE_RCTRL:  return 0x11;
-    case SDL_SCANCODE_LALT:   case SDL_SCANCODE_RALT:   return 0x12;
-    case SDL_SCANCODE_TAB:    return 0x09;
-    case SDL_SCANCODE_DELETE: return 0x2E;
-    case SDL_SCANCODE_F1: case SDL_SCANCODE_F2: case SDL_SCANCODE_F3:
-    case SDL_SCANCODE_F4: case SDL_SCANCODE_F5: case SDL_SCANCODE_F6:
-        return 0x70 + (uint32_t)(sc - SDL_SCANCODE_F1);
-    default: return 0;
-    }
-}
-
-/* The RmlUi settings screen rebinds keys from an SDL event (issue #70); it needs the same
- * scancode -> Windows VK map the message pump uses, so the one table is not written twice. */
-uint32_t hostwin_key_from_scancode(SDL_Scancode sc) { return scancode_to_vk(sc); }
-
-static SDL_Scancode vk_to_scancode(uint32_t vk)
-{
-    if (vk >= 'A' && vk <= 'Z') return (SDL_Scancode)(SDL_SCANCODE_A + (vk - 'A'));
-    if (vk >= '0' && vk <= '9') return (SDL_Scancode)(SDL_SCANCODE_0 + (vk - '0'));
-    switch (vk) {
-    case 0x25: return SDL_SCANCODE_LEFT;
-    case 0x26: return SDL_SCANCODE_UP;
-    case 0x27: return SDL_SCANCODE_RIGHT;
-    case 0x28: return SDL_SCANCODE_DOWN;
-    case 0x0D: return SDL_SCANCODE_RETURN;
-    case 0x1B: return SDL_SCANCODE_ESCAPE;
-    case 0x20: return SDL_SCANCODE_SPACE;
-    case 0x10: return SDL_SCANCODE_LSHIFT;
-    case 0x11: return SDL_SCANCODE_LCTRL;
-    case 0x12: return SDL_SCANCODE_LALT;
-    case 0x09: return SDL_SCANCODE_TAB;
-    case 0x2E: return SDL_SCANCODE_DELETE;
-    case 0x60: return SDL_SCANCODE_KP_0;
-    case 0x61: return SDL_SCANCODE_KP_1;
-    case 0x62: return SDL_SCANCODE_KP_2;
-    case 0x63: return SDL_SCANCODE_KP_3;
-    case 0x64: return SDL_SCANCODE_KP_4;
-    case 0x65: return SDL_SCANCODE_KP_5;
-    case 0x66: return SDL_SCANCODE_KP_6;
-    case 0x67: return SDL_SCANCODE_KP_7;
-    case 0x68: return SDL_SCANCODE_KP_8;
-    case 0x69: return SDL_SCANCODE_KP_9;
-    default:   return SDL_SCANCODE_UNKNOWN;
-    }
 }
 
 /* Scripted keys, on a wall clock.
@@ -808,22 +823,26 @@ static int key_script_pressed(uint32_t vk)
     const long frame = hostwin_frames();
 
     int idx = 0;
-    for (const char *c = script; *c; ) {
+    for (const char *c = script; *c;) {
         const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
         const char *when = c;
-        if (*c == ':') { c++; when = c; }
+        if (*c == ':') {
+            c++;
+            when = c;
+        }
         char buf[64];
         while (*c && *c != ',' && *c != ' ') c++;
         size_t n = (size_t)(c - when);
         if (n >= sizeof buf) n = sizeof buf - 1;
-        memcpy(buf, when, n); buf[n] = 0;
+        memcpy(buf, when, n);
+        buf[n] = 0;
         while (*c == ',' || *c == ' ') c++;
 
         const int i = idx++;
         script_seen(SCRIPT_KEYS, i);
         int un = 0;
         const long at = script_when(buf, &un);
-        if (un) continue;              /* its screen has not appeared YET -- not never */
+        if (un) continue; /* its screen has not appeared YET -- not never */
         if (frame < at || frame >= at + KEY_SCRIPT_HOLD) continue;
 
         /* Recorded for every item whose window this frame is in, not only the one being
@@ -857,7 +876,7 @@ static int autokey_pressed(uint32_t vk)
     const char *h_env = getenv("LF2_AUTOKEY_HOLD");
     const uint64_t begin = s_env ? strtoull(s_env, NULL, 10) : 6000;
     const uint64_t every = e_env ? strtoull(e_env, NULL, 10) : 1200;
-    const uint64_t hold  = h_env ? strtoull(h_env, NULL, 10) : 150;
+    const uint64_t hold = h_env ? strtoull(h_env, NULL, 10) : 150;
 
     const uint64_t now = SDL_GetTicks() - base_ms;
     if (now < begin) return 0;
@@ -865,7 +884,7 @@ static int autokey_pressed(uint32_t vk)
     if (elapsed % every >= hold) return 0;
 
     unsigned count = 0;
-    for (const char *c = script; *c; ) {
+    for (const char *c = script; *c;) {
         (void)strtoul(c, (char **)&c, 16);
         count++;
         while (*c == ',' || *c == ' ') c++;
@@ -878,7 +897,7 @@ static int autokey_pressed(uint32_t vk)
     if (getenv("LF2_AUTOKEY_ONCE") && step >= count) return 0;
     const unsigned want = step % count;
     unsigned i = 0;
-    for (const char *c = script; *c; ) {
+    for (const char *c = script; *c;) {
         const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
         if (i == want) return key == vk;
         i++;
@@ -909,7 +928,8 @@ static uint32_t mouse_lparam(float wx, float wy)
     float lx = 0, ly = 0;
     lf2_pointer_to_compose(wx, wy, density, &lx, &ly);
     const int x = (int)lx - screen_offset_x(), y = (int)ly;
-    host_ptr_x = x; host_ptr_y = y;
+    host_ptr_x = x;
+    host_ptr_y = y;
     return ((uint32_t)(y & 0xffff) << 16) | (uint32_t)(x & 0xffff);
 }
 
@@ -926,11 +946,12 @@ static void keydebug_note(unsigned vk)
     static uint8_t cur[256], prev[256];
     static int have_prev, sweeps;
     keydebug_calls++;
-    if (cur[vk]) {                                  /* repeat => sweep ended */
+    if (cur[vk]) { /* repeat => sweep ended */
         sweeps++;
         if (!have_prev || memcmp(cur, prev, sizeof cur) != 0) {
             fprintf(stderr, "poll set changed (sweep %d):", sweeps);
-            for (int i = 0; i < 256; i++) if (cur[i]) fprintf(stderr, " %02x", i);
+            for (int i = 0; i < 256; i++)
+                if (cur[i]) fprintf(stderr, " %02x", i);
             fprintf(stderr, "\n");
             memcpy(prev, cur, sizeof cur);
             have_prev = 1;
@@ -946,8 +967,8 @@ static void keydebug_note(unsigned vk)
 static void keydebug_selftest(void)
 {
     fprintf(stderr, "LF2_KEY_DEBUG selftest: expect 2 'poll set changed' lines\n");
-    const unsigned a[] = { 0x0d, 0x20, 0x0d };            /* sweep 1, then repeat */
-    const unsigned b[] = { 0x68, 0x57, 0x49, 0x68 };      /* different set */
+    const unsigned a[] = {0x0d, 0x20, 0x0d};       /* sweep 1, then repeat */
+    const unsigned b[] = {0x68, 0x57, 0x49, 0x68}; /* different set */
     for (unsigned i = 0; i < 3; i++) keydebug_note(a[i]);
     for (unsigned i = 0; i < 4; i++) keydebug_note(b[i]);
     fprintf(stderr, "LF2_KEY_DEBUG selftest: done\n");
@@ -959,37 +980,43 @@ static void keydebug_selftest(void)
 static void keydebug_report(void)
 {
     if (keydebug_calls == 0)
-        fprintf(stderr,
-                "LF2_KEY_DEBUG: the game never called GetKeyState, so this trace saw\n"
-                "  NOTHING -- that is not evidence of no input. LF2 keeps its own key\n"
-                "  array at 0x455378, filled from WM_KEYDOWN, and reads that instead.\n"
-                "  To follow input, probe reads of 0x455378 rather than this import.\n");
+        fprintf(stderr, "LF2_KEY_DEBUG: the game never called GetKeyState, so this trace saw\n"
+                        "  NOTHING -- that is not evidence of no input. LF2 keeps its own key\n"
+                        "  array at 0x455378, filled from WM_KEYDOWN, and reads that instead.\n"
+                        "  To follow input, probe reads of 0x455378 rather than this import.\n");
 }
 
 /* Escape is the global RmlUi menu command. While its document is visible, all physical input
  * belongs to that document and must read as released to the guest; otherwise a front-end menu
  * moves behind the modal UI. This is Dusklight's input-block ownership applied at LF2's
  * Win32 boundary. */
-static int port_owns_key(uint32_t vk)
-{
-    return vk == 0x1B || rmlui_active();
-}
+static int port_owns_key(uint32_t vk) { return vk == 0x1B || rmlui_active(); }
 
 static void h_GetKeyState(void)
 {
     hostwin_pump();
     if (getenv("LF2_KEY_DEBUG")) keydebug_note(ARG(0) & 0xff);
-    if (port_owns_key(ARG(0))) { ret_stdcall(1, 0); return; }
-    if (ARG(0) == 0x01) { ret_stdcall(1, mouse_left_down ? 0xFF80u : 0u); return; }
-    if (ARG(0) == 0x02) { ret_stdcall(1, mouse_right_down ? 0xFF80u : 0u); return; }
-    if (autokey_pressed(ARG(0)) || hostwin_injected_key(ARG(0))) {
-        ret_stdcall(1, 0xFF80u); return;
+    if (port_owns_key(ARG(0))) {
+        ret_stdcall(1, 0);
+        return;
     }
-    const SDL_Scancode sc = vk_to_scancode(ARG(0));
+    if (ARG(0) == 0x01) {
+        ret_stdcall(1, mouse_left_down ? 0xFF80u : 0u);
+        return;
+    }
+    if (ARG(0) == 0x02) {
+        ret_stdcall(1, mouse_right_down ? 0xFF80u : 0u);
+        return;
+    }
+    if (autokey_pressed(ARG(0)) || hostwin_injected_key(ARG(0))) {
+        ret_stdcall(1, 0xFF80u);
+        return;
+    }
+    const SDL_Scancode sc = keyboard_scancode_from_vk(ARG(0));
     int n = 0;
     const bool *state = SDL_GetKeyboardState(&n);
     const int down = (sc != SDL_SCANCODE_UNKNOWN && (int)sc < n && state[sc]);
-    ret_stdcall(1, down ? 0xFF80u : 0u);   /* high bit set while held */
+    ret_stdcall(1, down ? 0xFF80u : 0u); /* high bit set while held */
 }
 
 /* ---- odds and ends ---- */
@@ -997,31 +1024,36 @@ static void h_GetKeyState(void)
 static void h_MessageBoxA(void)
 {
     /* Logged rather than shown: a modal dialog blocks the run and tells us nothing. */
-    fprintf(stderr, "[MessageBox] %s | %s\n",
-            ARG(2) ? (const char *)(g_mem + ARG(2)) : "",
+    fprintf(stderr, "[MessageBox] %s | %s\n", ARG(2) ? (const char *)(g_mem + ARG(2)) : "",
             ARG(1) ? (const char *)(g_mem + ARG(1)) : "");
     ret_stdcall(4, 1);
 }
 
-static void h_PostQuitMessage(void) { quit_posted = 1; ret_stdcall(1, 0); }
+static void h_PostQuitMessage(void)
+{
+    quit_posted = 1;
+    ret_stdcall(1, 0);
+}
 
 /* The port asking the game to shut down, through the same path the game's own quit takes --
  * so teardown, the atexit reports and a clean exit status all still happen. */
 void hostwin_request_quit(void) { quit_posted = 1; }
 
-int hostwin_width(void)  { return hw.width; }
+int hostwin_width(void) { return hw.width; }
 int hostwin_height(void) { return hw.height; }
 static void h_SetRect(void)
 {
     uint32_t r = ARG(0);
-    ST32(r, ARG(1)); ST32(r + 4, ARG(2)); ST32(r + 8, ARG(3)); ST32(r + 12, ARG(4));
+    ST32(r, ARG(1));
+    ST32(r + 4, ARG(2));
+    ST32(r + 8, ARG(3));
+    ST32(r + 12, ARG(4));
     ret_stdcall(5, 1);
 }
 static void h_ClientToScreen(void)
 {
     if (getenv("LF2_BLT_DEBUG"))
-        fprintf(stderr, "ClientToScreen pt=%08x (%d,%d)\n", ARG(1),
-                (int)LD32(ARG(1)), (int)LD32(ARG(1) + 4));
+        fprintf(stderr, "ClientToScreen pt=%08x (%d,%d)\n", ARG(1), (int)LD32(ARG(1)), (int)LD32(ARG(1) + 4));
     ret_stdcall(2, 1);
 }
 
@@ -1036,7 +1068,7 @@ static void h_u1_4_defwnd(void) { ret_stdcall(4, 0); }
  * whereas aborting here takes the whole process down. */
 static void h_GetOpenFileNameA(void) { ret_stdcall(1, 0); }
 
-static void h_CoInitialize(void)   { ret_stdcall(1, 0); }
+static void h_CoInitialize(void) { ret_stdcall(1, 0); }
 /* DirectShow (background music) is not implemented, so this reports failure.
  * A generic COM stub is NOT viable here: stdcall methods pop their own arguments and
  * the count varies per method, so a one-size handler corrupts the guest stack. The
@@ -1056,41 +1088,41 @@ static void h_CoCreateInstance(void)
     ret_stdcall(5, E_NOINTERFACE);
 }
 
-
-
-
 typedef void (*Handler)(void);
 
 Handler win32_lookup(const char *dll, const char *name)
 {
-    static const struct { const char *dll, *name; Handler fn; } T[] = {
-        { "USER32.dll", "RegisterClassA",    h_RegisterClassA },
-        { "USER32.dll", "CreateWindowExA",   h_CreateWindowExA },
-        { "USER32.dll", "GetClientRect",     h_GetClientRect },
-        { "USER32.dll", "GetSystemMetrics",  h_GetSystemMetrics },
-        { "USER32.dll", "PeekMessageA",      h_PeekMessageA },
-        { "USER32.dll", "GetMessageA",       h_GetMessageA },
-        { "USER32.dll", "DispatchMessageA",  h_DispatchMessageA },
-        { "USER32.dll", "TranslateMessage",  h_u1_1 },
-        { "USER32.dll", "DefWindowProcA",    h_u1_4_defwnd },
-        { "USER32.dll", "GetKeyState",       h_GetKeyState },
-        { "USER32.dll", "MessageBoxA",       h_MessageBoxA },
-        { "USER32.dll", "PostQuitMessage",   h_PostQuitMessage },
-        { "USER32.dll", "PostMessageA",      h_u1_4_defwnd },
-        { "USER32.dll", "SetRect",           h_SetRect },
-        { "USER32.dll", "ClientToScreen",    h_ClientToScreen },
-        { "USER32.dll", "ShowWindow",        h_u1_2 },
-        { "USER32.dll", "UpdateWindow",      h_u1_1 },
-        { "USER32.dll", "InvalidateRect",    h_u1_3 },
-        { "USER32.dll", "DestroyWindow",     h_u1_1 },
-        { "USER32.dll", "LoadCursorA",       h_u1_2 },
-        { "USER32.dll", "LoadIconA",         h_u1_2 },
+    static const struct {
+        const char *dll, *name;
+        Handler fn;
+    } T[] = {
+        {"USER32.dll", "RegisterClassA", h_RegisterClassA},
+        {"USER32.dll", "CreateWindowExA", h_CreateWindowExA},
+        {"USER32.dll", "GetClientRect", h_GetClientRect},
+        {"USER32.dll", "GetSystemMetrics", h_GetSystemMetrics},
+        {"USER32.dll", "PeekMessageA", h_PeekMessageA},
+        {"USER32.dll", "GetMessageA", h_GetMessageA},
+        {"USER32.dll", "DispatchMessageA", h_DispatchMessageA},
+        {"USER32.dll", "TranslateMessage", h_u1_1},
+        {"USER32.dll", "DefWindowProcA", h_u1_4_defwnd},
+        {"USER32.dll", "GetKeyState", h_GetKeyState},
+        {"USER32.dll", "MessageBoxA", h_MessageBoxA},
+        {"USER32.dll", "PostQuitMessage", h_PostQuitMessage},
+        {"USER32.dll", "PostMessageA", h_u1_4_defwnd},
+        {"USER32.dll", "SetRect", h_SetRect},
+        {"USER32.dll", "ClientToScreen", h_ClientToScreen},
+        {"USER32.dll", "ShowWindow", h_u1_2},
+        {"USER32.dll", "UpdateWindow", h_u1_1},
+        {"USER32.dll", "InvalidateRect", h_u1_3},
+        {"USER32.dll", "DestroyWindow", h_u1_1},
+        {"USER32.dll", "LoadCursorA", h_u1_2},
+        {"USER32.dll", "LoadIconA", h_u1_2},
 
-        { "USER32.dll", "SetCursor",         h_u1_1 },
-        { "COMDLG32.dll", "GetOpenFileNameA", h_GetOpenFileNameA },
-        { "ole32.dll",  "CoInitialize",      h_CoInitialize },
-        { "ole32.dll",  "CoCreateInstance",  h_CoCreateInstance },
-        { "SHELL32.dll", "ShellExecuteA",    h_u1_6 },
+        {"USER32.dll", "SetCursor", h_u1_1},
+        {"COMDLG32.dll", "GetOpenFileNameA", h_GetOpenFileNameA},
+        {"ole32.dll", "CoInitialize", h_CoInitialize},
+        {"ole32.dll", "CoCreateInstance", h_CoCreateInstance},
+        {"SHELL32.dll", "ShellExecuteA", h_u1_6},
     };
     for (size_t i = 0; i < sizeof T / sizeof T[0]; i++)
         if (strcmp(T[i].dll, dll) == 0 && strcmp(T[i].name, name) == 0) return T[i].fn;

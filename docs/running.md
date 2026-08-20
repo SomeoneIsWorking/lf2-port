@@ -1,8 +1,8 @@
 # Running the port
 
 ```sh
-cmake -S . -B scratch/build && cmake --build scratch/build -j
-cd game && ../scratch/build/lf2 lf2.exe
+python3 tools/build/build.py
+cd game && ../scratch/build-clang/lf2 lf2.exe
 ```
 
 The working directory must be the extracted game tree — the game opens its data with
@@ -15,8 +15,8 @@ portability blockers that have been removed, not a report of a successful build.
 
 ```sh
 brew install sdl3 cmake
-cmake -S . -B scratch/build && cmake --build scratch/build -j
-cd game && ../scratch/build/lf2 lf2.exe
+python3 tools/build/build.py
+cd game && ../scratch/build-clang/lf2 lf2.exe
 ```
 
 The runtime is POSIX plus SDL3 throughout; an audit found no `/proc`, no epoll, no
@@ -104,7 +104,7 @@ Forcing the video driver is required, and the reason is worth knowing:
 
 ```sh
 Xvfb :99 -screen 0 1024x768x24 &
-cd game && DISPLAY=:99 SDL_VIDEODRIVER=x11 ../scratch/build/lf2 lf2.exe &
+cd game && DISPLAY=:99 SDL_VIDEODRIVER=x11 ../scratch/build-clang/lf2 lf2.exe &
 DISPLAY=:99 import -window root shot.png
 ```
 
@@ -322,7 +322,7 @@ alongside the code that ships it, and it now runs in a millisecond.
 | 1920x1080 | 1.964 | 978x550 | fills it — the extra height is scale |
 | 800x900 | 1.008 | 794x550 | the **width** binds; leftover rows are black, correctly |
 
-`tools/e2e.sh widescreen` asserts exactly that table, both columns. The 794 row is the one that
+`tools/e2e.py widescreen` asserts exactly that table, both columns. The 794 row is the one that
 must NOT widen or scale — without it a build that always widened would pass everything else.
 The 800x900 row is the negative for "the picture fills the window": that window is taller in
 aspect than the game, so a band is the right answer, and a build that stretched everything
@@ -348,7 +348,7 @@ screen, and an unknown name is refused loudly rather than silently entering VS.
 This is what makes anything but VS mode testable. Every scripted route used to reach the game
 by pressing buttons at counted frames and take whatever the mode menu happened to be sitting
 on, so one of eight modes was exercised and seven were not — and the stage-mode camera lock
-had no way to be verified at all. `tools/e2e.sh stage_mode` uses it, and its report says explicitly
+had no way to be verified at all. `tools/e2e.py stage_mode` uses it, and its report says explicitly
 when the mode menu was never reached, because a route that silently entered VS while asking
 for stage would be a green test for a mode it never visited.
 
@@ -419,8 +419,8 @@ otherwise be delivered to a game that never runs another frame.
 
 `LEAVE MATCH` is named for what it verifiably does: it lands on the post-load mode menu,
 asserted by the screen word rather than by a picture, because character selection and the
-mode menu share a blit destination and can share a picture (issue #59). `tools/e2e.sh
-exit_to_menu` is that assertion. `tools/e2e.sh pause_dropout` covers the drop-out half end to
+mode menu share a blit destination and can share a picture (issue #59). `tools/e2e.py
+exit_to_menu` is that assertion. `tools/e2e.py pause_dropout` covers the drop-out half end to
 end, including the negative that player one is still in the match afterwards.
 
 The global menu is RmlUi (issues #70 and #79) — the one C++ dependency in the port, vendored as a
@@ -437,8 +437,13 @@ software compositor rasterizes them at logical size. The existing native high-re
 display-list path receives a vector raster matched to the quad's current output-pixel footprint
 behind the same 18x18 logical cell, and RmlUi receives a 120x120 linear-filtered raster, so
 neither path first reduces the SVG to a tiny bitmap.
-`tools/e2e.sh settings ui_global` proves the document renders both shared textures and opens on
+`tools/e2e.py settings ui_global` proves the document renders both shared textures and opens on
 all four screens.
+
+`tools/e2e.py ui_escape` is the keyboard gate. It runs the real X11 window under Xvfb, focuses
+it, and sends two XTEST Escape presses; SDL must report both, and the first must open RmlUi while
+the second closes it. `LF2_KEY_SCRIPT` is deliberately absent from that route: the scripted key
+path once passed while physical Escape was discarded before the port's held-key ledger.
 
 ## Scripted input
 
@@ -732,8 +737,8 @@ Two are build options rather than environment variables, because they need code 
 into the generated file:
 
 ```sh
-cmake -S . -B scratch/build -DLF2_STACK_CHECK=ON   # assert stack balance at every guest RET
-LF2_PROBE=4246fd,4274da cmake --build scratch/build --target lf2   # log ESP at those instructions
+CC=clang CXX=clang++ cmake -S . -B scratch/build-clang -DLF2_STACK_CHECK=ON   # assert stack balance at every guest RET
+LF2_PROBE=4246fd,4274da cmake --build scratch/build-clang --target lf2   # log ESP at those instructions
 ```
 
 `LF2_PROBE` is read when the code is **generated**, not when it runs, so the target has to
@@ -874,7 +879,7 @@ opponent, entirely unattended:
 cd game && LF2_AUTOCLICK_ONCE=1 LF2_AUTOCLICK=403,228 LF2_AUTOCLICK_START=3000 \
   LF2_AUTOKEY_ONCE=1 LF2_AUTOKEY=0x5A,0x5A,0x5A,0x5A,0x5A,0x5A,0x5A,0x5A,0x26,0x26,0x5A \
   LF2_AUTOKEY_START=32000 LF2_AUTOKEY_EVERY=1800 \
-  ../scratch/build/lf2 lf2.exe
+  ../scratch/build-clang/lf2 lf2.exe
 ```
 
 The click picks **game start**; the game then loads its data for ~25 s, which is why the
@@ -924,7 +929,7 @@ table dump taken there is 400 lines of untouched defaults, which reads exactly l
 result. The dump now says `NOT A MATCH` outright in that case.
 
 ```sh
-cd game && LF2_COOP_TABLE=live+60 LF2_COOP_SPAWN=13,1 ../scratch/build/lf2 lf2.exe
+cd game && LF2_COOP_TABLE=live+60 LF2_COOP_SPAWN=13,1 ../scratch/build-clang/lf2 lf2.exe
 ```
 
 puts a Bandit into a running match: it animates, walks, collides and gets its own HUD bar
@@ -968,7 +973,7 @@ drawn by its code from its record; the port is not painting a character-select s
 the match.
 
 ```sh
-cd game && ../scratch/build/lf2 lf2.exe
+cd game && ../scratch/build-clang/lf2 lf2.exe
 ```
 
 The remaining `LF2_COOP_*` variables are the **diagnostics** over this — `_SPAWN`, `_JOIN`,
@@ -1232,9 +1237,9 @@ sits at ~13%.
 ## Tests
 
 ```sh
-cd scratch/build && ctest      # THE suite: 8 tests, ~1.3 s, nothing in it boots the game
-tools/e2e.sh                   # the scripts that DO boot the game (seconds to minutes each)
-tools/e2e.sh mouse render      # by name
+ctest --test-dir scratch/build-clang  # offline suite + Clang gates, about 15 s; no game boot
+tools/e2e.py                   # the scripts that DO boot the game (seconds to minutes each)
+tools/e2e.py mouse render      # by name
 ```
 
 There is one ctest suite and it is fast — that is deliberate, and it is a bar, not a
@@ -1244,7 +1249,7 @@ checked without a running game is checked without one: `runtime/overrides/geom.h
 port's pure geometry and `tests/test_geom.c` walks all of it in a millisecond, and the
 overrides *include* that header rather than keeping their own copy of the arithmetic.
 
-`tools/e2e.sh` keeps the rest — the questions only a running instance can answer. It runs
+`tools/e2e.py` keeps the rest — the questions only a running instance can answer. It runs
 them one at a time and prints a summary that distinguishes a skip from a pass.
 
 `tools/routes/smoke_test.sh` drives the port deep into the game headless and asserts what has
@@ -1281,7 +1286,7 @@ leading space.
 
 ```sh
 cd game && SDL_VIDEODRIVER=offscreen LF2_DUMP_DIR=../scratch/frames \
-  LF2_FRAME_DUMP=1900,2400 ../scratch/build/lf2 lf2.exe
+  LF2_FRAME_DUMP=1900,2400 ../scratch/build-clang/lf2 lf2.exe
 ```
 
 Prefer this to screenshotting an X server. Frame numbers are exact and reproducible, it
@@ -1480,7 +1485,7 @@ becomes player 1, the next player 2, and so on, and pressing attack on the join 
 claims and joins in one stroke. Assignments clear when the game returns to the front
 end of a session, so the next session reassigns from scratch. Held keyboard state comes from a
 host-side ledger fed by the same message stream as everything else
-(`hostwin_key_held`), which is what makes the scripted-key tests exercise the identical
+(`keyboard_held`), which is what makes the scripted-key tests exercise the identical
 path a human uses.
 
 ## Playing with a controller
@@ -1717,7 +1722,7 @@ Three hooks in `runtime/video/ddraw.c`:
 
 - **`LF2_PRIMARY_STALE=1`** injects the defect that issue #29 was about: the copy from the
   composition to the primary skips `(composition - 794) / 2` columns on the left, so they keep
-  the previous size's pixels. It is the negative arm of `tools/e2e.sh resize` -- "the band left
+  the previous size's pixels. It is the negative arm of `tools/e2e.py resize` -- "the band left
   of the panel is black" would pass just as happily on a frame that is black everywhere, so the
   check has to be shown failing. It used to *disable a clear*; issue #42 made the copy 1:1, so
   every column of the primary is written every frame, the ghost has nowhere to live and there
@@ -1739,7 +1744,7 @@ Three hooks in `runtime/video/ddraw.c`:
 ### The native renderer, the lighting and the cast shadows
 
 - **`LF2_RENDERER=soft`** presents the software compositor instead of the GPU renderer. Both
-  build every frame; this chooses which one is shown, and it is how `tools/e2e.sh render` diffs them.
+  build every frame; this chooses which one is shown, and it is how `tools/e2e.py render` diffs them.
 - **`LF2_HD2D=off`** turns off the lighting *and* the sprite-cast shadows, which restores the
   game's own dithered ellipse. The lighting is **on by default** — it is a look, not a switch;
   this exists so the renderer's *geometry* can be compared against the software path with
@@ -1780,7 +1785,7 @@ Three hooks in `runtime/video/ddraw.c`:
   `shadowsize:`, not read from a fixed offset — the offset that looked right matched 0 of
   40000 draws (claim C019).
 - **`LF2_RENDER_SKIP=<n>`** drops every nth display-list entry. It is the negative arm of
-  `tools/e2e.sh render`: this comparison was fooled once already (the readback ran before the draw, so
+  `tools/e2e.py render`: this comparison was fooled once already (the readback ran before the draw, so
   every dump was the previous frame — which with a scrolling camera looked like a clean
   one-pixel shift), so an arm that draws the frame *wrong* has to come out different.
 - **`LF2_RENDER_DEBUG=1`** reports what each frame was made of — quads, fills, tiles, cached
@@ -1796,7 +1801,7 @@ Three hooks in `runtime/video/ddraw.c`:
     without a single test noticing (issue #52).
   - `N frame(s) were drawn over a RETAINED list` — frames the game recorded nothing for and
     the renderer redrew what it already had, which is how the pause menu is presented. Zero is
-    the correct answer for a run that never paused, and `tools/e2e.sh pause_dropout` asserts
+    the correct answer for a run that never paused, and `tools/e2e.py pause_dropout` asserts
     both directions: non-zero in the run that pauses, zero in the same route without one.
   - `the busiest frame drew N tile(s) against a pool of M` — the tile-texture pool must be at
     least as large as the busiest frame, because every tile in a frame is live at once. When
@@ -1817,7 +1822,7 @@ stage geometry, HUD, text, and leftover bands are never relit. Outside a charact
 the only permitted change is the character's cast-shadow mask.
 
 On a frame with no stage and no fighters in it — the menu, character selection — the pass
-changes **nothing at all**, byte for byte, and `tools/e2e.sh render` asserts that alongside asserting
+changes **nothing at all**, byte for byte, and `tools/e2e.py render` asserts that alongside asserting
 that the match frame *does* change. An effect that has quietly spread over the whole picture
 passes the second check and fails the first, which is exactly how the bloom-and-haze version
 of this pass would have been caught.
@@ -1852,7 +1857,7 @@ plain composition; there is deliberately no approximation to fall back to.
 
 - **`LF2_BG_ORIG=1`** hands the background layer draw back to the recompiled body instead of
   `runtime/overrides/background.c`, and **`LF2_BG_SKEW=<n>`** shifts every layer's parallax
-  offset by `n` pixels. Both exist for one purpose: `tools/e2e.sh background` runs the same route
+  offset by `n` pixels. Both exist for one purpose: `tools/e2e.py background` runs the same route
   three ways and asserts the port's frames are byte-identical to the original's *and* that
   the skewed arm differs. Without the third arm, "the two agreed" would be indistinguishable
   from "the dump does not contain the background at all".
@@ -1880,7 +1885,7 @@ plain composition; there is deliberately no approximation to fall back to.
   fighter, shadow, name tag and effect it draws moves *n* pixels and nothing else in the frame
   does. It is not a fix and not a port: it is the **negative control** for the byte-identity
   gate issue #55's hand-port of `fn_0041a5a0` will need, built before the port so that the gate
-  has been seen to fail before it is trusted. `tools/e2e.sh objects` uses it — two default runs
+  has been seen to fail before it is trusted. `tools/e2e.py objects` uses it — two default runs
   must be byte-identical, and a skew of 3 must change thousands of pixels.
 
 - **`LF2_ALTBG_FORCE=1`** draws the game's **built-in background** (index 99) instead of the
@@ -1922,7 +1927,7 @@ plain composition; there is deliberately no approximation to fall back to.
   ```sh
   cd game && SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
       LF2_VIRTUAL_PAD="$ROUTE" LF2_BG_TABLE=all LF2_QUIT_AFTER=2300 \
-      ../scratch/build/lf2 lf2.exe 2>&1 | grep "bg table" > ../scratch/alltables.txt
+      ../scratch/build-clang/lf2 lf2.exe 2>&1 | grep "bg table" > ../scratch/alltables.txt
   tools/re/bg_table_check.py scratch/alltables.txt          # 12/12 against the shipped bg.dat
   tools/re/bg_table_check.py --selftest                     # asserts it can also say FAIL
   ```
@@ -1954,7 +1959,7 @@ plain composition; there is deliberately no approximation to fall back to.
   on being diffed. A reimplementation that cannot be diffed against what it replaces is a
   rewrite.
 
-  `tools/e2e.sh render` runs both arms. The engine one must MATCH the software compositor to
+  `tools/e2e.py render` runs both arms. The engine one must MATCH the software compositor to
   the same tolerance the old GPU path does — its first version is deliberately a reproduction
   — and `LF2_ENGINE=1 LF2_RENDER_SKIP=7` must differ, which is what proves the engine is what
   drew the matching frame rather than the old path having drawn both dumps.
@@ -1972,7 +1977,7 @@ plain composition; there is deliberately no approximation to fall back to.
 
   That is the case worth being able to see, because "this stage has nothing woven into it" and
   "the loader never ran, or looked in the wrong place, or read the stage's name wrong" all
-  produce the same picture and the same silence. `tools/e2e.sh stage_geom` is the run that
+  produce the same picture and the same silence. `tools/e2e.py stage_geom` is the run that
   asserts all three states — loaded, refused, and absent — inside the real game.
 
   Geometry is looked for **beside the binary** first (CMake copies the repo's `stages/` there

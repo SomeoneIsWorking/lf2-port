@@ -6,13 +6,13 @@
 #include <stdint.h>
 
 typedef struct {
-    SDL_Window   *window;
+    SDL_Window *window;
     SDL_Renderer *renderer;
-    SDL_Texture  *texture;
-    int           width, height;    /* the COMPOSE size the game draws into */
-    int           win_w, win_h;     /* the actual window, which the above follows */
-    uint32_t      hwnd;
-    uint32_t      wndproc;
+    SDL_Texture *texture;
+    int width, height; /* the COMPOSE size the game draws into */
+    int win_w, win_h;  /* the actual window, which the above follows */
+    uint32_t hwnd;
+    uint32_t wndproc;
 } HostWin;
 
 extern HostWin hw;
@@ -28,24 +28,24 @@ uint32_t frame_source_pixels(void);
 #endif
 
 void audio_report(void);
-int  music_load(const char *path);
+int music_load(const char *path);
 void music_start(void);
 void music_stop(void);
 void music_set_volume(int32_t centibels);
 long hostwin_frames(void);
-int  lf2_loading_now(void);              /* runtime/win32/imports.c */
-enum { GUEST_FRAME_NS = 33333333 };      /* the guest clock's tick, shared with imports.c */
+int lf2_loading_now(void);          /* runtime/win32/imports.c */
+enum { GUEST_FRAME_NS = 33333333 }; /* the guest clock's tick, shared with imports.c */
 /* The window changed size (or was just created): recompute the composition from its PIXEL
  * width and re-point everything that depends on it. In runtime/video/ddraw.c, because that is
  * where the surfaces and the presentation live. */
 void hostwin_window_geometry(int win_w, int win_h);
 
 /* Which post-load screen the game is drawing this frame; see runtime/video/ddraw.c. */
-int  panel_charselect_up(void);
-int  panel_overlay_up(void);
-int  panel_hud_up(void);
-int  panel_modemenu_up(void); /* the MODE menu, likewise -- not the game-mode word (issue #51) */
-int  lf2_wide_width(void);    /* the composition's width when it is wider than 794, else 0 */
+int panel_charselect_up(void);
+int panel_overlay_up(void);
+int panel_hud_up(void);
+int panel_modemenu_up(void); /* the MODE menu, likewise -- not the game-mode word (issue #51) */
+int lf2_wide_width(void);    /* the composition's width when it is wider than 794, else 0 */
 
 /* Where the composition is drawn in the window, and how big (issue #41): the height sets the
  * scale, leftover width is field of view. Both present paths use the rectangle; the renderer
@@ -58,20 +58,22 @@ void lf2_window_to_compose(float wx, float wy, float *cx, float *cy);
 /* The pointer's own path: SDL delivers it in POINTS, the composition is placed in PIXELS, and
  * the density between them is the whole of issue #56 as far as hit tests are concerned. */
 void lf2_pointer_to_compose(float px, float py, float density, float *cx, float *cy);
-int  screen_offset_x(void);   /* centring offset for fixed-width screens */
-int  hud_offset_x(int dst_w, int bottom);   /* the in-match HUD's own centring */
+int screen_offset_x(void);               /* centring offset for fixed-width screens */
+int hud_offset_x(int dst_w, int bottom); /* the in-match HUD's own centring */
 void hostwin_shutdown(void);
 void hostwin_inject_key(uint32_t vk, int down);
 void hostwin_inject_pointer(int x, int y, int down);
-int  hostwin_injected_key(uint32_t vk);
-int  gamepad_player_buttons(int index, unsigned char out[7]);
+int hostwin_injected_key(uint32_t vk);
+int gamepad_player_buttons(int index, unsigned char out[7]);
 void input_report(void);
 void audio_pan_report(void);
 void bg_camera_report(void);
 /* LF2_STAGE_GEOM=1: how much hand-woven geometry actually reached the frame (issue #62). */
 void bg_geom_report(void);
-void mode_force_report(void);  /* LF2_MODE: which mode a scripted run entered, and whether it did */   /* LF2_CAMERA: was the wide view actually re-centred? */   /* LF2_AUDIO_PAN: the audible span vs the picture (issue #39) */
-void clock_sites_report(void);   /* LF2_CLOCK_SITES: who reads the clock, and who spins on it */
+void mode_force_report(void); /* LF2_MODE: which mode a scripted run entered, and whether it did */
+/* LF2_CAMERA: was the wide view actually re-centred? */ /* LF2_AUDIO_PAN: the audible span vs
+                                                            the picture (issue #39) */
+void clock_sites_report(void);                           /* LF2_CLOCK_SITES: who reads the clock, and who spins on it */
 /* The scripted-input exit report lives in runtime/app/script.h (script_report). */
 void window_resize_report(void); /* any LF2_WINDOW_RESIZE step the run never reached */
 void glyph_hint_set(int ch);
@@ -91,40 +93,36 @@ void world_backdrop_hint_set(int on);
 void world_band_report(void);   /* LF2_BAND_DEBUG=1 */
 void glyph_scale_report(void);  /* LF2_GLYPH_DEBUG=1 -- was text rasterised at window size? */
 void framing_report(void);      /* LF2_FRAMING_DEBUG=1 -- per-screen framing, issue #44 */
-int  screen_backdrop_left(void); /* this screen's BACKDROP art is anchored at x=0 */
+int screen_backdrop_left(void); /* this screen's BACKDROP art is anchored at x=0 */
 
 /* The clip-draw override hands over the object each draw is made on; the blit path learns
  * from it which object draws the stage's shadow ellipse, and answers with shadow_object(). */
-void     clip_obj_note(uint32_t obj);
+void clip_obj_note(uint32_t obj);
 uint32_t shadow_object(void);
 
 /* runtime/overrides/assets.c -- the stage's shadow geometry, from the background record. */
-void     bg_shadow_size(int *w, int *h);
+void bg_shadow_size(int *w, int *h);
 uint32_t bg_shadow_stage(void);
 
 /* The stage's walkable floor, from bg.dat's `zboundary:` -- which is where the floor IS on
  * the screen, because LF2's depth axis projects straight down it. 0 when no stage is loaded
  * or the record does not give an ordered pair inside 550 rows. */
-int      bg_z_bounds(int *zmin, int *zmax);
-int  hostwin_key_held(uint32_t vk);
-/* The one scancode -> Windows VK table, shared with the RmlUi settings screen's key rebind
- * (runtime/ui/settings_ui.cpp, issue #70). */
-uint32_t hostwin_key_from_scancode(SDL_Scancode sc);
+int bg_z_bounds(int *zmin, int *zmax);
 void hostwin_request_quit(void);
-int  hostwin_width(void);
-int  hostwin_height(void);
-int  gamepad_start_held(void);
-int  gamepad_start_index(void);   /* which pad, or -1; drop-out is per player */
+int hostwin_width(void);
+int hostwin_height(void);
+int gamepad_start_held(void);
+int gamepad_start_index(void); /* which pad, or -1; drop-out is per player */
 
 /* The pause menu's reach into the game. `device_player` is the slot a device is driving,
  * -1 if none. `coop_drop_out` is the deliberate half of what unplugging a pad does.
  * `exit_to_menu_begin` drives the game's own way out of a match (screens.c, which calls the
  * game's exit code directly -- the synthetic-attack path that used to dispatch the overlay
  * is gone, issue #22). */
-int  device_player(int dev);
-int  device_for_player(int slot); /* the device driving a slot, -1 = none (issue #74) */
-int  coop_owns(int slot);         /* is this slot the port's to release? */
-int  coop_drop_out(int slot);
+int device_player(int dev);
+int device_for_player(int slot); /* the device driving a slot, -1 = none (issue #74) */
+int coop_owns(int slot);         /* is this slot the port's to release? */
+int coop_drop_out(int slot);
 void exit_to_menu_begin(int dev);
 void exit_to_menu_tick(void);
 
@@ -133,15 +131,15 @@ void exit_to_menu_tick(void);
 void gfx_request_frame_dump(void);
 
 /* Global RmlUi menu lifecycle and LF2 action bridge, runtime/app/pause.c. */
-int  pause_active(void);
+int pause_active(void);
 void pause_tick(void);
-int  pause_menu_in_match(void);
-int  pause_menu_can_drop(void);
+int pause_menu_in_match(void);
+int pause_menu_can_drop(void);
 void pause_menu_close(void);
 void pause_menu_drop_out(void);
 void pause_menu_leave_match(void);
 void pause_draw(uint32_t pix, int w, int h, int pitch);
 /* Rewind the native renderer to the retained frame under an open modal document. */
-int  pause_draw_list(uint32_t dst_pixels, int w, int h);
+int pause_draw_list(uint32_t dst_pixels, int w, int h);
 void present_frozen_frame(void);
 void controls_hint_enable(int on);

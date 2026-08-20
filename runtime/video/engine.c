@@ -32,7 +32,7 @@ static SDL_GPUSampler *SMP;
 /* THREE PIPELINES, one per blend mode, because SDL_GPU fixes the blend state at pipeline
  * creation. The alternative -- premultiplying everything on upload so one blend serves all --
  * would change what a keyed sprite's colour IS, and the byte-identity arms of
- * tools/e2e.sh background compare exact pixels against the software blitter. Three pipelines
+ * tools/e2e.py background compare exact pixels against the software blitter. Three pipelines
  * is a one-off cost at startup; a changed colour is a whole class of drift. */
 enum { BLEND_NONE = 0, BLEND_ALPHA = 1, BLEND_PREMUL = 2, BLEND_KINDS = 3 };
 static SDL_GPUGraphicsPipeline *PIPE[BLEND_KINDS];

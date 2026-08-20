@@ -1,0 +1,13 @@
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  -performance-enum-size,
+  -performance-no-int-to-ptr
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/runtime/.*'
+ExcludeHeaderFilterRegex: '.*/third_party/.*'
+SystemHeaders: false
+FormatStyle: file
