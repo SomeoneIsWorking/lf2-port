@@ -10,7 +10,7 @@
 #include "guest_ops.h"
 #include "guest_map.h"
 #include "hostwin.h"
-#include "config.h"
+#include "bindings.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,7 +84,8 @@ static int device_buttons(int dev, unsigned char out[7])
     if (dev == 0) {
         /* up, down, left, right, attack, jump, defend -- the game's button order, read from
          * the settings file so a player can remap them (config.h, issue #70). */
-        for (int b = 0; b < 7; b++) out[b] = (unsigned char)(hostwin_key_held(config_key_vk(b)) != 0);
+        for (int b = 0; b < B_N; b++)
+            out[b] = (unsigned char)(hostwin_key_held(binding_key_vk(b)) != 0);
         /* A mouse click on a ported menu reads as this device's attack, so the game does
          * its own dispatch, sound and screen change rather than the port simulating them. */
         if (mouse_confirm_frames > 0) { mouse_confirm_frames--; out[4] = 1; }

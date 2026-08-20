@@ -64,7 +64,7 @@ void hd2d_light_set_angles(float azimuth_deg, float elevation_deg);
 
 /* ---- the look ----
  *
- * The uniform block hd2d_light.frag is fed, as SIX vec4s (24 floats), filled here so the
+ * The uniform block hd2d_light.frag is fed as FIVE vec4s (20 floats), filled here so the
  * constants are written down in exactly one place:
  *
  *   [0] u_sun_dir    xyz: toward the key light, in stage axes.  w: key intensity
@@ -72,16 +72,8 @@ void hd2d_light_set_angles(float azimuth_deg, float elevation_deg);
  *   [2] u_sky        rgb: light from above.                     w: bevel strength
  *   [3] u_bounce     rgb: light bounced off the floor.          w: shadow strength
  *   [4] u_params     xy: one texel (1/w, 1/h). z: bevel radius in texels. w: height gain
- *   [5] u_floor      x: the floor's near edge in output rows.   y: 1/feather.
- *                    z: 1 when the stage said where its floor is, 0 when it did not.
- *
- * `floor_row` is the output row the stage's walkable floor begins at, from bg.dat's own
- * z boundary; `have_floor` is 0 when the stage did not say, in which case the whole picture
- * is lit as a surface facing the camera. The numbers are chosen so a FLAT, unshadowed,
- * camera-facing pixel comes out at very close to the colour the game drew: the light must not
- * be a brightness or a tint applied to the game, and what is visible is the DIFFERENCE from
- * flat -- the bevel round a fighter's silhouette, the sky catching them when they jump, and
- * the shadow they throw. */
-void hd2d_light_uniforms(float out[24], int w, int h, float floor_row, int have_floor);
+ * The numbers affect only pixels in the character or cast-shadow masks. Every background,
+ * HUD and text pixel otherwise passes through exactly as the game composed it. */
+void hd2d_light_uniforms(float out[20], int w, int h);
 
 #endif

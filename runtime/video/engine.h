@@ -48,10 +48,6 @@ typedef struct {
     float    x, y, w, h;        /* destination, composition pixels */
     float    u0, v0, u1, v1;    /* source, 0..1; ignored when there is no texture */
     float    depth;             /* 0 nearest .. 1 farthest -- the PAINTER ORDER, not a distance */
-    /* The draw's real distance as a parallax depth (1.0 = the fighters' plane, 0 = unknown).
-     * Written into the G-buffer for effects that must be a function of distance rather than of
-     * screen position or draw order -- see issue #63. */
-    float    world_depth;
     float    r, g, b, a;        /* tint, or the colour when there is no texture */
     /* The source SHEET, as guest memory. The engine owns the upload and the cache, so both
      * sprites and stage geometry sample the same object -- which is the whole of defect 2
@@ -130,24 +126,14 @@ int  engine_enabled(void);
  * With the lighting option on (issue #69), the object quads are additionally drawn into a
  * character mask and a cast-shadow mask, and a light pass re-lights the finished picture into
  * a second target -- the returned texture is the LIT frame, and the masks never leave the
- * engine. `floor_row`/`have_floor` are the stage's answer for where its walkable floor begins,
- * in output rows (0/0 when the frame has no stage in it); the light pass needs them to tell a
- * floor from a backdrop. */
+ * engine. Pixels outside those masks are not treated as an effect surface. */
 struct SDL_Texture *engine_draw(const EngineQuad *q, int n,
-                               const EngineGeom *g, int ng, int w, int h,
-                               float floor_row, int have_floor);
+                               const EngineGeom *g, int ng, int w, int h);
 
 /* A guest surface was written to, so any cached upload of it is stale. Same contract as
  * render_surface_dirty -- the cache is validated by content hash as well, and this is the cheap
  * path for the case the port already knows about. */
 void engine_surface_dirty(uint32_t pixels);
-
-/* Present the engine's finished frame onto `dst` through the DEFOCUS (issue #63), which is a
- * function of the G-buffer's distance channel and of nothing else. Returns 0 when the caller
- * should do a plain copy instead -- no shader, no G-buffer, or the control arm turned it off.
- * `max_radius` is the blur at full circle of confusion, in texels of the output. */
-int  engine_present(struct SDL_Texture *dst, float max_radius);
-int  engine_dof_enabled(void);
 
 void engine_report(void);       /* LF2_ENGINE_DEBUG=1: what the engine actually drew */
 void engine_shutdown(void);

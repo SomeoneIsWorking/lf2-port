@@ -35,7 +35,7 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 # moves with the data load and with how busy the box is, so a frame-numbered route is a
 # stopwatch aimed at a moving target -- issue #18, and this route was one of the last three
 # still exposed to it (issue #25).
-PAD1="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"        # the front end, before any screen
+PAD1="south@modemenu+60"        # first visible screen: the mode menu
 PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358,south@charselect+418"
 PAD1="$PAD1,south@charselect+618,south@charselect+838"  # join, then open the overlay
 PAD1="$PAD1,up@overlay+99,up@overlay+159,south@overlay+219"   # 2 -> 1 -> 0 = Fight!

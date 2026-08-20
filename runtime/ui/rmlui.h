@@ -1,10 +1,10 @@
 /* The RmlUi settings screen: the port's own settings UI (issue #70).
  *
- * The renderer choice, the lighting, the depth of field and the device mapping used to be
+ * The renderer choice, character lighting and device mapping used to be
  * hand-rolled pause-menu rows. The settings screen is a real RmlUi document now -- RML/CSS +
  * data bindings -- rendered by the port's own SDL renderer, on top of the frozen frame while
  * the game is paused. The C API here is the whole boundary: the C++ implementation
- * (runtime/app/rmlui.cpp) owns the RmlUi context and the document, and this header is what
+ * settings_ui.cpp owns the RmlUi context and document, and this header is what
  * the C side (render.c's present, the pause menu) calls.
  *
  * The screen is engine-path only for now: it is rendered into the render target render_present

@@ -34,7 +34,7 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 
 # Player one walks to character selection and then proceeds, which is what fills the
 # remaining slots with computers. The second pad, when present, joins before that.
-PAD1="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"        # the front end, before any screen
+PAD1="south@modemenu+60"        # first visible screen: the mode menu
 PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358"
 PAD1="$PAD1,south@charselect+418,south@charselect+618"
 

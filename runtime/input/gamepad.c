@@ -10,6 +10,7 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "script.h"
+#include "bindings.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -147,20 +148,17 @@ int gamepad_player_buttons(int index, unsigned char out[7])
     if (index < 0 || index >= JOY_SLOTS || !slot[index]) return 0;
     SDL_Gamepad *pad = slot[index];
 
-    static const struct { SDL_GamepadButton b; SDL_GamepadAxis ax; int dir; } B[7] = {
-        { SDL_GAMEPAD_BUTTON_DPAD_UP,    SDL_GAMEPAD_AXIS_LEFTY,   -1 },
-        { SDL_GAMEPAD_BUTTON_DPAD_DOWN,  SDL_GAMEPAD_AXIS_LEFTY,   +1 },
-        { SDL_GAMEPAD_BUTTON_DPAD_LEFT,  SDL_GAMEPAD_AXIS_LEFTX,   -1 },
-        { SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_AXIS_LEFTX,   +1 },
-        { SDL_GAMEPAD_BUTTON_SOUTH,      SDL_GAMEPAD_AXIS_INVALID,  0 },  /* attack */
-        { SDL_GAMEPAD_BUTTON_EAST,       SDL_GAMEPAD_AXIS_INVALID,  0 },  /* jump   */
-        { SDL_GAMEPAD_BUTTON_WEST,       SDL_GAMEPAD_AXIS_INVALID,  0 },  /* defend */
+    static const struct { SDL_GamepadAxis ax; int dir; } AXIS[B_N] = {
+        { SDL_GAMEPAD_AXIS_LEFTY, -1 }, { SDL_GAMEPAD_AXIS_LEFTY, +1 },
+        { SDL_GAMEPAD_AXIS_LEFTX, -1 }, { SDL_GAMEPAD_AXIS_LEFTX, +1 },
+        { SDL_GAMEPAD_AXIS_INVALID, 0 }, { SDL_GAMEPAD_AXIS_INVALID, 0 },
+        { SDL_GAMEPAD_AXIS_INVALID, 0 },
     };
     for (int i = 0; i < 7; i++) {
-        int down = SDL_GetGamepadButton(pad, B[i].b);
-        if (!down && B[i].ax != SDL_GAMEPAD_AXIS_INVALID) {
-            const int raw = SDL_GetGamepadAxis(pad, B[i].ax);
-            down = B[i].dir < 0 ? (raw < -16000) : (raw > 16000);
+        int down = SDL_GetGamepadButton(pad, binding_pad_button(i));
+        if (!down && AXIS[i].ax != SDL_GAMEPAD_AXIS_INVALID) {
+            const int raw = SDL_GetGamepadAxis(pad, AXIS[i].ax);
+            down = AXIS[i].dir < 0 ? (raw < -16000) : (raw > 16000);
         }
         out[i] = (unsigned char)!!down;
     }
@@ -185,56 +183,12 @@ int gamepad_start_index(void)
     return -1;
 }
 
-/* ---- driving the front-end menu from a controller ----
- *
- * Only the front-end menu needs anything here. Everything the game itself drives from the
- * player buttons -- mode select, character selection, the pre-fight overlay and the match
- * -- gets the pad through the ported input gather in runtime/overrides.c, which merges it
- * into the game's own button state. The front end is the exception because it is driven by
- * a mouse rather than by player buttons, so what a pad moves there is the selection index
- * of the ported menu.
- *
- * This used to synthesise player-1 keypresses for all of it. That worked, but it was the
- * wrong shape: it made a controller pretend to be a keyboard at the window boundary
- * instead of being an input device the game understands, it could only ever drive player
- * one, and it silently depended on player one still having the default key bindings.
- */
-void gamepad_drive_ui(void)
-{
-    ensure_init();
-    SDL_Gamepad *pad = slot[0];
-    if (!pad) return;
-
-    static uint8_t was[4];
-    static const struct { SDL_GamepadButton b; SDL_GamepadAxis ax; int dir; int delta; }
-    MAP[] = {
-        { SDL_GAMEPAD_BUTTON_DPAD_UP,    SDL_GAMEPAD_AXIS_LEFTY,   -1, -1 },
-        { SDL_GAMEPAD_BUTTON_DPAD_DOWN,  SDL_GAMEPAD_AXIS_LEFTY,   +1, +1 },
-        { SDL_GAMEPAD_BUTTON_SOUTH,      SDL_GAMEPAD_AXIS_INVALID,  0,  0 },  /* confirm */
-        { SDL_GAMEPAD_BUTTON_START,      SDL_GAMEPAD_AXIS_INVALID,  0,  0 },  /* confirm */
-    };
-
-    for (unsigned i = 0; i < sizeof MAP / sizeof MAP[0]; i++) {
-        int down = SDL_GetGamepadButton(pad, MAP[i].b);
-        if (!down && MAP[i].ax != SDL_GAMEPAD_AXIS_INVALID) {
-            const int raw = SDL_GetGamepadAxis(pad, MAP[i].ax);
-            down = MAP[i].dir < 0 ? (raw < -16000) : (raw > 16000);
-        }
-        if (down == was[i]) continue;              /* edge-triggered, like a keypress */
-        was[i] = (uint8_t)down;
-        if (!down) continue;
-
-        if (MAP[i].delta) menu_move(MAP[i].delta);
-        else              menu_confirm();
-    }
-}
-
 /* ---- virtual controller, for testing without hardware ----
  *
  * LF2_VIRTUAL_PAD=<script> attaches a software gamepad through SDL and plays a button
  * script into it. This is the only way any of the controller support gets exercised here,
- * since there is no physical pad to plug in -- auto-detect, hotswap and the menu driving
- * above were otherwise all untested code.
+ * since there is no physical pad to plug in -- auto-detect and hotswap would otherwise be
+ * untested code.
  *
  * The script is button:frame pairs, e.g. "down:60,down:90,south:120", where the names are
  * SDL_GamepadButton short names and the frame is when to press (released 8 frames later).

@@ -18,9 +18,8 @@
 #include "../shaders/gen/quad_spv.h"
 #include "../shaders/gen/mesh_vert_spv.h"
 #include "../shaders/gen/mesh_spv.h"
-#include "../shaders/gen/dof_spv.h"
 #include "../shaders/gen/hd2d_quad_vert_spv.h"
-#include "../shaders/gen/hd2d_gbuf_spv.h"
+#include "../shaders/gen/hd2d_character_spv.h"
 #include "../shaders/gen/hd2d_shadow_spv.h"
 #include "../shaders/gen/hd2d_light_spv.h"
 
@@ -47,13 +46,6 @@ static SDL_GPUTransferBuffer *gvxfer;
 static int gvbuf_cap;
 static long stat_geom_draws, stat_geom_tris;
 
-/* THE DEFOCUS (issue #63). A render state rather than a pipeline, because it is a pass over the
- * finished frame through SDL_Render -- the same shape the lighting uses. Rebuilt whenever the
- * G-buffer is, since it holds a binding to it. */
-static SDL_GPUShader     *sh_dof;
-static SDL_GPURenderState *st_dof;
-static long stat_dof_frames;
-
 /* ---- the lighting chain (issues #37, #69) ----
  *
  * The engine's own shading: a character mask, a cast-shadow mask and a light pass, as real
@@ -63,8 +55,7 @@ static long stat_dof_frames;
  * different.
  *
  * The light pass samples the picture being lit, so it needs a SECOND colour target to write
- * into -- a pass cannot read and write the same texture. `tex_lit` holds the lit frame and is
- * what the defocus reads when the lighting ran. */
+ * into -- a pass cannot read and write the same texture. */
 static SDL_GPUTexture *tex_chars, *tex_shadow, *tex_lit;
 static SDL_Texture    *wrapped_chars, *wrapped_shadow, *wrapped_lit;
 static SDL_GPUShader     *sh_light_vert;
@@ -76,30 +67,14 @@ static SDL_GPUSampler   *smp_linear;
 static SDL_GPUBuffer    *lvbuf;
 static SDL_GPUTransferBuffer *lvxfer;
 static int lvbuf_cap;
-/* Which texture the finished frame lives in right now -- tex_color until the light pass runs,
- * then tex_lit. engine_present reads the same object. */
-static SDL_GPUTexture *cur_tex;
-static SDL_Texture    *cur_wrapped;
 static int light_ok;                 /* the light chain's shaders and pipelines exist */
 static long stat_light_frames, stat_char_quads, stat_shadow_quads;
-
-static void gbuf_report(int w, int h);
 
 /* The offscreen pair. Colour is wrapped as an ordinary SDL_Texture (claim C030 -- the same
  * object, no copy and no readback) so the existing present path can put it on the screen while
  * the engine is being brought up beside the old renderer rather than in place of it. */
 static SDL_GPUTexture *tex_color, *tex_depth;
 static SDL_Texture    *wrapped;
-/* THE G-BUFFER (issue #63): a second colour attachment carrying a surface normal and the draw's
- * real DISTANCE. It is a colour target rather than the depth buffer because SDL3 has no pixel
- * format for depth at all -- checked, `SDL_pixels.h` declares none -- so a D32_FLOAT texture
- * cannot be wrapped as an SDL_Texture and nothing outside the engine could ever sample it.
- *
- * R16G16B16A16_FLOAT rather than 8-bit: the alpha channel is a distance running from about 0.89
- * (a foreground strip) to 535 (a distant sky) on the shipped stages, and eight bits of that is a
- * staircase, which a defocus would turn into visible banding by distance. */
-static SDL_GPUTexture *tex_gbuf;
-static SDL_Texture    *wrapped_gbuf;
 static int             tgt_w, tgt_h;
 
 static SDL_GPUBuffer *vbuf;
@@ -110,7 +85,7 @@ static int  init_done, init_ok;
 static const char *init_why = "not attempted";
 static long stat_frames, stat_quads, stat_batches, stat_uploads, stat_dropped;
 
-typedef struct { float x, y, depth, u, v, r, g, b, a, world; } QuadVertex;
+typedef struct { float x, y, depth, u, v, r, g, b, a; } QuadVertex;
 
 /* The vertex format the lighting passes draw from (hd2d_quad.vert): output pixels, sprite UV
  * and a tint. The two masks and the full-screen light pass all speak it, so one buffer serves
@@ -370,10 +345,8 @@ int engine_init(SDL_Renderer *r)
     vbd.pitch = sizeof(QuadVertex);
     vbd.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
-    SDL_GPUVertexAttribute attrs[5];
+    SDL_GPUVertexAttribute attrs[4];
     SDL_zero(attrs);
-    attrs[4].location = 4; attrs[4].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
-    attrs[4].offset = (Uint32)offsetof(QuadVertex, world);
     attrs[0].location = 0; attrs[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
     attrs[0].offset = (Uint32)offsetof(QuadVertex, x);
     attrs[1].location = 1; attrs[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
@@ -385,16 +358,10 @@ int engine_init(SDL_Renderer *r)
 
     int made = 0;
     for (int k = 0; k < BLEND_KINDS; k++) {
-        SDL_GPUColorTargetDescription ctd[2];
+        SDL_GPUColorTargetDescription ctd;
         SDL_zero(ctd);
-        ctd[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-        blend_state(&ctd[0].blend_state, k);
-        /* The G-buffer is NEVER blended, whatever the colour target does. A distance is not a
-         * quantity you can average with the one behind it: half way between a sprite at 1.0 and
-         * a sky at 535 is a plane that nothing in the scene occupies, and a defocus driven off
-         * it would blur a hard edge into a smooth ramp of wrong distances. The nearest writer
-         * wins outright, which is what the depth test already decides. */
-        ctd[1].format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+        ctd.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        blend_state(&ctd.blend_state, k);
 
         SDL_GPUGraphicsPipelineCreateInfo pi;
         SDL_zero(pi);
@@ -403,10 +370,10 @@ int engine_init(SDL_Renderer *r)
         pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         pi.vertex_input_state.num_vertex_buffers = 1;
         pi.vertex_input_state.vertex_buffer_descriptions = &vbd;
-        pi.vertex_input_state.num_vertex_attributes = 5;
+        pi.vertex_input_state.num_vertex_attributes = 4;
         pi.vertex_input_state.vertex_attributes = attrs;
-        pi.target_info.num_color_targets = 2;
-        pi.target_info.color_target_descriptions = ctd;
+        pi.target_info.num_color_targets = 1;
+        pi.target_info.color_target_descriptions = &ctd;
         pi.target_info.has_depth_stencil_target = true;
         pi.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
         /* THE DEPTH IS WRITTEN AND TESTED, but the picture is still the painter order's --
@@ -453,11 +420,10 @@ int engine_init(SDL_Renderer *r)
             ga[3].location = 3; ga[3].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
             ga[3].offset = (Uint32)offsetof(MeshVertex, r);
 
-            SDL_GPUColorTargetDescription gct[2];
+            SDL_GPUColorTargetDescription gct;
             SDL_zero(gct);
-            gct[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-            blend_state(&gct[0].blend_state, BLEND_ALPHA);
-            gct[1].format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+            gct.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            blend_state(&gct.blend_state, BLEND_ALPHA);
 
             SDL_GPUGraphicsPipelineCreateInfo gp;
             SDL_zero(gp);
@@ -468,8 +434,8 @@ int engine_init(SDL_Renderer *r)
             gp.vertex_input_state.vertex_buffer_descriptions = &gvbd;
             gp.vertex_input_state.num_vertex_attributes = 4;
             gp.vertex_input_state.vertex_attributes = ga;
-            gp.target_info.num_color_targets = 2;
-            gp.target_info.color_target_descriptions = gct;
+            gp.target_info.num_color_targets = 1;
+            gp.target_info.color_target_descriptions = &gct;
             gp.target_info.has_depth_stencil_target = true;
             gp.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
             /* LESS here, not LESS_OR_EQUAL: within a set the depth is REAL and a genuine tie is
@@ -534,7 +500,7 @@ int engine_init(SDL_Renderer *r)
             lp.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
             lp.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
 
-            lp.fragment_shader = shader_make(hd2d_gbuf_spv, sizeof hd2d_gbuf_spv,
+            lp.fragment_shader = shader_make(hd2d_character_spv, sizeof hd2d_character_spv,
                                              SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1,
                                              "character mask");
             p_chars = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
@@ -588,11 +554,6 @@ int engine_init(SDL_Renderer *r)
                             "unlit, which is a picture without shading rather than a broken one\n");
     }
 
-    sh_dof = shader_make(dof_spv, sizeof dof_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1, "defocus");
-    if (!sh_dof)
-        fprintf(stderr, "engine: no defocus shader -- frames are presented unblurred, which is "
-                        "a picture without a depth of field rather than a broken one\n");
-
     SDL_GPUSamplerCreateInfo si;
     SDL_zero(si);
     /* NEAREST, always: this is pixel art magnified two or three times, and the frame is built
@@ -628,13 +589,11 @@ int engine_enabled(void)
 static void targets_release(void)
 {
     if (wrapped)      { SDL_DestroyTexture(wrapped); wrapped = NULL; }
-    if (wrapped_gbuf) { SDL_DestroyTexture(wrapped_gbuf); wrapped_gbuf = NULL; }
     if (wrapped_chars)   { SDL_DestroyTexture(wrapped_chars); wrapped_chars = NULL; }
     if (wrapped_shadow)  { SDL_DestroyTexture(wrapped_shadow); wrapped_shadow = NULL; }
     if (wrapped_lit)     { SDL_DestroyTexture(wrapped_lit); wrapped_lit = NULL; }
     if (tex_color) { SDL_ReleaseGPUTexture(DEV, tex_color); tex_color = NULL; }
     if (tex_depth) { SDL_ReleaseGPUTexture(DEV, tex_depth); tex_depth = NULL; }
-    if (tex_gbuf)  { SDL_ReleaseGPUTexture(DEV, tex_gbuf); tex_gbuf = NULL; }
     if (tex_chars) { SDL_ReleaseGPUTexture(DEV, tex_chars); tex_chars = NULL; }
     if (tex_shadow) { SDL_ReleaseGPUTexture(DEV, tex_shadow); tex_shadow = NULL; }
     if (tex_lit)   { SDL_ReleaseGPUTexture(DEV, tex_lit); tex_lit = NULL; }
@@ -657,24 +616,19 @@ static int targets_make(int w, int h)
     ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
     tex_color = SDL_CreateGPUTexture(DEV, &ci);
 
-    ci.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
-    ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    tex_gbuf = SDL_CreateGPUTexture(DEV, &ci);
-
     ci.format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
     ci.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
     tex_depth = SDL_CreateGPUTexture(DEV, &ci);
 
     /* The lighting chain's three extra targets: the character mask, the cast-shadow mask and
-     * the LIT picture. All full resolution and all sampleable -- the light pass reads the two
-     * masks, and the defocus reads the lit picture. */
+     * the lit picture. All are full resolution and sampleable by the following pass. */
     ci.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
     tex_chars = SDL_CreateGPUTexture(DEV, &ci);
     tex_shadow = SDL_CreateGPUTexture(DEV, &ci);
     tex_lit   = SDL_CreateGPUTexture(DEV, &ci);
 
-    if (!tex_color || !tex_depth || !tex_gbuf || !tex_chars || !tex_shadow || !tex_lit) {
+    if (!tex_color || !tex_depth || !tex_chars || !tex_shadow || !tex_lit) {
         fprintf(stderr, "engine: could not allocate the %dx%d target pair: %s\n",
                 w, h, SDL_GetError());
         targets_release();
@@ -694,45 +648,8 @@ static int targets_make(int w, int h)
         return 0;
     }
     SDL_SetTextureScaleMode(wrapped, SDL_SCALEMODE_NEAREST);
-    if (st_dof)   { SDL_DestroyGPURenderState(st_dof); st_dof = NULL; }
-
-    SDL_PropertiesID pg = SDL_CreateProperties();
-    SDL_SetPointerProperty(pg, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, tex_gbuf);
-    SDL_SetNumberProperty(pg, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w);
-    SDL_SetNumberProperty(pg, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h);
-    SDL_SetNumberProperty(pg, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER,
-                          SDL_PIXELFORMAT_ABGR64_FLOAT);
-    wrapped_gbuf = SDL_CreateTextureWithProperties(R, pg);
-    SDL_DestroyProperties(pg);
-    if (!wrapped_gbuf) {
-        /* NOT fatal: the picture is unaffected and only distance-driven effects lose their
-         * input. Said out loud, because a silently absent G-buffer would make a depth of field
-         * do nothing and look like a switch that was never wired up. */
-        fprintf(stderr, "engine: the G-buffer could not be wrapped as a texture (%s) -- the "
-                        "frame is unaffected, but nothing can read distance from it\n",
-                SDL_GetError());
-    } else {
-        /* LINEAR on the G-buffer would average two distances at a texel boundary and invent a
-         * plane nothing in the scene occupies -- the same reason its attachment is never
-         * blended. NEAREST, so every sample is a distance something actually is at. */
-        SDL_SetTextureScaleMode(wrapped_gbuf, SDL_SCALEMODE_NEAREST);
-        if (sh_dof) {
-            SDL_GPUTextureSamplerBinding b = { tex_gbuf, SMP };
-            SDL_GPURenderStateCreateInfo ci;
-            SDL_zero(ci);
-            ci.fragment_shader = sh_dof;
-            ci.num_sampler_bindings = 1;
-            ci.sampler_bindings = &b;
-            st_dof = SDL_CreateGPURenderState(R, &ci);
-            if (!st_dof)
-                fprintf(stderr, "engine: could not create the defocus render state (%s) -- the "
-                                "frame is presented unblurred\n", SDL_GetError());
-        }
-    }
-    /* The masks and the lit frame, wrapped the same way, for the SHOW diagnostics and the
-     * defocus. The light pass samples the two masks directly (they never leave the engine
-     * through this path except when LF2_HD2D_SHOW asks to see one); the lit frame is what the
-     * defocus reads instead of the unlit picture. */
+    /* The masks and lit frame are wrapped for the SHOW diagnostics. The light pass samples
+     * the masks directly; they otherwise never leave the engine. */
     {
         struct { SDL_GPUTexture *gpu; SDL_Texture **wrap; const char *what; } w3[3] = {
             { tex_chars,  &wrapped_chars,  "character mask" },
@@ -749,7 +666,7 @@ static int targets_make(int w, int h)
             SDL_DestroyProperties(p);
             if (!*w3[i].wrap) {
                 fprintf(stderr, "engine: the %s could not be wrapped as a texture (%s) -- it "
-                                "cannot be SHOWN or (for the lit frame) defocused\n",
+                                "cannot be shown\n",
                         w3[i].what, SDL_GetError());
             } else {
                 SDL_SetTextureScaleMode(*w3[i].wrap, SDL_SCALEMODE_NEAREST);
@@ -826,11 +743,10 @@ static int lvbuf_reserve(int bytes)
 static void emit(QuadVertex *v, const EngineQuad *q, float depth)
 {
     const float x0 = q->x, y0 = q->y, x1 = q->x + q->w, y1 = q->y + q->h;
-    const float wd = q->world_depth;
-    const QuadVertex a = { x0, y0, depth, q->u0, q->v0, q->r, q->g, q->b, q->a, wd };
-    const QuadVertex b = { x1, y0, depth, q->u1, q->v0, q->r, q->g, q->b, q->a, wd };
-    const QuadVertex c = { x1, y1, depth, q->u1, q->v1, q->r, q->g, q->b, q->a, wd };
-    const QuadVertex d = { x0, y1, depth, q->u0, q->v1, q->r, q->g, q->b, q->a, wd };
+    const QuadVertex a = { x0, y0, depth, q->u0, q->v0, q->r, q->g, q->b, q->a };
+    const QuadVertex b = { x1, y0, depth, q->u1, q->v0, q->r, q->g, q->b, q->a };
+    const QuadVertex c = { x1, y1, depth, q->u1, q->v1, q->r, q->g, q->b, q->a };
+    const QuadVertex d = { x0, y1, depth, q->u0, q->v1, q->r, q->g, q->b, q->a };
     v[0] = a; v[1] = b; v[2] = c;
     v[3] = a; v[4] = c; v[5] = d;
 }
@@ -864,30 +780,11 @@ static int gvbuf_reserve(int bytes)
     return 1;
 }
 
-/* The light, read from hd2d rather than copied. stagelight.h is the one source and mesh.c reads
- * it the same way -- a second copy here is the exact bug issue #62's note records. */
-typedef struct { float dir[4], sky[4], ground[4], tint[4]; } GeomLight;
-static GeomLight geom_light(void)
-{
-    GeomLight u = {
-        { 0.0f, 1.0f, 0.0f, 0.85f },
-        { 0.34f, 0.36f, 0.42f, 0.0f },
-        { 0.20f, 0.18f, 0.16f, 0.0f },
-        { 0.0f, 0.0f, 0.0f, 0.0f },
-    };
-    float d[3];
-    hd2d_light_vector(d);
-    if (d[0] != 0.0f || d[1] != 0.0f || d[2] != 0.0f) {
-        u.dir[0] = d[0]; u.dir[1] = d[1]; u.dir[2] = d[2];
-    }
-    return u;
-}
-
 /* ---- the lighting chain ----
  *
  * Three passes over the finished picture, all drawing from one LightVertex buffer:
  *
- *   CHARS   the object quads again, through hd2d_gbuf.frag, into a mask that says which
+ *   CHARS   the object quads again, through hd2d_character.frag, into a mask that says which
  *           pixels are a fighter and how high off the ground each is.
  *   SHADOW  the same objects' SHEARED silhouettes, through hd2d_shadow.frag, into the mask
  *           the light is taken away through.
@@ -963,8 +860,7 @@ static int show_stage_name(void)
 
 /* Run the chain, from the objects in `q`, into tex_lit (or the requested mask). Returns the
  * GPU texture that now holds the frame to present. */
-static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h,
-                                       float floor_row, int have_floor)
+static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
 {
     const int show = show_stage_name();
     const int want_chars  = show == 1 || show == 2 || !show;
@@ -987,8 +883,8 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h,
              * ASKED FOR, or SHOW=shadow would hand back the character buffer. */
             return show == 2 ? tex_shadow : tex_chars;
         }
-        /* No objects, but the light pass still runs for the floor tint -- it must agree with
-         * what a frame WITH fighters does, or toggling who is on screen would move the floor. */
+        /* No characters means there is no shading or cast shadow to apply. */
+        return tex_color;
     }
 
     /* One buffer: chars quads, then shadow quads, then the full-screen light quad. */
@@ -1101,8 +997,8 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h,
                 { tex_shadow, smp_linear },
             };
             SDL_BindGPUFragmentSamplers(pass, 0, lb, 3);
-            float u[24];
-            hd2d_light_uniforms(u, w, h, floor_row, have_floor);
+            float u[20];
+            hd2d_light_uniforms(u, w, h);
             SDL_PushGPUFragmentUniformData(cmd, 0, u, sizeof u);
             SDL_DrawGPUPrimitives(pass, 6, 1, (Uint32)((no + no) * 6), 0);
             SDL_EndGPURenderPass(pass);
@@ -1118,8 +1014,7 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h,
     return want_light ? tex_lit : (show == 2 ? tex_shadow : tex_chars);
 }
 
-SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng, int w, int h,
-                         float floor_row, int have_floor)
+SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng, int w, int h)
 {
     if (!init_ok || n <= 0 || w <= 0 || h <= 0) return NULL;
     if (!targets_make(w, h)) return NULL;
@@ -1192,24 +1087,15 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
     }
     SDL_EndGPUCopyPass(copy);
 
-    SDL_GPUColorTargetInfo cti[2];
+    SDL_GPUColorTargetInfo cti;
     SDL_zero(cti);
-    cti[0].texture = tex_color;
+    cti.texture = tex_color;
     /* Opaque black, not transparent: this is the whole frame, not an overlay over one. A
      * transparent clear would let whatever the present path had behind it show through the
      * columns no quad covers, which is issue #29's ghost by another route. */
-    cti[0].clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 1.0f };
-    cti[0].load_op = SDL_GPU_LOADOP_CLEAR;
-    cti[0].store_op = SDL_GPU_STOREOP_STORE;
-
-    /* The G-buffer clears to a ZERO normal and a ZERO distance, which both read as "nothing
-     * known here" -- the same answer a sprite gives. Clearing the distance to something plausible
-     * instead, like the fighters' plane, would make every uncovered pixel claim to be at a
-     * distance nothing in the scene is at. */
-    cti[1].texture = tex_gbuf;
-    cti[1].clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 0.0f };
-    cti[1].load_op = SDL_GPU_LOADOP_CLEAR;
-    cti[1].store_op = SDL_GPU_STOREOP_STORE;
+    cti.clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 1.0f };
+    cti.load_op = SDL_GPU_LOADOP_CLEAR;
+    cti.store_op = SDL_GPU_STOREOP_STORE;
 
     SDL_GPUDepthStencilTargetInfo dti;
     SDL_zero(dti);
@@ -1225,7 +1111,7 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
     dti.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
     dti.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
 
-    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, cti, 2, &dti);
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &cti, 1, &dti);
     if (!pass) {
         fprintf(stderr, "engine: the render pass could not begin: %s\n", SDL_GetError());
         SDL_SubmitGPUCommandBuffer(cmd);
@@ -1265,9 +1151,9 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
                 g[k].sx_scale, g[k].sx_bias, g[k].sy_scale, g[k].sy_bias,
                 lo, hi, 0.0f, 0.0f,
             };
-            const GeomLight gl = geom_light();
+            const float material[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
             SDL_PushGPUVertexUniformData(cmd, 0, cam, sizeof cam);
-            SDL_PushGPUFragmentUniformData(cmd, 0, &gl, sizeof gl);
+            SDL_PushGPUFragmentUniformData(cmd, 0, material, sizeof material);
             SDL_DrawGPUPrimitives(pass, (Uint32)g[k].n, 1, (Uint32)goff[k], 0);
             stat_geom_draws++;
             stat_geom_tris += g[k].n / 3;
@@ -1319,9 +1205,9 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
             g[k].sx_scale, g[k].sx_bias, g[k].sy_scale, g[k].sy_bias,
             lo, hi, 0.0f, 0.0f,
         };
-        const GeomLight gl = geom_light();
+        const float material[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
         SDL_PushGPUVertexUniformData(cmd, 0, cam, sizeof cam);
-        SDL_PushGPUFragmentUniformData(cmd, 0, &gl, sizeof gl);
+        SDL_PushGPUFragmentUniformData(cmd, 0, material, sizeof material);
         SDL_DrawGPUPrimitives(pass, (Uint32)g[k].n, 1, (Uint32)goff[k], 0);
         stat_geom_draws++;
         stat_geom_tris += g[k].n / 3;
@@ -1332,265 +1218,10 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
 
     stat_frames++;
     stat_quads += n;
-    gbuf_report(w, h);
-
-    /* The frame is the unlit picture until the light pass has run over it; a frame whose
-     * lighting is off stays that. engine_present and the defocus read the same pair, so the
-     * whole frame after this point is whatever lighting_passes picked. */
-    cur_tex = tex_color;
-    cur_wrapped = wrapped;
-    cur_tex = lighting_passes(q, n, w, h, floor_row, have_floor);
-    cur_wrapped = cur_tex == tex_color ? wrapped
-                : cur_tex == tex_chars  ? wrapped_chars
-                : cur_tex == tex_shadow ? wrapped_shadow : wrapped_lit;
-    return cur_wrapped;
-}
-
-/* IEEE half to float. Written out rather than reached for, because the G-buffer readback is the
- * only thing in the port that reads a 16-bit float and a wrong decode here would show up as
- * plausible-but-wrong distances -- which is exactly the kind of number nobody double-checks. */
-static float half_to_float(uint16_t h)
-{
-    const uint32_t sgn = (uint32_t)(h >> 15) & 1u;
-    const uint32_t exp = (uint32_t)(h >> 10) & 0x1fu;
-    const uint32_t man = (uint32_t)h & 0x3ffu;
-    uint32_t bits;
-    if (exp == 0) {
-        if (man == 0) bits = sgn << 31;
-        else {
-            int e = -1;
-            uint32_t m = man;
-            do { m <<= 1; e++; } while (!(m & 0x400u));
-            bits = (sgn << 31) | ((uint32_t)(127 - 15 - e) << 23) | ((m & 0x3ffu) << 13);
-        }
-    } else if (exp == 31) {
-        bits = (sgn << 31) | 0x7f800000u | (man << 13);
-    } else {
-        bits = (sgn << 31) | ((exp - 15u + 127u) << 23) | (man << 13);
-    }
-    float f;
-    memcpy(&f, &bits, sizeof f);
-    return f;
-}
-
-/* LF2_ENGINE_GBUF=1: read the G-buffer back once and say what distances are actually in it.
- *
- * WHY A READBACK AND NOT A COUNTER. A counter can only say the engine was HANDED a distance; it
- * cannot say the distance survived the vertex format, the attachment, the half-float encoding
- * and the blend state. Every one of those fails silently into a buffer full of zeros, and a
- * depth of field reading zeros does nothing at all -- which looks exactly like a feature that
- * was never switched on.
- *
- * It prints the DISTINCT distances with their pixel counts, so the answer can be checked against
- * the stage's own bg.dat: a layer's depth is (stage_width-794)/(span-794) (C031), and those are
- * the numbers that must appear. A histogram nobody can check against an independent source is
- * just a number.
- */
-static void gbuf_report(int w, int h)
-{
-    if (!getenv("LF2_ENGINE_GBUF") || !tex_gbuf) return;
-    /* WHEN TO LOOK, and the first cut of this got it wrong in the way the rule about capping the
-     * BORING case warns about: it latched on the first frame, which is the front-end menu -- no
-     * stage, no layers, no distances -- and reported an entirely zero buffer. That reading was
-     * true and useless, and it would have read as "the G-buffer does not work".
-     *
-     * So it retries: every 60th frame until one actually carries a distance, bounded, and if
-     * none ever does the bound is reported rather than the run going quiet. The INTERESTING case
-     * is the one to keep looking for; the boring one is what gets capped. */
-    enum { GBUF_EVERY = 60, GBUF_TRIES = 40 };
-    static int done, tries;
-    static long seen;
-    if (done) return;
-    if ((seen++ % GBUF_EVERY) != 0) return;
-    if (++tries > GBUF_TRIES) {
-        if (tries == GBUF_TRIES + 1)
-            fprintf(stderr, "engine gbuf: looked at %d frames spread over the run and NOT ONE "
-                            "carried a distance. The buffer is being written and is entirely "
-                            "zero -- so either no stage was ever on screen, or the depth hint "
-                            "never reached a draw\n", GBUF_TRIES);
-        return;
-    }
-
-    const size_t bytes = (size_t)w * (size_t)h * 8u;   /* RGBA16F */
-    SDL_GPUTransferBufferCreateInfo ti;
-    SDL_zero(ti);
-    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
-    ti.size = (Uint32)bytes;
-    SDL_GPUTransferBuffer *tb = SDL_CreateGPUTransferBuffer(DEV, &ti);
-    /* THE COLOUR TARGET IS READ BACK BESIDE IT, and that pairing is the whole point of the
-     * second buffer rather than a convenience. An effect gated on this G-buffer is driven by a
-     * CONJUNCTION -- it acts where a pixel is both selected by its own rule AND in the world --
-     * and neither buffer alone can say whether that conjunction is ever satisfied. Measured
-     * separately once, they both looked fine: a match frame had 1106 pixels over 0.75 luminance,
-     * and the buffer had real distances in it, and a luminance bloom over the two still changed
-     * NOTHING, because the two sets did not intersect at a single pixel. A histogram of each
-     * half would have gone on agreeing with itself indefinitely. */
-    SDL_GPUTransferBufferCreateInfo ci2;
-    SDL_zero(ci2);
-    ci2.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
-    ci2.size = (Uint32)((size_t)w * (size_t)h * 4u);   /* RGBA8 */
-    SDL_GPUTransferBuffer *cb = SDL_CreateGPUTransferBuffer(DEV, &ci2);
-    if (!tb || !cb) {
-        fprintf(stderr, "engine gbuf: no download buffer (%s) -- READ NOTHING\n", SDL_GetError());
-        if (tb) SDL_ReleaseGPUTransferBuffer(DEV, tb);
-        if (cb) SDL_ReleaseGPUTransferBuffer(DEV, cb);
-        return;
-    }
-    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
-    SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cmd);
-    SDL_GPUTextureRegion reg;
-    SDL_zero(reg);
-    reg.texture = tex_gbuf; reg.w = (Uint32)w; reg.h = (Uint32)h; reg.d = 1;
-    SDL_GPUTextureTransferInfo dst = { tb, 0, (Uint32)w, (Uint32)h };
-    SDL_DownloadFromGPUTexture(cp, &reg, &dst);
-    reg.texture = tex_color;
-    SDL_GPUTextureTransferInfo dstc = { cb, 0, (Uint32)w, (Uint32)h };
-    SDL_DownloadFromGPUTexture(cp, &reg, &dstc);
-    SDL_EndGPUCopyPass(cp);
-    SDL_GPUFence *f = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-    if (f) { SDL_WaitForGPUFences(DEV, true, &f, 1); SDL_ReleaseGPUFence(DEV, f); }
-
-    const uint16_t *px = (const uint16_t *)SDL_MapGPUTransferBuffer(DEV, tb, false);
-    const uint8_t  *cx = (const uint8_t  *)SDL_MapGPUTransferBuffer(DEV, cb, false);
-    if (!px || !cx) {
-        fprintf(stderr, "engine gbuf: the readback could not be mapped (%s) -- READ NOTHING\n",
-                SDL_GetError());
-        if (px) SDL_UnmapGPUTransferBuffer(DEV, tb);
-        if (cx) SDL_UnmapGPUTransferBuffer(DEV, cb);
-        SDL_ReleaseGPUTransferBuffer(DEV, tb);
-        SDL_ReleaseGPUTransferBuffer(DEV, cb);
-        return;
-    }
-    enum { BUCKETS = 24 };
-    float val[BUCKETS];
-    long  cnt[BUCKETS];
-    int nb = 0;
-    long normals = 0, zero = 0, total = 0;
-    /* HOW MUCH OF THE FRAME'S BRIGHT SET IS ACTUALLY IN THE WORLD -- the question that killed
-     * the luminance bloom (issue #63), kept because it is the question any future
-     * brightness-driven effect has to answer before it is written. BRIGHT_T is a reference
-     * point rather than a live threshold: 0.75 is the value such an effect would reach for, and
-     * the run that mattered reported 766 pixels above it with ZERO of them carrying a distance. */
-    const float BRIGHT_T = 0.75f;
-    long bright = 0, bright_world = 0, bright_flat = 0;
-    /* The WORLD's own luminance distribution, in twentieths, which is the half nobody measures.
-     * A threshold gets picked from the whole frame's distribution and then applied to a
-     * population the world gate has already removed the bright end of -- the HUD and the text
-     * are most of what is bright in an LF2 frame. */
-    enum { LUMB = 20 };
-    long lumh[LUMB];
-    memset(lumh, 0, sizeof lumh);
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            const uint16_t *p = px + ((size_t)y * (size_t)w + (size_t)x) * 4u;
-            const float nx = half_to_float(p[0]), ny = half_to_float(p[1]),
-                        nz = half_to_float(p[2]), d = half_to_float(p[3]);
-            const uint8_t *c = cx + ((size_t)y * (size_t)w + (size_t)x) * 4u;
-            const float l = (0.2126f * (float)c[0] + 0.7152f * (float)c[1]
-                             + 0.0722f * (float)c[2]) / 255.0f;
-            if (l > BRIGHT_T) {
-                bright++;
-                if (d > 0.0f) bright_world++; else bright_flat++;
-            }
-            if (d > 0.0f) {
-                int b = (int)(l * (float)LUMB);
-                if (b < 0) b = 0;
-                if (b >= LUMB) b = LUMB - 1;
-                lumh[b]++;
-            }
-            total++;
-            if (nx * nx + ny * ny + nz * nz > 0.25f) normals++;
-            if (!(d > 0.0f)) { zero++; continue; }
-            int hit = -1;
-            for (int b = 0; b < nb; b++)
-                if (d > val[b] * 0.999f && d < val[b] * 1.001f) { hit = b; break; }
-            if (hit >= 0) { cnt[hit]++; continue; }
-            if (nb < BUCKETS) { val[nb] = d; cnt[nb] = 1; nb++; }
-        }
-    }
-    SDL_UnmapGPUTransferBuffer(DEV, tb);
-    SDL_UnmapGPUTransferBuffer(DEV, cb);
-    SDL_ReleaseGPUTransferBuffer(DEV, tb);
-    SDL_ReleaseGPUTransferBuffer(DEV, cb);
-
-    /* Nothing on screen yet: say nothing and look again in sixty frames. The bound above is
-     * what turns "never found one" into a message rather than into silence. */
-    if (nb == 0) return;
-    done = 1;
-
-    fprintf(stderr, "engine gbuf: %dx%d, %ld px -- %ld with a real surface normal, %ld with no "
-                    "distance (sprites, HUD and anything uncovered)\n",
-            w, h, total, normals, zero);
-    /* Stated as a conjunction with BOTH of its halves, so a zero cannot be read as "the effect
-     * is broken" when it means "nothing bright is in the world". The two failure modes it
-     * separates are the only two there are: bright_world == 0 with bright > 0 says the gate
-     * rejects everything the threshold picks, and bright == 0 says the threshold picks nothing. */
-    fprintf(stderr, "engine gbuf: over %.2f luminance: %ld px, of which %ld carry a distance "
-                    "(in the world) and %ld do not (HUD, text, sprites -- gated out of any "
-                    "world effect)\n", (double)BRIGHT_T, bright, bright_world, bright_flat);
-    {
-        /* Printed as a CUMULATIVE tail -- "how many world pixels a threshold here would select"
-         * -- because that is the question being asked of it. A per-bucket count would need the
-         * reader to do the sum, and the sum is the whole point. */
-        long tail = 0;
-        for (int b = LUMB - 1; b >= 0; b--) {
-            tail += lumh[b];
-            if (lumh[b] || tail)
-                fprintf(stderr, "engine gbuf:   world luminance >= %.2f : %ld px (%.3f%% of the "
-                                "world)\n", (double)b / (double)LUMB, tail,
-                        100.0 * (double)tail / (double)(total - zero ? total - zero : 1));
-        }
-    }
-    for (int a = 0; a < nb; a++)          /* nearest first, which is how a stage reads */
-        for (int b = a + 1; b < nb; b++)
-            if (val[b] < val[a]) {
-                const float t = val[a]; val[a] = val[b]; val[b] = t;
-                const long c = cnt[a]; cnt[a] = cnt[b]; cnt[b] = c;
-            }
-    for (int b = 0; b < nb; b++)
-        fprintf(stderr, "engine gbuf:   distance %8.4f  %ld px%s\n", (double)val[b], cnt[b],
-                nb == BUCKETS && b == nb - 1 ? "   (bucket list FULL -- more may exist)" : "");
-}
-
-/* Is the defocus running? The pause menu's DOF option owns it (issue #69): ON by default,
- * because a feature nobody can find is not a feature -- and LF2_DOF stays as the A/B control
- * arm, the same shape LF2_HD2D=off has for the lighting, and it is what tools/e2e.sh render
- * diffs against. */
-int engine_dof_enabled(void)
-{
-    return opt_dof() && st_dof != NULL;
-}
-
-/* Present the engine's finished frame onto `dst`, through the defocus when it is available.
- * Returns 0 if the caller should do a plain copy instead. */
-int engine_present(SDL_Texture *dst, float max_radius)
-{
-    if (!init_ok || !cur_wrapped) return 0;
-    if (!engine_dof_enabled()) return 0;    /* nothing to do: the caller copies the frame */
-    struct { float params[4], focus[4]; } u;
-    u.params[0] = 1.0f / (float)tgt_w;
-    u.params[1] = 1.0f / (float)tgt_h;
-    u.params[2] = max_radius;
-    u.params[3] = 1.0f;
-    /* THE FOCUS IS THE FIGHTERS' PLANE, and it is 1.0 by derivation rather than by taste: a
-     * parallax depth of 1 is the plane an object shifts with the camera at rate 1, which is
-     * where the game puts every fighter (C018/C031). Focusing anywhere else would defocus the
-     * one thing the player is looking at. */
-    u.focus[0] = 1.0f;
-    u.focus[1] = u.focus[2] = u.focus[3] = 0.0f;
-    SDL_SetGPURenderStateFragmentUniforms(st_dof, 0, &u, sizeof u);
-
-    /* The defocus blurs whatever the frame is RIGHT NOW -- the lit picture when the lighting
-     * ran, the plain picture when it did not. `cur_wrapped` is that object; `wrapped` alone
-     * would blur the unlit picture over the lit one. */
-    SDL_SetRenderTarget(R, dst);
-    SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
-    SDL_SetGPURenderState(R, st_dof);
-    SDL_SetTextureBlendMode(cur_wrapped, SDL_BLENDMODE_NONE);
-    SDL_RenderTexture(R, cur_wrapped, NULL, NULL);
-    SDL_SetGPURenderState(R, NULL);
-    stat_dof_frames++;
-    return 1;
+    SDL_GPUTexture *finished = lighting_passes(q, n, w, h);
+    return finished == tex_color ? wrapped
+         : finished == tex_chars ? wrapped_chars
+         : finished == tex_shadow ? wrapped_shadow : wrapped_lit;
 }
 
 void engine_report(void)
@@ -1609,9 +1240,6 @@ void engine_report(void)
     fprintf(stderr, "engine: stage geometry -- %ld draw(s), %ld triangle(s), in the SAME pass "
                     "as the sprites%s\n", stat_geom_draws, stat_geom_tris,
             GPIPE ? "" : "  (NO geometry pipeline: sets are not drawn at all)");
-    fprintf(stderr, "engine: defocus %s -- %ld frame(s) presented through it%s\n",
-            engine_dof_enabled() ? "ON" : "off", stat_dof_frames,
-            sh_dof ? "" : "  (NO defocus shader: frames are presented unblurred)");
     fprintf(stderr, "engine: lighting %s -- %ld frame(s) lit, %ld character quad(s) into the "
                     "mask, %ld shadow quad(s)%s\n",
             (light_ok && opt_lighting()) ? "ON" : "off", stat_light_frames,
@@ -1634,8 +1262,6 @@ void engine_shutdown(void)
     if (gvbuf)  { SDL_ReleaseGPUBuffer(DEV, gvbuf); gvbuf = NULL; }
     if (gvxfer) { SDL_ReleaseGPUTransferBuffer(DEV, gvxfer); gvxfer = NULL; }
     if (GPIPE) { SDL_ReleaseGPUGraphicsPipeline(DEV, GPIPE); GPIPE = NULL; }
-    if (st_dof) { SDL_DestroyGPURenderState(st_dof); st_dof = NULL; }
-    if (sh_dof) { SDL_ReleaseGPUShader(DEV, sh_dof); sh_dof = NULL; }
     if (p_chars)   { SDL_ReleaseGPUGraphicsPipeline(DEV, p_chars); p_chars = NULL; }
     if (p_shadow)  { SDL_ReleaseGPUGraphicsPipeline(DEV, p_shadow); p_shadow = NULL; }
     if (p_light)   { SDL_ReleaseGPUGraphicsPipeline(DEV, p_light); p_light = NULL; }

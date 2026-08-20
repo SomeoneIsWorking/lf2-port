@@ -40,13 +40,7 @@ layout(set = 3, binding = 0) uniform Light {
     vec4 u_sky;         /* rgb: light from above.                     w: bevel strength  */
     vec4 u_bounce;      /* rgb: light bounced off the floor.          w: shadow strength */
     vec4 u_params;      /* xy: one texel.  z: bevel radius in texels. w: height gain     */
-    vec4 u_floor;       /* x: the floor's near edge in output rows.   y: 1/feather.
-                           z: 1 when the stage said where its floor is, 0 when it did not. */
 };
-
-/* The luminance a lighting term carries, so an orientation can change a surface's COLOUR
- * without changing how bright the game's art is. */
-float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
 /* The softened silhouette the normal is built from. Sampling the mask on a ring rather than
  * at the four neighbours is what gives the bevel a width: a one-texel difference would put a
@@ -89,10 +83,6 @@ void main(void)
     vec3 n = normalize(vec3(-grad.x, grad.y, 1.0));
 
     vec3 L = normalize(u_sun_dir.xyz);
-    /* What a surface facing the CAMERA gets. That is what the stage's backdrop is, and what
-     * the whole picture used to be treated as. */
-    float wrap_flat = clamp(L.z * 0.5 + 0.5, 0.0, 1.0);
-    float ndl_flat  = wrap_flat * wrap_flat;
     /* WRAPPED diffuse, not clamped Lambert. A hard `max(dot, 0)` sends the whole away-facing
      * side of the silhouette to ambient only, which on a 32-pixel sprite magnified to 1080p
      * is a dark line round one side of the fighter. Wrapping the cosine into 0..1 and
@@ -126,46 +116,8 @@ void main(void)
      * and the hemisphere ambient, and nothing else takes light away from it. */
     vec3 character = albedo * (ambient + u_sun_color.rgb * (u_sun_dir.w * ndl));
 
-    /* ---- the stage: a floor is a HORIZONTAL surface, a backdrop is a vertical one ----
-     *
-     * Which rows are which is the stage's own answer and not a guess from the picture: LF2's
-     * depth axis projects straight down the screen -- that is why the game depth-sorts on z
-     * and why it puts the shadow ellipse at y = z -- so bg.dat's `zboundary:` is literally
-     * where the floor begins on the screen (issue #32, BG_Z_MIN in world.h). Above it a
-     * fighter cannot walk, because it is a wall.
-     *
-     * The two orientations see different amounts of sky: a floor faces straight up and takes
-     * all of it, a backdrop faces the camera and takes half. That is the only difference
-     * applied, and it is applied AS COLOUR ONLY -- both terms are normalised to the same
-     * luminance first.
-     *
-     * The luminance lock is the point, not a caution. The art is already painted with its own
-     * light in it; re-lighting the brightness of a whole stage is how a pass stops being
-     * geometry and becomes a filter, which is exactly what the version before this one did.
-     * What survives is the cue that is genuinely geometric: the ground picks up the sky's
-     * colour and the rock face does not.
-     *
-     * With no floor band from the stage (u_floor.z == 0) this collapses to the backdrop term
-     * everywhere, so a stage the port could not read comes out as the game drew it. */
-    float floorness = u_floor.z
-                    * clamp((gl_FragCoord.y - u_floor.x) * u_floor.y + 0.5, 0.0, 1.0);
-
-    vec3 flat_face = mix(u_bounce.rgb, u_sky.rgb, 0.5) * u_sun_color.w
-                   + u_sun_color.rgb * (u_sun_dir.w * ndl_flat);
-    vec3 up_face   = u_sky.rgb * u_sun_color.w
-                   + u_sun_color.rgb * (u_sun_dir.w * L.y * L.y);
-
-    /* The RATIO of the two, each at unit luminance -- so what is applied is purely the hue
-     * difference between facing up and facing the camera, and the backdrop's own multiplier
-     * is EXACTLY 1. That exactness matters: it is what lets the pass promise that a frame
-     * with no floor and no fighters in it comes out byte-identical, which is the arm of
-     * ctest render that would catch this spreading over the whole picture. */
-    vec3 tint = mix(vec3(1.0),
-                    (up_face / max(lum(up_face), 1.0e-4))
-                        * (max(lum(flat_face), 1.0e-4) / max(flat_face, vec3(1.0e-4))),
-                    floorness);
-
-    vec3 ground = albedo * tint * shade;
-
-    o_color = vec4(mix(ground, character, mask), 1.0);
+    /* Outside the character mask, only the cast-shadow mask may change the pixel. There is no
+     * floor tint, backdrop relighting, bloom, defocus, or other whole-scene treatment. */
+    vec3 unchanged_or_shadowed = albedo * shade;
+    o_color = vec4(mix(unchanged_or_shadowed, character, mask), 1.0);
 }

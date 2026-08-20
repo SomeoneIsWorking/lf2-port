@@ -26,7 +26,7 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 # player for a Fighter and then a Team, and player one cannot proceed until every joined
 # player has finished. Without those, the screen sits there with both players joined and
 # nothing happening -- which is what the first attempts at this route did.
-PAD1="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"        # the front end, before any screen
+PAD1="south@modemenu+60"        # first visible screen: the mode menu
 PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358"
 PAD1="$PAD1,south@charselect+418,south@charselect+618,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"
 JOIN="south@charselect+168,south@charselect+298,south@charselect+478"

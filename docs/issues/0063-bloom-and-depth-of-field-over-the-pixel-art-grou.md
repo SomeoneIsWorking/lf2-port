@@ -1,11 +1,11 @@
 ---
 id: 63
 title: Bloom and depth of field over the pixel art, grounded in real depth rather than in a screen filter
-status: open
+status: resolved
 symptom: Two thirds of issue #30's HD2D ask are delivered and one is not: the reporter asked for 'depth, lighting, bloom/DOF over the pixel art' and there is no bloom and no depth of field. A previous cut of both was removed because each touched every pixel and together they read as a filter over a screenshot.
 tags: reported,renderer,hd2d,feature
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-20
 ---
 
 ## What this is
@@ -214,3 +214,6 @@ threshold, no gate, nothing to tune. Until a stage authors an emitter there is n
 that is correct rather than a missing feature.
 
 Blocked on #62 having any authored content at all -- `stages/` currently holds a README.
+
+### Resolution (2026-08-20)
+The later presentation requirement superseded bloom/DoF: the DoF pass, G-buffer distance, bloom-era diagnostics and their options were deleted. The engine now applies only character shading and cast shadows; the render route proves a menu frame changes by zero pixels while a fighter frame changes.

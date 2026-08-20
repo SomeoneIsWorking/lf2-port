@@ -61,7 +61,7 @@ FRAMES=@match+282,@match+732
 # The heap dump is ~106 MB, so it is taken at ONE frame rather than both. .data is small
 # and is taken at both.
 HEAP_FRAME=@match+282
-PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
+PAD="south@modemenu+60"
 PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238"
 PAD="$PAD,up@charselect+298,up@charselect+358,south@charselect+418,south@charselect+618"
 PAD="$PAD,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"

@@ -28,10 +28,10 @@ GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
 #   per arm -- the project's rule is that run artefacts go to the gitignored scratch/, which is
 #   on the real disk.
 #   And a route that deletes its evidence on EXIT makes a failure unexaminable: the one thing
-#   anybody wants after "FAIL: the defocus changed 0 px" is the two frames it compared. They are
+#   anybody wants after a failed frame comparison is the two frames it compared. They are
 #   cleared at the START of the next run instead, so the last run's frames are always there.
 OUT=${LF2_SCRATCH:-scratch}/background_test
-rm -rf "$OUT"
+tools/build/scratch_clean.sh "$OUT"
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)          # absolute: each arm runs with cwd inside the game tree
 
@@ -40,7 +40,7 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 
 # Into a VS match, then walk right so the later frame has a different camera -- and so the
 # right-hand wall is actually reached, which is the case issue #28 is about.
-PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
+PAD="south@modemenu+60"
 PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238"
 PAD="$PAD,up@charselect+298,up@charselect+358,south@charselect+418,south@charselect+618"
 PAD="$PAD,south@charselect+838,up@overlay+99,up@overlay+159,south@overlay+219"

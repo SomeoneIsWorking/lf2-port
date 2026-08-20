@@ -32,7 +32,7 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 # (issue #25), then pauses and takes the second row. Pad one joined through the game's own
 # character selection, so coop_owns is false for it and DROP OUT does not appear: the rows are
 # RESUME, LEAVE MATCH, ... and one press of DOWN lands on the item this route is about.
-PAD1="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
+PAD1="south@modemenu+60"
 PAD1="$PAD1,south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+238,up@charselect+298,up@charselect+358,south@charselect+418"
 PAD1="$PAD1,south@charselect+618,south@charselect+838"
 PAD1="$PAD1,up@overlay+99,up@overlay+159,south@overlay+219"        # 2 -> 1 -> 0 = Fight!

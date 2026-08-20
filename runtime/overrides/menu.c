@@ -10,6 +10,7 @@
 #include "guest_ops.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "startup.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,60 +126,6 @@ void mode_force_report(void)
  * looked perfect. The screen is now taken from what the game DRAWS -- see panel_overlay_up()
  * in runtime/video/ddraw.c -- and this word is deliberately not used. */
 
-/* Selectable items per screen, taken from the game's own hit-test constants -- the centre
- * of each band it brackets the pointer against. Adding a screen is a matter of reading its
- * comparisons out of the disassembly, not of inventing coordinates.
- *
- *   main menu (screen 0):  x 260..547, five entries down the middle
- *   control settings (6):  ok   x 405..560 y 441..465
- *                          cancel x 582..737 y 441..465
- *   recording info (7):    ok   x 231..386 y 416..440
- *                          cancel x 403..558 y 416..440
- *
- * The recording page's "click here to know more" link (x 44..483, y 461..484) is
- * deliberately not selectable: it opens a web page, and a controller should not be able to
- * fall onto something that leaves the game.
- */
-typedef struct { int x, y; } Item;
-
-static const Item MAIN_MENU[] = {
-    { 403, 228 },  /* game start       */
-    { 403, 259 },  /* network game     */
-    { 403, 292 },  /* control settings */
-    { 403, 322 },  /* recording info   */
-    { 403, 353 },  /* official website */
-};
-static const Item CONTROL_SETTINGS[] = {
-    { 482, 453 },  /* ok     */
-    { 659, 453 },  /* cancel */
-};
-
-static const Item RECORDING_INFO[] = {
-    { 308, 428 },  /* ok     */
-    { 480, 428 },  /* cancel */
-};
-
-/* fn_004246b0 is a __thiscall method and [this+0] is the TOP-level mode. Its own dispatch,
- * read out of the disassembly rather than guessed at:
- *
- *   == 1  a one-shot entry step that immediately stores 2 and returns
- *   == 2  hand the frame to fn_0041bc90 -- character selection and the match
- *   else  fall through into the front-end menu body, which is this whole function
- *
- * So the front end is the DEFAULT branch, not a numbered mode; the observed value there is
- * 0. An earlier version of this gate had it as `mode == 1`, which is the one value that is
- * never live for a whole frame -- the port never ran, and the game simply used its original
- * body, which is exactly why nothing looked wrong.
- *
- * 0x0044d064 is only the sub-screen within the front end, so keying off it alone would let
- * these tables fire during character selection whenever it happened to hold a matching
- * value. Both are checked. */
-static const struct { uint32_t screen; const Item *items; int n; } SCREENS[] = {
-    { 0, MAIN_MENU,        (int)(sizeof MAIN_MENU / sizeof MAIN_MENU[0]) },
-    { 6, CONTROL_SETTINGS, (int)(sizeof CONTROL_SETTINGS / sizeof CONTROL_SETTINGS[0]) },
-    { 7, RECORDING_INFO,   (int)(sizeof RECORDING_INFO / sizeof RECORDING_INFO[0]) },
-};
-
 /* Issue #27's instrument: the game's click flag as the front-end MENU sees it, with the
  * count printed at exit whether or not it is zero.
  *
@@ -203,64 +150,6 @@ void menu_click_report(void)
     fprintf(stderr, "menu-click: %ld frame(s) reached the front-end menu with the game's "
                     "click flag set%s\n", menu_click_seen,
             menu_click_seen ? "" : " -- so nothing the menu could act on ever arrived");
-}
-
-static int menu_index;
-static int menu_confirm_frames;
-static int menu_owns_pointer;
-static uint32_t menu_wrote_x, menu_wrote_y;
-static uint32_t menu_last_screen = 0xffffffffu;
-
-static const Item *screen_items(uint32_t screen, int *n)
-{
-    for (unsigned i = 0; i < sizeof SCREENS / sizeof SCREENS[0]; i++)
-        if (SCREENS[i].screen == screen) { *n = SCREENS[i].n; return SCREENS[i].items; }
-    *n = 0;
-    return NULL;
-}
-
-int menu_move(int delta)
-{
-    int n = 0;
-    if (!screen_items(LD32(GX_SCREEN), &n) || n == 0) return 0;
-    menu_index += delta;
-    if (menu_index < 0) menu_index = n - 1;
-    if (menu_index >= n) menu_index = 0;
-    menu_owns_pointer = 1;
-    return 1;
-}
-
-void menu_confirm(void)
-{
-    int n = 0;
-    if (!screen_items(LD32(GX_SCREEN), &n) || n == 0) return;
-    menu_confirm_frames = 2;
-}
-
-/* Keep pad and mouse consistent: if the pointer is somewhere the port did not put it, a
- * mouse is in use, so adopt what it points at and hand control back. */
-static void menu_sync_from_pointer(const Item *items, int n)
-{
-    const uint32_t px = LD32(GX_MOUSE_X), py = LD32(GX_MOUSE_Y);
-    if (menu_owns_pointer && px == menu_wrote_x && py == menu_wrote_y) return;
-
-    menu_owns_pointer = 0;
-    int best = -1, best_d = 1 << 30;
-    for (int i = 0; i < n; i++) {
-        const int dx = (int)px - items[i].x, dy = (int)py - items[i].y;
-        const int d = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
-        if (d < best_d) { best_d = d; best = i; }
-    }
-    if (best >= 0 && best_d <= 90) { menu_index = best; return; }
-
-    /* The pointer is nowhere near the menu, so it is not what is driving it -- keep the
-     * port's own index and go on asserting it. Without this the front end drew NOTHING
-     * highlighted until a key was pressed: at boot the pointer sits at the origin, no item
-     * is within reach of it, and the port dropped its selection every frame rather than
-     * showing where the keyboard and the pad actually were. The first arrow press then
-     * moved from an invisible item 0 to item 1, which reads as the highlight starting on
-     * the wrong entry. */
-    menu_owns_pointer = 1;
 }
 
 /* The top-level mode, cached for the input gather's routing: everything before the game
@@ -329,7 +218,10 @@ void fn_004246b0(void)
         R(ESP) += 8;                               /* same stack contract as the body */
         return;
     }
-    const uint32_t mode = R(ECX) ? LD32(R(ECX)) : 0xffffffffu;
+    const uint32_t self = R(ECX);
+    uint32_t mode = self ? LD32(self) : 0xffffffffu;
+    startup_before_game_frame(self, mode);
+    mode = self ? LD32(self) : 0xffffffffu;
     const uint32_t screen = LD32(GX_SCREEN);
     top_mode = mode;
     controls_hint_enable(mode != MODE_IN_GAME);
@@ -393,9 +285,9 @@ void fn_004246b0(void)
     if (menu_click_debug() && LD32(GX_CLICK)) {
         menu_click_seen++;
         fprintf(stderr, "menu-click: frame %ld -- the menu is entered with click=1 at "
-                        "mouse=(%d,%d), index=%d owns_pointer=%d screen=%u\n",
+                        "mouse=(%d,%d), screen=%u\n",
                 hostwin_frames(), (int32_t)LD32(GX_MOUSE_X), (int32_t)LD32(GX_MOUSE_Y),
-                menu_index, menu_owns_pointer, LD32(GX_SCREEN));
+                LD32(GX_SCREEN));
     }
 
     bg_table_report();           /* LF2_BG_TABLE=1: the loaded stage's layers, once */
@@ -406,34 +298,8 @@ void fn_004246b0(void)
      * same pointer and the slot cursor would wander while the player aims at "Fight!". */
     if (!overlay_open()) charselect_mouse();
 
-    int n = 0;
-    const int front_end = (mode != MODE_ENTER && mode != MODE_IN_GAME);
-    const Item *items = front_end ? screen_items(screen, &n) : NULL;
-
-    /* Anything outside the front-end menu, or without an item table, is pure delegation. */
-    if (!items) { fn_004246b0__orig(); return; }
-
-    if (screen != menu_last_screen) {      /* entering a screen starts at its first item */
-        menu_last_screen = screen;
-        menu_index = 0;
-        menu_owns_pointer = 0;
-        menu_confirm_frames = 0;
-    }
-
-    menu_sync_from_pointer(items, n);
-
-    if (menu_owns_pointer || menu_confirm_frames) {
-        menu_wrote_x = (uint32_t)items[menu_index].x;
-        menu_wrote_y = (uint32_t)items[menu_index].y;
-        ST32(GX_MOUSE_X, menu_wrote_x);
-        ST32(GX_MOUSE_Y, menu_wrote_y);
-    }
-    if (menu_confirm_frames > 0) {
-        menu_confirm_frames--;
-        ST32(GX_CLICK, 1);
-    }
-
     fn_004246b0__orig();
+    startup_after_game_frame(self, mode);
 }
 
 /* fn_00423b00 -- shared element draw, called with a descriptor.

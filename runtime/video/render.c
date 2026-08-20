@@ -50,20 +50,6 @@ typedef struct {
     int      tw, th;
     SDL_Texture *tile_tex;          /* made once per frame, used by every pass over the list */
     SDL_FRect tile_src;             /* the tw x th corner of it that this tile actually is */
-    /* THE DRAW'S REAL DISTANCE, as a parallax depth -- 1.0 is the plane the fighters stand in,
-     * larger is further away, and 0 means UNKNOWN (issue #63).
-     *
-     * NOT the same thing as the depth the engine's depth buffer holds, and conflating the two
-     * is the trap. The buffer's depth is the draw's POSITION IN THE PAINTER ORDER, which is the
-     * game's own answer about what covers what and must be preserved exactly. This is a
-     * DISTANCE, and it is what a depth of field has to be a function of -- a blur driven off
-     * draw order would be "defocus by how late something was drawn", which is the screen-space
-     * effect issue #63 exists to not repeat.
-     *
-     * Known for the stage's background layers, whose depth is derivable from their own parallax
-     * rate (C031), and for authored geometry, which carries it per vertex. Left 0 for the HUD,
-     * the text and the port's own UI, which are not in the world at all. */
-    float world_depth;
     /* E_MESH: hand-woven stage geometry, RECORDED rather than pre-rendered.
      *
      * It used to be a finished SDL_Texture, which meant the background override had to run a
@@ -220,12 +206,6 @@ static void frame_touch(void)
     tile_list = -1;
 }
 
-/* The depth of the draw about to be recorded, in the same units as Entry.world_depth. Set by
- * the background override around a layer's draw, the way world_band_hint marks a world band --
- * the game's own draw call goes through the guest, so there is no argument to add. */
-static float depth_hint;
-void render_depth_hint_set(float d) { depth_hint = d > 0.0f ? d : 0.0f; }
-
 static Entry *entry_push(uint32_t dst_pixels)
 {
     frame_touch();
@@ -234,7 +214,6 @@ static Entry *entry_push(uint32_t dst_pixels)
     if (FL.n[li] >= LIST_MAX) { lists[li].dropped++; stat_dropped++; return NULL; }
     Entry *e = &lists[li].e[FL.n[li]++];
     memset(e, 0, sizeof *e);
-    e->world_depth = depth_hint;
     return e;
 }
 
@@ -260,8 +239,8 @@ static uint32_t sample_hash(const uint8_t *base, int w, int h, int pitch)
 
 /* The colour key becomes ALPHA. This is where this port's blend stage comes from: the
  * software blitter could only skip a keyed pixel, so nothing could ever be partly
- * transparent; a keyed source uploaded as RGBA can be, and that is what a cast shadow, a
- * silhouette in the g-buffer and every lighting term need. */
+ * transparent; a keyed source uploaded as RGBA can be, and that is what the character mask,
+ * cast shadow, and lighting pass need. */
 static void upload(Tex *t, const uint8_t *base, int w, int h, int pitch)
 {
     void *px = NULL;
@@ -749,7 +728,8 @@ static EngineQuad *eq_reserve(int n)
 }
 
 static int engine_colour_pass(List *l, int li, int ov, float world, float ox, float oy,
-                              float scale, int ow, int oh, SDL_Texture *dst)
+                              float scale, int ow, int oh, SDL_Texture *dst,
+                              const SDL_FRect *place)
 {
     (void)li;
     if (!engine_enabled()) return 0;
@@ -763,11 +743,8 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
      * ellipse immediately before the object, so a sprite preceded by a marker is an object
      * STANDING IN THE STAGE rather than a HUD element or a piece of text.
      *
-     * The engine needs it for a different reason than the lighting does. An object is part of the
-     * WORLD, and it stands at the fighters' plane -- parallax depth 1.0, which is not a guess but
-     * the definition of that plane (C018/C031: every object shifts with the camera at rate 1).
-     * Writing that into the G-buffer is what lets a later effect ask "is this pixel part of the
-     * scene" and get a truthful answer for a fighter as well as for a layer. */
+     * The engine uses that pair to shade only the character and to anchor its cast shadow at the
+     * same ground point the game drew. */
     int have_ground = 0;
     SDL_FRect ground = { 0, 0, 0, 0 };
     for (int i = 0; i < ov; i++) {
@@ -837,11 +814,9 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
         q->w = e->dst.w * scale;
         q->h = e->dst.h * scale;
         q->r = q->g = q->b = q->a = 1.0f;
-        q->world_depth = e->world_depth;
         if (was_ground && e->kind == E_TEX) {
             const float qx = (e->dst.x + world) * scale + ox, qw = e->dst.w * scale;
             if (qx < ground.x + ground.w && qx + qw > ground.x) {
-                q->world_depth = 1.0f;      /* an object, standing in the fighters' plane */
                 /* MARKED FOR THE LIGHTING CHAIN, with the ground it stands on: the engine
                  * draws the object's own quad into the character mask and its sheared
                  * silhouette into the cast-shadow mask. The shadow is anchored to the GROUND
@@ -899,35 +874,16 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
         n++;
     }
 
-    /* WHERE THE STAGE SAYS ITS FLOOR BEGINS, in the output's rows. The lighting pass needs it
-     * in the space it shades in, and this is the only place that knows both the game's answer
-     * and where the composition was placed.
-     *
-     * GATED ON THE MATCH HUD, and that gate is not belt-and-braces. The background record
-     * stays loaded after a fight, so the front end, the mode menu and character selection
-     * would all be handed a perfectly valid floor band and would get their lower half tinted
-     * -- a stage's geometry applied to a screen that has no stage in it. The HUD strip is up
-     * exactly while the world is on screen, which is the same signal the widescreen centring
-     * already switches on. */
-    int zmin = 0, zmax = 0;
-    const int have_floor = panel_hud_up() && bg_z_bounds(&zmin, &zmax);
-    SDL_Texture *frame = engine_draw(out, n, egeom, ng, ow, oh,
-                                     (float)zmin * scale + oy, have_floor);
+    SDL_Texture *frame = engine_draw(out, n, egeom, ng, ow, oh);
     if (!frame) return 0;                        /* engine_draw said why; fall back */
 
-    /* The engine's target, placed on the caller's. It is the SAME GPU object the pass rendered
-     * into (C030), so this is a blit and not a readback -- and the blit is where the DEFOCUS
-     * happens, since it is the one moment the finished frame and its G-buffer are both to hand.
-     *
-     * The radius is in texels of the OUTPUT, so it scales with the window: a fixed pixel radius
-     * would be a heavy blur at 794x550 and a hairline at 4K, which is a blur that is a function
-     * of resolution rather than of distance. */
-    const float dof_radius = (float)oh / 110.0f;   /* 5 texels at the game's own 550 rows */
-    if (!engine_present(dst, dof_radius)) {
-        SDL_SetRenderTarget(R, dst);
-        SDL_SetTextureBlendMode(frame, SDL_BLENDMODE_NONE);
-        SDL_RenderTexture(R, frame, NULL, NULL);
-    }
+    /* The scene is rasterised at the composition's integer pixel grid, then enlarged ONCE.
+     * Scaling each scrolling layer independently at a fractional output coordinate changes its
+     * nearest-sampling phase as the camera moves; different parallax layers then shimmer against
+     * one another. A single final scale has one stable phase for the whole scene. */
+    SDL_SetRenderTarget(R, dst);
+    SDL_SetTextureBlendMode(frame, SDL_BLENDMODE_NONE);
+    SDL_RenderTexture(R, frame, NULL, place);
     if (opt_lighting()) stat_post++;     /* "the light ran" -- the engine's own count is engine_report's */
     stat_engine_frames++;
     return 1;
@@ -1023,7 +979,8 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     const int ln = FL.n[li];
 
     clear_to(target, 0, 0, 0, 255);
-    if (!engine_colour_pass(l, li, ov, (float)off, ox, oy, scale, ow, oh, target))
+    if (!engine_colour_pass(l, li, ov, (float)off, 0.0f, 0.0f, 1.0f, w, h,
+                            target, &place))
         draw_list(l, (float)off, ox, oy, 0, ov);
 
     /* The port's UI, over the finished picture and after the light. */

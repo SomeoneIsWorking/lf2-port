@@ -42,10 +42,10 @@ GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
 #   per arm -- the project's rule is that run artefacts go to the gitignored scratch/, which is
 #   on the real disk.
 #   And a route that deletes its evidence on EXIT makes a failure unexaminable: the one thing
-#   anybody wants after "FAIL: the defocus changed 0 px" is the two frames it compared. They are
+#   anybody wants after a failed frame comparison is the two frames it compared. They are
 #   cleared at the START of the next run instead, so the last run's frames are always there.
 OUT=${LF2_SCRATCH:-scratch}/resize_test
-rm -rf "$OUT"
+tools/build/scratch_clean.sh "$OUT"
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)          # absolute: each arm runs with cwd inside the game tree
 
@@ -70,7 +70,7 @@ arm() {   # arm <dir> [VAR=value ...]
     ( cd "$GAME" && \
       env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
           LF2_RENDERER=soft \
-          LF2_VIRTUAL_PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180" \
+LF2_VIRTUAL_PAD="south@modemenu+60" \
           LF2_WINDOW_SIZE=1900x800 \
           LF2_WINDOW_RESIZE="560:1200x800,660:1900x800" \
           LF2_FRAME_DUMP="$FRAME" LF2_DUMP_DIR="$OUT/$dir" \

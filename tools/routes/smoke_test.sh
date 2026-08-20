@@ -39,8 +39,9 @@ set -eu
 # it is when ctest passes CMAKE_BINARY_DIR.
 BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
 GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
-LOG=$(mktemp)
-trap 'rm -f "$LOG"' EXIT
+LOG_DIR=${LF2_SCRATCH:-scratch}/logs
+mkdir -p "$LOG_DIR"
+LOG=$(cd "$LOG_DIR" && pwd)/smoke.log
 
 if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi
 if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; fi
@@ -54,14 +55,13 @@ if [ ! -f "$GAME/lf2.exe" ]; then echo "SKIP: no game tree at $GAME"; exit 77; f
 # exactly how the unimplemented Sleep survived unnoticed.
 TIMER=""
 for t in /usr/bin/time /bin/time; do [ -x "$t" ] && TIMER=$t && break; done
-CPUFILE=$(mktemp); trap 'rm -f "$LOG" "$CPUFILE"' EXIT
+CPUFILE=$(cd "$LOG_DIR" && pwd)/smoke-time.log
 
 echo "running a match headless (about 90s)..."
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
   LF2_CK_DEBUG=1 LF2_AUDIO_DEBUG=1 LF2_SCREEN_HASH=1 \
-  LF2_CLICK_SCRIPT="403,228@frontend+0" \
-  LF2_KEY_SCRIPT="0x5A@frontend+60,\
+LF2_KEY_SCRIPT="0x5A@modemenu+60,\
 0x5A@charselect+58,0x5A@charselect+118,0x5A@charselect+178,0x5A@charselect+238,\
 0x5A@charselect+298,0x5A@charselect+358,0x26@charselect+418,0x26@charselect+478,\
 0x5A@charselect+538,0x5A@charselect+738,\
@@ -98,6 +98,17 @@ check "keyed blits"        "$(num "$ck" 'keyed blits')" 1000
 check "sound effects"      "$(num "$au" plays)" 2
 check "audio peak"         "$(num "$au" peak)" 1000
 check "device pulls"       "$(num "$au" 'device-pulls')" 100
+
+first_screen=$(grep '^scripted input: screen ' "$LOG" | head -1 | sed -n 's/.*screen \([^ ]*\) first.*/\1/p')
+if [ "$first_screen" = "modemenu" ] \
+   && grep -q '^startup: guest initialised; entering its loader directly$' "$LOG" \
+   && grep -q '^startup: data loaded; presenting the mode menu$' "$LOG"; then
+    echo "  ok    startup: the first script-visible screen is the post-load mode menu"
+else
+    echo "  FAIL  startup: first visible screen is '${first_screen:-none}', expected modemenu"
+    echo "        (the guest must initialise and load, with no synthetic input or visible intro)"
+    fail=1
+fi
 
 # Music is optional: it needs ffmpeg at runtime, so its absence must not fail the suite.
 mf=$(num "$au" 'music-frames')
