@@ -143,6 +143,10 @@ void render_init(SDL_Renderer *r)
 {
     R = r;
     fl_init(&FL);
+    /* RmlUi is the global shell, not a native-renderer feature. Its backend uses the shared
+     * SDL_Renderer and also composites over the software fallback. */
+    if (!rmlui_init(r, hw.window))
+        fprintf(stderr, "render: the global RmlUi shell is not available\n");
     if (!render_gpu_enabled()) return;
     if (!tile_arena) tile_arena = malloc(TILE_BYTES_MAX);
     /* The depth-tested geometry pass shares this renderer's device (issues #49, #62). It
@@ -150,10 +154,6 @@ void render_init(SDL_Renderer *r)
      * indistinguishable from a stage with no geometry authored for it. */
     mesh_init(r);
     engine_init(r);
-    /* The settings screen is RmlUi over the same renderer (issue #70). It fails loudly when
-     * it cannot, and the pause menu refuses SETTINGS on the software path. */
-    if (!rmlui_init(r, hw.window))
-        fprintf(stderr, "render: the RmlUi settings screen is not available\n");
 }
 
 static void targets_free(void)

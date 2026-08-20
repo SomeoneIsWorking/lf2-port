@@ -1,10 +1,11 @@
 ---
 id: C027
 kind: claim
-status: holds
+status: falsified
 created: 2026-08-12
 tags: re,screens
 depends: runtime/overrides/world.h
+falsified_on: 2026-08-21
 ---
 
 ## Claim
@@ -18,3 +19,9 @@ Read from Ghidra decompilations of fn_0041bc90 (hands the word by address to fn_
 ## What would falsify it
 
 a run where the front-end menu is drawn while 0x0044d020 reads something other than 10, or a fifth writer of the word outside fn_0041bc90 and fn_00429730's callees
+
+## FALSIFIED 2026-08-21
+
+The address mapping was right but the screen name was wrong. The discarded first screen is top-level mode 0 in fn_004246b0; screen word 10 is fn_00431d10's post-load eight-item VS/Stage/Championship mode menu. The direct constructor boot and exit_to_menu route both reach screen 10 without ever entering the launcher.
+
+> Anything that cited this claim as proof must be re-checked. Grep the repo for it.

@@ -453,7 +453,7 @@ static void guest_end_match(void)
     R(ESP) -= 4;
 }
 
-/* fn_00429730's overlay-Exit dispatch: stop the game's sound, move to the front-end screen
+/* fn_00429730's overlay-Exit dispatch: stop the game's sound, move to the mode-menu screen
  * word and run the same cleanup. */
 static void guest_overlay_exit(void)
 {
@@ -462,7 +462,7 @@ static void guest_overlay_exit(void)
     ST32(R(ESP) + 4, 0);
     R(ECX) = SOUND_OBJ;
     fn_00401a30();
-    ST32(SCREEN_WORD, SCREEN_FRONTEND);
+    ST32(SCREEN_WORD, SCREEN_MODEMENU);
     ST32(0x00457580u, 0);
     R(ECX) = GAME_OBJ;
     fn_00431c70();
@@ -471,8 +471,8 @@ static void guest_overlay_exit(void)
 
 /* Which screen the game is on, in its own words: SCREEN_WORD is what fn_0041bc90 hands to
  * fn_00429730 and what that dispatches on (see runtime/overrides/world.h). Naming it is the
- * whole verdict for "did the exit land on the front end" -- the alternative, comparing frame
- * dumps, cannot tell the front-end menu from character selection, because they share a blit
+ * whole verdict for "did the exit land on the mode menu" -- the alternative, comparing frame
+ * dumps, cannot tell the mode menu from character selection, because they share a blit
  * destination and can share a picture (issue #59). */
 static const char *screen_name(uint32_t s)
 {
@@ -481,7 +481,7 @@ static const char *screen_name(uint32_t s)
     case SCREEN_CHARSELECT: return "character selection";
     case 2:                 return "character selection (entering, stage list armed)";
     case 3:                 return "character selection (selections being reset)";
-    case SCREEN_FRONTEND:   return "the FRONT-END MENU";
+    case SCREEN_MODEMENU:   return "the mode menu";
     default:                return "a screen this port has not named";
     }
 }

@@ -73,7 +73,8 @@ export LF2_CONFIG=
 # comparison. One line each on what only a running game can say:
 ALL="
 smoke             the port boots, loads its data and reaches a match
-settings          the RmlUi mapper opens from pause and renders both shared SVG device icons
+settings          the global RmlUi shell opens directly and renders both shared SVG device icons
+ui_global         the same RmlUi shell opens on menu, selection, overlay, and match screens
 controller        a pad alone drives the game -- the mouse and key routes cannot see this path
 mouse             the pointer alone reaches charselect, the overlay and a match (issue #26)
 controller_2p     a second pad joins as player two, with a one-pad run as the control

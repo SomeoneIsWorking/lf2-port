@@ -10,8 +10,24 @@ RmlUiRenderBackend::RmlUiRenderBackend(SDL_Renderer *renderer) : renderer(render
                                        SDL_BLENDOPERATION_ADD);
 }
 
-void RmlUiRenderBackend::BeginFrame() { SDL_SetRenderDrawBlendMode(renderer, blend); }
-void RmlUiRenderBackend::EndFrame() {}
+void RmlUiRenderBackend::BeginFrame()
+{
+    /* RmlUi's clip rectangles belong to one document render. The game renderer uses the same
+     * SDL_Renderer before and after us, so inheriting the last element's clip on the next frame
+     * clips the game itself to that element. Start and finish at the shared boundary's neutral
+     * state, just as RmlUi's reference SDL backend resets its viewport before drawing. */
+    SDL_SetRenderViewport(renderer, nullptr);
+    SDL_SetRenderClipRect(renderer, nullptr);
+    scissor_enabled = false;
+    SDL_SetRenderDrawBlendMode(renderer, blend);
+}
+
+void RmlUiRenderBackend::EndFrame()
+{
+    SDL_SetRenderClipRect(renderer, nullptr);
+    SDL_SetRenderViewport(renderer, nullptr);
+    scissor_enabled = false;
+}
 
 Rml::CompiledGeometryHandle RmlUiRenderBackend::CompileGeometry(
     Rml::Span<const Rml::Vertex> source_vertices, Rml::Span<const int> source_indices)
@@ -58,7 +74,9 @@ Rml::TextureHandle RmlUiRenderBackend::LoadTexture(Rml::Vector2i &dimensions,
 {
     const DeviceAsset asset = device_asset_from_source(source.c_str());
     if (asset == DEVICE_ASSET_INVALID) return 0;
-    SDL_Surface *surface = device_asset_rasterize(asset, 0, 0);
+    /* RmlUi draws directly in output pixels. Keep a 4x raster behind the 30dp column icon so
+     * resizing or a high-density output never magnifies the SVG's nominal 72px canvas. */
+    SDL_Surface *surface = device_asset_rasterize(asset, 120, 120);
     if (!surface) return 0;
     if (surface->format != SDL_PIXELFORMAT_RGBA32) {
         SDL_Surface *converted = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
@@ -75,6 +93,10 @@ Rml::TextureHandle RmlUiRenderBackend::LoadTexture(Rml::Vector2i &dimensions,
     SDL_DestroySurface(surface);
     if (texture) {
         SDL_SetTextureBlendMode(texture, blend);
+        /* The shared SVGs are deliberately rasterized above their CSS size. Linear sampling
+         * preserves their antialiased vector edges when RmlUi reduces that texture; nearest
+         * sampling made the 120px source look like a low-resolution sprite at 30dp. */
+        SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
         shared_device_textures_loaded++;
     }
     return reinterpret_cast<Rml::TextureHandle>(texture);
@@ -88,7 +110,9 @@ Rml::TextureHandle RmlUiRenderBackend::GenerateTexture(Rml::Span<const Rml::byte
                                              dimensions.x, dimensions.y);
     if (!texture) return 0;
     SDL_SetTextureBlendMode(texture, blend);
-    if (SDL_UpdateTexture(texture, nullptr, source.data(), dimensions.x * 4) != 0) {
+    /* SDL3 returns true on success. Treating it like SDL2's integer status destroyed every
+     * successfully uploaded font atlas, leaving RmlUi to draw glyph quads as solid blocks. */
+    if (!SDL_UpdateTexture(texture, nullptr, source.data(), dimensions.x * 4)) {
         SDL_DestroyTexture(texture);
         return 0;
     }
