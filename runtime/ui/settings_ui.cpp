@@ -23,6 +23,7 @@
 extern "C" {
 #include "config.h"
 #include "bindings.h"
+#include "hd2d.h"
 #include "hostwin.h"
 #include "options.h"
 }
@@ -45,61 +46,151 @@ extern const unsigned int  lf2_font_sans_len;
  * options.c every frame the screen is up, and each key row shows the config's current binding
  * and starts a rebind when clicked (its next key press is the binding).
  */
+/* Dusklight's window.rcss and SettingsWindow structure, adapted to LF2's smaller set of
+ * settings. The important parts are copied rather than approximated: a flex body centres one
+ * modal window, the window owns a tab strip and scrollable content pane, and every interactive
+ * element is a focusable RmlUi control. */
 static const char SETTINGS_RML[] = R"RML(
 <rml>
 <head>
 <style>
+  *, *:before, *:after { box-sizing: border-box; }
   body {
-    width: 100%; height: 100%;
-    background: transparent;
+    display: flex;
+    width: 100%;
+    height: 100%;
+    padding: 32dp;
     font-family: lf2;
-    font-size: 16px;
+    font-size: 16dp;
+    color: #e0dbc8;
   }
-  #panel {
-    width: 430px;
-    margin: 70px auto 0 auto;
-    background: #203050;
-    border: 2px #6080b0;
-    padding: 12px 14px;
-    color: #b0c0d0;
+  window {
+    display: flex;
+    flex-flow: column;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    max-width: 900dp;
+    max-height: 680dp;
+    margin: auto;
+    overflow: hidden;
+    border: 2dp #92875b;
+    border-radius: 14dp;
+    background-color: rgba(21, 22, 16, 94%);
   }
-  #title { color: #ffffff; text-align: center; font-size: 18px; margin-bottom: 8px; }
-  .group { color: #80a0d0; margin-top: 12px; }
-  .row { margin-top: 6px; }
-  .row .label { display: inline-block; width: 190px; }
-  .row .key {
-    display: inline-block; width: 105px; text-align: center;
-    background: #102040; color: #e0e8f0; padding: 2px 0;
+  tab-bar {
+    display: flex;
+    flex: 0 0 58dp;
+    height: 58dp;
+    padding: 8dp;
+    gap: 8dp;
+    border-bottom: 2dp #92875b;
+    background-color: rgba(217, 217, 217, 10%);
   }
-  .row .key:focus { background: #4870a0; color: #fff; }
-  .heads { margin-top: 6px; color: #8090a8; }
-  .heads .label { display: inline-block; width: 190px; }
-  .heads .device { display: inline-block; width: 109px; text-align: center; }
-  .device-icon { width: 30px; height: 30px; }
-  input[type=checkbox] { width: 18px; height: 18px; }
-  #close {
-    text-align: center; margin-top: 16px; padding: 4px 0;
-    background: #4870a0; color: #ffffff;
+  tab-bar button { flex: 1 1 0; }
+  content {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  pane {
+    display: flex;
+    flex-flow: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    padding: 20dp 24dp;
+    gap: 8dp;
+    overflow: hidden auto;
+  }
+  pane > * { flex: 0 0 auto; }
+  .section-heading {
+    display: block;
+    padding-top: 8dp;
+    font-size: 20dp;
+    color: rgba(224, 219, 200, 55%);
+  }
+  button, select-button {
+    display: block;
+    text-align: center;
+    padding: 8dp 16dp;
+    border-radius: 14dp;
+    border: 1dp rgba(146, 135, 91, 55%);
+    background: rgba(17, 16, 10, 35%);
+    color: #e0dbc8;
+    focus: auto;
+    tab-index: auto;
+  }
+  button:hover, button:focus, button:focus-visible,
+  select-button:hover, select-button:focus, select-button:focus-visible {
+    background: rgba(204, 184, 119, 25%);
+    border: 2dp #c2a42d;
+  }
+  .danger { color: #ffb0a0; }
+  .setting-row, .binding-row, .device-heads {
+    display: flex;
+    align-items: center;
+    gap: 8dp;
+    min-height: 38dp;
+  }
+  .label { display: block; flex: 1 1 auto; min-width: 150dp; }
+  .setting-value { display: block; flex: 0 0 240dp; }
+  input[type=checkbox] { width: 24dp; height: 24dp; focus: auto; }
+  input[type=range] { width: 220dp; height: 28dp; focus: auto; }
+  input[type=range] slidertrack { height: 8dp; background: #403d31; }
+  input[type=range] sliderbar { width: 18dp; height: 24dp; margin-top: -8dp; background: #c2a42d; }
+  input[type=range] sliderarrowdec, input[type=range] sliderarrowinc { width: 0; height: 0; }
+  .range-value { display: block; width: 58dp; text-align: right; }
+  .key { flex: 0 0 128dp; }
+  .device-heads .device { display: block; flex: 0 0 128dp; text-align: center; }
+  .device-icon { width: 30dp; height: 30dp; }
+  scrollbarvertical { width: 8dp; margin-left: 4dp; }
+  scrollbarvertical sliderbar { width: 8dp; min-height: 24dp; background: rgba(224,219,200,45%); }
+  scrollbarhorizontal { height: 0; }
+  @media (max-height: 560dp) {
+    body { padding: 12dp; }
+    window { border-radius: 8dp; }
   }
 </style>
 </head>
 <body data-model="settings">
-  <div id="panel">
-    <div id="title">SETTINGS</div>
-    <div class="group">GRAPHICS</div>
-    <div class="row"><span class="label">Render engine</span><input id="engine" type="checkbox" data-bind="checked: engine"/></div>
-    <div class="row"><span class="label">Lighting</span><input type="checkbox" data-bind="checked: lighting"/></div>
-    <div class="group">CONTROLS</div>
-    <div class="heads"><span class="label"></span><span class="device"><img class="device-icon" src="device_keyboard.svg"/></span><span class="device"><img class="device-icon" src="device_gamepad.svg"/></span></div>
-    <div class="row"><span class="label">Up</span><button class="key" data-event-click="capture_key('up')"><span data-bind="text: key_up"/></button><button class="key" data-event-click="capture_pad('up')"><span data-bind="text: pad_up"/></button></div>
-    <div class="row"><span class="label">Down</span><button class="key" data-event-click="capture_key('down')"><span data-bind="text: key_down"/></button><button class="key" data-event-click="capture_pad('down')"><span data-bind="text: pad_down"/></button></div>
-    <div class="row"><span class="label">Left</span><button class="key" data-event-click="capture_key('left')"><span data-bind="text: key_left"/></button><button class="key" data-event-click="capture_pad('left')"><span data-bind="text: pad_left"/></button></div>
-    <div class="row"><span class="label">Right</span><button class="key" data-event-click="capture_key('right')"><span data-bind="text: key_right"/></button><button class="key" data-event-click="capture_pad('right')"><span data-bind="text: pad_right"/></button></div>
-    <div class="row"><span class="label">Attack</span><button class="key" data-event-click="capture_key('attack')"><span data-bind="text: key_attack"/></button><button class="key" data-event-click="capture_pad('attack')"><span data-bind="text: pad_attack"/></button></div>
-    <div class="row"><span class="label">Jump</span><button class="key" data-event-click="capture_key('jump')"><span data-bind="text: key_jump"/></button><button class="key" data-event-click="capture_pad('jump')"><span data-bind="text: pad_jump"/></button></div>
-    <div class="row"><span class="label">Defend</span><button class="key" data-event-click="capture_key('defend')"><span data-bind="text: key_defend"/></button><button class="key" data-event-click="capture_pad('defend')"><span data-bind="text: pad_defend"/></button></div>
-    <button id="close" data-event-click="close">CLOSE</button>
-  </div>
+  <window id="window">
+    <tab-bar>
+      <button id="game-tab" data-event-click="show_page('game')">GAME</button>
+      <button data-event-click="show_page('graphics')">GRAPHICS</button>
+      <button data-event-click="show_page('controls')">CONTROLS</button>
+    </tab-bar>
+    <content>
+      <pane data-if="page == 'game'">
+        <span class="section-heading">PORT MENU</span>
+        <button id="continue" data-event-click="close">CONTINUE</button>
+        <button data-if="can_drop" data-event-click="drop_out">DROP OUT</button>
+        <button data-if="in_match" data-event-click="leave_match">LEAVE MATCH</button>
+        <button class="danger" data-event-click="quit">QUIT GAME</button>
+      </pane>
+      <pane data-if="page == 'graphics'">
+        <span class="section-heading">RENDERING</span>
+        <div class="setting-row"><span class="label">Native renderer</span><button class="setting-value" data-event-click="toggle_engine">{{engine ? 'ON' : 'OFF'}}</button></div>
+        <div class="setting-row"><span class="label">Character shading and shadows</span><button class="setting-value" data-event-click="toggle_lighting">{{lighting ? 'ON' : 'OFF'}}</button></div>
+        <span class="section-heading">LIGHT DIRECTION</span>
+        <div class="setting-row"><span class="label">Angle</span><input class="setting-value" type="range" min="-180" max="180" step="5" data-value="light_angle"/><span class="range-value">{{light_angle}}°</span></div>
+        <div class="setting-row"><span class="label">Height</span><input class="setting-value" type="range" min="5" max="85" step="5" data-value="light_height"/><span class="range-value">{{light_height}}°</span></div>
+      </pane>
+      <pane data-if="page == 'controls'">
+        <span class="section-heading">INPUT MAPPING</span>
+        <div class="device-heads"><span class="label"></span><span class="device"><img class="device-icon" src="device_keyboard.svg"/></span><span class="device"><img class="device-icon" src="device_gamepad.svg"/></span></div>
+        <div class="binding-row"><span class="label">Up</span><button class="key" data-event-click="capture_key('up')">{{key_up}}</button><button class="key" data-event-click="capture_pad('up')">{{pad_up}}</button></div>
+        <div class="binding-row"><span class="label">Down</span><button class="key" data-event-click="capture_key('down')">{{key_down}}</button><button class="key" data-event-click="capture_pad('down')">{{pad_down}}</button></div>
+        <div class="binding-row"><span class="label">Left</span><button class="key" data-event-click="capture_key('left')">{{key_left}}</button><button class="key" data-event-click="capture_pad('left')">{{pad_left}}</button></div>
+        <div class="binding-row"><span class="label">Right</span><button class="key" data-event-click="capture_key('right')">{{key_right}}</button><button class="key" data-event-click="capture_pad('right')">{{pad_right}}</button></div>
+        <div class="binding-row"><span class="label">Attack</span><button class="key" data-event-click="capture_key('attack')">{{key_attack}}</button><button class="key" data-event-click="capture_pad('attack')">{{pad_attack}}</button></div>
+        <div class="binding-row"><span class="label">Jump</span><button class="key" data-event-click="capture_key('jump')">{{key_jump}}</button><button class="key" data-event-click="capture_pad('jump')">{{pad_jump}}</button></div>
+        <div class="binding-row"><span class="label">Defend</span><button class="key" data-event-click="capture_key('defend')">{{key_defend}}</button><button class="key" data-event-click="capture_pad('defend')">{{pad_defend}}</button></div>
+      </pane>
+    </content>
+  </window>
 </body>
 </rml>
 )RML";
@@ -118,6 +209,7 @@ static bool g_pad_capture_armed;
 static bool g_dispatching_pad;
 static long g_open_count;
 static long g_render_frames;
+static unsigned char g_nav_previous[7];
 
 /* ---- the data model ----
  *
@@ -127,6 +219,11 @@ static long g_render_frames;
 static struct {
     bool engine;
     bool lighting;
+    bool in_match;
+    bool can_drop;
+    int light_angle;
+    int light_height;
+    Rml::String page;
     Rml::String key_name[B_N];
     Rml::String pad_name[B_N];
 } M;
@@ -152,8 +249,15 @@ static void refresh_pad_name(int b)
 
 static void model_load(void)
 {
+    float angle = 0.0f, height = 0.0f;
     M.engine = opt_renderer_engine() != 0;
     M.lighting = opt_lighting() != 0;
+    M.in_match = pause_menu_in_match() != 0;
+    M.can_drop = pause_menu_can_drop() != 0;
+    hd2d_light_angles(&angle, &height);
+    M.light_angle = (int)(angle + (angle < 0.0f ? -0.5f : 0.5f));
+    M.light_height = (int)(height + 0.5f);
+    M.page = "game";
     for (int b = 0; b < B_N; b++) { refresh_key_name(b); refresh_pad_name(b); }
     model.DirtyAllVariables();
 }
@@ -173,6 +277,50 @@ static void model_store_live(void)
 {
     opt_set_renderer_engine(M.engine);
     opt_set_lighting(M.lighting);
+    hd2d_light_set_angles((float)M.light_angle, (float)M.light_height);
+}
+
+/* Dusklight updates controller navigation from the live pad state, including repeat handling,
+ * instead of assuming every platform emits an SDL_GAMEPAD_BUTTON event. LF2's virtual-pad
+ * tests exposed why that matters: its d-pad is visible through polling on every frame but some
+ * SDL backends only emit joystick-class events. Edge-driven polling makes the shipping mapping
+ * and the test device follow the same route. */
+static void poll_gamepad_navigation(void)
+{
+    unsigned char now[7] = {};
+    for (int pad = 0; pad < 2; pad++) {
+        unsigned char state[7] = {};
+        if (!gamepad_player_buttons(pad, state)) continue;
+        for (int i = 0; i < 7; i++) now[i] |= state[i];
+    }
+    const auto pressed = [&now](int i) { return now[i] && !g_nav_previous[i]; };
+    if (getenv("LF2_RMLUI_DEBUG") &&
+        (pressed(B_UP) || pressed(B_DOWN) || pressed(B_LEFT) || pressed(B_RIGHT) ||
+         pressed(B_ATTACK) || pressed(B_JUMP))) {
+        Rml::Element *focus = g_ctx->GetFocusElement();
+        fprintf(stderr, "rmlui nav: %d%d%d%d%d%d%d focus=%s#%s\n",
+                now[0], now[1], now[2], now[3], now[4], now[5], now[6],
+                focus ? focus->GetTagName().c_str() : "none",
+                focus ? focus->GetId().c_str() : "");
+    }
+    const auto move_focus = [](bool forward) {
+        Rml::Element *from = g_ctx->GetFocusElement();
+        if (!from || !g_doc) return;
+        if (Rml::Element *next = g_doc->FindNextTabElement(from, forward)) {
+            next->Focus(true);
+            next->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+        }
+    };
+    if (pressed(B_UP)) move_focus(false);
+    if (pressed(B_DOWN)) move_focus(true);
+    if (pressed(B_LEFT)) g_ctx->ProcessKeyDown(Rml::Input::KI_LEFT, 0);
+    if (pressed(B_RIGHT)) g_ctx->ProcessKeyDown(Rml::Input::KI_RIGHT, 0);
+    if (pressed(B_ATTACK) || pressed(B_JUMP)) {
+        g_dispatching_pad = true;
+        if (Rml::Element *focused = g_ctx->GetFocusElement()) focused->Click();
+        g_dispatching_pad = false;
+    }
+    std::memcpy(g_nav_previous, now, sizeof g_nav_previous);
 }
 
 /* ---- the C API ---- */
@@ -200,6 +348,7 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
         fprintf(stderr, "rmlui: CreateContext failed\n");
         return 0;
     }
+    g_ctx->SetDensityIndependentPixelRatio(SDL_GetWindowPixelDensity(w));
 
     auto ctor = g_ctx->CreateDataModel("settings");
     if (!ctor) {
@@ -209,6 +358,11 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     model = ctor.GetModelHandle();
     ctor.Bind("engine", &M.engine);
     ctor.Bind("lighting", &M.lighting);
+    ctor.Bind("in_match", &M.in_match);
+    ctor.Bind("can_drop", &M.can_drop);
+    ctor.Bind("light_angle", &M.light_angle);
+    ctor.Bind("light_height", &M.light_height);
+    ctor.Bind("page", &M.page);
     for (int b = 0; b < B_N; b++) {
         ctor.Bind(std::string("key_") + binding_action_id(b), &M.key_name[b]);
         ctor.Bind(std::string("pad_") + binding_action_id(b), &M.pad_name[b]);
@@ -232,8 +386,30 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
         M.pad_name[b] = g_pad_capture_armed ? "PRESS BUTTON" : "RELEASE BUTTON";
         model.DirtyVariable(std::string("pad_") + binding_action_id(b));
     });
+    ctor.BindEventCallback("show_page", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &args) {
+        if (args.empty()) return;
+        M.page = args[0].Get<Rml::String>();
+        model.DirtyVariable("page");
+    });
+    ctor.BindEventCallback("toggle_engine", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        M.engine = !M.engine;
+        model.DirtyVariable("engine");
+    });
+    ctor.BindEventCallback("toggle_lighting", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        M.lighting = !M.lighting;
+        model.DirtyVariable("lighting");
+    });
     ctor.BindEventCallback("close", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
-        rmlui_close();
+        pause_menu_close();
+    });
+    ctor.BindEventCallback("drop_out", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        pause_menu_drop_out();
+    });
+    ctor.BindEventCallback("leave_match", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        pause_menu_leave_match();
+    });
+    ctor.BindEventCallback("quit", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        hostwin_request_quit();
     });
 
     g_doc = g_ctx->LoadDocumentFromMemory(SETTINGS_RML, "settings");
@@ -261,6 +437,7 @@ void rmlui_shutdown(void)
     g_W = nullptr;
     g_open = false;
     g_key_capture = g_pad_capture = -1;
+    std::memset(g_nav_previous, 0, sizeof g_nav_previous);
     g_open_count = g_render_frames = 0;
 }
 
@@ -272,10 +449,11 @@ void rmlui_open(void)
     g_open = true;
     g_open_count++;
     g_key_capture = g_pad_capture = -1;
+    std::memset(g_nav_previous, 0, sizeof g_nav_previous);
     model_load();
     if (g_doc) {
         g_doc->Show();
-        if (Rml::Element *first = g_doc->GetElementById("engine")) first->Focus();
+        if (Rml::Element *first = g_doc->GetElementById("continue")) first->Focus();
     }
 }
 
@@ -303,7 +481,11 @@ void rmlui_render(void)
         const Rml::Vector2i d = g_ctx->GetDimensions();
         if (d.x != ow || d.y != oh) g_ctx->SetDimensions(Rml::Vector2i(ow, oh));
     }
+    const float density = SDL_GetWindowPixelDensity(g_W);
+    if (density > 0.0f && density != g_ctx->GetDensityIndependentPixelRatio())
+        g_ctx->SetDensityIndependentPixelRatio(density);
 
+    poll_gamepad_navigation();
     g_render->BeginFrame();
     g_ctx->Update();
     g_ctx->Render();
@@ -329,6 +511,14 @@ int rmlui_event(SDL_Event *e)
         return 1;                              /* the binding is ours, not the game's */
     }
 
+    /* Dusklight's Button component turns Confirm into a click on its focused generic element.
+     * LF2 keeps its document data-bound, so reproduce that document-level behavior here. */
+    if (e->type == SDL_EVENT_KEY_DOWN &&
+        (e->key.scancode == SDL_SCANCODE_RETURN || e->key.scancode == SDL_SCANCODE_SPACE)) {
+        if (Rml::Element *focused = g_ctx->GetFocusElement()) focused->Click();
+        return 1;
+    }
+
     if (g_pad_capture >= 0 && (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN
                            || e->type == SDL_EVENT_GAMEPAD_BUTTON_UP)) {
         if (e->type == SDL_EVENT_GAMEPAD_BUTTON_UP && !g_pad_capture_armed) {
@@ -344,29 +534,20 @@ int rmlui_event(SDL_Event *e)
         return 1;
     }
 
-    /* Escape closes the screen (and is consumed, so it does not also unpause). */
+    /* Escape's physical state is the one toggle owned by pause_tick. Consume the SDL event,
+     * but do not close here: closing during the pump and then edge-polling the same held key
+     * would immediately reopen the document in the game update that follows. */
     if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_ESCAPE) {
-        rmlui_close();
         return 1;
     }
 
     if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
         const SDL_GamepadButton b = (SDL_GamepadButton)e->gbutton.button;
-        if (b == SDL_GAMEPAD_BUTTON_EAST) { rmlui_close(); return 1; }
-        Rml::Input::KeyIdentifier key = Rml::Input::KI_UNKNOWN;
-        int mods = 0;
-        if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN || b == SDL_GAMEPAD_BUTTON_DPAD_RIGHT)
-            key = Rml::Input::KI_TAB;
-        else if (b == SDL_GAMEPAD_BUTTON_DPAD_UP || b == SDL_GAMEPAD_BUTTON_DPAD_LEFT) {
-            key = Rml::Input::KI_TAB; mods = Rml::Input::KM_SHIFT;
-        } else if (b == SDL_GAMEPAD_BUTTON_SOUTH || b == SDL_GAMEPAD_BUTTON_START)
-            key = Rml::Input::KI_RETURN;
-        if (key != Rml::Input::KI_UNKNOWN) {
-            g_dispatching_pad = true;
-            g_ctx->ProcessKeyDown(key, mods);
-            g_dispatching_pad = false;
+        if (b == SDL_GAMEPAD_BUTTON_EAST) {
+            pause_menu_close();
             return 1;
         }
+        return 1; /* navigation itself is edge-polled once per rendered frame */
     }
     if (e->type == SDL_EVENT_GAMEPAD_BUTTON_UP) return 1;
 
@@ -382,6 +563,23 @@ int rmlui_event(SDL_Event *e)
         default: break;
         }
     }
-    const bool propagating = RmlSDL::InputEventHandler(g_ctx, g_W, copy);
-    return propagating ? 0 : 1;
+    RmlSDL::InputEventHandler(g_ctx, g_W, copy);
+    /* Dusklight blocks the game whenever any active document is visible. The SDL adapter's
+     * propagation result only describes RmlUi's DOM, not whether the guest should also see
+     * the physical input, so every input event is consumed at this boundary. */
+    switch (e->type) {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP:
+    case SDL_EVENT_TEXT_INPUT:
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_MOUSE_WHEEL:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+        return 1;
+    default:
+        return 0;
+    }
 }

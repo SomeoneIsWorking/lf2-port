@@ -47,23 +47,21 @@ SDL_Surface *device_asset_rasterize(DeviceAsset asset, int width, int height)
     if (!source_bytes(asset, &data, &size)) return NULL;
 
     SDL_IOStream *stream = SDL_IOFromConstMem(data, size);
-    SDL_Surface *loaded = stream ? IMG_LoadTyped_IO(stream, true, "svg") : NULL;
+    /* Rasterize the vector at the requested resolution. Loading at the SVG's intrinsic 72px
+     * size and then calling SDL_BlitSurfaceScaled only magnifies/reduces a bitmap; it throws
+     * away the exact benefit of sharing SVG assets with the high-resolution renderer. */
+    SDL_Surface *loaded = NULL;
+    if (stream) {
+        loaded = width > 0 && height > 0
+               ? IMG_LoadSizedSVG_IO(stream, width, height)
+               : IMG_LoadSVG_IO(stream);
+        SDL_CloseIO(stream);
+    }
     if (!loaded) return NULL;
 
     SDL_Surface *argb = loaded->format == SDL_PIXELFORMAT_ARGB8888
                       ? loaded : SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_ARGB8888);
     if (argb != loaded) SDL_DestroySurface(loaded);
     if (!argb) return NULL;
-    if (width <= 0 || height <= 0 || (argb->w == width && argb->h == height)) return argb;
-
-    SDL_Surface *scaled = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_ARGB8888);
-    if (!scaled) { SDL_DestroySurface(argb); return NULL; }
-    SDL_SetSurfaceBlendMode(argb, SDL_BLENDMODE_NONE);
-    const SDL_Rect dst = { 0, 0, width, height };
-    if (!SDL_BlitSurfaceScaled(argb, NULL, scaled, &dst, SDL_SCALEMODE_LINEAR)) {
-        SDL_DestroySurface(scaled);
-        scaled = NULL;
-    }
-    SDL_DestroySurface(argb);
-    return scaled;
+    return argb;
 }

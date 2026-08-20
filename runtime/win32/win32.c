@@ -173,7 +173,8 @@ static void h_CreateWindowExA(void)
      * 2 and the game's own 794 columns of world -- the picture the player asked for, drawn at
      * twice the resolution rather than blown up to it. */
     hw.window = SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h,
-                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                                 SDL_WINDOW_HIDDEN);
     if (!hw.window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); abort(); }
     /* THE GPU RENDERER BY NAME, not whichever SDL picks. SDL's default order puts the
      * OpenGL backend first, and that one has no SDL_GPUDevice -- so SDL_GPURenderState, and
@@ -533,9 +534,12 @@ void hostwin_pump(void)
          * -- a key rebind, an Escape that closed it -- must not also reach the game's message
          * pump or the pause menu's key ledger. */
         if (rmlui_event(&e)) continue;
+        /* Escape is the port menu command on every screen. Never enqueue it in LF2's own key
+         * array; pause_tick observes SDL's physical state and opens the document directly. */
+        if ((e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) &&
+            e.key.scancode == SDL_SCANCODE_ESCAPE)
+            continue;
         if (e.type == SDL_EVENT_QUIT) quit_posted = 1;
-        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE &&
-            (e.key.mod & SDL_KMOD_SHIFT)) quit_posted = 1;
         /* Alt+Enter is what players expect, and the game cannot ask for it itself. */
         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_RETURN &&
             (e.key.mod & SDL_KMOD_ALT)) { toggle_fullscreen(); continue; }
@@ -962,18 +966,13 @@ static void keydebug_report(void)
                 "  To follow input, probe reads of 0x455378 rather than this import.\n");
 }
 
-/* Escape belongs to the pause menu while a match is on screen.
- *
- * The game reads Escape itself and answers with its own "Are you sure to quit?" prompt, so
- * a pause menu bound to it would open underneath a quit dialog. The port takes the key
- * instead: it is reported as UP to the game whenever the pause menu is entitled to it, and
- * the port's own hostwin_key_held() -- which the pause menu reads -- is unaffected.
- *
- * Only during a match, so Escape still quits from the menus, which is where the game's
- * prompt makes sense. */
+/* Escape is the global RmlUi menu command. While its document is visible, all physical input
+ * belongs to that document and must read as released to the guest; otherwise a front-end menu
+ * moves behind the modal UI. This is Dusklight's input-block ownership applied at LF2's
+ * Win32 boundary. */
 static int port_owns_key(uint32_t vk)
 {
-    return vk == 0x1B && (panel_hud_up() || pause_active());
+    return vk == 0x1B || rmlui_active();
 }
 
 static void h_GetKeyState(void)

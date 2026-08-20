@@ -1,15 +1,7 @@
-/* The RmlUi settings screen: the port's own settings UI (issue #70).
- *
- * The renderer choice, character lighting and device mapping used to be
- * hand-rolled pause-menu rows. The settings screen is a real RmlUi document now -- RML/CSS +
- * data bindings -- rendered by the port's own SDL renderer, on top of the frozen frame while
- * the game is paused. The C API here is the whole boundary: the C++ implementation
- * settings_ui.cpp owns the RmlUi context and document, and this header is what
- * the C side (render.c's present, the pause menu) calls.
- *
- * The screen is engine-path only for now: it is rendered into the render target render_present
- * composes into, which is the GPU path. On the software fallback there is no such target, so
- * the SETTINGS item is refused there (the pause menu checks render_gpu_enabled).
+/* The global RmlUi shell, ported from Dusklight's document/window ownership (issue #70).
+ * Escape or the controller menu action opens this document directly on every game screen.
+ * The app layer decides whether a match must freeze; this UI owns presentation, navigation,
+ * settings, and input mapping. Both native and software render paths composite it.
  */
 #ifndef LF2_RMLUI_H
 #define LF2_RMLUI_H
@@ -25,9 +17,7 @@ extern "C" {
 int  rmlui_init(SDL_Renderer *r, SDL_Window *w);
 void rmlui_shutdown(void);
 
-/* The screen's state. open/close are the pause menu's entry and exit points; while it is
- * active the pause menu draws nothing and its navigation is swallowed, and render_present
- * composites the document over the frozen frame. */
+/* Active-document state and lifecycle. */
 int  rmlui_active(void);
 void rmlui_open(void);
 void rmlui_close(void);
@@ -37,9 +27,8 @@ void rmlui_close(void);
  * it. */
 void rmlui_render(void);
 
-/* Feed an SDL event to the document. Returns 1 if it consumed the event (a key rebind, a
- * click that the document handled) -- the caller should then not pass the event on to the
- * game. Returns 0 for events the settings screen ignores. */
+/* Feed an SDL event to the active document. All physical input is consumed while visible;
+ * non-input window and quit events remain available to the host. */
 int  rmlui_event(SDL_Event *e);
 
 #ifdef __cplusplus

@@ -485,10 +485,8 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
 {
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
-    /* Boot still executes the guest's real front-end initialisation and loader, but neither is
-     * part of the port's presentation. Reset the retained draw list so their pictures cannot
-     * leak into the first visible frame; keep the ordinary host pacing and guest frame boundary
-     * so loading semantics are unchanged. */
+    /* The real loader runs, but its draw list is never part of the port's presentation. Keep
+     * pacing/frame boundaries and discard the list until startup admits the mode menu. */
     if (!startup_present_enabled()) {
         render_frame_reset();
         frame_pace();
@@ -566,8 +564,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     }
     render_frame_reset();
     if (!hw.renderer) return;
-    if (gpu) { frame_pace(); return; }
-
+    if (gpu) { startup_reveal_window(hw.window); frame_pace(); return; }
     /* The texture is the size of the composition, and the composition follows the window, so
      * it is checked against the frame in hand rather than created once. Sizes are kept here
      * because SDL_GetTextureSize is a call per frame to learn what this port already knows. */
@@ -605,7 +602,9 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     SDL_SetRenderDrawColor(hw.renderer, 0, 0, 0, 255);
     SDL_RenderClear(hw.renderer);
     SDL_RenderTexture(hw.renderer, hw.texture, NULL, &place);
+    if (rmlui_active()) rmlui_render();
     SDL_RenderPresent(hw.renderer);
+    startup_reveal_window(hw.window);
     frame_pace();
 }
 
@@ -811,7 +810,7 @@ static void present_primary(void)
      * arena underneath them had been overwritten, so the frozen frame's text came out as
      * garbage while everything drawn from a cached texture looked perfect. */
     pause_in_list = pause_active() && frame_src_pixels && frame_src_pixels != s->pixels
-                    && (rmlui_active() || pause_draw_list(frame_src_pixels, s->w, s->h));
+                    && pause_draw_list(frame_src_pixels, s->w, s->h);
     pause_draw(s->pixels, s->w, s->h, s->pitch);
     hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
     LOADPROF_END();

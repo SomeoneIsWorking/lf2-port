@@ -11,6 +11,7 @@
 #include "guest_map.h"
 #include "hostwin.h"
 #include "bindings.h"
+#include "rmlui.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,6 +82,15 @@ int device_for_player(int slot)
 
 static int device_buttons(int dev, unsigned char out[7])
 {
+    /* This gather reads host devices directly rather than Win32 key messages. Mirror the UI
+     * input block here so a visible global document cannot also drive the menu or fighter
+     * underneath it. Presence is preserved; only the seven action states are withheld. */
+    if (rmlui_active()) {
+        memset(out, 0, 7);
+        if (dev == 0) return 1;
+        unsigned char ignored[7];
+        return gamepad_player_buttons(dev - 1, ignored);
+    }
     if (dev == 0) {
         /* up, down, left, right, attack, jump, defend -- the game's button order, read from
          * the settings file so a player can remap them (config.h, issue #70). */

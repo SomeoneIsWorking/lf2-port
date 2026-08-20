@@ -132,12 +132,16 @@ void exit_to_menu_tick(void);
  * by game state rather than by a frame number. */
 void gfx_request_frame_dump(void);
 
-/* Pause menu, runtime/app/pause.c */
+/* Global RmlUi menu lifecycle and LF2 action bridge, runtime/app/pause.c. */
 int  pause_active(void);
 void pause_tick(void);
+int  pause_menu_in_match(void);
+int  pause_menu_can_drop(void);
+void pause_menu_close(void);
+void pause_menu_drop_out(void);
+void pause_menu_leave_match(void);
 void pause_draw(uint32_t pix, int w, int h, int pitch);
-/* The same menu recorded over the native renderer's retained frame; 1 if it drew.
- * See runtime/app/pause.c and issue #52. */
+/* Rewind the native renderer to the retained frame under an open modal document. */
 int  pause_draw_list(uint32_t dst_pixels, int w, int h);
 void present_frozen_frame(void);
 void controls_hint_enable(int on);

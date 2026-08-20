@@ -8,8 +8,8 @@
  * replace -- one screen's behaviour is usually spread over several overrides, and one
  * override (fn_0043f010 draws everything) serves several screens:
  *
- *   menu.c        the front end: its selection, its mouse and pad, the advertising panel,
- *                 and the widescreen geometry the whole port hangs off
+ *   boot_guest.c  construction-time ownership of the port's initial loader state
+ *   menu.c        the retired front end's draw filtering and shared widescreen geometry
  *   screens.c     the post-load screens' mouse -- mode menu, character select, overlay
  *   input.c       the per-frame gather: devices to the seven buttons a fighter acts on
  *   coop.c        the object world: building a fighter, joining, leaving, choosing one
@@ -32,8 +32,8 @@
 /* Which recompiled function each file provides, so a reader looking for one address does
  * not have to open seven files:
  *
- *   fn_004246b0  menu.c     the front-end menu -- selection index, so a pad can drive it
- *   boot_guest.c            exact non-rendering Game Start transition used by direct boot
+ *   fn_00419e40  boot_guest.c  world construction -- initial loader state before first update
+ *   fn_004246b0  menu.c     retired front-end draw boundary and widescreen geometry
  *   fn_00423b00  menu.c     element draw -- declines the advertising panel by descriptor
  *   fn_00419a60  input.c    per-frame player input -- devices into the game's buttons
  *   fn_0041ae60  hud.c      the in-match HUD strip -- one panel per player slot

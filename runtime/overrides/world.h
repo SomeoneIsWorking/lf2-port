@@ -192,7 +192,7 @@ enum { BG_REGISTRY = 0x00458b00 + 2004,
  * sequence to drive". There is. These two words are the OUTER layer -- which program the
  * process is running -- and the game never leaves the game proper once it is in it. Leaving a
  * MATCH is a different layer entirely, SCREEN_WORD below, and the game drives it itself: the
- * post-match overlay's Exit item takes it to screen 10, the front-end menu. The port's exit
+ * post-match overlay's Exit item takes it to screen 10, the post-load mode menu. The port's exit
  * uses exactly that (runtime/overrides/screens.c), and issue #22 is what happens when the two
  * layers are confused for each other. */
 enum { GAME_TOP_MODE = 0x00458b00, GAME_MODE_WORD = 0x0044d070 };
@@ -205,15 +205,15 @@ enum { GAME_TOP_MODE = 0x00458b00, GAME_MODE_WORD = 0x0044d070 };
  *      1            character selection (the panel proper)
  *      2            enter character selection with the stage list armed -> becomes 1
  *      3            reset every player's selection, then -> 1
- *      10           the FRONT-END MENU, fn_00431d10 -- the eight-item list
+ *      10           the post-load MODE MENU, fn_00431d10 -- the eight-item list
  *      0x14..0x32   fn_00432ab0        0x78..0x96  fn_00434ab0
  *      200..299     fn_00438b40        300         fn_00437220
  *
  * MENU_CURSOR is the same word the port already knows as the game mode: fn_00429730 passes
- * &0x00451160 to fn_00431d10, which uses it as the front-end cursor (0..7) AND as the mode the
+ * &0x00451160 to fn_00431d10, which uses it as the mode-menu cursor (0..7) AND as the mode the
  * chosen item runs in. They are one word on purpose -- picking the item IS picking the mode. */
 enum { SCREEN_WORD = 0x0044d020, MENU_CURSOR = 0x00451160 };
-enum { SCREEN_MATCH = 0, SCREEN_CHARSELECT = 1, SCREEN_FRONTEND = 10 };
+enum { SCREEN_MATCH = 0, SCREEN_CHARSELECT = 1, SCREEN_MODEMENU = 10 };
 /* THE WHOLE RECORD, from fn_0040c160 -- the bg.dat parser itself (issue #62).
  *
  * Every constant below used to be located by dumping the record and recognising a value

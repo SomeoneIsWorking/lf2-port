@@ -38,7 +38,7 @@ PAD1="$PAD1,south@charselect+618,south@charselect+838"
 PAD1="$PAD1,up@overlay+99,up@overlay+159,south@overlay+219"        # 2 -> 1 -> 0 = Fight!
 PAD1="$PAD1,start@match+300,down@match+360,south@match+420"        # pause, LEAVE MATCH, take it
 
-echo "exit to menu: LEAVE MATCH should reach the front-end menu..."
+echo "exit to menu: LEAVE MATCH should reach the post-load mode menu..."
 ( cd "$GAME" && \
   SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
   LF2_VIRTUAL_PAD="$PAD1" \

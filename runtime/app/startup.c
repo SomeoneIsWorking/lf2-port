@@ -2,23 +2,23 @@
 
 #include "boot_guest.h"
 
+#include <SDL3/SDL.h>
 #include <stdio.h>
 
-enum { TOP_FRONTEND = 0, TOP_LOAD = 1, TOP_GAME = 2 };
+enum { TOP_LOAD = 1, TOP_GAME = 2 };
 enum { START_INITIALISING, START_LOADING, START_WAITING_FOR_MENU, START_READY };
 
 static int phase;
 
 void startup_before_game_frame(uint32_t self, uint32_t mode)
 {
-    if (phase == START_INITIALISING && self && mode == TOP_FRONTEND) {
-        /* fn_004246b0's front-end branch does not return until a menu choice changes its
-         * state. Entering the original body first therefore cannot be followed by a direct
-         * transition. Process-wide DirectDraw/audio setup has already completed in its
-         * caller, so take the original Game Start transition before entering the body. */
-        boot_guest_enter_loader(self);
+    if (phase == START_INITIALISING && self && mode == TOP_LOAD) {
+        /* The world constructor owns the initial mode and constructs this port directly in
+         * loader state. Platform setup is complete by the first update, so initialise local
+         * player slots here before the real loader body runs. */
+        boot_guest_prepare_local_players();
         phase = START_LOADING;
-        fprintf(stderr, "startup: guest initialised; entering its loader directly\n");
+        fprintf(stderr, "startup: world constructed in local-loader state\n");
         return;
     }
 
@@ -45,4 +45,15 @@ void startup_after_game_frame(uint32_t self, uint32_t mode_before)
 int startup_present_enabled(void)
 {
     return phase == START_READY;
+}
+
+void startup_reveal_window(SDL_Window *window)
+{
+    static int revealed;
+    if (revealed || !window) return;
+    /* The window starts hidden. Its first backing buffer is now the post-load menu, so there
+     * is no interval in which the retired front end, loader, or a black flash can be exposed. */
+    SDL_ShowWindow(window);
+    revealed = 1;
+    fprintf(stderr, "startup: first menu frame presented; window revealed\n");
 }

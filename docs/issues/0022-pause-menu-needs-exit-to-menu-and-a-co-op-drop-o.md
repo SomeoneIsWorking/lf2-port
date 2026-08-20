@@ -2,7 +2,7 @@
 id: 22
 title: Pause menu needs EXIT TO MENU and a co-op drop-out option
 status: resolved
-symptom: the pause menu offers only RESUME and QUIT GAME: there is no way back to the front end without killing the process, and a joined player has no way to leave a match deliberately
+symptom: the pause menu offers only RESUME and QUIT GAME: there is no way back to the post-load mode menu without killing the process, and a joined player has no way to leave a match deliberately
 tags: reported,pause,menu,coop,drop-in,ux
 created: 2026-08-05
 updated: 2026-08-17
@@ -15,7 +15,7 @@ REPORTED. runtime/app/pause.c currently has exactly two items:
 
 with IT_QUIT calling hostwin_request_quit() -- it kills the process. Wanted:
 
-  EXIT TO MENU    leave the match, return to the front end, keep the process alive
+  EXIT TO MENU    leave the match, return to the post-load mode menu, keep the process alive
   DROP OUT        a joined player leaves the match deliberately
 
 WHAT IS ALREADY IN HAND for the drop-out half: coop_leave() in runtime/overrides/coop.c is
@@ -27,8 +27,8 @@ WHOSE drop-out it is when several devices are in the match: the pause menu is on
 drop-out is per player, so the item has to name a player or be driven by the device that
 opened the menu. pause.c does not currently track which device paused.
 
-WHAT IS NOT KNOWN for exit-to-menu: how the game itself returns from a match to the front
-end. The port must not fake it by resetting its own state -- the game has a path for
+WHAT IS NOT KNOWN for exit-to-menu: how the game itself returns from a match to the mode
+menu. The port must not fake it by resetting its own state -- the game has a path for
 finishing a match (the overlay's Exit item is one candidate, 0x0044d06c index 5 per
 overrides.h) and that path is what should be driven. Reproducing the transition by hand
 would leave the game's own state half-wound and is exactly the kind of thing that looks
@@ -40,7 +40,7 @@ UNFROZEN, i.e. unpause first, then drive the transition.
 
 ### Note (2026-08-05)
 PROGRESS, 2026-08-05: DROP OUT is done; LEAVE MATCH is done as far as it is established;
-EXIT TO THE FRONT-END MENU is NOT, and that is what this entry stays open for.
+EXIT TO THE MODE MENU is NOT, and that is what this entry stays open for.
 
 WHAT SHIPPED
 
@@ -494,7 +494,8 @@ FURTHER BACK than the game goes on its own.
 That is a design question again, but a much better posed one than before: not "why does our exit
 miss the mode menu" (it does not miss it -- the game leaves it), but "should EXIT TO MENU stop
 where the game stops, or carry on to the front end". Both are implementable; only the second
-needs anything beyond what already works.
+needs anything beyond what already works. The latter wording was based on a screen-name error;
+screen 10 is the post-load mode menu, not the discarded top-level launcher (claim C040).
 
 AND 0044d020 = 10 HOLDS when written directly: the probe run left the mode menu up and it took
 input normally (a press moved it to character selection). So if the answer is "stop at the mode
@@ -512,14 +513,14 @@ does, in three lines.
 
 **What the code says.** `fn_0041bc90` runs the match while 0x0044d020 is 0 and otherwise hands
 it BY ADDRESS to `fn_00429730`, which dispatches on it: 1 = character selection, 2 and 3 enter
-it, **10 = the FRONT-END MENU** (`fn_00431d10`, the eight-item list), 0x14..0x32 / 0x78..0x96 /
+it, **10 = the post-load MODE MENU** (`fn_00431d10`, the eight-item list), 0x14..0x32 / 0x78..0x96 /
 200..299 / 300 = the other panels. `fn_00429730` also passes `&0x00451160` to `fn_00431d10`,
-which uses that one word as BOTH the front-end cursor (0..7) and the game mode -- picking the
+which uses that one word as BOTH the mode-menu cursor (0..7) and the game mode -- picking the
 item is picking the mode.
 
 `fn_00431d10` writes the screen word in exactly one place: its confirm branch. Cursor 0, 1 or 4
 sets it to **3**, which `fn_00429730` turns into **1**. So `10 -> 3 -> 1` is not a walk. It is
-one confirm press on the front-end menu with the cursor on item 0, and nothing else in the
+one confirm press on the mode menu with the cursor on item 0, and nothing else in the
 binary produces that pair of writes.
 
 **What raises that confirm.** `fn_00431b70`, the menu's gather: per player it reads obj+0xcd..
@@ -530,8 +531,8 @@ which the game runs on every way out of a match, zeroes both that latch and thos
 **So the cause.** `input_synth_confirm(exit_dev, 2)` held the attack for two gathers
 unconditionally, and outside the game proper `fn_00419a60`'s override routes every device to
 slot 0 (`target = in_game ? dev_player[d] : 0`). Gather one dispatched the overlay's Exit;
-gather two landed after the transition, on the front-end menu, with the latch freshly cleared
-by `fn_00431c70` -- a fresh press by construction. The exit reached the front end correctly and
+gather two landed after the transition, on the mode menu, with the latch freshly cleared
+by `fn_00431c70` -- a fresh press by construction. The exit reached the mode menu correctly and
 was then pushed off it by its own press.
 
 Why the earlier cancel "never fired": it was armed on `panel_modemenu_up()`, a DRAWING signal.
@@ -543,7 +544,7 @@ the positive -- the exact failure mode the global rules describe.
 records 0x0044d020 and `synth_active()` drops the remaining gathers the moment it moves, saying
 so out loud. That is the game's own rule (`fn_00431c70`), not a shorter frame count.
 
-**Verified**, `tools/e2e.sh exit_to_menu` (new): LANDED on screen 10, the front-end menu, with
+**Verified**, `tools/e2e.sh exit_to_menu` (new): LANDED on screen 10, the mode menu, with
 "1 gather(s) left when the game moved from screen 1 to screen 10 -- dropped". Run against BOTH
 classes: with the scope check compiled out the same route lands on screen 1, character
 selection, and the route FAILS. `ctest` 10/10.
@@ -553,7 +554,7 @@ it existed for was answered by one decompilation. `SCREEN_WORD`, `MENU_CURSOR` a
 numbering are recorded in `runtime/overrides/world.h`.
 
 ### Resolution (2026-08-12)
-The exit reached the front-end menu (screen word 0x0044d020 = 10) and was pushed off it by its own synthetic confirm: input_synth_confirm held the attack for two gathers, and fn_00431c70 clears the held-button latch across a screen change, so the leftover gather read as a fresh press to fn_00431b70 and fn_00431d10 confirmed cursor 0. The press is now scoped to the screen it was issued on. Verified by tools/e2e.sh exit_to_menu, which lands on 10 and fails on 1 with the scope compiled out.
+The exit reached the mode menu (screen word 0x0044d020 = 10) and was pushed off it by its own synthetic confirm: input_synth_confirm held the attack for two gathers, and fn_00431c70 clears the held-button latch across a screen change, so the leftover gather read as a fresh press to fn_00431b70 and fn_00431d10 confirmed cursor 0. The press is now scoped to the screen it was issued on. Verified by tools/e2e.sh exit_to_menu, which lands on 10 and fails on 1 with the scope compiled out.
 
 ### Note (2026-08-17)
-SUPERSEDED (2026-08-17): the synthetic-press mechanism this entry describes was itself replaced. LEAVE MATCH now calls the game's own exit code directly (screens.c's guest_end_match / guest_overlay_exit, read off fn_0041bc90 and fn_00429730): fn_00416cd0(0x44d020,0x451160) + fn_00431c70(this) to end the match, then fn_00401a30(0x455610,0) + screen=10 + 0x457580=0 + fn_00431c70(this) for the overlay Exit. input_synth_confirm and any_playing_device are DELETED -- no keystroke or button is injected, so the 'second gather confirms the front-end menu' bug class cannot recur because there is no press. tools/e2e.sh exit_to_menu (updated for the native flow) still lands on screen 10.
+SUPERSEDED (2026-08-17): the synthetic-press mechanism this entry describes was itself replaced. LEAVE MATCH now calls the game's own exit code directly (screens.c's guest_end_match / guest_overlay_exit, read off fn_0041bc90 and fn_00429730): fn_00416cd0(0x44d020,0x451160) + fn_00431c70(this) to end the match, then fn_00401a30(0x455610,0) + screen=10 + 0x457580=0 + fn_00431c70(this) for the overlay Exit. input_synth_confirm and any_playing_device are DELETED -- no keystroke or button is injected, so the 'second gather confirms the mode menu' bug class cannot recur because there is no press. tools/e2e.sh exit_to_menu (updated for the native flow) still lands on screen 10.
