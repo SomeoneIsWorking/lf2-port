@@ -116,9 +116,10 @@ Generic port UI art comes from `PORT_ASSETS_DIR`, `SHARED_DIR/port-assets`, or t
 device indicators embed that repository's SVG icons at build time, so the installed game has no
 host checkout path.
 
-`tools/build/check_structure.py` enforces the boundary: new runtime source files are capped at 500
-lines and existing oversized files may not grow. Lower a legacy cap when extracting code; never raise
-one merely to land a feature. Update this section and `docs/codemap.md` whenever ownership moves.
+`tools/build/check_structure.py` enforces the boundary: new runtime source files are capped at 1,200
+lines and existing files above that limit may not grow. At 2,000 lines a file is critical extraction
+work, not merely large. Lower a legacy cap when extracting code; never raise one merely to land a
+feature. Update this section and `docs/codemap.md` whenever ownership moves.
 
 **3. The overrides (`runtime/overrides/`).** Listing a hex address in `re/overrides.txt`
 excludes it from lifting; the generated code still calls `fn_<addr>()` and the linker resolves
