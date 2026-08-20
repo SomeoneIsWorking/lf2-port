@@ -5,16 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The one keyboard layout's defaults -- the layout that was hardcoded in input.c before this
- * file existed. */
-static const uint32_t KEY_DEFAULT[B_N] = {
-    0x26, 0x28, 0x25, 0x27, 0x5A, 0x58, 0x43,   /* up down left right Z X C */
-};
-static const char *const KEY_NAME[B_N] = {
-    "key_up", "key_down", "key_left", "key_right",
-    "key_attack", "key_jump", "key_defend",
-};
-
 /* The file, or NULL when settings are disabled (LF2_CONFIG set-but-empty). */
 static const char *config_file(void)
 {
@@ -25,8 +15,8 @@ static const char *config_file(void)
 
 /* The generic store. Fixed size: the port's settings are a handful of short names, and a
  * dynamic map for that is an allocation for nothing. */
-enum { SLOT_N = 16 };
-static struct { const char *name; char value[32]; } slot[SLOT_N];
+enum { SLOT_N = 32 };
+static struct { char name[32]; char value[32]; } slot[SLOT_N];
 static int slot_n;
 
 static int find_slot(const char *name)
@@ -48,7 +38,7 @@ void config_set(const char *name, const char *value)
     if (i < 0) {
         if (slot_n >= SLOT_N) return;
         i = slot_n++;
-        slot[i].name = name;
+        snprintf(slot[i].name, sizeof slot[i].name, "%s", name);
     }
     snprintf(slot[i].value, sizeof slot[i].value, "%s", value ? value : "");
 }
@@ -73,54 +63,6 @@ void config_save(void)
     FILE *f = path ? fopen(path, "w") : NULL;
     if (!f) return;
     fprintf(f, "# LF2 port settings\n");
-    for (int b = 0; b < B_N; b++)
-        fprintf(f, "%s %u\n", KEY_NAME[b], (unsigned)config_key_vk(b));
-    for (int i = 0; i < slot_n; i++) {
-        int is_key = 0;
-        for (int b = 0; b < B_N; b++) if (slot[i].name == KEY_NAME[b]) is_key = 1;
-        if (!is_key) fprintf(f, "%s %s\n", slot[i].name, slot[i].value);
-    }
+    for (int i = 0; i < slot_n; i++) fprintf(f, "%s %s\n", slot[i].name, slot[i].value);
     fclose(f);
-}
-
-uint32_t config_key_vk(int b)
-{
-    if (b < 0 || b >= B_N) return 0;
-    const char *v = config_get(KEY_NAME[b]);
-    if (!v || !*v) return KEY_DEFAULT[b];
-    char *end = NULL;
-    const long n = strtol(v, &end, 0);
-    if (end == v || n <= 0 || n >= 256) return KEY_DEFAULT[b];
-    return (uint32_t)n;
-}
-
-void config_set_key_vk(int b, uint32_t vk)
-{
-    if (b < 0 || b >= B_N || vk >= 256) return;
-    char v[16];
-    snprintf(v, sizeof v, "%u", (unsigned)vk);
-    config_set(KEY_NAME[b], v);
-}
-
-const char *config_key_name(uint32_t vk)
-{
-    static char buf[16];
-    if (vk >= 0x41 && vk <= 0x5A) { snprintf(buf, sizeof buf, "%c", (char)vk); return buf; }
-    if (vk >= 0x30 && vk <= 0x39) { snprintf(buf, sizeof buf, "%c", (char)vk); return buf; }
-    if (vk >= 0x60 && vk <= 0x69) { snprintf(buf, sizeof buf, "NUM%c", (char)(vk - 0x60 + '0')); return buf; }
-    switch (vk) {
-    case 0x25: return "LEFT";
-    case 0x26: return "UP";
-    case 0x27: return "RIGHT";
-    case 0x28: return "DOWN";
-    case 0x0D: return "ENTER";
-    case 0x20: return "SPACE";
-    case 0x09: return "TAB";
-    case 0x08: return "BKSP";
-    case 0x10: return "SHIFT";
-    case 0x11: return "CTRL";
-    case 0x12: return "ALT";
-    case 0x1B: return "ESC";
-    default:   snprintf(buf, sizeof buf, "VK %02X", (unsigned)vk); return buf;
-    }
 }

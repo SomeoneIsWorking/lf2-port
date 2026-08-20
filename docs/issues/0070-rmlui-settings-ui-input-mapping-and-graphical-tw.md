@@ -1,11 +1,11 @@
 ---
 id: 70
 title: RmlUi settings UI: input mapping and graphical tweaks
-status: open
+status: resolved
 symptom: The keyboard layout is one hardcoded set (arrows+Z/X/C in runtime/overrides/input.c) with no way to remap, and the renderer/light/DOF options live in a hand-rolled pause-menu page that cannot grow a real settings tree
 tags: reported,feature,ui,rmlui,input,options
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-20
 ---
 
 ## Reported
@@ -40,3 +40,12 @@ that screen.
 
 ### Note (2026-08-16)
 RmlUi is no longer the requirement. The user's follow-up: 'You can make a regular UI, using game's systems or a custom UI for device mapping'. So the device-mapping screen is a REGULAR UI on the port's own systems -- the pause-menu page (runtime/app/pause.c) that already takes keyboard/pad/mouse and draws with the game's own glyphs, or a custom UI -- not a C++ library dependency. RmlUi is off the table unless a genuine document tree appears. The graphical tweaks are already the pause-menu Options page (#69), not RmlUi.
+
+### Note (2026-08-20)
+USER 2026-08-20 explicitly restored the RmlUi requirement: 'Add RmlUi with input mapping'. This supersedes the 2026-08-16 note that RmlUi was off the table. RmlUi plus persistent keyboard/controller mapping is the required UI, not the hand-rolled substitute.
+
+### Note (2026-08-20)
+USER 2026-08-20: copy the RmlUi integration from Dusklight. The LF2 implementation must follow Dusklight's current UI ownership/backend/input pattern rather than growing a bespoke monolithic glue file.
+
+### Resolution (2026-08-20)
+RmlUi now owns a persistent keyboard/controller mapper and graphical settings document. Its SDL backend is a separate UI module, controller capture is release-gated, the shipping input gather consumes the mappings, ctest bindings passes, and the settings route opens and renders the real document.

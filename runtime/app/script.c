@@ -18,33 +18,18 @@
  * (0x0044d070) is the game mode wearing a screen's disguise and reads the same in VS mode
  * whether the overlay is up or not. See runtime/overrides/menu.c.
  *
- * `charselect` is the post-load panel, and that panel is ALSO the mode menu -- the two share
- * a blit destination, so this signal goes up when the mode menu appears, a little before
- * character selection proper. That is what makes it a usable reference point for a route
- * (it is the first thing after the load, and the load is the part that moves), but it is not
- * a claim that character selection is on screen. A route that must distinguish the two
- * counts frames from here; nothing in the port asks this to tell them apart. */
-/* `frontend` is the game's FIRST screen, and it is the one anchor that saves wall clock rather
- * than accuracy: every route used to open with a press at a counted frame 900, picked to be
- * safely past the load, and the front end is in fact taking input at frame 60. Anchoring the
- * first press cut 840 frames of waiting off the front of every run (issue #57). Like the
- * others it comes from what the game DRAWS -- the flat backdrop colour that appears exactly
- * once in .text -- so it cannot be true on a build that never reached the screen. */
-/* `modemenu` is the VS / Stage / Championship list. It is drawn in EVERY run -- at frame 5,
- * between the loading screen and character selection (issue #59) -- but for only a frame or
- * two, because a route's presses go straight through it. LF2_MODE holds it open. It is here
- * because issue #22 needs a frame that is DEMONSTRABLY the mode menu as its positive control:
- * that screen and character selection share a blit destination and can share a picture, so
- * "which screen is this" cannot be read off a frame dump by comparing it with another dump. */
-enum { SCREEN_N = 5 };
-static long screen_first[SCREEN_N] = { -1, -1, -1, -1, -1 };
-static const char *const SCREEN_NAME[SCREEN_N] = { "frontend", "modemenu", "charselect",
-                                                   "overlay", "match" };
+ * `modemenu` is the VS / Stage / Championship list and the first screen direct startup presents.
+ * `charselect` is the following player-selection panel. They share a blit destination and can
+ * share a picture, so both anchors come from what the game distinctly draws, not a frame dump or
+ * a sampled state word. */
+enum { SCREEN_N = 4 };
+static long screen_first[SCREEN_N] = { -1, -1, -1, -1 };
+static const char *const SCREEN_NAME[SCREEN_N] = { "modemenu", "charselect", "overlay", "match" };
 
 void script_observe_screens(long frame)
 {
-    const int up[SCREEN_N] = { panel_frontend_up(), panel_modemenu_up(),
-                               panel_charselect_up(), panel_overlay_up(), panel_hud_up() };
+    const int up[SCREEN_N] = { panel_modemenu_up(), panel_charselect_up(),
+                               panel_overlay_up(), panel_hud_up() };
     for (int i = 0; i < SCREEN_N; i++)
         if (up[i] && screen_first[i] < 0) {
             screen_first[i] = frame;

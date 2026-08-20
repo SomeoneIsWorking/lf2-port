@@ -210,7 +210,7 @@ void modemenu_mouse(void)
      *
      * The honest signal is what the game DRAWS -- the mode menu paints its whole screen
      * 0x122565, a literal that appears exactly once in the binary -- which is the identifier
-     * this port already uses for per-screen framing and for the `@frontend` route anchor. */
+     * this port already uses for per-screen framing and for the `@modemenu` route anchor. */
     /* THE DISCRIMINATOR, counted rather than argued: frames on which the OLD gate was true and
      * the new one is false are exactly the frames the handler used to be live on a screen that
      * was not the mode menu. LF2_MODEMENU_DEBUG prints it with its denominator. */

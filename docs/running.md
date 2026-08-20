@@ -401,7 +401,7 @@ keyboard and pad like every other menu here.
 | DROP OUT | only when the device that OPENED the menu is driving a player this port put into the match — a drop-in. It runs the same `coop_leave` an unplugged pad does, which refuses any slot the game's own character selection filled |
 | LEAVE MATCH | calls the game's OWN exit code directly — `screens.c`'s `guest_end_match` / `guest_overlay_exit`, read off `fn_0041bc90` and `fn_00429730` — and lands on the game's own front-end menu (screen word `0x0044d020` = 10). No keystroke or button is injected (issue #22) |
 | OPTIONS | the light's direction: **LIGHT ANGLE** (which way it comes from) and **LIGHT HEIGHT** (how high it is), in degrees. Left/right adjust in 5° steps, confirm nudges, BACK returns. Both feed the *one* light vector, so the shading on the fighters, the direction their shadows point and how long those shadows are all move together — and the frame is frozen while you do it, so you watch them move |
-| SETTINGS | the RmlUi settings screen (issue #70): **GRAPHICS** — render engine / lighting / depth of field — and **CONTROLS** — the seven keyboard buttons, click a key and press the new one to rebind. It renders over the frozen frame and is engine-path only (the item is not offered on the software fallback) |
+| SETTINGS | the RmlUi settings screen (issue #70): **GRAPHICS** — render engine / character lighting — and **CONTROLS** — keyboard and controller bindings for all seven actions. Select a binding, then press its replacement. It renders over the frozen frame and is engine-path only (the item is not offered on the software fallback) |
 | QUIT GAME | ends the process |
 
 Two things about it are worth knowing before changing it.
@@ -423,9 +423,13 @@ end, including the negative that player one is still in the match afterwards.
 The settings screen is RmlUi (issue #70) — the one C++ dependency in the port, vendored as a
 submodule at `third_party/RmlUi` (pinned to 6.2) and built with its freetype font engine; the
 screen's own text uses the port's committed Liberation face, loaded from memory. The
-settings — the seven keys, and the renderer/lighting/DOF choices — persist across runs in
-`lf2.cfg` beside the game tree (`runtime/app/config.c`). RmlUi was considered for a pause-menu
-page once and declined; a real settings screen is the case it earns its place in.
+settings — seven keyboard bindings, seven controller bindings, renderer and character lighting —
+persist across runs in `lf2.cfg` beside the game tree (`runtime/app/config.c`). The keyboard and
+gamepad column headers are SVGs from the shared `port-assets` repository, embedded at build time
+rather than copied into this tree. The same embedded SVGs replace the old `K`/`P1..P4` text
+indicators on character-select portraits and the in-match HUD. One asset loader rasterizes them
+for RmlUi, the software compositor, and native display-list tiles; `tools/e2e.sh settings` proves
+the document renders both shared textures.
 
 ## Scripted input
 
@@ -439,11 +443,10 @@ and with how busy the machine is, and every regression test's route was once a s
 at a moving target (issue #18, which went red three times for that reason and never for a real
 one). Every route in `tools/` is screen-keyed end to end, the opening press included.
 
-**The opening press is `@frontend`, and it is where the wall clock went.** Every route used to
-open with `south:900` — a frame number picked to be safely past a load that had not started
-yet. The front end is in fact drawn and taking input on **frame 1**, and the mode menu follows
-six frames after the first press whenever that press lands. Anchoring it cut **840 frames off
-the front of every run** (issue #57).
+**There is no opening press.** Startup executes the original Game Start state transition at the
+guest boundary, runs the real loader, suppresses both retired pictures, and presents the mode
+menu as the first screen. Routes therefore begin at `@modemenu`; a click/key/button aimed at a
+hidden launcher is a regression, not a boot mechanism (issue #71).
 
 A press whose screen never appears **never fires**, and the run says so at exit along with the
 screens that did appear — silently not pressing is how a route that missed its screen reads as
@@ -483,15 +486,10 @@ now live in `runtime/app/script.c` and are shared.
 | `LF2_WINDOW_RESIZE="<frame>:<w>x<h>[,...]"` | resize the window on that frame — a stand-in for a window manager |
 | `LF2_FRAME_DUMP="<frame>\|@<screen>[+<n>][,...]"` | dump those presented frames; **screen anchors work here too** |
 
-Screens are `frontend`, `charselect`, `overlay` and `match`. **`frontend` is the game's first
-screen**, identified by the flat backdrop colour that only it paints (`0x10206c`, pushed at
-exactly one site in `.text`), so it cannot be true on a run that never got there. **`charselect`
-is the post-load panel, and
-that panel is also the mode menu** — the two share a blit destination, so the signal goes up
-when the mode menu appears, a little before character selection proper. It is a reliable
-reference point (it is the first thing after the load, and the load is the part that moves),
-but it does not mean character selection is on screen, and a route that needs to tell the two
-apart has to count frames from it.
+Screens are `modemenu`, `charselect`, `overlay` and `match`. `modemenu` is the first presented
+screen after direct boot and real loading. `charselect` is the following player-selection panel;
+the two share some underlying draw destinations, so their anchors come from the distinct fills
+and panels the game draws rather than from a guessed state word.
 
 **`@match` means the HUD is up, NOT that fighters are on screen.** The stage load happens after
 the overlay's confirm, and the HUD strip is drawn across it, so the gap between `@match` and
@@ -1799,19 +1797,18 @@ Three hooks in `runtime/video/ddraw.c`:
     N reaches M the report says how many tiles were dropped, and a dropped tile is text
     missing from the picture.
 
-The renderer draws the display list into a target the size of the window, scaling **each quad**
-by the world scale as it goes (`SDL_SCALEMODE_NEAREST` throughout, so a sprite's texels are
-resampled once, from the source art). Frame dumps in GPU mode are therefore the size of the
-window, not of the composition.
+The engine draws the complete world on the composition's native integer grid, then scales that
+single finished texture to the window with nearest sampling. Previously each scrolling layer was
+placed directly at fractional output coordinates, so its sampling phase changed independently as
+the camera moved and backgrounds jittered. One native-grid composition gives every layer the same
+stable phase; frame dumps in GPU mode remain the size of the window.
 
 **What the lighting touches, and what it does not.** One key light, given as a direction in the
 stage's own three axes (x across, y up — LF2's jump axis, claim C018 — z toward the camera).
 It **shades** only the objects standing in the stage, which the game itself identifies by
-drawing a shadow ellipse at their feet immediately before drawing them. The HUD, the text and
-any leftover band are never touched at all. Two things do reach the stage, and both are
-geometry rather than decoration: the **cast shadow**, which is the point of a cast shadow, and
-the **floor's orientation** below — a hue shift at locked luminance, so it cannot change how
-bright the picture is.
+drawing a shadow ellipse at their feet immediately before drawing them. Backgrounds, authored
+stage geometry, HUD, text, and leftover bands are never relit. Outside a character silhouette,
+the only permitted change is the character's cast-shadow mask.
 
 On a frame with no stage and no fighters in it — the menu, character selection — the pass
 changes **nothing at all**, byte for byte, and `tools/e2e.sh render` asserts that alongside asserting
@@ -1834,20 +1831,9 @@ reason worth knowing: SDL multiplies the vertex colour into the texture, so the 
 route gives `sprite.rgb * a` — the fighter's colours — and the shadow came out darker under
 the bright parts of them.
 
-**The floor is lit as a floor.** `bg.dat`'s `zboundary:` is where the walkable floor begins on
-the screen, because LF2's depth axis projects straight down it — that is why the game can
-depth-sort on z and why it puts the shadow ellipse at `y = z`. So the rows below it are a
-horizontal surface and the rows above are a wall, and the two see different amounts of sky.
-That difference is applied **as colour**: the tint is the ratio of the two lighting terms with
-each normalised to unit luminance, so the ground picks up the sky's colour without the picture
-getting brighter or darker. Measured over a match frame's floor with the fighters excluded,
-the mean luminance change is **-0.03 levels of 255** against a mean chroma change of **3.0**.
-It is a per-channel multiplier, so a strongly saturated pixel can still move in luminance —
-what is locked is the tint, not every pixel. The backdrop's multiplier is exactly 1: measured,
-**0 of 16880** sampled backdrop pixels changed, which is what lets the pass keep its promise
-that a frame with no stage and no fighters comes out byte-identical. It is gated on the in-match HUD: the
-background record stays loaded after a fight, so without that gate the front end would have
-its lower half tinted by a stage that is not on screen.
+There is no floor tint, backdrop light, bloom, depth of field, haze, vignette, or colour grade.
+The retired distance attachment, shader, runtime option, readback instrument, and route assertions
+were removed with those effects rather than left as a dormant second implementation.
 
 **The shaders are compiled SPIR-V, committed** in `runtime/shaders/gen/`, so the build still
 needs nothing but a C compiler and SDL. `tools/build/build_shaders.sh` regenerates them and
@@ -1971,29 +1957,6 @@ plain composition; there is deliberately no approximation to fall back to.
   In the default renderer it restores the complete old `SDL_RenderTexture` call; in the
   optional engine it restores normalized UVs on shared cell edges. At magnified resolutions
   the adjacent cell may leak into the selected menu row or animation frame.
-
-- **`LF2_ENGINE_GBUF=1`** reads the engine's G-buffer back and says what is actually in it
-  (instrument I016). It prints the DISTINCT distances with their pixel counts, so the answer can
-  be checked against the stage's own `bg.dat` — a layer's depth is `(stage_width-794)/(span-794)`
-  (C031), and those are the numbers that must appear. Brokeback Clif reports `1.0000` and
-  `1.2061`, which is 706/585 at half-float precision.
-
-  A counter could only say the engine was *handed* a distance; it could not say the distance
-  survived the vertex format, the attachment, the half-float encoding and the blend state, every
-  one of which fails silently into a buffer of zeros. It also **reads the colour target back
-  beside the G-buffer**, and reports the CONJUNCTION rather than two independent histograms: how
-  many pixels are over 0.75 luminance, how many of *those* carry a distance, and the world's own
-  luminance distribution. That pairing is what killed the luminance bloom (C035) — 766 px above
-  the threshold and **zero** of them in the world, where each half measured alone looked fine.
-
-  It looks every 60th frame until one carries a distance, bounded at 40 tries, and says so if
-  none ever does. The first cut latched on frame 1 — the front-end menu, no stage — and reported
-  an entirely zero buffer, which was true and useless.
-
-  The offline companion is **`tools/re/stage_lum.py`** (I017), which answers the same question
-  about the ART rather than a frame: the luminance distribution of every shipped background
-  layer, black colour key excluded, BI_RLE8 decoded in-tool. `--selftest` proves it fires in
-  both directions; a missing corpus exits 2 rather than printing a clean zero.
 
 - **`LF2_STAGE_GEOM=1`** makes the hand-woven stage geometry report its **negative** (issue
   #62). A loaded `.stage` always announces itself — its solid count, its vertices, the OBJ

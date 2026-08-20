@@ -106,7 +106,7 @@ static float knob(const char *name, float dflt)
     return v ? (float)atof(v) : dflt;
 }
 
-void hd2d_light_uniforms(float out[24], int w, int h, float floor_row, int have_floor)
+void hd2d_light_uniforms(float out[20], int w, int h)
 {
     /* The lazy fill, and this is the site that made it necessary to be careful: LIGHT is no
      * longer a literal initialiser, so a pass that read it before anything had filled it would
@@ -127,13 +127,4 @@ void hd2d_light_uniforms(float out[24], int w, int h, float floor_row, int have_
     u[16] = 1.0f / (float)w; u[17] = 1.0f / (float)h;
     u[18] = knob("LF2_HD2D_BEVEL_PX", 5.0f);
     u[19] = knob("LF2_HD2D_HEIGHT_GAIN", 0.9f);
-    /* [5] u_floor -- x: the floor's near edge in output rows. y: 1/feather. z: 1 when the
-     * stage said where its floor is, 0 when it did not. The feather is a few rows: the floor
-     * meets the wall at a line the art already draws, and a hard switch there would put a
-     * second, straighter line beside it. */
-    const float feather = knob("LF2_HD2D_FLOOR_FEATHER", 6.0f);
-    u[20] = floor_row;
-    u[21] = 1.0f / (feather > 0.5f ? feather : 0.5f);
-    u[22] = have_floor ? 1.0f : 0.0f;
-    u[23] = 0.0f;
 }

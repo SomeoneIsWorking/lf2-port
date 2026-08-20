@@ -100,6 +100,26 @@ Only ~130 imported symbols exist, so this is the *entire* porting surface. But n
 `DirectDrawCreate` is DDraw's only import: every other video call reaches the game through a
 COM vtable the recompiler cannot resolve statically, and `runtime/win32/com.c` supplies those.
 
+## Host structure follows Dusklight
+
+Dusklight is the architecture reference for host-side ownership. LF2 adapts that pattern to SDL3 and
+static recompilation rather than copying Dusklight's platform implementations:
+
+- `runtime/app/` composes lifecycle and startup policy.
+- `runtime/ui/` owns the RmlUi document and its SDL render backend separately.
+- `runtime/input/` owns device discovery and persistent action bindings; config only stores values.
+- `runtime/video/`, `runtime/audio/`, and `runtime/win32/` remain cohesive peer subsystems.
+- `runtime/overrides/` changes game behavior and does not absorb host platform mechanisms.
+
+Generic port UI art comes from `PORT_ASSETS_DIR`, `SHARED_DIR/port-assets`, or the standard sibling
+`../../shared/port-assets`, never from a copied LF2-local version. The settings screen and in-game
+device indicators embed that repository's SVG icons at build time, so the installed game has no
+host checkout path.
+
+`tools/build/check_structure.py` enforces the boundary: new runtime source files are capped at 500
+lines and existing oversized files may not grow. Lower a legacy cap when extracting code; never raise
+one merely to land a feature. Update this section and `docs/codemap.md` whenever ownership moves.
+
 **3. The overrides (`runtime/overrides/`).** Listing a hex address in `re/overrides.txt`
 excludes it from lifting; the generated code still calls `fn_<addr>()` and the linker resolves
 it to a hand-written C function in `runtime/overrides/`. These run in the **guest ABI** —

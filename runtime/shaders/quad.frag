@@ -19,7 +19,6 @@
 
 layout(location = 0) in vec2 v_uv;
 layout(location = 1) in vec4 v_color;
-layout(location = 2) in float v_world;
 
 layout(set = 2, binding = 0) uniform sampler2D u_src;
 
@@ -28,16 +27,6 @@ layout(set = 3, binding = 0) uniform Flags {
 } f;
 
 layout(location = 0) out vec4 o_color;
-/* THE G-BUFFER (issue #63). rgb is a surface normal in the stage's own axes; a is the draw's
- * real DISTANCE as a parallax depth, 1.0 being the plane the fighters stand in.
- *
- * A sprite writes a normal of exactly (0,0,0), which is not a unit vector and so can never be a
- * real one -- that is the marker, and it is exact rather than a tolerance. A sprite HAS no
- * normal: it is flat art, and the bevel the lighting builds from its silhouette is a deliberate
- * reconstruction, not something this pass should pretend to know. Anything reading this buffer
- * therefore tests `length(n) > 0.5` to ask "is there a real surface here", and gets a truthful
- * no for every sprite in the frame. */
-layout(location = 1) out vec4 o_gbuf;
 
 void main()
 {
@@ -48,5 +37,4 @@ void main()
      * replaces could not have at all. */
     vec4 tex = texture(u_src, v_uv);
     o_color = mix(vec4(1.0), tex, f.u_flags.x) * v_color;
-    o_gbuf  = vec4(0.0, 0.0, 0.0, v_world);
 }

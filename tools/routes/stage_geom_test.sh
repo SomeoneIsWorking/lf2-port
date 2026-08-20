@@ -75,7 +75,7 @@ OBJ
 
 arm() {   # arm <label> <extra-env...>; reads the .stage already in place
     label=$1; shift
-    PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
+PAD="south@modemenu+60"
     PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178"
     PAD="$PAD,south@charselect+238,up@charselect+298,up@charselect+358"
     PAD="$PAD,south@charselect+418,south@charselect+618,south@charselect+838"
@@ -192,7 +192,7 @@ fi
 # session.
 gpu_arm() {
     label=$1; shift
-    PAD="south@frontend+0,south@frontend+60,south@frontend+120,south@frontend+180"
+    PAD="south@modemenu+60"
     PAD="$PAD,south@charselect+58,south@charselect+118,south@charselect+178"
     PAD="$PAD,south@charselect+238,up@charselect+298,up@charselect+358"
     PAD="$PAD,south@charselect+418,south@charselect+618,south@charselect+838"
@@ -206,7 +206,7 @@ gpu_arm() {
     ( cd "$GAME" && \
       env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy LF2_UNPACED=1 \
           LF2_VIRTUAL_PAD="$PAD" LF2_STAGE_GEOM=1 LF2_RENDER_DEBUG=1 \
-          LF2_ENGINE=1 LF2_ENGINE_DEBUG=1 LF2_ENGINE_GBUF=1 \
+          LF2_ENGINE=1 LF2_ENGINE_DEBUG=1 \
           LF2_QUIT_AFTER=1900 "$@" \
           $RUN "$BUILD/lf2" lf2.exe ) > "$LOG" 2>&1 || true
     echo "  --    arm $label (GPU)"
@@ -295,46 +295,6 @@ elif [ "$with" -gt 0 ]; then
         say_fail "only $depths distinct depth(s) were reported for a two-solid stage"
     fi
 
-    # ---- THE G-BUFFER: real distances, and a real normal only where there is geometry ----
-    #
-    # The engine writes a second attachment carrying a surface normal and the draw's real
-    # DISTANCE (issue #63) -- not the painter-order depth, which decides what covers what. Every
-    # step between the hint and the buffer fails silently into zeros: the vertex format, the
-    # attachment, the half-float encoding, the blend state. A depth of field reading zeros does
-    # nothing, which looks exactly like a feature that was never switched on. So the buffer is
-    # READ BACK and its distances checked against the stage's own bg.dat.
-    #
-    # Brokeback Clif is 1500 wide; a layer's depth is (stage_width-794)/(span-794) (C031), so its
-    # span-1500 layers are at exactly 1.0 and its span-1379 layers at 706/585 = 1.2068. The
-    # buffer is half-float, whose nearest value there is 1.2061 -- so that is what it must say,
-    # and asserting 1.2068 would be asserting a precision the format does not have.
-    if grep -q "^engine gbuf:   distance" "$LOG"; then
-        near=$(grep -c "^engine gbuf:   distance   1.0000" "$LOG" || true)
-        far=$(grep -c "^engine gbuf:   distance   1.206" "$LOG" || true)
-        if [ "$near" -ge 1 ] && [ "$far" -ge 1 ]; then
-            say_ok "gbuf: the distances in the buffer are this stage's own -- 1.0000 for its"
-            say_ok "      span-1500 layers and 1.206 for its span-1379 ones, which is (1500-794)"
-            say_ok "      over (span-794) at half-float precision"
-        else
-            say_fail "gbuf: the buffer carries distances but not this stage's:"
-            grep "^engine gbuf:   distance" "$LOG" | sed 's/^/        /'
-        fi
-        # A REAL NORMAL means a real surface. Sprites write exactly (0,0,0), which is not a unit
-        # vector and can never be one, so this count is geometry and nothing else.
-        norms=$(sed -n 's/^engine gbuf: .* -- \([0-9][0-9]*\) with a real surface normal.*/\1/p' "$LOG" | tail -1)
-        if [ -n "$norms" ] && [ "$norms" -gt 0 ]; then
-            say_ok "gbuf: $norms pixel(s) carry a real surface normal, so the authored set is in"
-            say_ok "      the buffer and not just in the picture"
-        else
-            say_fail "gbuf: NOT ONE pixel carries a real surface normal, though this stage has"
-            say_fail "      geometry -- the normal channel is not reaching the buffer"
-        fi
-    else
-        say_fail "gbuf: the readback reported no distances at all, so nothing driven by distance"
-        say_fail "      has an input. That is NOT the same as an effect being switched off."
-        grep -m2 "^engine gbuf" "$LOG" || say_fail "      (it printed nothing at all)"
-    fi
-
     # ---- THE NEGATIVE, without which every count above proves nothing ----
     rm -f "$STAGES/$STAGE.stage"
     gpu_arm "no geometry"
@@ -347,19 +307,6 @@ elif [ "$with" -gt 0 ]; then
     else
         say_fail "control: with NO .stage file the engine still drew $without geometry, so the"
         say_fail "         count is not measuring the authored set"
-    fi
-    # And the NORMAL channel's own control: with no geometry there is no real surface in the
-    # frame, so the count above must fall to zero. Without this, "N pixels carry a normal" could
-    # be true of every frame the engine ever draws.
-    cnorm=$(sed -n 's/^engine gbuf: .* -- \([0-9][0-9]*\) with a real surface normal.*/\1/p' "$LOG" | tail -1)
-    if [ -z "$cnorm" ]; then
-        say_fail "control: the run reported no G-buffer readback, so the normal count above has"
-        say_fail "         no negative and proves nothing"
-    elif [ "$cnorm" = 0 ]; then
-        say_ok "control: with no .stage file NOT ONE pixel carries a real surface normal"
-    else
-        say_fail "control: with no geometry at all, $cnorm pixel(s) still claim a real surface"
-        say_fail "         normal -- the channel is reporting something other than geometry"
     fi
 else
     say_fail "the .stage was read but the engine drew 0 geometry -- the set is NOT in the frame"

@@ -121,16 +121,6 @@ int render_hold_begin(void);
  * not part of the scene. render_hold_begin does the same for a frozen frame. */
 void render_overlay_mark(uint32_t dst_pixels);
 
-/* The DISTANCE of the draws about to be recorded, as a parallax depth: 1.0 is the plane the
- * fighters stand in, larger is further, 0 means unknown (issue #63). Set around a draw and
- * cleared after, the way world_band_hint marks a world band -- the game's own draw goes through
- * the guest, so there is no argument to add.
- *
- * This is NOT the depth the engine's depth buffer holds. That one is the draw's position in the
- * painter order, which decides what covers what. This is a distance, and it is the only honest
- * input to a depth of field. */
-void render_depth_hint_set(float depth);
-
 /* RECORD hand-woven stage geometry at THIS point in the painter order (issues #62, #64).
  *
  * The position in the list is the whole content of the call: a set spans parallax depths and the

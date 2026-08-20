@@ -82,9 +82,12 @@ add_executable(lf2
     runtime/app/pause.c
     runtime/app/options.c
     runtime/app/config.c
+    runtime/app/startup.c
     runtime/input/gamepad.c
+    runtime/input/bindings.c
     runtime/app/script.c
     runtime/win32/wsock.c
+    runtime/overrides/boot_guest.c
     runtime/overrides/menu.c
     runtime/overrides/screens.c
     runtime/overrides/input.c
@@ -101,7 +104,10 @@ add_executable(lf2
     runtime/video/mesh.c
     runtime/video/engine.c
     runtime/video/stagegeom.c
-    runtime/app/rmlui.cpp
+    runtime/ui/device_assets.c
+    runtime/ui/device_icons.c
+    runtime/ui/settings_ui.cpp
+    runtime/ui/rmlui_backend.cpp
     third_party/RmlUi/Backends/RmlUi_Platform_SDL.cpp
     runtime/app/main.c)
 # EVERY subsystem directory is on the include path, which is what lets a file say
@@ -109,7 +115,7 @@ add_executable(lf2
 # includes -- ties each file to its position in the tree and turns any future regrouping into
 # an edit of every header line (issue #46).
 target_include_directories(lf2 PRIVATE
-    runtime runtime/cpu runtime/win32 runtime/video runtime/audio runtime/input runtime/app
+    runtime runtime/cpu runtime/win32 runtime/video runtime/audio runtime/input runtime/app runtime/ui
     runtime/overrides
     ${CMAKE_SOURCE_DIR}/third_party/RmlUi/Backends)
 # RmlUi's SDL backends pick SDL2 vs SDL3 by this macro (Backends/RmlUi_Platform_SDL.h).
@@ -147,10 +153,12 @@ add_dependencies(lf2 stages)
 set_source_files_properties(
     runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c
     runtime/win32/com.c runtime/win32/win32.c runtime/video/ddraw.c runtime/audio/dsound.c runtime/win32/dshow.c
-    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/input/gamepad.c runtime/app/script.c
+    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/input/gamepad.c runtime/input/bindings.c runtime/app/script.c
     runtime/app/options.c
     runtime/app/config.c
+    runtime/app/startup.c
     runtime/win32/wsock.c
+    runtime/overrides/boot_guest.c
     runtime/overrides/menu.c
     runtime/overrides/screens.c
     runtime/overrides/input.c
@@ -185,6 +193,19 @@ find_package(SDL3 REQUIRED CONFIG)
 find_library(LF2_M m)
 target_link_libraries(lf2 PRIVATE SDL3::SDL3 $<$<BOOL:${LF2_M}>:${LF2_M}>)
 
+add_executable(test_bindings tests/test_bindings.c runtime/input/bindings.c runtime/app/config.c)
+target_include_directories(test_bindings PRIVATE runtime/input runtime/app)
+target_link_libraries(test_bindings PRIVATE SDL3::SDL3)
+target_compile_options(test_bindings PRIVATE -Wall -Wextra)
+set(LF2_BINDINGS_TEST_CONFIG "${CMAKE_BINARY_DIR}/test-bindings.cfg")
+add_test(NAME bindings_write COMMAND test_bindings write ${LF2_BINDINGS_TEST_CONFIG})
+add_test(NAME bindings_read COMMAND test_bindings read ${LF2_BINDINGS_TEST_CONFIG})
+set_tests_properties(bindings_read PROPERTIES DEPENDS bindings_write)
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME structure COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tools/build/check_structure.py)
+
 # ---- RmlUi (issue #70) ----
 #
 # The settings UI -- device mapping and the graphical tweaks -- is built with RmlUi, a C++
@@ -193,7 +214,8 @@ target_link_libraries(lf2 PRIVATE SDL3::SDL3 $<$<BOOL:${LF2_M}>:${LF2_M}>)
 # (RML/CSS + data bindings), which is exactly the case the hand-rolled pause-menu pages were
 # never going to scale to. The submodule must be initialised (git submodule update --init),
 # and FreeType is required for RmlUi's default font engine. Everything else is OFF on purpose:
-# no samples, no tests, no Lua/SVG/Lottie, no shared lib.
+# no samples, no tests, no Lua/Lottie, no shared lib. RmlUi's SVG plugin stays off because the
+# shared device SVGs are embedded and rasterised through the port's SDL3_image asset boundary.
 if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/RmlUi/CMakeLists.txt")
     set(BUILD_SHARED_LIBS OFF)
     set(RMLUI_SAMPLES OFF)
@@ -210,6 +232,13 @@ else()
     message(FATAL_ERROR "third_party/RmlUi is missing -- run `git submodule update --init --recursive`")
 endif()
 
+find_package(SDL3_image QUIET CONFIG)
+if(SDL3_image_FOUND)
+    target_link_libraries(lf2 PRIVATE SDL3_image::SDL3_image)
+else()
+    message(FATAL_ERROR "SDL3_image is required to rasterise the shared SVG device icons")
+endif()
+
 # ---- the text faces, COMPILED IN (issue #45) ----
 #
 # assets/fonts/ holds two unmodified SIL OFL 1.1 faces, and they are turned into byte arrays
@@ -222,11 +251,11 @@ endif()
 # file(READ ... HEX) at configure time, so the build needs no extra tool -- not python, not
 # xxd. 730 KB of font becomes about 4.4 MB of C, which is why the newlines matter: one
 # 4-million-character line is legal C that some compilers take a very long time over.
-function(lf2_embed_font symbol src)
+function(lf2_embed_bytes symbol src output_list)
     set(out "${CMAKE_BINARY_DIR}/gen/${symbol}.c")
     if(NOT EXISTS "${src}")
-        message(FATAL_ERROR "font ${src} is missing -- it is committed to this repo and the "
-                            "binary cannot be built without it")
+        message(FATAL_ERROR "required asset ${src} is missing -- the binary cannot be built "
+                            "without it")
     endif()
     file(READ "${src}" hex HEX)
     string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," body "${hex}")
@@ -235,14 +264,28 @@ function(lf2_embed_font symbol src)
          "/* Generated from ${src} by CMakeLists.txt -- do not edit, do not commit. */\n"
          "const unsigned char ${symbol}[] = {\n${body}\n};\n"
          "const unsigned int ${symbol}_len = (unsigned int)(sizeof ${symbol});\n")
-    set(LF2_FONT_SOURCES ${LF2_FONT_SOURCES} "${out}" PARENT_SCOPE)
+    set(${output_list} ${${output_list}} "${out}" PARENT_SCOPE)
 endfunction()
 
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/gen)
 set(LF2_FONT_SOURCES "")
-lf2_embed_font(lf2_font_sans ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationSans-Regular.ttf)
-lf2_embed_font(lf2_font_mono ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationMono-Regular.ttf)
+lf2_embed_bytes(lf2_font_sans ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationSans-Regular.ttf LF2_FONT_SOURCES)
+lf2_embed_bytes(lf2_font_mono ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationMono-Regular.ttf LF2_FONT_SOURCES)
 target_sources(lf2 PRIVATE ${LF2_FONT_SOURCES})
+
+# Device art is shared by every port rather than copied into each tree. Consumers embed the
+# SVG source at build time, so the installed game has no machine-specific runtime asset path.
+set(PORT_ASSETS_DIR "$ENV{PORT_ASSETS_DIR}" CACHE PATH "shared port-assets checkout")
+if(NOT PORT_ASSETS_DIR AND DEFINED ENV{SHARED_DIR})
+    set(PORT_ASSETS_DIR "$ENV{SHARED_DIR}/port-assets")
+endif()
+if(NOT PORT_ASSETS_DIR)
+    get_filename_component(PORT_ASSETS_DIR "${CMAKE_SOURCE_DIR}/../../shared/port-assets" ABSOLUTE)
+endif()
+set(LF2_DEVICE_ASSET_SOURCES "")
+lf2_embed_bytes(lf2_device_keyboard_svg "${PORT_ASSETS_DIR}/sets/devices/keyboard.svg" LF2_DEVICE_ASSET_SOURCES)
+lf2_embed_bytes(lf2_device_gamepad_svg "${PORT_ASSETS_DIR}/sets/devices/gamepad.svg" LF2_DEVICE_ASSET_SOURCES)
+target_sources(lf2 PRIVATE ${LF2_DEVICE_ASSET_SOURCES})
 
 # SDL3_ttf rasterises them. It is REQUIRED, and that is a change: it used to be optional with
 # a debug-font fallback, which meant a build could silently produce a different game. A missing

@@ -33,6 +33,7 @@
  * not have to open seven files:
  *
  *   fn_004246b0  menu.c     the front-end menu -- selection index, so a pad can drive it
+ *   boot_guest.c            exact non-rendering Game Start transition used by direct boot
  *   fn_00423b00  menu.c     element draw -- declines the advertising panel by descriptor
  *   fn_00419a60  input.c    per-frame player input -- devices into the game's buttons
  *   fn_0041ae60  hud.c      the in-match HUD strip -- one panel per player slot

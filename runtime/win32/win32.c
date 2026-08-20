@@ -5,6 +5,7 @@
 #include "render.h"
 #include "script.h"
 #include "config.h"
+#include "bindings.h"
 #include "rmlui.h"
 
 #include <SDL3/SDL.h>
@@ -79,7 +80,6 @@ int hostwin_pointer(int *x, int *y)
 }
 static unsigned autokey_pumps;
 void gamepad_handle_event(const SDL_Event *e);
-void gamepad_drive_ui(void);
 void virtual_pad_tick(long frame);
 
 /* ---- window ---- */
@@ -468,7 +468,6 @@ static void pump_autokey_messages(void)
 static void keydebug_report(void);
 static void keydebug_note(unsigned vk);
 static void keydebug_selftest(void);
-static void keyboard_drive_ui(void);
 
 /* Injection points for the controller UI layer in gamepad.c. Keys go in as real
  * WM_KEYDOWN/WM_KEYUP so code that reacts to messages sees them, and are also reflected in
@@ -570,31 +569,6 @@ void hostwin_pump(void)
     }
 
     virtual_pad_tick(hostwin_frames());
-    gamepad_drive_ui();        /* controller -> the input the menus actually read */
-    keyboard_drive_ui();       /* the one keyboard layout does the same */
-}
-
-/* The single keyboard layout drives the ported front-end menu the same way a pad does:
- * arrow edges move the selection, attack confirms. The layout's own keys, so the menu
- * and the game agree about what the keyboard is. */
-static void keyboard_drive_ui(void)
-{
-    static uint8_t was[3];
-    /* The remappable layout's own keys, so the front-end menu and the game agree about what
-     * the keyboard is -- up, down and attack (config.h, issue #70). */
-    const struct { uint32_t vk; int delta; } MAP[] = {
-        { config_key_vk(B_UP),  -1 },          /* up          */
-        { config_key_vk(B_DOWN), +1 },         /* down        */
-        { config_key_vk(B_ATTACK), 0 },        /* attack -> confirm */
-    };
-    for (unsigned i = 0; i < sizeof MAP / sizeof MAP[0]; i++) {
-        const uint8_t down = (uint8_t)(hostwin_key_held(MAP[i].vk) != 0);
-        if (down == was[i]) continue;
-        was[i] = down;
-        if (!down) continue;
-        if (MAP[i].delta) menu_move(MAP[i].delta);
-        else              menu_confirm();
-    }
 }
 
 static void fill_msg(uint32_t p, uint32_t msg)
