@@ -39,10 +39,10 @@
  * The 794 appears ONLY in the parallax. It is not a loop bound -- ddraw.c's comment said the
  * layer count came from "an immediate 794 inside FUN_0041a250" and that was simply not so.
  *
- * WHAT FOLLOWS FROM IT for widescreen (issues #23 and #28, and claim C017): a non-looping
- * layer has 794 pixels of picture and never any more, at any camera, on any stage -- and
- * every stage's sky is non-looping. So there is nothing to uncover beside it; only a LOOPING
- * layer can be carried further, and then at its own declared step rather than a guessed one.
+ * WHAT FOLLOWS FROM IT for widescreen (issues #23/#87 and claim C017): a non-looping layer
+ * has no additional picture to uncover. Looping layers continue at their declared step.
+ * Complete non-looping BACKDROP PLANES are instead scaled as planes when the live view exceeds
+ * their span, while isolated props retain native size; backdrop_plane_span owns that policy.
  *
  * Verified against the body it replaces by drawing the same frames both ways: see
  * tools/routes/background_test.sh.
@@ -57,6 +57,7 @@
 #include "hostwin.h"
 #include "stagegeom.h"
 #include "render.h"
+#include "backdrop.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -159,9 +160,9 @@ static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, i
 {
     /* The formula, and the pin for a layer with less picture than the view is wide, are
      * geom_layer_offset -- checked by tests/test_geom.c without booting the game. The
-     * pin is issue #23: every stage's sky is non-looping and only just wider than 794, so
-     * beyond that width the band beside it is black, and filling it would mean inventing
-     * layout the stage does not have. */
+     * pin is issue #23: every stage's sky is non-looping and only just wider than 794. The
+     * plane-scale policy is applied later at its blit boundary; parallax itself remains the
+     * game's formula and isolated art is never manufactured here. */
     if (stage_width <= w || span <= w) return 0;      /* pinned: the skew must not move it */
     const int32_t off = geom_layer_offset(span, stage_width, camera, w);
     /* LF2_BG_SKEW=<n> shifts every parallax offset by n. It exists so the byte-identity
@@ -849,6 +850,19 @@ void fn_0041a250(void)
     if (stage_geom.n) geom_frames++;
     int next_gap = 0;
 
+    BackdropLayerLayout layouts[30];
+    for (int i = 0; i < (int)count; i++) {
+        layouts[i] = (BackdropLayerLayout){
+            .span = (int32_t)lf(registry, bg, BG_LAYER_SPAN, i),
+            .x = (int32_t)lf(registry, bg, BG_LAYER_X, i),
+            .y = (int32_t)lf(registry, bg, BG_LAYER_Y, i),
+            .loop = (int32_t)lf(registry, bg, BG_LAYER_LOOP, i),
+            .tint = (int32_t)lf(registry, bg, BG_LAYER_TINT, i),
+        };
+    }
+    int floor_top = 0, floor_bottom = 0;
+    if (!bg_z_bounds(&floor_top, &floor_bottom)) floor_top = 0;
+
     for (int i = 0; i < (int)count; i++) {
         while (next_gap < geom_ngaps && geom_gaps[next_gap] == i)
             geom_submit(geom_gaps[next_gap++], (int)camera, (int)view, GEOM_SCREEN_H);
@@ -891,12 +905,15 @@ void fn_0041a250(void)
         } else {
             /* loop < 0 would spin for ever; the game would too, but it is a data error and
              * drawing the layer once is the closest thing to what was meant. */
-            /* The first layer is the stage's far painted backdrop. Marking the semantic call
-             * site lets the blitter extend that existing art over a wide composition without
-             * guessing from rectangle shape (which also matches menu and foreground art).
-             * This adds no object or artwork; it only prevents uncovered black columns. */
-            world_backdrop_hint_set(i == 0);
+            /* Complete backdrop planes are selected from the stage record as a group, not by
+             * rectangle shape and not by assuming layer zero is always the sky (CUHK begins
+             * with floor strips). All pieces in one selected span receive the same scale;
+             * only its opaque painted pieces extend backing below later keyed scenery. */
+            const int plane_span = backdrop_plane_span(layouts, (int)count, i, view, floor_top);
+            world_backdrop_hint_set(plane_span > 0 && transparent == 0);
+            world_layer_span_hint_set(plane_span);
             draw_layer(obj, off + lx, y, transparent, arg0);
+            world_layer_span_hint_set(0);
             world_backdrop_hint_set(0);
         }
     }
