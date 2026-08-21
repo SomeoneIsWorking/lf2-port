@@ -24,7 +24,14 @@
 
 /* The game's own screen. Every constant below is expressed against it, because that is how
  * the game expressed them. */
-enum { GEOM_SCREEN_W = 794, GEOM_SCREEN_H = 550 };
+enum {
+    GEOM_SCREEN_W = 794,
+    GEOM_SCREEN_H = 550,
+    /* Stage art stops above the 22-row black caption strip where the game draws
+     * "Stage mode (Difficult)". A backdrop extension belongs behind the world, not behind
+     * that screen furniture. The stage blit trace pins the split at y=528. */
+    GEOM_WORLD_BOTTOM = 528,
+};
 
 /* ---- HOW BIG THE WORLD IS DRAWN, AND HOW MUCH OF IT (issue #41) ----
  *
@@ -264,6 +271,15 @@ static inline int geom_screen_offset_x(int comp_w, int align)
     if (comp_w <= GEOM_SCREEN_W) return 0;      /* nothing spare: there is nowhere to move */
     if (align == GEOM_ALIGN_LEFT) return 0;
     return (comp_w - GEOM_SCREEN_W) / 2;
+}
+
+/* A fixed item inside the live world is not necessarily centred inside the original screen.
+ * Preserve the authored native placement, but centre the item's own bounds once the
+ * composition is wider. */
+static inline int geom_item_offset_x(int comp_w, int item_left, int item_w)
+{
+    if (comp_w <= GEOM_SCREEN_W) return 0;
+    return (comp_w - item_w) / 2 - item_left;
 }
 
 /* ---- the stage's parallax (runtime/overrides/background.c) ----

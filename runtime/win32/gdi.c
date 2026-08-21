@@ -13,6 +13,7 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "loadprof.h"
+#include "result_panel.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -966,6 +967,10 @@ static void h_TextOutA(void)
      * while composing now -- so that the front end's backdrop can fill the window while its
      * content stays centred -- and a path that does not go through Blt has to ask for it. */
     if (dwid > 794) x += screen_offset_x();
+    /* The post-match Summary is a fixed-width panel inside the still-wide match. Its bitmap
+     * path identifies the panel for this frame; GDI asks the same owner for the matching
+     * text shift so numbers and labels do not detach from the centred panel beneath them. */
+    x += result_panel_text_offset(hostwin_frames(), dwid, x, y, 16);
     if (len > 512) len = 512;
 
     char text[513];
