@@ -6,6 +6,7 @@
  *
  *   LF2_VIRTUAL_PAD    "<button>:<frame>"  or  "<button>@<screen>[+n]"      items split by ,
  *   LF2_VIRTUAL_PAD2   the same, second pad                                 items split by ,
+ *   LF2_VIRTUAL_PAD3/4 the same, third and fourth pads                       items split by ,
  *   LF2_KEY_SCRIPT     "<vk>:<frame>"      or  "<vk>@<screen>[+n]"          items split by ,
  *   LF2_CLICK_SCRIPT   "<x>,<y>:<frame>"   or  "<x>,<y>@<screen>[+n]"       items split by ;
  *
@@ -18,7 +19,7 @@
 #ifndef LF2_SCRIPT_H
 #define LF2_SCRIPT_H
 
-enum { SCRIPT_PAD0, SCRIPT_PAD1, SCRIPT_KEYS, SCRIPT_CLICKS, SCRIPT_STREAMS };
+enum { SCRIPT_PAD0, SCRIPT_PAD1, SCRIPT_PAD2, SCRIPT_PAD3, SCRIPT_KEYS, SCRIPT_CLICKS, SCRIPT_STREAMS };
 
 /* Called once per presented frame, before anything asks script_when(). Notices which of the
  * game's screens are being drawn, which is what the @<screen> form resolves against. */
@@ -34,7 +35,7 @@ long script_when(const char *spec, int *unresolved);
  * moment the input actually goes down. */
 void script_seen(int stream, int idx);
 void script_fired(int stream, int idx);
-void script_bad_item(int stream, int idx);   /* unparseable: a name this build does not know */
+void script_bad_item(int stream, int idx); /* unparseable: a name this build does not know */
 
 /* At exit: the screens reached, then one line per configured script with its denominator,
  * then a line naming each item that never fired. */

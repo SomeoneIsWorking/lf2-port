@@ -11,10 +11,12 @@ tools/e2e.py ui_escape — physical SDL Escape route
 
 ## Validated by
 
-Negative before the fix: the focused X11/XTEST route logged SDL Escape down/up but RmlUi
-reported 0 opens. Positive after the edge-latch fix: the same route logs two physical down
-events, menu commands at active=0 then active=1, and exactly one rendered RmlUi opening. It
-therefore distinguishes physical keyboard failure from scripted-key success.
+Negative before the Escape fix: the focused X11/XTEST route logged SDL Escape down/up but
+RmlUi reported 0 opens. Current positive: the same route opens/closes the document with
+physical Escape, activates Graphics with a real window-relative XTEST click, activates focused
+content with the configured keyboard Attack action, then proves that key reaches the game once
+the modal closes. It distinguishes physical pointer/keyboard failure from scripted input and
+raw-key-only navigation.
 
 ## Known failure modes
 

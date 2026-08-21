@@ -88,7 +88,7 @@ game's four monolithic functions (28/20/18/15 KB — main loop, character state 
 | `runtime/win32/` | the Win32 shim — `win32.c` (window, message pump, input, window modes), `gdi.c` (text), `imports.c` (the CRT and the guest clock), `com.c` (the DirectDraw vtables), `dshow.c`, `wsock.c` (netplay, stubbed) |
 | `runtime/video/` | `ddraw.c` (DirectDraw → SDL3), `render.c` + `hd2d.c` (the native renderer and its lighting), `hostwin.h` |
 | `runtime/audio/` | `dsound.c` + `mixer.c` |
-| `runtime/input/` | `gamepad.c` |
+| `runtime/input/` | device state and persistent action bindings — `gamepad.c/.h`, `keyboard.c/.h`, `bindings.c/.h` |
 | `runtime/app/` | the port's own shell — `main.c`, `pause.c`, `script.c` (scripted input), `loadprof.c` |
 | `runtime/overrides/` | see below |
 | `tests/` | the unit tests, which are programs rather than runtime code |
@@ -107,7 +107,9 @@ Dusklight is the architecture reference for host-side ownership. LF2 adapts that
 static recompilation rather than copying Dusklight's platform implementations:
 
 - `runtime/app/` composes lifecycle and startup policy.
-- `runtime/ui/` owns the RmlUi document and its SDL render backend separately.
+- `runtime/ui/` owns the RmlUi document, device-independent UI input translation, and SDL
+  render backend as separate modules (`settings_ui.cpp`, `rmlui_input.cpp`,
+  `rmlui_backend.cpp`).
 - `runtime/input/` owns device discovery and persistent action bindings; config only stores values.
 - `runtime/video/`, `runtime/audio/`, and `runtime/win32/` remain cohesive peer subsystems.
 - `runtime/overrides/` changes game behavior and does not absorb host platform mechanisms.

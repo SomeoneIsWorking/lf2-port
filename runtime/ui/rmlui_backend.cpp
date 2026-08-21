@@ -108,6 +108,10 @@ Rml::TextureHandle RmlUiRenderBackend::GenerateTexture(Rml::Span<const Rml::byte
         SDL_DestroyTexture(texture);
         return 0;
     }
+    /* FreeType rasterizes glyphs at the computed dp pixel size. Linear sampling preserves
+     * that coverage for fractional placement without turning the atlas into a fixed-size UI
+     * buffer; the geometry and atlas both remain in drawable pixels. */
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
     return reinterpret_cast<Rml::TextureHandle>(texture);
 }
 

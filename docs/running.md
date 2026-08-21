@@ -427,7 +427,10 @@ The global menu is RmlUi (issues #70 and #79) — the one C++ dependency in the 
 submodule at `third_party/RmlUi` (pinned to 6.2) and built with its freetype font engine; the
 document's text uses the port's committed Liberation face, loaded from memory. Its window,
 tabs, document model, controlled values, and live input navigation follow Dusklight's RmlUi
-ownership pattern; the SDL rendering adapter remains separate. The settings — seven keyboard
+ownership pattern; device-independent UI input and the SDL rendering adapter remain separate
+modules. The context is drawable-sized and its `dp` scale comes from
+`SDL_GetWindowDisplayScale`, so FreeType rasterizes the 16dp body font at 32 pixels on a 2x
+display instead of enlarging a fixed 16px atlas. The settings — seven keyboard
 bindings, seven controller bindings, renderer, and character lighting — persist across runs in
 `lf2.cfg` beside the game tree (`runtime/app/config.c`).
 
@@ -440,10 +443,12 @@ neither path first reduces the SVG to a tiny bitmap.
 `tools/e2e.py settings ui_global` proves the document renders both shared textures and opens on
 all four screens.
 
-`tools/e2e.py ui_escape` is the keyboard gate. It runs the real X11 window under Xvfb, focuses
-it, and sends two XTEST Escape presses; SDL must report both, and the first must open RmlUi while
-the second closes it. `LF2_KEY_SCRIPT` is deliberately absent from that route: the scripted key
-path once passed while physical Escape was discarded before the port's held-key ledger.
+`tools/e2e.py ui_escape` is the physical-input gate. It runs the real X11 window under Xvfb,
+uses XTEST Escape to open and close RmlUi, clicks the Graphics tab with a real window-relative
+pointer, and activates Continue with the configured keyboard Attack action. `LF2_KEY_SCRIPT`
+is deliberately absent: the scripted key path once passed while physical Escape was discarded
+before the port's held-key ledger. `tools/e2e.py settings` independently proves mapped
+controller navigation and Confirm reach the Controls tab.
 
 ## Scripted input
 
@@ -1479,6 +1484,12 @@ Left, Right, Attack, Jump, and Defend. They persist in `lf2.cfg`; the four legac
 The native input gather reads the same mapping that RmlUi edits
 (`runtime/input/bindings.c`, `runtime/overrides/input.c`).
 
+The same mappings control RmlUi itself. `runtime/ui/rmlui_input.cpp` merges held state and
+short event edges from the keyboard and every attached controller, maps Attack to Confirm and
+Jump to Cancel, and applies accelerated repeat to directions. Raw keyboard navigation remains
+available when those keys are not assigned to a game action. Mouse events take SDL's complete
+window-to-render transform once; no caller applies a second DPI multiplier.
+
 Devices — the keyboard and every connected pad — are handed to players **first come,
 first served**: on menus every device can navigate; from the mode menu onward the first device to press anything
 becomes player 1, the next player 2, and so on, and pressing attack on the join screen
@@ -1500,9 +1511,11 @@ time.
 | B / X | jump / defend |
 | Start | opens or closes the global RmlUi menu |
 
-Pads are handed to live player slots in order, so **a second controller is player two**,
-with no configuration either. `LF2_VIRTUAL_PAD2` attaches a second software pad and
-`tools/routes/controller_2p_test.sh` (ctest target `controller_2p`) asserts it.
+Up to four pads are handed to live player slots in order, so **a second controller is player
+two**, with no configuration either. `LF2_VIRTUAL_PAD2`, `LF2_VIRTUAL_PAD3`, and
+`LF2_VIRTUAL_PAD4` attach the remaining software pads. `tools/e2e.py controller_2p` asserts
+two-player assignment; `tools/e2e.py settings` attaches all four and drives RmlUi exclusively
+from slot four, so an input path hardcoded to the old two slots fails.
 
 This claim has been wrong in both directions, which is worth recording:
 
