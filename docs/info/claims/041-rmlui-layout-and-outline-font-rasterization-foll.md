@@ -6,7 +6,7 @@ created: 2026-08-21
 tags: rmlui,hidpi,text
 depends: runtime/ui/settings_ui.cpp#rmlui_render, runtime/ui/rmlui_backend.cpp#GenerateTexture
 reconfirmed: 2026-08-21
-verified_at: 2026-08-21 10:55:20
+verified_at: 2026-08-21 11:01:59
 ---
 
 ## Claim
@@ -24,3 +24,7 @@ a scaled-display run reports context dimensions different from the drawable or a
 ## Re-confirmed 2026-08-21
 
 Verified at commit e005304 by tools/e2e.py hidpi: a 794x550 logical window produced a 1588x1100 drawable at content scale 2, full-drawable game composition, and a 32px RmlUi body font from the 16dp rule.
+
+## Re-confirmed 2026-08-21
+
+The 2026-08-21 screenshots were reclassified: they contain LF2's pre-fight overlay and HUD, not the RmlUi document, so they do not falsify this RmlUi-only drawable/content-scale claim. Game glyph sharpness is tracked by reopened issue #45.

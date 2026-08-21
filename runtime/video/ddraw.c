@@ -746,7 +746,7 @@ static void device_icon_draw(const Surface *s, int x, int y, int dev)
 
 static void hud_device_labels(const Surface *s)
 {
-    if (!panel_hud_up()) return;
+    if (!device_icon_hud_visible(panel_hud_up(), panel_overlay_up())) return;
     for (int i = 0; i < 8; i++) {
         const int dev = device_for_player(i);
         if (dev < 0) continue;                       /* a computer, or nobody claimed it */

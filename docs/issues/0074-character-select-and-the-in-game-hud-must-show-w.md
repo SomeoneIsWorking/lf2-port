@@ -5,7 +5,7 @@ status: resolved
 symptom: The character-select panels and the in-match HUD do not say which device (keyboard / pad 1 / pad 2 ...) is driving which fighter; with drop-in coop and device mapping, a player cannot tell which slot is theirs
 tags: reported,feature,hud,input
 created: 2026-08-16
-updated: 2026-08-20
+updated: 2026-08-21
 ---
 
 ## Reported
@@ -39,3 +39,9 @@ cannot inherit the icons.
 `runtime/ui/device_icons.c` composites that raster once into the software primary and records
 the same premultiplied pixels as a GPU display-list tile. The slot location identifies the
 player; the icon identifies the device class, without the retired `K`/`P1..P4` text vocabulary.
+
+### Reopened (2026-08-21)
+USER 2026-08-21: the keyboard SVG overlaps the Stage selector in the pre-fight settings overlay. The indicator needs a layout-owned anchor outside interactive labels/values at every scale.
+
+### Resolution (2026-08-21)
+The overlap was not bad SVG geometry: the pre-fight overlay borrows panel_hud_up while drawing Stage/Difficulty, so ddraw treated it as player HUD. Device visibility now requires HUD up AND overlay down through device_icon_hud_visible; the offline device_icons test covers every signal combination, and the 1920x1080 overlay capture shows the Stage cell unobstructed.

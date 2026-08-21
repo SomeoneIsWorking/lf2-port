@@ -5,7 +5,7 @@ status: resolved
 symptom: text is rasterised at the composition's resolution and then scaled with everything else, so it is the one thing in the frame that does not get sharper as the window grows
 tags: reported,rendering,text,gdi,scaling,feature
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-21
 ---
 
 REPORTED 2026-08-11. Filed on receipt. The reporter's words: all text that is not part of an
@@ -52,3 +52,9 @@ unless the reporter means the literal format, and ASK if the distinction turns o
 
 ### Resolution (2026-08-11)
 Both text paths -- the GDI TextOutA one and the game's own 8x16 bitmap-sheet one, which is the larger -- now draw from Liberation Sans/Mono committed in assets/fonts/ under SIL OFL 1.1 and embedded as byte arrays at configure time. The system-font search and the silent debug-font fallback are deleted and SDL3_ttf is required. Glyphs are rasterised at the window's resolution via a tile whose pixel size is separate from its placement, with size-keyed caches. Measured at 1920x1080: Sans opened at 26pt, 23 glyphs at 1.96x the cell, and the GPU title band differs from the tile-less software frame in 88.7% of pixels.
+
+### Reopened (2026-08-21)
+USER 2026-08-21: 'fonts are still low res'. The supplied screenshots are the game's pre-fight overlay and in-match HUD, not RmlUi. The dynamic values and HUD text use the fixed-cell font-sheet path in runtime/win32/gdi.c; the overlay's large labels are image-authored and are tracked separately in #84. Verification must exercise the shipping renderer rather than only report a requested raster scale.
+
+### Resolution (2026-08-21)
+The high-resolution glyph rasters still existed, but both native renderers sampled every tile as pixel art: NEAREST re-quantized host outline-font coverage at fractional output scales. Host ARGB glyph/SVG tiles now use linear sampling while guest sprites remain nearest. The simulated 200% route now exercises the shipping engine and reports 23 game glyphs rasterized at 2.00x with zero cache drops. Image-authored labels are separately tracked in #84.

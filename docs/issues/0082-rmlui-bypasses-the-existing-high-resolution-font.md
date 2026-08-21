@@ -18,3 +18,7 @@ Determine which resolution owns RmlUi layout, font-atlas rasterization, render t
 
 ### Resolution (2026-08-21)
 The native-resolution game text path never disappeared; RmlUi had introduced a separate outline-font atlas and incorrectly sized dp layout from SDL_GetWindowPixelDensity instead of the display content scale. RmlUi now keeps drawable-sized geometry, uses SDL_GetWindowDisplayScale like Dusklight so FreeType rasterizes at the actual UI pixel size, and linearly samples generated coverage textures. The simulated 4K/200% run reports a 1588x1100 drawable, content scale 2.00, and a 32px raster for the 16dp body font.
+
+The later low-resolution screenshots show LF2's own overlay/HUD glyph path, not this RmlUi
+document. That separate game-font regression is tracked by reopened issue #45; this result is
+not evidence for the sharpness of game text.

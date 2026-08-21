@@ -465,7 +465,10 @@ static SDL_Texture *tile_texture(Entry *e)
                                               SDL_TEXTUREACCESS_STREAMING,
                                               FL.pool_w[slot], FL.pool_h[slot]);
         if (!made) { FL.pool_exhausted++; FL.pool_n--; return NULL; }
-        SDL_SetTextureScaleMode(made, SDL_SCALEMODE_NEAREST);
+        /* These are premultiplied coverage rasters from outline fonts and SVGs, not game
+         * sprites. LINEAR preserves their subpixel edge coverage at fractional output scale;
+         * NEAREST re-quantises them into the low-resolution look the larger raster avoided. */
+        SDL_SetTextureScaleMode(made, SDL_SCALEMODE_LINEAR);
         /* PREMULTIPLIED: the writer already multiplied the colour by its coverage, so the
          * blend is src + dst*(1-a) rather than src*a + dst*(1-a). Using plain BLEND here
          * would darken every glyph edge. */

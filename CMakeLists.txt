@@ -111,6 +111,7 @@ add_executable(lf2
     runtime/video/hd2d.c
     runtime/video/mesh.c
     runtime/video/engine.c
+    runtime/video/engine_textures.c
     runtime/video/stagegeom.c
     runtime/ui/device_assets.c
     runtime/ui/device_icons.c
@@ -183,6 +184,7 @@ set_source_files_properties(
     runtime/video/hd2d.c
     runtime/video/mesh.c
     runtime/video/engine.c
+    runtime/video/engine_textures.c
     runtime/video/stagegeom.c
     runtime/app/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
@@ -353,6 +355,16 @@ target_include_directories(test_texrect PRIVATE runtime/video)
 target_link_libraries(test_texrect PRIVATE m)
 target_compile_options(test_texrect PRIVATE -Wall -Wextra)
 add_test(NAME texrect COMMAND test_texrect)
+
+add_executable(test_texture_lru tests/test_texture_lru.c)
+target_include_directories(test_texture_lru PRIVATE runtime/video)
+target_compile_options(test_texture_lru PRIVATE -Wall -Wextra)
+add_test(NAME texture_lru COMMAND test_texture_lru)
+
+add_executable(test_device_icons tests/test_device_icons.c)
+target_include_directories(test_device_icons PRIVATE runtime/ui)
+target_compile_options(test_device_icons PRIVATE -Wall -Wextra)
+add_test(NAME device_icons COMMAND test_device_icons)
 
 # The renderer's frame lifetime -- when a display list is cleared, how a frame held up under
 # the pause menu is rewound, which pooled texture serves a tile. runtime/video/render.c
