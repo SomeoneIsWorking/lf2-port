@@ -13,6 +13,7 @@
 #include "hd2d.h"
 #include "stagelight.h"
 #include "options.h"
+#include "engine_textures.h"
 
 #include "../shaders/gen/quad_vert_spv.h"
 #include "../shaders/gen/quad_spv.h"
@@ -83,7 +84,7 @@ static int vbuf_cap;
 
 static int  init_done, init_ok;
 static const char *init_why = "not attempted";
-static long stat_frames, stat_quads, stat_batches, stat_uploads, stat_dropped;
+static long stat_frames, stat_quads, stat_batches, stat_dropped;
 
 typedef struct { float x, y, depth, u, v, r, g, b, a; } QuadVertex;
 
@@ -92,173 +93,9 @@ typedef struct { float x, y, depth, u, v, r, g, b, a; } QuadVertex;
  * all three. */
 typedef struct { float x, y, u, v, r, g, b, a; } LightVertex;
 
-/* ---- the texture cache -------------------------------------------------------------------
- *
- * ONE POOL, and that is defect 2 of issue #64 gone: the geometry pass and the sprite pass
- * sample the same object because there is one pass. The logic is render.c's, which was never
- * the part that was wrong -- a content hash so a surface the game reloads into the same arena
- * slot cannot keep drawing last level's art, and the colour key turned into ALPHA on upload,
- * which is where this port's blend stage comes from at all.
- */
-enum { TEX_MAX = 512 };
-typedef struct {
-    uint32_t pixels;            /* guest address, or 0 for a host tile */
-    const void *host;           /* host_rgba, for GDI text the port rasterises itself */
-    int      keyed;
-    uint32_t key_lo, key_hi;
-    int      w, h;
-    uint32_t content;
-    SDL_GPUTexture *tex;
-} EngTex;
-static EngTex texes[TEX_MAX];
-static int    ntexes;
-
-/* Sampled every 7th row, exactly as render.c does: enough to catch a different picture, cheap
- * enough to run per draw. Same stride on purpose -- two hashes that disagreed about what
- * "changed" would make the two paths cache differently and the A/B meaningless. */
-static uint32_t sample_hash(const uint8_t *base, int w, int h, int pitch)
-{
-    uint32_t x = 2166136261u;
-    for (int y = 0; y < h; y += 7) {
-        const uint32_t *row = (const uint32_t *)(base + (size_t)y * (size_t)pitch);
-        for (int i = 0; i < w; i += 5) { x ^= row[i]; x *= 16777619u; }
-    }
-    x ^= (uint32_t)w * 2654435761u; x ^= (uint32_t)h * 40503u;
-    return x;
-}
-
-/* Guest ARGB (or host RGBA) into the RGBA8 the pipeline samples, with the key becoming alpha.
- *
- * The guest's surfaces are 32-bit XRGB with no meaningful alpha, so the byte order has to be
- * swizzled here rather than by choosing a format: SDL_GPU has no B8G8R8A8 guaranteed across
- * backends, and picking one that happens to exist on this machine is how a port works on the
- * machine it was written on. */
-static void fill_rgba(uint8_t *dst, const EngineQuad *q, int w, int h)
-{
-    if (q->host_argb) {
-        /* ARGB words to RGBA bytes, alpha KEPT -- these are premultiplied glyph tiles and the
-         * alpha is their coverage. A memcpy here would have been the same bytes in the wrong
-         * order: red and blue swapped, which on white text looks like nothing at all and on
-         * anything coloured looks like a palette bug a long way from here. */
-        for (int y = 0; y < h; y++) {
-            const uint32_t *src = (const uint32_t *)((const uint8_t *)q->host_argb
-                                                     + (size_t)y * (size_t)q->host_pitch);
-            uint8_t *row = dst + (size_t)y * (size_t)w * 4;
-            for (int x = 0; x < w; x++) {
-                const uint32_t v = src[x];
-                row[x * 4 + 0] = (uint8_t)((v >> 16) & 0xff);
-                row[x * 4 + 1] = (uint8_t)((v >> 8) & 0xff);
-                row[x * 4 + 2] = (uint8_t)(v & 0xff);
-                row[x * 4 + 3] = (uint8_t)((v >> 24) & 0xff);
-            }
-        }
-        return;
-    }
-    const uint8_t *base = g_mem + q->src_pixels;
-    const uint32_t lo = q->key_lo & 0x00ffffffu, hi = q->key_hi & 0x00ffffffu;
-    for (int y = 0; y < h; y++) {
-        const uint32_t *src = (const uint32_t *)(base + (size_t)y * (size_t)q->spitch);
-        uint8_t *row = dst + (size_t)y * (size_t)w * 4;
-        for (int x = 0; x < w; x++) {
-            const uint32_t v = src[x] & 0x00ffffffu;
-            const int clear = q->keyed && v >= lo && v <= hi;
-            row[x * 4 + 0] = (uint8_t)(clear ? 0 : (v >> 16) & 0xff);   /* R */
-            row[x * 4 + 1] = (uint8_t)(clear ? 0 : (v >> 8) & 0xff);    /* G */
-            row[x * 4 + 2] = (uint8_t)(clear ? 0 : v & 0xff);           /* B */
-            row[x * 4 + 3] = (uint8_t)(clear ? 0 : 255);
-        }
-    }
-}
-
-static int tex_upload(EngTex *t, const EngineQuad *q)
-{
-    const int w = t->w, h = t->h;
-    SDL_GPUTransferBufferCreateInfo ti;
-    SDL_zero(ti);
-    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-    ti.size = (Uint32)(w * h * 4);
-    SDL_GPUTransferBuffer *tb = SDL_CreateGPUTransferBuffer(DEV, &ti);
-    void *map = tb ? SDL_MapGPUTransferBuffer(DEV, tb, false) : NULL;
-    if (!map) {
-        fprintf(stderr, "engine: a %dx%d upload could not be mapped: %s\n", w, h, SDL_GetError());
-        if (tb) SDL_ReleaseGPUTransferBuffer(DEV, tb);
-        return 0;
-    }
-    fill_rgba((uint8_t *)map, q, w, h);
-    SDL_UnmapGPUTransferBuffer(DEV, tb);
-
-    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
-    SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
-    SDL_GPUTextureTransferInfo src = { tb, 0, (Uint32)w, (Uint32)h };
-    SDL_GPUTextureRegion dst;
-    SDL_zero(dst);
-    dst.texture = t->tex; dst.w = (Uint32)w; dst.h = (Uint32)h; dst.d = 1;
-    SDL_UploadToGPUTexture(copy, &src, &dst, false);
-    SDL_EndGPUCopyPass(copy);
-    SDL_SubmitGPUCommandBuffer(cmd);
-    SDL_ReleaseGPUTransferBuffer(DEV, tb);
-    stat_uploads++;
-    return 1;
-}
-
-static SDL_GPUTexture *tex_for(const EngineQuad *q)
-{
-    const int w = q->host_argb ? q->host_w : q->sw;
-    const int h = q->host_argb ? q->host_h : q->sh;
-    if (w <= 0 || h <= 0) return NULL;
-
-    /* A host tile is keyed on its POINTER and its size. The port owns that memory and rewrites
-     * it per frame, so it is hashed too -- the pool is what stops a texture being allocated per
-     * glyph per frame, which is the churn that wedged a GPU once (issue #40). */
-    const uint32_t content = q->host_argb
-        ? sample_hash((const uint8_t *)q->host_argb, w, h, q->host_pitch)
-        : sample_hash(g_mem + q->src_pixels, w, h, q->spitch);
-
-    for (int i = 0; i < ntexes; i++) {
-        EngTex *t = &texes[i];
-        if (t->w != w || t->h != h || t->keyed != q->keyed) continue;
-        if (q->host_argb ? (t->host != q->host_argb) : (t->pixels != q->src_pixels)) continue;
-        if (q->keyed && (t->key_lo != q->key_lo || t->key_hi != q->key_hi)) continue;
-        if (t->content != content) { t->content = content; tex_upload(t, q); }
-        return t->tex;
-    }
-    if (ntexes >= TEX_MAX) {
-        static int said;
-        if (!said) {
-            said = 1;
-            fprintf(stderr, "engine: the %d-texture pool is FULL; further sheets are NOT drawn "
-                            "-- art is missing from these frames, it is not a slow path\n",
-                    TEX_MAX);
-        }
-        return NULL;
-    }
-    EngTex *t = &texes[ntexes];
-    SDL_GPUTextureCreateInfo ci;
-    SDL_zero(ci);
-    ci.type = SDL_GPU_TEXTURETYPE_2D;
-    ci.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-    ci.width = (Uint32)w; ci.height = (Uint32)h;
-    ci.layer_count_or_depth = 1; ci.num_levels = 1;
-    ci.sample_count = SDL_GPU_SAMPLECOUNT_1;
-    ci.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    t->tex = SDL_CreateGPUTexture(DEV, &ci);
-    if (!t->tex) {
-        fprintf(stderr, "engine: could not create a %dx%d texture: %s\n", w, h, SDL_GetError());
-        return NULL;
-    }
-    t->pixels = q->host_argb ? 0u : q->src_pixels;
-    t->host = q->host_argb;
-    t->keyed = q->keyed; t->key_lo = q->key_lo; t->key_hi = q->key_hi;
-    t->w = w; t->h = h; t->content = content;
-    ntexes++;
-    if (!tex_upload(t, q)) return NULL;
-    return t->tex;
-}
-
 void engine_surface_dirty(uint32_t pixels)
 {
-    for (int i = 0; i < ntexes; i++)
-        if (texes[i].pixels == pixels) texes[i].content = 0;   /* forces a re-hash and reupload */
+    engine_textures_surface_dirty(pixels);
 }
 
 /* ---- setup ------------------------------------------------------------------------------- */
@@ -563,8 +400,9 @@ int engine_init(SDL_Renderer *r)
     si.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     si.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     SMP = SDL_CreateGPUSampler(DEV, &si);
-    if (!SMP) { init_why = "no sampler"; return 0; }
+    if (!SMP || !smp_linear) { init_why = "no sampler"; return 0; }
 
+    engine_textures_init(DEV);
     init_ok = 1;
     init_why = "ready";
     fprintf(stderr, "engine: up on the %s backend, sharing the renderer's device "
@@ -937,7 +775,7 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
             int on = 0;
             for (int i = 0; i < n; i++) {
                 if (!q[i].is_object) continue;
-                SDL_GPUTexture *t = tex_for(&q[i]);
+                SDL_GPUTexture *t = engine_texture_for(&q[i]);
                 if (!t) { on++; continue; }
                 const float geom[4] = { q[i].ground_gy, 1.0f / (float)h, 0.0f, 0.0f };
                 SDL_GPUTextureSamplerBinding tsb = { t, SMP };
@@ -967,7 +805,7 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
             int on = 0;
             for (int i = 0; i < n; i++) {
                 if (!q[i].is_object) continue;
-                SDL_GPUTexture *t = tex_for(&q[i]);
+                SDL_GPUTexture *t = engine_texture_for(&q[i]);
                 if (!t) { on++; continue; }
                 SDL_GPUTextureSamplerBinding tsb = { t, SMP };
                 SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
@@ -1018,6 +856,7 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
 {
     if (!init_ok || n <= 0 || w <= 0 || h <= 0) return NULL;
     if (!targets_make(w, h)) return NULL;
+    engine_textures_begin_frame();
     const int verts = n * 6;
     if (!vbuf_reserve(verts * (int)sizeof(QuadVertex))) return NULL;
 
@@ -1160,13 +999,13 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
             bound_pipe = -1;            /* the quad pipeline must be rebound after this */
         }
 
-        SDL_GPUTexture *t = (q[i].src_pixels || q[i].host_argb) ? tex_for(&q[i]) : NULL;
+        SDL_GPUTexture *t = (q[i].src_pixels || q[i].host_argb) ? engine_texture_for(&q[i]) : NULL;
         const int kind = q[i].blend < 0 || q[i].blend >= BLEND_KINDS ? BLEND_ALPHA : q[i].blend;
         int j = i + 1;
         while (j < n && j - i < 4096) {
             const int k2 = q[j].blend < 0 || q[j].blend >= BLEND_KINDS ? BLEND_ALPHA : q[j].blend;
             if (k2 != kind) break;
-            SDL_GPUTexture *t2 = (q[j].src_pixels || q[j].host_argb) ? tex_for(&q[j]) : NULL;
+            SDL_GPUTexture *t2 = (q[j].src_pixels || q[j].host_argb) ? engine_texture_for(&q[j]) : NULL;
             if (t2 != t) break;
             j++;
         }
@@ -1178,7 +1017,13 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
          * one, and leaving it unbound is undefined rather than "the branch is not taken". The
          * colour target stands in when there is nothing to sample -- u_flags.x is 0, so nothing
          * reads it. */
-        SDL_GPUTextureSamplerBinding tsb = { t ? t : tex_color, SMP };
+        /* Guest art is authored pixel art and stays nearest. Host tiles are outline-font and
+         * SVG coverage rasterised at output scale; nearest would quantise that coverage again
+         * at fractional DPI and is why the supposedly high-resolution text still looked like
+         * the original bitmap font. */
+        SDL_GPUTextureSamplerBinding tsb = {
+            t ? t : tex_color, t && q[i].host_argb ? smp_linear : SMP
+        };
         if (bound_tex != tsb.texture) { bound_tex = tsb.texture; }
         SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
         const float flags[4] = { t ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
@@ -1227,10 +1072,11 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
 void engine_report(void)
 {
     if (!getenv("LF2_ENGINE_DEBUG")) return;
-    fprintf(stderr, "engine: %s (%s). %ld frame(s), %ld quad(s) in %ld batch(es), %d texture(s), "
-                    "%ld upload(s), %ld quad(s) DROPPED\n",
+    fprintf(stderr, "engine: %s (%s). %ld frame(s), %ld quad(s) in %ld batch(es), "
+                    "%ld quad(s) DROPPED\n",
             engine_enabled() ? "DRAWING" : "not drawing", init_why,
-            stat_frames, stat_quads, stat_batches, ntexes, stat_uploads, stat_dropped);
+            stat_frames, stat_quads, stat_batches, stat_dropped);
+    engine_textures_report();
     /* The zero is printed and named, because zero is the ordinary answer when the engine is
      * built but not selected -- and "built but not selected" must not look like "selected and
      * drew nothing". */
@@ -1253,9 +1099,7 @@ void engine_report(void)
 void engine_shutdown(void)
 {
     if (!DEV) return;
-    for (int i = 0; i < ntexes; i++)
-        if (texes[i].tex) SDL_ReleaseGPUTexture(DEV, texes[i].tex);
-    ntexes = 0;
+    engine_textures_shutdown();
     targets_release();
     if (vbuf)  { SDL_ReleaseGPUBuffer(DEV, vbuf); vbuf = NULL; }
     if (vxfer) { SDL_ReleaseGPUTransferBuffer(DEV, vxfer); vxfer = NULL; }

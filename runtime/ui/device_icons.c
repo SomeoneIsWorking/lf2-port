@@ -53,9 +53,9 @@ static SDL_Surface *native_icon_surface(DeviceAsset asset, float scale)
     if (key != native_scale_x100) native_icons_reset(key);
     if (!native_icons[asset] && !native_failed[asset]) {
         /* Follow the renderer's existing high-resolution text path: rasterise at the final
-         * output footprint, while the quad stays 18 composition pixels. Its NEAREST sampler
-         * then performs an approximately 1:1 copy instead of magnifying an 18x18 bitmap or
-         * minifying an arbitrary oversized one. Re-rasterise when a resize changes scale. */
+         * output footprint, while the quad stays 18 composition pixels. The host-tile sampler
+         * preserves the SVG's coverage when fractional scaling needs a small resample.
+         * Re-rasterise when a resize changes scale. */
         int pixels = (int)((float)DEVICE_ICON_SIZE * scale + 0.5f);
         if (pixels < 1) pixels = 1;
         native_icons[asset] = device_asset_rasterize(asset, pixels, pixels);

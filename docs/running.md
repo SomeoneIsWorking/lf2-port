@@ -438,7 +438,8 @@ The keyboard/gamepad headers and in-game device indicators are SVGs from the sha
 `port-assets` repository, embedded at build time rather than copied into this tree. The
 software compositor rasterizes them at logical size. The existing native high-resolution
 display-list path receives a vector raster matched to the quad's current output-pixel footprint
-behind the same 18x18 logical cell, and RmlUi receives a 120x120 linear-filtered raster, so
+behind the same 18x18 logical cell; host font/SVG coverage uses linear sampling while game
+sprites remain nearest. RmlUi receives a 120x120 linear-filtered raster, so
 neither path first reduces the SVG to a tiny bitmap.
 `tools/e2e.py settings ui_global` proves the document renders both shared textures and opens on
 all four screens.
@@ -1820,6 +1821,10 @@ Three hooks in `runtime/video/ddraw.c`:
     least as large as the busiest frame, because every tile in a frame is live at once. When
     N reaches M the report says how many tiles were dropped, and a dropped tile is text
     missing from the picture.
+  - `engine textures: N resident, U upload(s), E eviction(s), P peak live/frame, F request(s)
+    failed` — the engine cache may meet more than 512 sheets over a run, but every sheet used
+    by the current frame is protected. `tools/e2e.py texture_cache` fills the cache in a real
+    Stage match, requires nonzero safe evictions, and fails on any missing-art report.
 
 The engine draws the complete world on the composition's native integer grid, then scales that
 single finished texture to the window with nearest sampling. Previously each scrolling layer was

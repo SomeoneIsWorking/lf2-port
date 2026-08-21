@@ -34,12 +34,14 @@ def inside_compositor(build: Path, game: Path) -> int:
     env.update(
         SDL_VIDEODRIVER="wayland",
         SDL_AUDIODRIVER="dummy",
-        LF2_RENDERER="soft",
         LF2_UNPACED="1",
         LF2_WINDOW_SIZE="794x550",
         LF2_VIRTUAL_PAD="start@modemenu+20",
         LF2_RMLUI_DEBUG="1",
-        LF2_QUIT_AFTER="90",
+        LF2_RENDER_DEBUG="1",
+        LF2_ENGINE_DEBUG="1",
+        LF2_GLYPH_DEBUG="1",
+        LF2_QUIT_AFTER="920",
     )
     return subprocess.run(
         [str(build / "lf2"), "lf2.exe"], cwd=game, env=env, check=False
@@ -97,6 +99,7 @@ def check_results() -> int:
 
     widescreen = re.search(r"^widescreen: window .*?$", text, re.MULTILINE)
     metrics = re.search(r"^rmlui metrics: .*?$", text, re.MULTILINE)
+    glyphs = re.search(r"^glyph scale: .*?$", text, re.MULTILINE)
     checks = (
         (
             "794x550 points -> 1588x1100 pixels" in window.group(0),
@@ -124,6 +127,16 @@ def check_results() -> int:
             "rmlui: 1 settings open(s), " in text,
             "the scaled-display run opened and rendered the real RmlUi document",
             "the scaled-display run never rendered an RmlUi opening",
+        ),
+        (
+            glyphs is not None and "rasterised at 2.00x" in glyphs.group(0),
+            f"game glyph raster size: {glyphs.group(0) if glyphs else ''}",
+            "the default renderer did not rasterise game glyphs at the drawable scale",
+        ),
+        (
+            "engine: DRAWING (ready)." in text,
+            "the scaled-display run exercised the shipping GPU renderer",
+            "the scaled-display run did not exercise the shipping GPU renderer",
         ),
     )
     failed = False
