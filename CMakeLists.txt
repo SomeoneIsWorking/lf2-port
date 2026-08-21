@@ -81,7 +81,9 @@ add_executable(lf2
     runtime/win32/imports.c
     runtime/win32/com.c
     runtime/win32/win32.c
+    runtime/video/blt_trace.c
     runtime/video/ddraw.c
+    runtime/video/result_panel.c
     runtime/audio/dsound.c
     runtime/win32/dshow.c
     runtime/win32/gdi.c
@@ -162,7 +164,7 @@ add_dependencies(lf2 stages)
 # left unchecked -- which is how four real warnings sat unnoticed.
 set_source_files_properties(
     runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c
-    runtime/win32/com.c runtime/win32/win32.c runtime/video/ddraw.c runtime/audio/dsound.c runtime/win32/dshow.c
+    runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/result_panel.c runtime/audio/dsound.c runtime/win32/dshow.c
     runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/app/script.c
     runtime/app/options.c
     runtime/app/config.c
@@ -383,6 +385,16 @@ add_executable(test_blit tests/test_blit.c)
 target_include_directories(test_blit PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)
 target_compile_options(test_blit PRIVATE -Wall -Wextra)
 add_test(NAME blit COMMAND test_blit)
+
+add_executable(test_backdrop tests/test_backdrop.c)
+target_include_directories(test_backdrop PRIVATE runtime/video)
+target_compile_options(test_backdrop PRIVATE -Wall -Wextra)
+add_test(NAME backdrop COMMAND test_backdrop)
+
+add_executable(test_result_panel tests/test_result_panel.c runtime/video/result_panel.c)
+target_include_directories(test_result_panel PRIVATE runtime/video runtime/overrides)
+target_compile_options(test_result_panel PRIVATE -Wall -Wextra)
+add_test(NAME result_panel COMMAND test_result_panel)
 
 add_executable(test_mixer tests/test_mixer.c runtime/audio/mixer.c)
 target_include_directories(test_mixer PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)

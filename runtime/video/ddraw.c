@@ -10,6 +10,9 @@
 #include "hostwin.h"
 #include "render.h"
 #include "engine.h"
+#include "backdrop.h"
+#include "blt_trace.h"
+#include "result_panel.h"
 #include "framespec.h"
 #include "script.h"
 #include "rmlui.h"
@@ -1448,57 +1451,6 @@ static int primary_stale_injected(void)
     return on;
 }
 
-/* LF2_BLT_FRAME=<frame>[,...] -- every blit that composes those presented frames, with both
- * rectangles, the source surface and the caller. This replaces LF2_BLT_ALL, which was capped
- * at the first 24 blits of the whole run: that is the front end, so a question about what a
- * match draws got 24 lines about the menu and no denominator. Scoping to a frame is what
- * makes the list complete AND finite -- a match frame is about 140 blits.
- *
- * It is called BEFORE the colour-fill branch on purpose. That branch returns early, so a
- * hook placed after it cannot see a fill at all -- and "the ground is drawn by 4 layer
- * blits" was a wrong answer produced exactly that way, with the fill underneath them
- * invisible to the instrument.
- *
- * Blits for presented frame N are issued while the counter still reads N-1, so the number
- * printed is the frame the pixels land in, which is the number LF2_FRAME_DUMP uses. */
-static void blt_frame_log(int dl, int dt, int dr, int db,
-                          uint32_t srcobj, uint32_t srect, uint32_t flags)
-{
-    const char *spec = getenv("LF2_BLT_FRAME");
-    if (!spec) return;
-
-    const long f = hostwin_frames() + 1;
-    static long logged_for = -1, n;
-    if (!spec_lists(spec, f)) {
-        if (logged_for >= 0) {
-            fprintf(stderr, "bltframe %ld: %ld blits total\n", logged_for, n);
-            logged_for = -1;
-        }
-        return;
-    }
-    if (logged_for != f) {
-        if (logged_for >= 0) fprintf(stderr, "bltframe %ld: %ld blits total\n", logged_for, n);
-        logged_for = f; n = 0;
-        fprintf(stderr, "bltframe %ld: begin\n", f);
-    }
-    n++;
-
-    int sl = -1, st = -1, sr = -1, sb = -1, sw = -1, sh = -1;
-    if (srcobj) {
-        Surface *s = com_host(srcobj);
-        read_rect(srect, &sl, &st, &sr, &sb, s->w, s->h);
-        sw = s->w; sh = s->h;
-    }
-    char fill[48] = "";
-    if (flags & DDBLT_COLORFILL)
-        snprintf(fill, sizeof fill, " COLORFILL=%08x",
-                 ARG(5) ? LD32(ARG(5) + DDBLTFX_FILLCOLOR) : 0);
-    fprintf(stderr, "blt %ld dst=(%d,%d)-(%d,%d) src=%08x[%dx%d] srect=%s(%d,%d)-(%d,%d)"
-                    " flags=%08x from=%08x%s\n",
-            n, dl, dt, dr, db, srcobj, sw, sh, srect ? "" : "NULL",
-            sl, st, sr, sb, flags, LD32(R(ESP)), fill);
-}
-
 static void surf_Blt(uint32_t self)
 {
     LOADPROF_SCOPE(LP_BLT);
@@ -1519,6 +1471,9 @@ static void surf_Blt(uint32_t self)
 
     int dl, dt, dr, db;
     read_rect(drect, &dl, &dt, &dr, &db, d->w, d->h);
+    Surface *s = srcobj ? com_host(srcobj) : NULL;
+    int sl = -1, st_ = -1, sr = -1, sb = -1;
+    if (s) read_rect(srect, &sl, &st_, &sr, &sb, s->w, s->h);
     /* WHERE A FIXED-WIDTH SCREEN IS CENTRED, and it moved (issue #42).
      *
      * It used to be done on the way OUT: the game composes off-screen and copies that surface
@@ -1549,7 +1504,16 @@ static void surf_Blt(uint32_t self)
      * that proves it: it is two frames long, and a value read before its backdrop was
      * recognised placed it with the alignment of the front end that preceded it. */
 
-    blt_frame_log(dl, dt, dr, db, srcobj, srect, flags);
+    const long trace_frame = hostwin_frames() + 1;
+    const BltTrace trace = {
+        .frame = trace_frame, .selected = spec_lists(getenv("LF2_BLT_FRAME"), trace_frame),
+        .dl = dl, .dt = dt, .dr = dr, .db = db,
+        .source = srcobj, .source_w = s ? s->w : -1, .source_h = s ? s->h : -1,
+        .has_source_rect = srect != 0, .sl = sl, .st = st_, .sr = sr, .sb = sb,
+        .flags = flags, .caller = LD32(R(ESP)), .has_fill = flags & DDBLT_COLORFILL,
+        .fill = (flags & DDBLT_COLORFILL) && ARG(5) ? LD32(ARG(5) + DDBLTFX_FILLCOLOR) : 0,
+    };
+    blt_trace_log(&trace);
 
     if (flags & DDBLT_COLORFILL) {
         const uint32_t fill = ARG(5) ? LD32(ARG(5) + DDBLTFX_FILLCOLOR) : 0;
@@ -1721,10 +1685,22 @@ static void surf_Blt(uint32_t self)
     if (getenv("LF2_BAND_DEBUG") && lf2_wide_width() && panel_hud_up() && srcobj && dl == 0)
         fprintf(stderr, "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n",
                 dl, dr, dt, db, d->w, NATIVE_W);
+    const int extend_world_backdrop = lf2_wide_width() && panel_hud_up() && s
+                                      && world_backdrop_hint && d->w > NATIVE_W;
     if (lf2_wide_width() && panel_hud_up() && srcobj
         && ((dl == 0 && dr == NATIVE_W) || world_backdrop_hint)
         && d->w > NATIVE_W)
         dr = d->w;
+
+    /* The Summary screen is a fixed-width panel drawn over a world that remains wide. Its
+     * first bitmap identifies the branch in fn_0041bc90; only draws inside that panel take
+     * the fixed-screen offset, while the stage and the HUD keep their world placement. */
+    if (s) {
+        const int off = result_panel_blit_offset(frames, d->w, dl, dt, dr, db,
+                                                 s->w, s->h, sl, st_, sr, sb);
+        dl += off;
+        dr += off;
+    }
 
     panel_note(dl, dt, dr, db);
 
@@ -1822,10 +1798,7 @@ static void surf_Blt(uint32_t self)
             fprintf(stderr, "\n");
         }
     }
-    Surface *s = srcobj ? com_host(srcobj) : NULL;
     if (s) {
-        int sl, st_, sr, sb;
-        read_rect(srect, &sl, &st_, &sr, &sb, s->w, s->h);
         /* LF2_CK_FORCE is a discriminator, not a fix: if honouring the key on every blit
          * that has one makes the sprites transparent, they arrive through Blt and the
          * question is about the flags; if nothing changes, they are composited elsewhere
@@ -1895,6 +1868,19 @@ static void surf_Blt(uint32_t self)
             }
             blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
                  keyed, s->key_lo, s->key_hi);
+            BackdropBlit ext;
+            if (backdrop_bottom_extension(extend_world_backdrop,
+                                          d->h < GEOM_WORLD_BOTTOM ? d->h : GEOM_WORLD_BOTTOM,
+                                          dl, dt, dr, db, sl, st_, sr, sb, &ext)) {
+                if (!d->primary)
+                    render_blit(d->pixels, ext.dl, ext.dt, ext.dr, ext.db,
+                                s->pixels, s->w, s->h, s->pitch,
+                                ext.sl, ext.st, ext.sr, ext.sb,
+                                keyed, s->key_lo, s->key_hi);
+                blit(d, ext.dl, ext.dt, ext.dr - ext.dl, ext.db - ext.dt,
+                     s, ext.sl, ext.st, ext.sr - ext.sl, ext.sb - ext.st,
+                     keyed, s->key_lo, s->key_hi);
+            }
             if (backdrop_picture) {
                 backdrop_picture_bands(d, s, sl, st_, sr, sb, dl, dt, dr, db);
                 framing_n_picture++;
@@ -1989,7 +1975,8 @@ static void surf_SetColorKey(uint32_t self)
     const uint32_t key = ARG(2);
     ck_set++;
     if (getenv("LF2_CK_DEBUG") && ck_set <= 4)
-        fprintf(stderr, "SetColorKey #%ld flags=%08x key=%08x\n", ck_set, ARG(1), key);
+        fprintf(stderr, "SetColorKey #%ld flags=%08x key=%08x range=%08x..%08x\n",
+                ck_set, ARG(1), key, key ? LD32(key) : 0, key ? LD32(key + 4) : 0);
     if (key) { s->has_key = 1; s->key_lo = LD32(key); s->key_hi = LD32(key + 4); }
     else s->has_key = 0;
     com_ret(3, DD_OK);
