@@ -150,9 +150,11 @@ void shadow_hint_set(int on) { shadow_hint = on; }
  * cost. Counted so the widening cannot become a rule nobody has ever seen fire. */
 static int  world_band_hint;
 static int  world_backdrop_hint;
+static int  world_layer_span_hint;
 static long world_band_fills, world_band_widened;
 void world_band_hint_set(int on) { world_band_hint = on; }
 void world_backdrop_hint_set(int on) { world_backdrop_hint = on; }
+void world_layer_span_hint_set(int span) { world_layer_span_hint = span; }
 
 void glyph_hint_clear(void) { glyph_hint = -1; }
 
@@ -1669,26 +1671,24 @@ static void surf_Blt(uint32_t self)
         }
     }
 
-    /* Widescreen: a background layer drawn from x 0 across the whole native width is a
-     * full-width backdrop -- the sky, a distant panorama -- and the game draws it as ONE
-     * blit clipped to 794 rather than by looping it. Those are the only pieces that cannot
-     * be made wider by drawing more of them, so they are stretched across the viewport
-     * instead. It is a soft gradient over a third more width; the alternative is the black
-     * band that was there before.
-     *
-     * Gated on the world view being up, or it would also stretch the fixed 794-wide menu
-     * backdrops that are deliberately being CENTRED. */
-    /* LF2_BAND_DEBUG=1: every candidate for the backdrop-stretch rule, with the rectangle it
-     * arrived as. The rule's `dr == NATIVE_W` test assumes the GAME clipped the layer to its
-     * own 794, and the port patches the game's width words to the view -- so what actually
-     * arrives is worth printing rather than reasoning about (issue #23). */
+    /* The semantic span hint owns multi-piece backdrop scaling. The older native-width
+     * fallback below still covers a one-piece sky whose guest draw was clipped to 794; both
+     * rules are world-only so fixed menu artwork retains its screen framing. */
     if (getenv("LF2_BAND_DEBUG") && lf2_wide_width() && panel_hud_up() && srcobj && dl == 0)
         fprintf(stderr, "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n",
                 dl, dr, dt, db, d->w, NATIVE_W);
+    /* Scale every piece against the same authored plane span. Adjacent pieces therefore keep
+     * one boundary, and the plane's outer bitmap edges land at the viewport rather than
+     * becoming visible vertical cuts. The background override withholds this hint from props. */
+    int scaled_l, scaled_r;
+    if (backdrop_scale_span(world_layer_span_hint, d->w, dl, dr, &scaled_l, &scaled_r)) {
+        dl = scaled_l;
+        dr = scaled_r;
+    }
     const int extend_world_backdrop = lf2_wide_width() && panel_hud_up() && s
                                       && world_backdrop_hint && d->w > NATIVE_W;
     if (lf2_wide_width() && panel_hud_up() && srcobj
-        && ((dl == 0 && dr == NATIVE_W) || world_backdrop_hint)
+        && dl == 0 && dr == NATIVE_W
         && d->w > NATIVE_W)
         dr = d->w;
 

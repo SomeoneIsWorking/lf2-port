@@ -40,16 +40,16 @@ typedef struct {
     /* E_TEX */
     uint32_t src_pixels;
     SDL_FRect src;
-    int      keyed;
+    int keyed;
     uint32_t key_lo, key_hi;
-    int      sw, sh, spitch;
+    int sw, sh, spitch;
     /* E_FILL */
     uint32_t argb;
     /* E_TILE */
-    uint32_t tile_off;              /* byte offset into the frame's tile arena */
-    int      tw, th;
-    SDL_Texture *tile_tex;          /* made once per frame, used by every pass over the list */
-    SDL_FRect tile_src;             /* the tw x th corner of it that this tile actually is */
+    uint32_t tile_off; /* byte offset into the frame's tile arena */
+    int tw, th;
+    SDL_Texture *tile_tex; /* made once per frame, used by every pass over the list */
+    SDL_FRect tile_src;    /* the tw x th corner of it that this tile actually is */
     /* E_MESH: hand-woven stage geometry, RECORDED rather than pre-rendered.
      *
      * It used to be a finished SDL_Texture, which meant the background override had to run a
@@ -60,9 +60,9 @@ typedef struct {
      *
      * `slot` is only for the old path, which still has to composite each gap as its own
      * texture because SDL_Render cannot take geometry at all. */
-    const void *mesh_v;             /* MeshVertex *, owned by the background override */
-    int         mesh_n, mesh_slot;
-    int         mesh_camera, mesh_view_w, mesh_view_h;
+    const void *mesh_v; /* MeshVertex *, owned by the background override */
+    int mesh_n, mesh_slot;
+    int mesh_camera, mesh_view_w, mesh_view_h;
 } Entry;
 
 /* The Entry array and its destination. HOW MANY entries it holds, where the port's overlay
@@ -70,8 +70,8 @@ typedef struct {
  * so that they can be tested without a GPU -- FL.n[i] belongs to lists[i]. */
 typedef struct {
     uint32_t dst_pixels;
-    Entry   *e;
-    long     dropped;
+    Entry *e;
+    long dropped;
 } List;
 
 /* A cached GPU texture for one guest surface. Keyed on the guest pixel address AND the
@@ -79,33 +79,19 @@ typedef struct {
  * the key has been turned into alpha. */
 typedef struct {
     uint32_t pixels;
-    int      keyed;
+    int keyed;
     uint32_t key_lo, key_hi;
-    int      w, h;
-    uint32_t content;               /* hash of the source when uploaded */
+    int w, h;
+    uint32_t content; /* hash of the source when uploaded */
     SDL_Texture *tex;
-    long     uploads;
+    long uploads;
 } Tex;
 
 static SDL_Renderer *R;
 static FrameLife FL;
-static List   lists[SURF_MAX];
-static Tex    texes[TEX_MAX];
-static int    ntexes;
-
-static void texture_uv(const SDL_FRect *src, int sw, int sh,
-                       float *u0, float *v0, float *u1, float *v1)
-{
-    const int whole = src->x == 0.0f && src->y == 0.0f
-                   && src->w == (float)sw && src->h == (float)sh;
-    if (getenv("LF2_TEXRECT_EDGE") || whole) {
-        *u0 = src->x / (float)sw; *v0 = src->y / (float)sh;
-        *u1 = (src->x + src->w) / (float)sw;
-        *v1 = (src->y + src->h) / (float)sh;
-    } else {
-        texrect_centres(src->x, src->y, src->w, src->h, sw, sh, u0, v0, u1, v1);
-    }
-}
+static List lists[SURF_MAX];
+static Tex texes[TEX_MAX];
+static int ntexes;
 
 static uint8_t *tile_arena;
 
@@ -115,19 +101,19 @@ static uint8_t *tile_arena;
  * same indices. The bound is tiles per frame, not distinct sizes -- see framelife.h. */
 enum { TILE_TEX_MAX = FL_POOL_MAX };
 static SDL_Texture *tile_tex_pool[TILE_TEX_MAX];
-static long    stat_tile_allocs;
-static int      tile_list = -1;     /* the list index the open tile belongs to */
-static int      tile_index;
+static long stat_tile_allocs;
+static int tile_list = -1; /* the list index the open tile belongs to */
+static int tile_index;
 
-static SDL_Texture *target;         /* the frame the player is shown */
-static int          target_w, target_h;
+static SDL_Texture *target; /* the frame the player is shown */
+static int target_w, target_h;
 
 static long stat_frames, stat_tex, stat_fill, stat_tile, stat_uploads, stat_dropped;
-static long stat_mesh;   /* geometry passes placed in the list -- see render_report */
+static long stat_mesh; /* geometry passes placed in the list -- see render_report */
 static long stat_soft_frames, stat_post, stat_ground, stat_shadow;
 static float ground_y_lo = 1e9f, ground_y_hi = -1e9f;
 static float stat_airborne_max;
-static long  stat_ground_orphan;
+static long stat_ground_orphan;
 
 int render_gpu_enabled(void)
 {
@@ -145,8 +131,7 @@ void render_init(SDL_Renderer *r)
     fl_init(&FL);
     /* RmlUi is the global shell, not a native-renderer feature. Its backend uses the shared
      * SDL_Renderer and also composites over the software fallback. */
-    if (!rmlui_init(r, hw.window))
-        fprintf(stderr, "render: the global RmlUi shell is not available\n");
+    if (!rmlui_init(r, hw.window)) fprintf(stderr, "render: the global RmlUi shell is not available\n");
     if (!render_gpu_enabled()) return;
     if (!tile_arena) tile_arena = malloc(TILE_BYTES_MAX);
     /* The depth-tested geometry pass shares this renderer's device (issues #49, #62). It
@@ -158,22 +143,35 @@ void render_init(SDL_Renderer *r)
 
 static void targets_free(void)
 {
-    if (target) { SDL_DestroyTexture(target); target = NULL; }
+    if (target) {
+        SDL_DestroyTexture(target);
+        target = NULL;
+    }
     target_w = target_h = 0;
 }
 
 void render_shutdown(void)
 {
     for (int i = 0; i < ntexes; i++)
-        if (texes[i].tex) { SDL_DestroyTexture(texes[i].tex); texes[i].tex = NULL; }
+        if (texes[i].tex) {
+            SDL_DestroyTexture(texes[i].tex);
+            texes[i].tex = NULL;
+        }
     ntexes = 0;
     for (int i = 0; i < FL.pool_n; i++)
-        if (tile_tex_pool[i]) { SDL_DestroyTexture(tile_tex_pool[i]); tile_tex_pool[i] = NULL; }
+        if (tile_tex_pool[i]) {
+            SDL_DestroyTexture(tile_tex_pool[i]);
+            tile_tex_pool[i] = NULL;
+        }
     targets_free();
-    for (int i = 0; i < FL.nlists; i++) { free(lists[i].e); lists[i].e = NULL; }
+    for (int i = 0; i < FL.nlists; i++) {
+        free(lists[i].e);
+        lists[i].e = NULL;
+    }
     fl_init(&FL);
     rmlui_shutdown();
-    free(tile_arena); tile_arena = NULL;
+    free(tile_arena);
+    tile_arena = NULL;
 }
 
 /* The list index for a destination surface, or -1. An index rather than a pointer because
@@ -211,7 +209,11 @@ static Entry *entry_push(uint32_t dst_pixels)
     frame_touch();
     const int li = list_index(dst_pixels);
     if (li < 0) return NULL;
-    if (FL.n[li] >= LIST_MAX) { lists[li].dropped++; stat_dropped++; return NULL; }
+    if (FL.n[li] >= LIST_MAX) {
+        lists[li].dropped++;
+        stat_dropped++;
+        return NULL;
+    }
     Entry *e = &lists[li].e[FL.n[li]++];
     memset(e, 0, sizeof *e);
     return e;
@@ -231,9 +233,13 @@ static uint32_t sample_hash(const uint8_t *base, int w, int h, int pitch)
     uint32_t x = 2166136261u;
     for (int y = 0; y < h; y += 7) {
         const uint32_t *row = (const uint32_t *)(base + (size_t)y * (size_t)pitch);
-        for (int i = 0; i < w; i += 5) { x ^= row[i]; x *= 16777619u; }
+        for (int i = 0; i < w; i += 5) {
+            x ^= row[i];
+            x *= 16777619u;
+        }
     }
-    x ^= (uint32_t)w * 2654435761u; x ^= (uint32_t)h * 40503u;
+    x ^= (uint32_t)w * 2654435761u;
+    x ^= (uint32_t)h * 40503u;
     return x;
 }
 
@@ -244,7 +250,7 @@ static uint32_t sample_hash(const uint8_t *base, int w, int h, int pitch)
 static void upload(Tex *t, const uint8_t *base, int w, int h, int pitch)
 {
     void *px = NULL;
-    int   dp = 0;
+    int dp = 0;
     if (!SDL_LockTexture(t->tex, NULL, &px, &dp)) return;
     const uint32_t lo = t->key_lo & 0x00ffffffu, hi = t->key_hi & 0x00ffffffu;
     for (int y = 0; y < h; y++) {
@@ -264,8 +270,7 @@ static void upload(Tex *t, const uint8_t *base, int w, int h, int pitch)
     stat_uploads++;
 }
 
-static Tex *tex_for(uint32_t pixels, int w, int h, int pitch,
-                    int keyed, uint32_t key_lo, uint32_t key_hi)
+static Tex *tex_for(uint32_t pixels, int w, int h, int pitch, int keyed, uint32_t key_lo, uint32_t key_hi)
 {
     if (w <= 0 || h <= 0) return NULL;
     const uint8_t *base = g_mem + pixels;
@@ -275,13 +280,15 @@ static Tex *tex_for(uint32_t pixels, int w, int h, int pitch,
         Tex *t = &texes[i];
         if (t->pixels != pixels || t->keyed != keyed || t->w != w || t->h != h) continue;
         if (keyed && (t->key_lo != key_lo || t->key_hi != key_hi)) continue;
-        if (t->content != content) { t->content = content; upload(t, base, w, h, pitch); }
+        if (t->content != content) {
+            t->content = content;
+            upload(t, base, w, h, pitch);
+        }
         return t;
     }
     if (ntexes >= TEX_MAX) return NULL;
     Tex *t = &texes[ntexes];
-    t->tex = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
-                               SDL_TEXTUREACCESS_STREAMING, w, h);
+    t->tex = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
     if (!t->tex) return NULL;
     /* NEAREST, always. This is pixel art magnified two or three times; anything else turns
      * a 32-pixel fighter into a smear. The frame is built at the window's resolution so the
@@ -289,8 +296,13 @@ static Tex *tex_for(uint32_t pixels, int w, int h, int pitch,
      * 1:1 -- which is the other half of keeping the pixels crisp. */
     SDL_SetTextureScaleMode(t->tex, SDL_SCALEMODE_NEAREST);
     SDL_SetTextureBlendMode(t->tex, keyed ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
-    t->pixels = pixels; t->keyed = keyed; t->key_lo = key_lo; t->key_hi = key_hi;
-    t->w = w; t->h = h; t->content = content;
+    t->pixels = pixels;
+    t->keyed = keyed;
+    t->key_lo = key_lo;
+    t->key_hi = key_hi;
+    t->w = w;
+    t->h = h;
+    t->content = content;
     ntexes++;
     upload(t, base, w, h, pitch);
     return t;
@@ -304,21 +316,22 @@ void render_surface_dirty(uint32_t pixels)
 
 /* ---- recording ---- */
 
-void render_blit(uint32_t dst_pixels,
-                 int dl, int dt, int dr, int db,
-                 uint32_t src_pixels, int sw, int sh, int spitch,
-                 int sl, int st, int sr, int sb,
-                 int keyed, uint32_t key_lo, uint32_t key_hi)
+void render_blit(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh, int spitch,
+                 int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi)
 {
     if (!render_gpu_enabled() || dr <= dl || db <= dt || sr <= sl || sb <= st) return;
     Entry *e = entry_push(dst_pixels);
     if (!e) return;
     e->kind = E_TEX;
-    e->dst = (SDL_FRect){ (float)dl, (float)dt, (float)(dr - dl), (float)(db - dt) };
-    e->src = (SDL_FRect){ (float)sl, (float)st, (float)(sr - sl), (float)(sb - st) };
+    e->dst = (SDL_FRect){(float)dl, (float)dt, (float)(dr - dl), (float)(db - dt)};
+    e->src = (SDL_FRect){(float)sl, (float)st, (float)(sr - sl), (float)(sb - st)};
     e->src_pixels = src_pixels;
-    e->sw = sw; e->sh = sh; e->spitch = spitch;
-    e->keyed = keyed; e->key_lo = key_lo; e->key_hi = key_hi;
+    e->sw = sw;
+    e->sh = sh;
+    e->spitch = spitch;
+    e->keyed = keyed;
+    e->key_lo = key_lo;
+    e->key_hi = key_hi;
 }
 
 /* A finished geometry pass, placed at THIS point in the painter order (issue #62).
@@ -333,14 +346,13 @@ void render_blit(uint32_t dst_pixels,
  * object the pass rendered into (claim C030), and it stays live until that slot is drawn
  * again. That is why the caller must use a different slot per insertion point.
  */
-void render_stage_mesh(uint32_t dst_pixels, const void *verts, int n, int slot,
-                       int camera, int view_w, int view_h)
+void render_stage_mesh(uint32_t dst_pixels, const void *verts, int n, int slot, int camera, int view_w, int view_h)
 {
     if (!render_gpu_enabled() || !verts || n <= 0 || view_w <= 0 || view_h <= 0) return;
     Entry *e = entry_push(dst_pixels);
     if (!e) return;
     e->kind = E_MESH;
-    e->dst = (SDL_FRect){ 0.0f, 0.0f, (float)view_w, (float)view_h };
+    e->dst = (SDL_FRect){0.0f, 0.0f, (float)view_w, (float)view_h};
     e->mesh_v = verts;
     e->mesh_n = n;
     e->mesh_slot = slot;
@@ -359,7 +371,7 @@ void render_shadow_ground(uint32_t dst_pixels, int dl, int dt, int dr, int db)
     Entry *e = entry_push(dst_pixels);
     if (!e) return;
     e->kind = E_GROUND;
-    e->dst = (SDL_FRect){ (float)dl, (float)dt, (float)(dr - dl), (float)(db - dt) };
+    e->dst = (SDL_FRect){(float)dl, (float)dt, (float)(dr - dl), (float)(db - dt)};
 }
 
 void render_fill(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t argb)
@@ -368,7 +380,7 @@ void render_fill(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t a
     Entry *e = entry_push(dst_pixels);
     if (!e) return;
     e->kind = E_FILL;
-    e->dst = (SDL_FRect){ (float)dl, (float)dt, (float)(dr - dl), (float)(db - dt) };
+    e->dst = (SDL_FRect){(float)dl, (float)dt, (float)(dr - dl), (float)(db - dt)};
     e->argb = argb;
 }
 
@@ -389,11 +401,13 @@ uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h, int
 {
     if (tw <= 0) tw = w;
     if (th <= 0) th = h;
-    if (!render_gpu_enabled() || !tile_arena || w <= 0 || h <= 0 || tw <= 0 || th <= 0)
-        return NULL;
+    if (!render_gpu_enabled() || !tile_arena || w <= 0 || h <= 0 || tw <= 0 || th <= 0) return NULL;
     frame_touch();
     const uint32_t need = (uint32_t)tw * (uint32_t)th * 4u;
-    if (need > TILE_BYTES_MAX - FL.tile_used) { stat_dropped++; return NULL; }
+    if (need > TILE_BYTES_MAX - FL.tile_used) {
+        stat_dropped++;
+        return NULL;
+    }
     const int li = list_index(dst_pixels);
     if (li < 0 || FL.n[li] >= LIST_MAX) {
         if (li >= 0) lists[li].dropped++;
@@ -403,20 +417,22 @@ uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h, int
     Entry *e = &lists[li].e[FL.n[li]];
     memset(e, 0, sizeof *e);
     e->kind = E_TILE;
-    e->dst = (SDL_FRect){ (float)x, (float)y, (float)w, (float)h };
+    e->dst = (SDL_FRect){(float)x, (float)y, (float)w, (float)h};
     e->tile_off = FL.tile_used;
-    e->tw = tw; e->th = th;
+    e->tw = tw;
+    e->th = th;
     uint32_t *p = (uint32_t *)(tile_arena + FL.tile_used);
     memset(p, 0, need);
     FL.tile_used += need;
-    tile_list = li; tile_index = FL.n[li];
+    tile_list = li;
+    tile_index = FL.n[li];
     return p;
 }
 
 void render_tile_end(void)
 {
     if (tile_list < 0) return;
-    FL.n[tile_list] = tile_index + 1;   /* commit the entry only now */
+    FL.n[tile_list] = tile_index + 1; /* commit the entry only now */
     tile_list = -1;
 }
 
@@ -460,11 +476,14 @@ static SDL_Texture *tile_texture(Entry *e)
     int slot = fl_pool_claim(&FL, e->tw, e->th);
     if (slot < 0) {
         slot = fl_pool_add(&FL, e->tw, e->th);
-        if (slot < 0) return NULL;          /* fl_pool_add counted the exhaustion */
-        SDL_Texture *made = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
-                                              SDL_TEXTUREACCESS_STREAMING,
-                                              FL.pool_w[slot], FL.pool_h[slot]);
-        if (!made) { FL.pool_exhausted++; FL.pool_n--; return NULL; }
+        if (slot < 0) return NULL; /* fl_pool_add counted the exhaustion */
+        SDL_Texture *made = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, FL.pool_w[slot],
+                                              FL.pool_h[slot]);
+        if (!made) {
+            FL.pool_exhausted++;
+            FL.pool_n--;
+            return NULL;
+        }
         /* These are premultiplied coverage rasters from outline fonts and SVGs, not game
          * sprites. LINEAR preserves their subpixel edge coverage at fractional output scale;
          * NEAREST re-quantises them into the low-resolution look the larger raster avoided. */
@@ -480,16 +499,16 @@ static SDL_Texture *tile_texture(Entry *e)
 
     /* Only the tw x th corner is written, and only it is ever read -- see tile_src below. The
      * rest of the texture holds whatever the last tile to use it left there. */
-    SDL_Rect corner = { 0, 0, e->tw, e->th };
-    void *px = NULL; int dp = 0;
+    SDL_Rect corner = {0, 0, e->tw, e->th};
+    void *px = NULL;
+    int dp = 0;
     if (SDL_LockTexture(t, &corner, &px, &dp)) {
         const uint32_t *src = (const uint32_t *)(tile_arena + e->tile_off);
         for (int y = 0; y < e->th; y++)
-            memcpy((uint8_t *)px + (size_t)y * (size_t)dp, src + (size_t)y * (size_t)e->tw,
-                   (size_t)e->tw * 4);
+            memcpy((uint8_t *)px + (size_t)y * (size_t)dp, src + (size_t)y * (size_t)e->tw, (size_t)e->tw * 4);
         SDL_UnlockTexture(t);
     }
-    e->tile_src = (SDL_FRect){ 0.0f, 0.0f, (float)e->tw, (float)e->th };
+    e->tile_src = (SDL_FRect){0.0f, 0.0f, (float)e->tw, (float)e->th};
     e->tile_tex = t;
     return t;
 }
@@ -503,7 +522,10 @@ static SDL_Texture *tile_texture(Entry *e)
 static int render_skip(void)
 {
     static int n = -1;
-    if (n < 0) { const char *v = getenv("LF2_RENDER_SKIP"); n = v ? atoi(v) : 0; }
+    if (n < 0) {
+        const char *v = getenv("LF2_RENDER_SKIP");
+        n = v ? atoi(v) : 0;
+    }
     return n;
 }
 
@@ -525,15 +547,16 @@ static void draw_texture_quad(Tex *t, const SDL_FRect *src, const SDL_FRect *dst
         return;
     }
     float u0, v0, u1, v1;
-    texture_uv(src, t->w, t->h, &u0, &v0, &u1, &v1);
-    const SDL_FColor white = { 1.0f, 1.0f, 1.0f, 1.0f };
+    texrect_for_blit(src->x, src->y, src->w, src->h, (int)dst->w, (int)dst->h, t->w, t->h,
+                     getenv("LF2_TEXRECT_EDGE") != NULL, &u0, &v0, &u1, &v1);
+    const SDL_FColor white = {1.0f, 1.0f, 1.0f, 1.0f};
     const SDL_Vertex v[4] = {
-        { { dst->x,          dst->y },          white, { u0, v0 } },
-        { { dst->x + dst->w, dst->y },          white, { u1, v0 } },
-        { { dst->x + dst->w, dst->y + dst->h }, white, { u1, v1 } },
-        { { dst->x,          dst->y + dst->h }, white, { u0, v1 } },
+        {{dst->x, dst->y}, white, {u0, v0}},
+        {{dst->x + dst->w, dst->y}, white, {u1, v0}},
+        {{dst->x + dst->w, dst->y + dst->h}, white, {u1, v1}},
+        {{dst->x, dst->y + dst->h}, white, {u0, v1}},
     };
-    const int idx[6] = { 0, 1, 2, 0, 2, 3 };
+    const int idx[6] = {0, 1, 2, 0, 2, 3};
     SDL_RenderGeometry(R, t->tex, v, 4, idx, 6);
 }
 
@@ -566,10 +589,7 @@ static void draw_texture_quad(Tex *t, const SDL_FRect *src, const SDL_FRect *dst
  * window, so the geometry is exact and only a sprite's own texels are resampled -- once,
  * NEAREST, from the source art. Scaling the composed frame instead is what the port used to
  * do and it quantises everything to the small grid first. */
-static float world_scale(void)
-{
-    return lf2_world_scale();
-}
+static float world_scale(void) { return lf2_world_scale(); }
 
 /* The ONE pass: everything the game composed, in the order it composed it. The two lighting
  * passes that shared this function -- the character buffer and the cast-shadow mask -- moved
@@ -600,7 +620,7 @@ static void draw_list(List *l, float world, float ox, float oy, int from, int to
         dst.w = e->dst.w * scale;
         dst.h = e->dst.h * scale;
 
-        if (e->kind == E_GROUND) continue;   /* a marker, never a picture -- see the note above */
+        if (e->kind == E_GROUND) continue; /* a marker, never a picture -- see the note above */
 
         /* THERE IS NO SEPARATE OBJECT MAGNIFICATION ANY MORE, and removing it was the point of
          * issue #41. Objects used to be scaled here, about their own base, by a whole-number
@@ -617,8 +637,7 @@ static void draw_list(List *l, float world, float ox, float oy, int from, int to
 
         if (e->kind == E_FILL) {
             SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_NONE);
-            SDL_SetRenderDrawColor(R, (uint8_t)(e->argb >> 16), (uint8_t)(e->argb >> 8),
-                                   (uint8_t)e->argb, 255);
+            SDL_SetRenderDrawColor(R, (uint8_t)(e->argb >> 16), (uint8_t)(e->argb >> 8), (uint8_t)e->argb, 255);
             SDL_RenderFillRect(R, &dst);
             stat_fill++;
             continue;
@@ -637,9 +656,8 @@ static void draw_list(List *l, float world, float ox, float oy, int from, int to
              * composite that target as a texture, because SDL_Render cannot take geometry with
              * a depth buffer at all. That is the cost issue #64 is about, and it is left intact
              * here so the two paths stay diffable. */
-            SDL_Texture *mt = mesh_draw(e->mesh_slot, (const MeshVertex *)e->mesh_v, e->mesh_n,
-                                        e->mesh_view_w, e->mesh_view_h,
-                                        e->mesh_camera, e->mesh_view_w, e->mesh_view_h, NULL);
+            SDL_Texture *mt = mesh_draw(e->mesh_slot, (const MeshVertex *)e->mesh_v, e->mesh_n, e->mesh_view_w,
+                                        e->mesh_view_h, e->mesh_camera, e->mesh_view_w, e->mesh_view_h, NULL);
             if (!mt) continue;
             SDL_SetTextureBlendMode(mt, SDL_BLENDMODE_BLEND);
             SDL_RenderTexture(R, mt, NULL, &dst);
@@ -648,11 +666,9 @@ static void draw_list(List *l, float world, float ox, float oy, int from, int to
         }
 
         if (e->kind == E_TEX) {
-            Tex *t = tex_for(e->src_pixels, e->sw, e->sh, e->spitch,
-                             e->keyed, e->key_lo, e->key_hi);
+            Tex *t = tex_for(e->src_pixels, e->sw, e->sh, e->spitch, e->keyed, e->key_lo, e->key_hi);
             if (!t) continue;
-            SDL_SetTextureBlendMode(t->tex, e->keyed ? SDL_BLENDMODE_BLEND
-                                                     : SDL_BLENDMODE_NONE);
+            SDL_SetTextureBlendMode(t->tex, e->keyed ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
             draw_texture_quad(t, &e->src, &dst);
             stat_tex++;
             continue;
@@ -675,15 +691,11 @@ static void draw_list(List *l, float world, float ox, float oy, int from, int to
  * mask nothing consumes would simply delete the game's shadow and put nothing in its place.
  * ddraw.c asks before it decides whether the game's own ellipse becomes a ground marker or
  * stays a picture. */
-int render_shadows_enabled(void)
-{
-    return engine_enabled() && opt_lighting();
-}
+int render_shadows_enabled(void) { return engine_enabled() && opt_lighting(); }
 
 static SDL_Texture *rt_make(int w, int h, SDL_ScaleMode mode)
 {
-    SDL_Texture *t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888,
-                                       SDL_TEXTUREACCESS_TARGET, w, h);
+    SDL_Texture *t = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w, h);
     if (t) {
         SDL_SetTextureScaleMode(t, mode);
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
@@ -698,7 +710,6 @@ static void clear_to(SDL_Texture *rt, uint8_t r, uint8_t g, uint8_t b, uint8_t a
     SDL_SetRenderDrawColor(R, r, g, b, a);
     SDL_RenderClear(R);
 }
-
 
 /* ---- the engine's colour pass (issue #64) --------------------------------------------------
  *
@@ -717,22 +728,22 @@ static void clear_to(SDL_Texture *rt, uint8_t r, uint8_t g, uint8_t b, uint8_t a
  * it is what the lighting step needs next.
  */
 static EngineQuad *eq;
-static int         eq_cap;
-static EngineGeom  egeom[64];
-static long        stat_engine_frames, stat_engine_geom;
+static int eq_cap;
+static EngineGeom egeom[64];
+static long stat_engine_frames, stat_engine_geom;
 
 static EngineQuad *eq_reserve(int n)
 {
     if (n <= eq_cap) return eq;
     EngineQuad *p = realloc(eq, (size_t)n * sizeof *p);
     if (!p) return NULL;
-    eq = p; eq_cap = n;
+    eq = p;
+    eq_cap = n;
     return eq;
 }
 
-static int engine_colour_pass(List *l, int li, int ov, float world, float ox, float oy,
-                              float scale, int ow, int oh, SDL_Texture *dst,
-                              const SDL_FRect *place)
+static int engine_colour_pass(List *l, int li, int ov, float world, float ox, float oy, float scale, int ow, int oh,
+                              SDL_Texture *dst, const SDL_FRect *place)
 {
     (void)li;
     if (!engine_enabled()) return 0;
@@ -749,9 +760,9 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
      * The engine uses that pair to shade only the character and to anchor its cast shadow at the
      * same ground point the game drew. */
     int have_ground = 0;
-    SDL_FRect ground = { 0, 0, 0, 0 };
+    SDL_FRect ground = {0, 0, 0, 0};
     for (int i = 0; i < ov; i++) {
-        if (skip > 0 && (i % skip) == 0) continue;   /* the negative arm, honoured identically */
+        if (skip > 0 && (i % skip) == 0) continue; /* the negative arm, honoured identically */
         Entry *e = &l->e[i];
         if (e->kind == E_GROUND) {
             ground.x = (e->dst.x + world) * scale + ox;
@@ -793,9 +804,9 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
                 /* The SAME map the quads get, written as scale and bias: a stage pixel sx
                  * lands at (sx + world) * scale + ox in the output, and that in clip space. */
                 egeom[ng].sx_scale = 2.0f * scale / (float)ow;
-                egeom[ng].sx_bias  = 2.0f * (world * scale + ox) / (float)ow - 1.0f;
+                egeom[ng].sx_bias = 2.0f * (world * scale + ox) / (float)ow - 1.0f;
                 egeom[ng].sy_scale = -2.0f * scale / (float)oh;
-                egeom[ng].sy_bias  = 1.0f - 2.0f * oy / (float)oh;
+                egeom[ng].sy_bias = 1.0f - 2.0f * oy / (float)oh;
                 ng++;
                 stat_engine_geom++;
             }
@@ -837,48 +848,55 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
                  * uses -- how far the object's own base sits above the floor. */
                 const float air = q->ground_gy - (q->y + q->h);
                 if (air > stat_airborne_max) stat_airborne_max = air;
-            } else
-                stat_ground_orphan++;       /* the same failed pairing draw_list counts */
+            } else stat_ground_orphan++; /* the same failed pairing draw_list counts */
         }
 
         if (e->kind == E_FILL) {
             q->r = (float)((e->argb >> 16) & 0xff) / 255.0f;
             q->g = (float)((e->argb >> 8) & 0xff) / 255.0f;
             q->b = (float)(e->argb & 0xff) / 255.0f;
-            q->blend = 0;                       /* BLEND_NONE, as SDL_BLENDMODE_NONE was */
+            q->blend = 0; /* BLEND_NONE, as SDL_BLENDMODE_NONE was */
             n++;
             continue;
         }
         if (e->kind == E_TILE) {
             if (!tile_arena) continue;
-            q->host_argb  = tile_arena + e->tile_off;
-            q->host_w     = e->tw;
-            q->host_h     = e->th;
+            q->host_argb = tile_arena + e->tile_off;
+            q->host_w = e->tw;
+            q->host_h = e->th;
             q->host_pitch = e->tw * 4;
             /* The whole tile, not a corner: the engine keys its cache on the tile's own size,
              * so there is no pooled texture with a stale remainder to avoid reading. That
              * corner rectangle was a consequence of the pool, not of the tile. */
-            q->u0 = 0.0f; q->v0 = 0.0f; q->u1 = 1.0f; q->v1 = 1.0f;
-            q->blend = 2;                       /* premultiplied */
+            q->u0 = 0.0f;
+            q->v0 = 0.0f;
+            q->u1 = 1.0f;
+            q->v1 = 1.0f;
+            q->blend = 2; /* premultiplied */
             n++;
             continue;
         }
         /* E_TEX */
         if (e->sw <= 0 || e->sh <= 0) continue;
         q->src_pixels = e->src_pixels;
-        q->sw = e->sw; q->sh = e->sh; q->spitch = e->spitch;
-        q->keyed = e->keyed; q->key_lo = e->key_lo; q->key_hi = e->key_hi;
+        q->sw = e->sw;
+        q->sh = e->sh;
+        q->spitch = e->spitch;
+        q->keyed = e->keyed;
+        q->key_lo = e->key_lo;
+        q->key_hi = e->key_hi;
         /* LF2_TEXRECT_EDGE restores the old shared-boundary coordinates as a defect
          * injector. At 1x they often happen to select the right texel; magnification is the
          * discriminator, where it produces issue #67's green line and issue #68's adjacent
          * Bandit eye. */
-        texture_uv(&e->src, e->sw, e->sh, &q->u0, &q->v0, &q->u1, &q->v1);
+        texrect_for_blit(e->src.x, e->src.y, e->src.w, e->src.h, (int)e->dst.w, (int)e->dst.h, e->sw, e->sh,
+                         getenv("LF2_TEXRECT_EDGE") != NULL, &q->u0, &q->v0, &q->u1, &q->v1);
         q->blend = e->keyed ? 1 : 0;
         n++;
     }
 
     SDL_Texture *frame = engine_draw(out, n, egeom, ng, ow, oh);
-    if (!frame) return 0;                        /* engine_draw said why; fall back */
+    if (!frame) return 0; /* engine_draw said why; fall back */
 
     /* The scene is rasterised at the composition's integer pixel grid, then enlarged ONCE.
      * Scaling each scrolling layer independently at a fractional output coordinate changes its
@@ -887,7 +905,7 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
     SDL_SetRenderTarget(R, dst);
     SDL_SetTextureBlendMode(frame, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(R, frame, NULL, place);
-    if (opt_lighting()) stat_post++;     /* "the light ran" -- the engine's own count is engine_report's */
+    if (opt_lighting()) stat_post++; /* "the light ran" -- the engine's own count is engine_report's */
     stat_engine_frames++;
     return 1;
 }
@@ -896,7 +914,8 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
 {
     if (!render_gpu_enabled() || !R) return 0;
     int li = -1;
-    for (int i = 0; i < FL.nlists; i++) if (lists[i].dst_pixels == src_pixels) li = i;
+    for (int i = 0; i < FL.nlists; i++)
+        if (lists[i].dst_pixels == src_pixels) li = i;
     List *l = li >= 0 ? &lists[li] : NULL;
     /* No list for this surface means the frame was not built through the routes this
      * renderer captures. Say so once and hand the frame back to the software path rather
@@ -906,9 +925,10 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         static int said;
         if (!said) {
             said = 1;
-            fprintf(stderr, "render: no display list for the composition at %08x -- the "
-                            "software compositor is presenting this frame. The GPU path "
-                            "records draws per destination surface and this one had none.\n",
+            fprintf(stderr,
+                    "render: no display list for the composition at %08x -- the "
+                    "software compositor is presenting this frame. The GPU path "
+                    "records draws per destination surface and this one had none.\n",
                     src_pixels);
         }
         stat_soft_frames++;
@@ -933,7 +953,10 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
      * time. */
     int ow = w, oh = h;
     SDL_GetCurrentRenderOutputSize(R, &ow, &oh);
-    if (ow <= 0 || oh <= 0) { ow = w; oh = h; }
+    if (ow <= 0 || oh <= 0) {
+        ow = w;
+        oh = h;
+    }
     SDL_RendererLogicalPresentation lp_mode = SDL_LOGICAL_PRESENTATION_DISABLED;
     int lp_w = 0, lp_h = 0;
     SDL_GetRenderLogicalPresentation(R, &lp_w, &lp_h, &lp_mode);
@@ -944,15 +967,17 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     if (!target) {
         target = rt_make(ow, oh, SDL_SCALEMODE_NEAREST);
         if (!target) {
-            fprintf(stderr, "render: could not create the %dx%d render target (%s) -- the "
-                            "software compositor is presenting\n", ow, oh, SDL_GetError());
+            fprintf(stderr,
+                    "render: could not create the %dx%d render target (%s) -- the "
+                    "software compositor is presenting\n",
+                    ow, oh, SDL_GetError());
             targets_free();
-            if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED)
-                SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
+            if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED) SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
             stat_soft_frames++;
             return 0;
         }
-        target_w = ow; target_h = oh;
+        target_w = ow;
+        target_h = oh;
     }
     /* WHERE THE PICTURE GOES AND HOW BIG IT IS DRAWN (issue #41). The composition is `w` x `h`
      * game pixels; geom_compose_rect says what rectangle of the window that fills, and every
@@ -982,8 +1007,7 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     const int ln = FL.n[li];
 
     clear_to(target, 0, 0, 0, 255);
-    if (!engine_colour_pass(l, li, ov, (float)off, 0.0f, 0.0f, 1.0f, w, h,
-                            target, &place))
+    if (!engine_colour_pass(l, li, ov, (float)off, 0.0f, 0.0f, 1.0f, w, h, target, &place))
         draw_list(l, (float)off, ox, oy, 0, ov);
 
     /* The port's UI, over the finished picture and after the light. */
@@ -1007,21 +1031,24 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     SDL_SetTextureBlendMode(target, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(R, target, NULL, NULL);
     SDL_RenderPresent(R);
-    if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED)
-        SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
+    if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED) SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
     stat_frames++;
     if (stat_frames == 1)
-        fprintf(stderr, "render: %dx%d of game scaled x%.3f per quad into a %dx%d target, "
-                        "filling %.0fx%.0f at (%.0f,%.0f), lighting %s\n",
-                w, h, (double)scale, ow, oh, (double)place.w, (double)place.h,
-                (double)ox, (double)oy,
+        fprintf(stderr,
+                "render: %dx%d of game scaled x%.3f per quad into a %dx%d target, "
+                "filling %.0fx%.0f at (%.0f,%.0f), lighting %s\n",
+                w, h, (double)scale, ow, oh, (double)place.w, (double)place.h, (double)ox, (double)oy,
                 (engine_enabled() && opt_lighting()) ? "on" : "OFF");
     return 1;
 }
 
 /* The size the frame was last drawn at, which is the OUTPUT size and not the game's. The
  * dump and readback paths need it because it is no longer the composition's. */
-void render_output_size(int *w, int *h) { *w = target_w; *h = target_h; }
+void render_output_size(int *w, int *h)
+{
+    *w = target_w;
+    *h = target_h;
+}
 
 /* Read the frame that was actually PRESENTED back off the GPU, so LF2_FRAME_DUMP dumps what
  * the player saw rather than what the software compositor happened to have in the primary.
@@ -1035,14 +1062,12 @@ int render_readback(uint32_t *dst, int w, int h, int dst_pitch)
     SDL_Surface *sf = SDL_RenderReadPixels(R, NULL);
     SDL_SetRenderTarget(R, NULL);
     if (!sf) return 0;
-    SDL_Surface *cv = (sf->format == SDL_PIXELFORMAT_ARGB8888)
-                    ? sf : SDL_ConvertSurface(sf, SDL_PIXELFORMAT_ARGB8888);
+    SDL_Surface *cv = (sf->format == SDL_PIXELFORMAT_ARGB8888) ? sf : SDL_ConvertSurface(sf, SDL_PIXELFORMAT_ARGB8888);
     int ok = 0;
     if (cv) {
         for (int y = 0; y < h && y < cv->h; y++)
             memcpy((uint8_t *)dst + (size_t)y * (size_t)dst_pitch,
-                   (const uint8_t *)cv->pixels + (size_t)y * (size_t)cv->pitch,
-                   (size_t)(w < cv->w ? w : cv->w) * 4);
+                   (const uint8_t *)cv->pixels + (size_t)y * (size_t)cv->pitch, (size_t)(w < cv->w ? w : cv->w) * 4);
         ok = 1;
         if (cv != sf) SDL_DestroySurface(cv);
     }
@@ -1092,53 +1117,60 @@ int render_hold_begin(void)
 void render_report(void)
 {
     if (!getenv("LF2_RENDER_DEBUG")) return;
-    fprintf(stderr, "render: gpu=%s frames=%ld (software fallbacks=%ld) quads=%ld fills=%ld "
-                    "tiles=%ld textures=%d uploads=%ld dropped=%ld mesh=%ld\n",
-            render_gpu_enabled() ? "on" : "off", stat_frames, stat_soft_frames,
-            stat_tex, stat_fill, stat_tile, ntexes, stat_uploads, stat_dropped, stat_mesh);
+    fprintf(stderr,
+            "render: gpu=%s frames=%ld (software fallbacks=%ld) quads=%ld fills=%ld "
+            "tiles=%ld textures=%d uploads=%ld dropped=%ld mesh=%ld\n",
+            render_gpu_enabled() ? "on" : "off", stat_frames, stat_soft_frames, stat_tex, stat_fill, stat_tile, ntexes,
+            stat_uploads, stat_dropped, stat_mesh);
     /* The allocation count is the number that matters: it must go FLAT once the pool is warm.
      * A count that keeps climbing with the frame count means tiles of ever-changing sizes and
      * the GPU allocator is being churned again, which is what wedged a GPU once. */
-    fprintf(stderr, "render: %ld tile draws served by %d pooled textures, %ld allocations "
-                    "(%.3f per frame -- this must be near zero once warm); the busiest frame "
-                    "drew %d tile(s) against a pool of %d\n",
-            stat_tile, FL.pool_n, stat_tile_allocs,
-            stat_frames ? (double)stat_tile_allocs / (double)stat_frames : 0.0,
+    fprintf(stderr,
+            "render: %ld tile draws served by %d pooled textures, %ld allocations "
+            "(%.3f per frame -- this must be near zero once warm); the busiest frame "
+            "drew %d tile(s) against a pool of %d\n",
+            stat_tile, FL.pool_n, stat_tile_allocs, stat_frames ? (double)stat_tile_allocs / (double)stat_frames : 0.0,
             FL.peak_tiles, TILE_TEX_MAX);
     if (FL.pool_exhausted)
-        fprintf(stderr, "render: %ld tiles were NOT DRAWN -- the %d-texture pool was full, so "
-                        "text is MISSING from those frames\n",
+        fprintf(stderr,
+                "render: %ld tiles were NOT DRAWN -- the %d-texture pool was full, so "
+                "text is MISSING from those frames\n",
                 FL.pool_exhausted, TILE_TEX_MAX);
     /* Prints the zero and says what it means, because zero is the ordinary answer: a run
-      * that never paused SHOULD report none, and a run that paused and reports none is the
-      * pause menu having fallen back to the software compositor (issue #52). */
-    fprintf(stderr, "render: %ld frame(s) were drawn over a RETAINED list -- the game recorded "
-                    "nothing and the renderer redrew the frame it already had, which is how the "
-                    "pause menu is presented. Zero is correct for a run that never paused.\n",
+     * that never paused SHOULD report none, and a run that paused and reports none is the
+     * pause menu having fallen back to the software compositor (issue #52). */
+    fprintf(stderr,
+            "render: %ld frame(s) were drawn over a RETAINED list -- the game recorded "
+            "nothing and the renderer redrew the frame it already had, which is how the "
+            "pause menu is presented. Zero is correct for a run that never paused.\n",
             FL.held_frames);
-    fprintf(stderr, "render: the light ran on %ld frame(s); %ld cast shadows from %ld ground "
-                    "markers\n", stat_post, stat_shadow, stat_ground);
+    fprintf(stderr,
+            "render: the light ran on %ld frame(s); %ld cast shadows from %ld ground "
+            "markers\n",
+            stat_post, stat_shadow, stat_ground);
     if (stat_ground)
-        fprintf(stderr, "render: the ground markers seen so far span y %.0f..%.0f in the "
-                        "game's own coordinates -- that is the walkable floor, measured from "
-                        "where the game put its shadows (issue #32)\n",
+        fprintf(stderr,
+                "render: the ground markers seen so far span y %.0f..%.0f in the "
+                "game's own coordinates -- that is the walkable floor, measured from "
+                "where the game put its shadows (issue #32)\n",
                 (double)ground_y_lo, (double)ground_y_hi);
     /* The airborne term is invisible in a run where nobody leaves the floor, and "the shadow
      * never moved" and "nothing ever jumped" look identical on a screenshot. So the highest
      * lift seen is reported: a zero here means the offset was NEVER EXERCISED, not that it
      * does not work. */
     if (stat_ground_orphan)
-        fprintf(stderr, "render: %ld ground markers were discarded because the sprite that "
-                        "followed did not overlap them -- that object's own sprite was "
-                        "dropped (clipped off the composition), so the marker had nothing to "
-                        "belong to\n", stat_ground_orphan);
+        fprintf(stderr,
+                "render: %ld ground markers were discarded because the sprite that "
+                "followed did not overlap them -- that object's own sprite was "
+                "dropped (clipped off the composition), so the marker had nothing to "
+                "belong to\n",
+                stat_ground_orphan);
     if (stat_shadow)
         fprintf(stderr, "render: the highest an object got off its ground point was %.0f px%s\n",
                 (double)stat_airborne_max,
-                stat_airborne_max < 1.0f
-                    ? " -- so NOTHING jumped in this run and the shadow's airborne offset was "
-                      "never exercised"
-                    : ", and its shadow was offset along the light by that much");
+                stat_airborne_max < 1.0f ? " -- so NOTHING jumped in this run and the shadow's airborne offset was "
+                                           "never exercised"
+                                         : ", and its shadow was offset along the light by that much");
     else
         fprintf(stderr, "render: NO ground markers were seen, so the floor band is UNKNOWN -- "
                         "this run reached no match, or the stage's shadow object was never "
@@ -1146,8 +1178,10 @@ void render_report(void)
     mesh_report();
     engine_report();
     if (engine_enabled() && opt_lighting() && stat_ground && !stat_shadow)
-        fprintf(stderr, "render: %ld ground markers but NO cast shadows -- every one was "
-                        "followed by something that could not be drawn\n", stat_ground);
+        fprintf(stderr,
+                "render: %ld ground markers but NO cast shadows -- every one was "
+                "followed by something that could not be drawn\n",
+                stat_ground);
     if (engine_enabled() && opt_lighting() && stat_frames && !stat_ground)
         fprintf(stderr, "render: NO ground markers were seen, so no shadow was replaced -- "
                         "the stage's shadow object was never identified\n");
@@ -1155,6 +1189,8 @@ void render_report(void)
         fprintf(stderr, "render: the GPU path presented NO frames -- every one fell back to "
                         "the software compositor, so these counters describe nothing\n");
     if (stat_dropped)
-        fprintf(stderr, "render: %ld entries were DROPPED (list or tile arena full), so the "
-                        "frames above are incomplete\n", stat_dropped);
+        fprintf(stderr,
+                "render: %ld entries were DROPPED (list or tile arena full), so the "
+                "frames above are incomplete\n",
+                stat_dropped);
 }
