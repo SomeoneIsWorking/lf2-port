@@ -17,7 +17,12 @@ ADOPTED_C_SOURCES = (
     ROOT / "runtime" / "input" / "keyboard.c",
     ROOT / "runtime" / "input" / "keyboard.h",
     ROOT / "runtime" / "overrides" / "input.c",
+    ROOT / "runtime" / "video" / "backdrop.h",
+    ROOT / "runtime" / "video" / "render.c",
+    ROOT / "runtime" / "video" / "texrect.h",
+    ROOT / "tests" / "test_backdrop.c",
     ROOT / "tests" / "test_keyboard.c",
+    ROOT / "tests" / "test_texrect.c",
 )
 
 

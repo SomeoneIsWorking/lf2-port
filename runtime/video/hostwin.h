@@ -89,6 +89,10 @@ void world_band_hint_set(int on);
  * the guest call boundary. It is the far backdrop that may cover a wider composition; the blit
  * rectangle alone cannot distinguish it from foreground art or a menu backdrop. */
 void world_backdrop_hint_set(int on);
+/* A non-looping stage layer whose authored span is narrower than the live view is scaled as
+ * one span, so adjacent bitmap pieces retain their shared boundary and outer bitmap edges
+ * land at the composition edge instead of becoming visible seams. */
+void world_layer_span_hint_set(int span);
 void world_band_report(void);   /* LF2_BAND_DEBUG=1 */
 void glyph_scale_report(void);  /* LF2_GLYPH_DEBUG=1 -- was text rasterised at window size? */
 void framing_report(void);      /* LF2_FRAMING_DEBUG=1 -- per-screen framing, issue #44 */
