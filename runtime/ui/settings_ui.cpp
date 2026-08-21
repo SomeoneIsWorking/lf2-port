@@ -19,6 +19,7 @@
 
 #include "RmlUi_Platform_SDL.h"
 #include "rmlui_backend.h"
+#include "rmlui_input.h"
 
 extern "C" {
 #include "config.h"
@@ -209,7 +210,7 @@ static bool g_pad_capture_armed;
 static bool g_dispatching_pad;
 static long g_open_count;
 static long g_render_frames;
-static unsigned char g_nav_previous[7];
+static int g_metrics_reported;
 
 static SystemInterface_SDL &system_interface()
 {
@@ -221,6 +222,18 @@ static Rml::DataModelHandle &data_model()
 {
     static Rml::DataModelHandle value;
     return value;
+}
+
+static float content_scale()
+{
+    const float scale = SDL_GetWindowDisplayScale(g_W);
+    if (scale > 0.0f) return scale;
+    static bool reported;
+    if (!reported) {
+        reported = true;
+        fprintf(stderr, "rmlui: SDL_GetWindowDisplayScale failed: %s; using 1.0 for UI layout\n", SDL_GetError());
+    }
+    return 1.0f;
 }
 
 /* ---- the data model ----
@@ -295,45 +308,14 @@ static void model_store_live(void)
     hd2d_light_set_angles((float)M.light_angle, (float)M.light_height);
 }
 
-/* Dusklight updates controller navigation from the live pad state, including repeat handling,
- * instead of assuming every platform emits an SDL_GAMEPAD_BUTTON event. LF2's virtual-pad
- * tests exposed why that matters: its d-pad is visible through polling on every frame but some
- * SDL backends only emit joystick-class events. Edge-driven polling makes the shipping mapping
- * and the test device follow the same route. */
-static void poll_gamepad_navigation(void)
+static void activate_focused(bool controller)
 {
-    unsigned char now[7] = {};
-    for (int pad = 0; pad < 2; pad++) {
-        unsigned char state[7] = {};
-        if (!gamepad_player_buttons(pad, state)) continue;
-        for (int i = 0; i < 7; i++) now[i] |= state[i];
-    }
-    const auto pressed = [&now](int i) { return now[i] && !g_nav_previous[i]; };
-    if (getenv("LF2_RMLUI_DEBUG") && (pressed(B_UP) || pressed(B_DOWN) || pressed(B_LEFT) || pressed(B_RIGHT) ||
-                                      pressed(B_ATTACK) || pressed(B_JUMP))) {
-        Rml::Element *focus = g_ctx->GetFocusElement();
-        fprintf(stderr, "rmlui nav: %d%d%d%d%d%d%d focus=%s#%s\n", now[0], now[1], now[2], now[3], now[4], now[5],
-                now[6], focus ? focus->GetTagName().c_str() : "none", focus ? focus->GetId().c_str() : "");
-    }
-    const auto move_focus = [](bool forward) {
-        Rml::Element *from = g_ctx->GetFocusElement();
-        if (!from || !g_doc) return;
-        if (Rml::Element *next = g_doc->FindNextTabElement(from, forward)) {
-            next->Focus(true);
-            next->ScrollIntoView(Rml::ScrollAlignment::Nearest);
-        }
-    };
-    if (pressed(B_UP)) move_focus(false);
-    if (pressed(B_DOWN)) move_focus(true);
-    if (pressed(B_LEFT)) g_ctx->ProcessKeyDown(Rml::Input::KI_LEFT, 0);
-    if (pressed(B_RIGHT)) g_ctx->ProcessKeyDown(Rml::Input::KI_RIGHT, 0);
-    if (pressed(B_ATTACK) || pressed(B_JUMP)) {
-        g_dispatching_pad = true;
-        if (Rml::Element *focused = g_ctx->GetFocusElement()) focused->Click();
-        g_dispatching_pad = false;
-    }
-    std::memcpy(g_nav_previous, now, sizeof g_nav_previous);
+    g_dispatching_pad = controller;
+    if (Rml::Element *focused = g_ctx->GetFocusElement()) focused->Click();
+    g_dispatching_pad = false;
 }
+
+static void cancel_document() { pause_menu_close(); }
 
 /* ---- the C API ---- */
 
@@ -359,7 +341,10 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
         fprintf(stderr, "rmlui: CreateContext failed\n");
         return 0;
     }
-    g_ctx->SetDensityIndependentPixelRatio(SDL_GetWindowPixelDensity(w));
+    /* Dusklight uses the display's expected CONTENT scale for dp layout and FreeType raster
+     * size. Pixel density only maps window points to drawable pixels and can be 1 on an X11
+     * desktop whose content scale is 2. */
+    g_ctx->SetDensityIndependentPixelRatio(content_scale());
 
     auto ctor = g_ctx->CreateDataModel("settings");
     if (!ctor) {
@@ -394,6 +379,7 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
         g_pad_capture = b;
         g_key_capture = -1;
         g_pad_capture_armed = !g_dispatching_pad;
+        rmlui_input_block_until_release();
         M.pad_name[b] = g_pad_capture_armed ? "PRESS BUTTON" : "RELEASE BUTTON";
         data_model().DirtyVariable(std::string("pad_") + binding_action_id(b));
     });
@@ -401,6 +387,7 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
         if (args.empty()) return;
         M.page = args[0].Get<Rml::String>();
         data_model().DirtyVariable("page");
+        if (getenv("LF2_RMLUI_DEBUG")) fprintf(stderr, "rmlui page: %s\n", M.page.c_str());
     });
     ctor.BindEventCallback("toggle_engine", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
         M.engine = !M.engine;
@@ -448,7 +435,8 @@ void rmlui_shutdown(void)
     g_W = nullptr;
     g_open = false;
     g_key_capture = g_pad_capture = -1;
-    std::memset(g_nav_previous, 0, sizeof g_nav_previous);
+    rmlui_input_reset();
+    g_metrics_reported = 0;
     g_open_count = g_render_frames = 0;
 }
 
@@ -460,7 +448,7 @@ void rmlui_open(void)
     g_open = true;
     g_open_count++;
     g_key_capture = g_pad_capture = -1;
-    std::memset(g_nav_previous, 0, sizeof g_nav_previous);
+    rmlui_input_reset();
     model_load();
     if (g_doc) {
         g_doc->Show();
@@ -492,13 +480,26 @@ void rmlui_render(void)
         const Rml::Vector2i d = g_ctx->GetDimensions();
         if (d.x != ow || d.y != oh) g_ctx->SetDimensions(Rml::Vector2i(ow, oh));
     }
-    const float density = SDL_GetWindowPixelDensity(g_W);
-    if (density > 0.0f && density != g_ctx->GetDensityIndependentPixelRatio())
-        g_ctx->SetDensityIndependentPixelRatio(density);
+    const float display_scale = content_scale();
+    if (display_scale != g_ctx->GetDensityIndependentPixelRatio())
+        g_ctx->SetDensityIndependentPixelRatio(display_scale);
 
-    poll_gamepad_navigation();
+    const RmlUiInputCallbacks callbacks = {activate_focused, cancel_document};
+    if (g_doc) rmlui_input_update(*g_ctx, *g_doc, callbacks);
     g_render->BeginFrame();
     g_ctx->Update();
+    if (!g_metrics_reported && getenv("LF2_RMLUI_DEBUG")) {
+        int window_w = 0, window_h = 0;
+        int pixel_w = 0, pixel_h = 0;
+        SDL_GetWindowSize(g_W, &window_w, &window_h);
+        SDL_GetRenderOutputSize(g_R, &pixel_w, &pixel_h);
+        fprintf(stderr,
+                "rmlui metrics: %dx%d window points -> %dx%d drawable pixels, content scale "
+                "%.2f, body font %.1fpx\n",
+                window_w, window_h, pixel_w, pixel_h, display_scale,
+                g_doc ? static_cast<double>(g_doc->GetComputedValues().font_size()) : 0.0);
+        g_metrics_reported = 1;
+    }
     g_ctx->Render();
     g_render->EndFrame();
 }
@@ -518,16 +519,9 @@ int rmlui_event(SDL_Event *e)
             config_save();
             refresh_key_name(g_key_capture);
             g_key_capture = -1;
+            rmlui_input_block_until_release();
         }
         return 1; /* the binding is ours, not the game's */
-    }
-
-    /* Dusklight's Button component turns Confirm into a click on its focused generic element.
-     * LF2 keeps its document data-bound, so reproduce that document-level behavior here. */
-    if (e->type == SDL_EVENT_KEY_DOWN &&
-        (e->key.scancode == SDL_SCANCODE_RETURN || e->key.scancode == SDL_SCANCODE_SPACE)) {
-        if (Rml::Element *focused = g_ctx->GetFocusElement()) focused->Click();
-        return 1;
     }
 
     if (g_pad_capture >= 0 && (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e->type == SDL_EVENT_GAMEPAD_BUTTON_UP)) {
@@ -540,6 +534,7 @@ int rmlui_event(SDL_Event *e)
             config_save();
             refresh_pad_name(g_pad_capture);
             g_pad_capture = -1;
+            rmlui_input_block_until_release();
         }
         return 1;
     }
@@ -549,34 +544,18 @@ int rmlui_event(SDL_Event *e)
      * would immediately reopen the document in the game update that follows. */
     if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_ESCAPE) { return 1; }
 
-    if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
-        const SDL_GamepadButton b = (SDL_GamepadButton)e->gbutton.button;
-        if (b == SDL_GAMEPAD_BUTTON_EAST) {
-            pause_menu_close();
-            return 1;
-        }
-        return 1; /* navigation itself is edge-polled once per rendered frame */
-    }
-    if (e->type == SDL_EVENT_GAMEPAD_BUTTON_UP) return 1;
+    if (rmlui_input_note_event(*e)) return 1;
 
-    /* Everything else goes to the document. SDL delivers the pointer in POINTS; the context
-     * is sized in pixels, so at a density above 1 the coordinates are scaled first. */
-    SDL_Event copy = *e;
-    const float density = SDL_GetWindowPixelDensity(g_W);
-    if (density > 1.0f) {
-        switch (e->type) {
-        case SDL_EVENT_MOUSE_MOTION:
-            copy.motion.x *= density;
-            copy.motion.y *= density;
-            break;
-        case SDL_EVENT_MOUSE_BUTTON_DOWN:
-        case SDL_EVENT_MOUSE_BUTTON_UP:
-            copy.button.x *= density;
-            copy.button.y *= density;
-            break;
-        default: break;
-        }
+    /* Conventional raw keyboard activation remains available even when Return and Space are
+     * not player-action bindings. Configured actions take the device-independent path above. */
+    if (e->type == SDL_EVENT_KEY_DOWN &&
+        (e->key.scancode == SDL_SCANCODE_RETURN || e->key.scancode == SDL_SCANCODE_SPACE)) {
+        activate_focused(false);
+        return 1;
     }
+    if (rmlui_input_pointer_event(*g_ctx, *g_R, *e)) return 1;
+
+    SDL_Event copy = *e;
     RmlSDL::InputEventHandler(g_ctx, g_W, copy);
     /* Dusklight blocks the game whenever any active document is visible. The SDL adapter's
      * propagation result only describes RmlUi's DOM, not whether the guest should also see

@@ -10,6 +10,7 @@
 #include "guest_ops.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "gamepad.h"
 #include "keyboard.h"
 #include "bindings.h"
 #include "rmlui.h"
@@ -56,7 +57,7 @@ void input_report(void)
  * bookkeeping, recording playback (device selector -1) and the packed-mask plumbing. Its
  * BUTTONS for live slots are then overwritten, not merged -- the control.txt keyboard
  * layouts are exactly what "only one keyboard layout" removes. */
-enum { MAX_DEV = 5 }; /* the keyboard, then up to four pads */
+enum { MAX_DEV = 1 + GAMEPAD_MAX_DEVICES }; /* the keyboard, then every host pad */
 
 static int dev_player[MAX_DEV] = {-1, -1, -1, -1, -1};
 static unsigned char dev_prev[MAX_DEV][7];

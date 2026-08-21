@@ -55,3 +55,9 @@ USER 2026-08-20 reports the shipped RmlUi is completely broken and is only reach
 
 ### Resolution (2026-08-21)
 RmlUi was broken for three independent integration reasons: SDL_UpdateTexture's SDL3 bool result was inverted so successful font-atlas uploads were destroyed; the backend leaked viewport/clip state into the shared renderer; and the document used browser-like bindings unsupported by RmlUi. Replaced the legacy pause painter with one global Dusklight-structured RmlUi document, corrected atlas/upload and render-state ownership, used RmlUi data-model syntax and tabbable controls, blocked guest input while modal, and verified mapped pad navigation plus rendering through settings and ui_global routes.
+
+### Reopened (2026-08-21)
+USER 2026-08-21: RmlUi should be controllable via any input device, including keyboard and controller. Re-audit the real navigation path across all connected pads/keyboards; mapped navigation in one scripted path is not sufficient evidence.
+
+### Resolution (2026-08-21)
+The settings document had bespoke two-pad polling, no mapped keyboard-action translation, manual controller clicks, and no directional repeat. A separate Dusklight-style runtime/ui/rmlui_input.cpp now merges keyboard and all attached-controller action state, latches short event edges, applies accelerated directional repeat, maps Attack/Jump to Confirm/Cancel, and keeps conventional raw controls when unbound. The physical keyboard route activates Continue through mapped Attack; the controller route navigates to and activates Controls.
