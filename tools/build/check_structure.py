@@ -10,7 +10,6 @@ DANGER_LIMIT = 2000
 LEGACY_LIMITS = {
     "runtime/video/ddraw.c": 2610,
     "runtime/win32/imports.c": 1293,
-    "runtime/video/engine.c": 1276,
 }
 
 
