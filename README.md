@@ -10,6 +10,15 @@ auto-detect and hotswap, and borderless windowed mode.
 > See [`docs/codemap.md`](docs/codemap.md) for an honest per-subsystem status, including
 > what is still broken.
 
+## Screenshots
+
+| Global port menu | Keyboard and controller mapping |
+|---|---|
+| ![The global RmlUi port menu](docs/screenshots/port-menu.png) | ![Keyboard and controller input mapping in RmlUi](docs/screenshots/input-mapping.png) |
+
+These captures show only the port-owned RmlUi shell. Game artwork is loaded from each user's
+local extracted copy and remains outside Git history.
+
 ## No game content is distributed here
 
 This repository contains **no Little Fighter 2 code, sprites, audio, or data** — only tools
