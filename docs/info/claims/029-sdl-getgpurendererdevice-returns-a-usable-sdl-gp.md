@@ -4,7 +4,9 @@ kind: claim
 status: holds
 created: 2026-08-12
 tags: renderer,hd2d
-depends: runtime/video/render.c
+depends: runtime/video/render.c, runtime/win32/win32.c
+reconfirmed: 2026-08-21
+verified_at: 2026-08-21 11:37:26
 ---
 
 ## Claim
@@ -18,3 +20,7 @@ Standalone spike ($CLAUDE_JOB_DIR/tmp/gpuspike.c) run under gpuguard on 2026-08-
 ## What would falsify it
 
 a machine whose gpu backend reports device=no (an SDL build without the GPU renderer, or a driver with no Vulkan/D3D12/Metal), or a depth format query that succeeds while the pipeline creation using it fails -- the spike allocates a texture but does not yet build a graphics pipeline
+
+## Re-confirmed 2026-08-21
+
+After the renderer changes, ./run.sh brought the Vulkan engine up on SDL_GetGPURendererDevice and tools/e2e.py render completed every GPU/engine arm headlessly.

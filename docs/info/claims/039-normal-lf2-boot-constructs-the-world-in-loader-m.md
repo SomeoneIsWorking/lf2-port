@@ -5,6 +5,8 @@ status: holds
 created: 2026-08-21
 tags: startup
 depends: runtime/overrides/boot_guest.c#fn_00419e40, runtime/app/startup.c#startup_present_enabled, runtime/video/ddraw.c
+reconfirmed: 2026-08-21
+verified_at: 2026-08-21 11:37:26
 ---
 
 ## Claim
@@ -18,3 +20,7 @@ fn_00419e40 override preserves the original constructor then sets initial top mo
 ## What would falsify it
 
 a zero-input default boot presents the launcher, loading picture, or black window; requires a key/click/pad event; or changes top mode through a post-construction frontend branch
+
+## Re-confirmed 2026-08-21
+
+A bounded zero-argument ./run.sh invocation after commit 7817223 logged constructor loader state, data-loaded mode menu, first menu frame presented, then modemenu@4 without an input script.

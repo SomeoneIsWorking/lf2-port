@@ -4,7 +4,9 @@ kind: claim
 status: holds
 created: 2026-08-12
 tags: renderer,hd2d
-depends: runtime/video/render.c
+depends: runtime/video/engine.c, runtime/video/render.c
+reconfirmed: 2026-08-21
+verified_at: 2026-08-21 11:37:26
 ---
 
 ## Claim
@@ -18,3 +20,7 @@ Standalone spike ($CLAUDE_JOB_DIR/tmp/bridge.c) under gpuguard, 2026-08-12, both
 ## What would falsify it
 
 a wrap that reports OK while SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER reads back a different pointer, or a backend where the wrapped texture draws blank -- the spike drew it but did not read the pixels back, so 'draw=OK' is the API accepting it and not yet a picture
+
+## Re-confirmed 2026-08-21
+
+After the renderer changes, tools/e2e.py render read back and compared both engine frames through the wrapped SDL_Texture path; the engine matched the software frame within the established tolerance on menu and match captures.
