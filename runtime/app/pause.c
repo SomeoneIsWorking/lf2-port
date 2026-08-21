@@ -6,6 +6,7 @@
  * second, hand-painted Escape menu here.
  */
 #include "hostwin.h"
+#include "gamepad.h"
 #include "keyboard.h"
 #include "render.h"
 #include "rmlui.h"

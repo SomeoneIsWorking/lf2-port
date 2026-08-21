@@ -64,7 +64,6 @@ void hostwin_shutdown(void);
 void hostwin_inject_key(uint32_t vk, int down);
 void hostwin_inject_pointer(int x, int y, int down);
 int hostwin_injected_key(uint32_t vk);
-int gamepad_player_buttons(int index, unsigned char out[7]);
 void input_report(void);
 void audio_pan_report(void);
 void bg_camera_report(void);
@@ -111,8 +110,6 @@ int bg_z_bounds(int *zmin, int *zmax);
 void hostwin_request_quit(void);
 int hostwin_width(void);
 int hostwin_height(void);
-int gamepad_start_held(void);
-int gamepad_start_index(void); /* which pad, or -1; drop-out is per player */
 
 /* The pause menu's reach into the game. `device_player` is the slot a device is driving,
  * -1 if none. `coop_drop_out` is the deliberate half of what unplugging a pad does.

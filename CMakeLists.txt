@@ -115,6 +115,7 @@ add_executable(lf2
     runtime/ui/device_assets.c
     runtime/ui/device_icons.c
     runtime/ui/settings_ui.cpp
+    runtime/ui/rmlui_input.cpp
     runtime/ui/rmlui_backend.cpp
     third_party/RmlUi/Backends/RmlUi_Platform_SDL.cpp
     runtime/app/main.c)

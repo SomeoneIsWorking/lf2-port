@@ -27,6 +27,15 @@ def wait_for_text(path: Path, text: str, seconds: float) -> bool:
     return False
 
 
+def wait_for_count(path: Path, text: str, count: int, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if path.exists() and path.read_text(errors="replace").count(text) >= count:
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def xdotool(*args: str) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         ["xdotool", *args], capture_output=True, text=True, check=False
@@ -63,10 +72,19 @@ def run_inside_xvfb(build: Path, game: Path) -> int:
                 wait_for_text(
                     RUN_LOG, "rmlui menu command: escape=1 start=0 active=0", 5.0
                 )
+                xdotool("mousemove", "--window", window, "397", "61")
+                xdotool("click", "1")
+                wait_for_text(RUN_LOG, "rmlui page: graphics", 5.0)
                 xdotool("key", "Escape")
                 wait_for_text(
                     RUN_LOG, "rmlui menu command: escape=1 start=0 active=1", 5.0
                 )
+                xdotool("key", "Escape")
+                wait_for_count(
+                    RUN_LOG, "rmlui menu command: escape=1 start=0 active=0", 2, 5.0
+                )
+                xdotool("key", "z")
+                wait_for_text(RUN_LOG, "rmlui input: keyboard attack", 5.0)
                 xdotool("keydown", "z")
                 time.sleep(0.15)
                 xdotool("keyup", "z")
@@ -91,20 +109,30 @@ def check_results() -> int:
             "xdotool could not find the visible game window",
         ),
         (
-            log.count("rmlui physical key: vk=1b down\n") == 2,
-            "SDL delivered two physical Escape down events",
-            "SDL did not deliver both physical Escape presses",
+            log.count("rmlui physical key: vk=1b down\n") == 3,
+            "SDL delivered all three physical Escape down events",
+            "SDL did not deliver all three physical Escape presses",
         ),
         (
-            "rmlui menu command: escape=1 start=0 active=0\n" in log
-            and "rmlui menu command: escape=1 start=0 active=1\n" in log,
-            "Escape opened the shell, then closed that same shell",
-            "the physical Escape edge did not toggle both menu states",
+            log.count("rmlui menu command: escape=1 start=0 active=0\n") == 2
+            and log.count("rmlui menu command: escape=1 start=0 active=1\n") == 1,
+            "Escape opened the shell twice and closed the first opening",
+            "the physical Escape edge did not produce both open states and one close",
         ),
         (
-            "rmlui: 1 settings open(s), " in log and " rendered frame(s)" in log,
-            "exactly one RmlUi document opened and rendered",
-            "RmlUi did not report one rendered opening",
+            "rmlui page: graphics\n" in log,
+            "a real window-relative mouse click activated the Graphics tab",
+            "the physical pointer did not hit the Graphics tab",
+        ),
+        (
+            "rmlui input: keyboard attack\n" in log,
+            "the configured keyboard Attack action activated focused RmlUi content",
+            "the mapped keyboard action did not reach RmlUi",
+        ),
+        (
+            "rmlui: 2 settings open(s), " in log and " rendered frame(s)" in log,
+            "the same RmlUi document rendered both openings",
+            "RmlUi did not report two rendered openings",
         ),
         (
             "scripted input: screen charselect first up at frame " in log,

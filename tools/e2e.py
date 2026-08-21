@@ -15,8 +15,8 @@ import sys
 
 ROUTES = (
     ("smoke", "the port boots, loads its data and reaches a match"),
-    ("settings", "the global RmlUi shell opens directly and renders both shared SVG device icons"),
-    ("ui_escape", "physical SDL Escape opens and closes RmlUi; no scripted-key substitute"),
+    ("settings", "mapped controller navigation reaches RmlUi Controls and both shared SVG device icons"),
+    ("ui_escape", "physical SDL keyboard and pointer control RmlUi; no scripted-key substitute"),
     ("ui_global", "the same RmlUi shell opens on menu, selection, overlay, and match screens"),
     ("controller", "a pad alone drives the game -- the mouse and key routes cannot see this path"),
     ("mouse", "the pointer alone reaches charselect, the overlay and a match (issue #26)"),
@@ -27,7 +27,7 @@ ROUTES = (
     ("exit_to_menu", "LEAVE MATCH reaches the post-load mode menu, by its screen word (issue #22)"),
     ("two_human_match", "pad two drives its fighter in the FIGHT, not just at selection"),
     ("widescreen", "the composition follows the window, both directions, natives as negatives"),
-    ("hidpi", "the port on a SIMULATED 4K display at 200%, in a nested compositor (issue #56)"),
+    ("hidpi", "game and RmlUi use a SIMULATED 4K/200% drawable in a nested compositor (issues #56, #82)"),
     ("resize", "a resize leaves no stale pixels standing (issue #29)"),
     ("background", "the background override draws what the recompiled body drew, byte for byte"),
     ("caption", "the mode caption follows the view, with the recompiled body as control (issue #60)"),

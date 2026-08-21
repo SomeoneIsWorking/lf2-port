@@ -7,6 +7,7 @@
 #include "script.h"
 #include "config.h"
 #include "bindings.h"
+#include "gamepad.h"
 #include "rmlui.h"
 
 #include <SDL3/SDL.h>
@@ -87,9 +88,6 @@ int hostwin_pointer(int *x, int *y)
     return 1;
 }
 static unsigned autokey_pumps;
-void gamepad_handle_event(const SDL_Event *e);
-void virtual_pad_tick(long frame);
-
 /* ---- window ---- */
 
 static void h_RegisterClassA(void)

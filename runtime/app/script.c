@@ -23,18 +23,16 @@
  * share a picture, so both anchors come from what the game distinctly draws, not a frame dump or
  * a sampled state word. */
 enum { SCREEN_N = 4 };
-static long screen_first[SCREEN_N] = { -1, -1, -1, -1 };
-static const char *const SCREEN_NAME[SCREEN_N] = { "modemenu", "charselect", "overlay", "match" };
+static long screen_first[SCREEN_N] = {-1, -1, -1, -1};
+static const char *const SCREEN_NAME[SCREEN_N] = {"modemenu", "charselect", "overlay", "match"};
 
 void script_observe_screens(long frame)
 {
-    const int up[SCREEN_N] = { panel_modemenu_up(), panel_charselect_up(),
-                               panel_overlay_up(), panel_hud_up() };
+    const int up[SCREEN_N] = {panel_modemenu_up(), panel_charselect_up(), panel_overlay_up(), panel_hud_up()};
     for (int i = 0; i < SCREEN_N; i++)
         if (up[i] && screen_first[i] < 0) {
             screen_first[i] = frame;
-            fprintf(stderr, "scripted input: screen %s first up at frame %ld\n",
-                    SCREEN_NAME[i], frame);
+            fprintf(stderr, "scripted input: screen %s first up at frame %ld\n", SCREEN_NAME[i], frame);
         }
 }
 
@@ -48,7 +46,10 @@ long script_when(const char *spec, int *unresolved)
         if (strncmp(spec, SCREEN_NAME[i], n) != 0) continue;
         const char *rest = spec + n;
         const long off = (*rest == '+') ? strtol(rest + 1, NULL, 10) : 0;
-        if (screen_first[i] < 0) { *unresolved = 1; return -1; }
+        if (screen_first[i] < 0) {
+            *unresolved = 1;
+            return -1;
+        }
         return screen_first[i] + off;
     }
     /* A screen name this build does not know can never resolve, and saying "not yet" about
@@ -69,17 +70,21 @@ static unsigned char item_state[SCRIPT_STREAMS][MAX_ITEMS];
 static int item_count[SCRIPT_STREAMS];
 static int item_overflow[SCRIPT_STREAMS];
 
-static const struct { const char *env; char sep; } STREAM[SCRIPT_STREAMS] = {
-    { "LF2_VIRTUAL_PAD",  ',' },
-    { "LF2_VIRTUAL_PAD2", ',' },
-    { "LF2_KEY_SCRIPT",   ',' },
-    { "LF2_CLICK_SCRIPT", ';' },
+static const struct {
+    const char *env;
+    char sep;
+} STREAM[SCRIPT_STREAMS] = {
+    {"LF2_VIRTUAL_PAD", ','},  {"LF2_VIRTUAL_PAD2", ','}, {"LF2_VIRTUAL_PAD3", ','},
+    {"LF2_VIRTUAL_PAD4", ','}, {"LF2_KEY_SCRIPT", ','},   {"LF2_CLICK_SCRIPT", ';'},
 };
 
 static int in_range(int stream, int idx)
 {
     if (stream < 0 || stream >= SCRIPT_STREAMS) return 0;
-    if (idx < 0 || idx >= MAX_ITEMS) { item_overflow[stream] = 1; return 0; }
+    if (idx < 0 || idx >= MAX_ITEMS) {
+        item_overflow[stream] = 1;
+        return 0;
+    }
     return 1;
 }
 
@@ -106,7 +111,8 @@ void script_bad_item(int stream, int idx)
 void script_report(void)
 {
     int configured = 0;
-    for (int s = 0; s < SCRIPT_STREAMS; s++) if (getenv(STREAM[s].env)) configured = 1;
+    for (int s = 0; s < SCRIPT_STREAMS; s++)
+        if (getenv(STREAM[s].env)) configured = 1;
     if (!configured) return;
 
     fprintf(stderr, "scripted input: screens reached --");
@@ -131,15 +137,16 @@ void script_report(void)
             if (item_state[s][i] == ITEM_FIRED) fired++;
         fprintf(stderr, "%s: %d of %d items fired\n", STREAM[s].env, fired, item_count[s]);
         if (item_overflow[s])
-            fprintf(stderr, "%s: route longer than %d items -- the ones past that were "
-                            "NEVER PLAYED and are not counted above\n",
+            fprintf(stderr,
+                    "%s: route longer than %d items -- the ones past that were "
+                    "NEVER PLAYED and are not counted above\n",
                     STREAM[s].env, MAX_ITEMS);
         if (fired == item_count[s] && !item_overflow[s]) continue;
 
         /* Name them. "Something did not fire" makes the next person bisect the route to
          * find out which; the text is right here. */
         int idx = 0;
-        for (const char *c = script; *c; ) {
+        for (const char *c = script; *c;) {
             const char *item = c;
             while (*c && *c != STREAM[s].sep && *c != ' ') c++;
             const int n = (int)(c - item);
@@ -148,10 +155,9 @@ void script_report(void)
             if (i >= item_count[s]) break;
             if (item_state[s][i] == ITEM_FIRED) continue;
             fprintf(stderr, "%s: item %d `%.*s' %s\n", STREAM[s].env, i, n, item,
-                    item_state[s][i] == ITEM_BAD
-                        ? "NEVER FIRED -- this build could not parse that"
-                        : "NEVER FIRED -- its screen never appeared, so any assertion about "
-                          "what it should have done is about an input that did not happen");
+                    item_state[s][i] == ITEM_BAD ? "NEVER FIRED -- this build could not parse that"
+                                                 : "NEVER FIRED -- its screen never appeared, so any assertion about "
+                                                   "what it should have done is about an input that did not happen");
         }
     }
 }
