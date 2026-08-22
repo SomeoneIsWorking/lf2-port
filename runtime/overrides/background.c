@@ -887,6 +887,11 @@ void fn_0041a250(void)
         const int32_t lx = (int32_t)lf(registry, bg, BG_LAYER_X, i);
         const int32_t loop = (int32_t)lf(registry, bg, BG_LAYER_LOOP, i);
 
+        /* LF2 keeps only IDIV's integer answer. At a magnified output that turns a rational
+         * scroll into visible stalls and whole-logical-pixel jumps, so retain the discarded
+         * fraction for this layer's complete synchronous draw, including continuations. */
+        render_background_phase_set(
+            geom_layer_offset_phase(span, stage_width, camera, view));
         if (loop > 0) {
             /* The game stops at the layer's span, which is exactly enough to fill 794. A
              * wider view needs more copies, and a LOOPING layer is the one kind that can
@@ -914,6 +919,7 @@ void fn_0041a250(void)
             draw_layer(obj, off + lx + translation, y, transparent, arg0);
             world_backdrop_hint_set(0);
         }
+        render_background_phase_set(0.0f);
     }
     /* Anything nearer than every layer -- still behind the sprites, which the game goes on
      * placing itself. */

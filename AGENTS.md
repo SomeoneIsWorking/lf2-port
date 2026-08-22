@@ -109,7 +109,9 @@ static recompilation rather than copying Dusklight's platform implementations:
 - `runtime/app/` composes lifecycle and startup policy.
 - `runtime/ui/` owns the RmlUi document, device-independent UI input translation, and SDL
   render backend as separate modules (`settings_ui.cpp`, `rmlui_input.cpp`,
-  `rmlui_backend.cpp`).
+  `rmlui_backend.cpp`). It also owns the port-authored pre-fight visual layout and native
+  font raster in `overlay_panel.c`; `overrides/text.c` only identifies the guest producer
+  painter slot before the shared draw helper loses it.
 - `runtime/input/` owns device discovery and persistent action bindings; config only stores values.
 - `runtime/video/`, `runtime/audio/`, and `runtime/win32/` remain cohesive peer subsystems.
 - `runtime/overrides/` changes game behavior and does not absorb host platform mechanisms.
