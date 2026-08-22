@@ -33,6 +33,8 @@ void music_start(void);
 void music_stop(void);
 void music_set_volume(int32_t centibels);
 long hostwin_frames(void);
+/* Resolve one frame specification through the same screen-anchor owner used by captures. */
+int hostwin_frame_selected(const char *spec, long frame);
 int lf2_loading_now(void);          /* runtime/win32/imports.c */
 enum { GUEST_FRAME_NS = 33333333 }; /* the guest clock's tick, shared with imports.c */
 /* The window changed size (or was just created): recompute the composition from its PIXEL
@@ -81,18 +83,18 @@ void glyph_hint_clear(void);
 /* The clip-draw override tells the blit path when a draw is the stage's own shadow ellipse,
  * identified by the object it is drawn on -- learned per stage, see runtime/video/ddraw.c. */
 void shadow_hint_set(int on);
+/* Scope fn_0040de30's world-object draw so every textured piece receives the object's exact
+ * ground row and independent character/cast-shadow membership. */
+void render_shadow_object_begin(int ground_y, int character, int casts_shadow);
+void render_shadow_object_end(void);
 
 /* The background override marks the stage's own colour-fill bands, because the game's fill
  * helper is shared with the front end and the blit cannot tell them apart (issue #42). */
 void world_band_hint_set(int on);
-/* The background override marks the stage's first non-looping painted layer while it crosses
- * the guest call boundary. It is the far backdrop that may cover a wider composition; the blit
- * rectangle alone cannot distinguish it from foreground art or a menu backdrop. */
+/* The background override marks an explicitly authored opaque far plane while it crosses the
+ * guest call boundary. It may continue its outer edge in native-size reflected segments;
+ * keyed scenery and undeclared stages never receive the hint. */
 void world_backdrop_hint_set(int on);
-/* A non-looping stage layer whose authored span is narrower than the live view is scaled as
- * one span, so adjacent bitmap pieces retain their shared boundary and outer bitmap edges
- * land at the composition edge instead of becoming visible seams. */
-void world_layer_span_hint_set(int span);
 void world_band_report(void);   /* LF2_BAND_DEBUG=1 */
 void glyph_scale_report(void);  /* LF2_GLYPH_DEBUG=1 -- was text rasterised at window size? */
 void framing_report(void);      /* LF2_FRAMING_DEBUG=1 -- per-screen framing, issue #44 */

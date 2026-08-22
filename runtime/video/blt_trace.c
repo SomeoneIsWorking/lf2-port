@@ -35,3 +35,13 @@ void blt_trace_log(const BltTrace *trace)
             trace->source_w, trace->source_h, trace->has_source_rect ? "" : "NULL", trace->sl, trace->st, trace->sr,
             trace->sb, trace->flags, trace->caller, fill);
 }
+
+void blt_trace_backdrop(const BltTrace *trace, const BackdropBlit *blit)
+{
+    if (!trace || !trace->selected || !blit) return;
+    fprintf(stderr,
+            "backdrop native frame %ld mirror=%d dst=(%d,%d)-(%d,%d) "
+            "src=(%d,%d)-(%d,%d)\n",
+            trace->frame, blit->mirror_x, blit->dl, blit->dt, blit->dr, blit->db, blit->sl, blit->st, blit->sr,
+            blit->sb);
+}

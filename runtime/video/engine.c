@@ -298,8 +298,8 @@ int engine_init(SDL_Renderer *r)
     {
         /* The hd2d fragment shaders were written for SDL_Render's varying convention (colour
          * at location 0, uv at location 1) and speak a different vertex format from the
-         * sprite pipeline's -- hd2d_quad.vert explains. The character mask additionally
-         * depth-tests against the completed scene; the other two draw into colour only. */
+         * sprite pipeline's -- hd2d_quad.vert explains. Character visibility and projected
+         * shadow reception both depth-test against the completed scene. */
         sh_light_vert = shader_make(hd2d_quad_vert_spv, sizeof hd2d_quad_vert_spv,
                                     SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, "lighting vertex");
 
@@ -351,23 +351,35 @@ int engine_init(SDL_Renderer *r)
             lp.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
             p_chars = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
             if (!p_chars) {
-                fprintf(stderr, "engine: the character-mask pipeline failed: %s -- no lighting "
-                                "chain\n", SDL_GetError());
+                fprintf(stderr,
+                        "engine: the character-mask pipeline failed: %s -- no lighting "
+                        "chain\n",
+                        SDL_GetError());
+            }
+            SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
+
+            /* A projected shadow has the caster's painter depth. Strict LESS admits the
+             * earlier-painted floor, rejects the caster itself at equal depth, and rejects a
+             * later foreground object (#99). The visibility probe's named LEQUAL arm is the
+             * deliberate other-answer mutation: it must expose self-shadowing on the same
+             * shipping pipeline or the equal-depth sample is not a trustworthy instrument. */
+            const char *visibility_probe = getenv("LF2_VISIBILITY_PROBE");
+            lp.depth_stencil_state.compare_op = visibility_probe && strcmp(visibility_probe, "shadow-self-lequal") == 0
+                                                    ? SDL_GPU_COMPAREOP_LESS_OR_EQUAL
+                                                    : SDL_GPU_COMPAREOP_LESS;
+            lp.fragment_shader = shader_make(hd2d_shadow_spv, sizeof hd2d_shadow_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 1,
+                                             1, "cast-shadow mask");
+            p_shadow = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
+            if (!p_shadow) {
+                fprintf(stderr,
+                        "engine: the cast-shadow-mask pipeline failed: %s -- no lighting "
+                        "chain\n",
+                        SDL_GetError());
             }
             SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
 
             lp.target_info.has_depth_stencil_target = false;
             SDL_zero(lp.depth_stencil_state);
-            lp.fragment_shader = shader_make(hd2d_shadow_spv, sizeof hd2d_shadow_spv,
-                                             SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1,
-                                             "cast-shadow mask");
-            p_shadow = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
-            if (!p_shadow) {
-                fprintf(stderr, "engine: the cast-shadow-mask pipeline failed: %s -- no lighting "
-                                "chain\n", SDL_GetError());
-            }
-            SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
-
             lp.fragment_shader = shader_make(hd2d_light_spv, sizeof hd2d_light_spv,
                                              SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, "light");
             p_light = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
@@ -656,27 +668,20 @@ static void light_emit_char(LightVertex *v, const EngineQuad *q, float depth)
     v[3] = a; v[4] = c; v[5] = d;
 }
 
-/* The same object laid down as its cast shadow: the sheared quad from the one shared light
- * projection. The ground point is the ellipse the game drew at the object's feet -- its bottom
- * edge for the height and its HORIZONTAL CENTRE for the anchor (issue #72). The sprite quad's
- * own centre is not that point: LF2's frame art is offset inside its rectangle, so a shadow
- * anchored there stood up to a sprite-width to the side of the fighter. On the ground the foot
- * edge then sits exactly at the character's feet; airborne, the lift carries the whole quad
- * along the light. */
-static void light_emit_shadow(LightVertex *v, const EngineQuad *q, float across, float up)
+/* The same sprite laid down as its cast shadow through the shared projection. The object's z
+ * row is the floor; every source corner keeps its actual x and derives its height from that row.
+ * Recentring the whole source rectangle on the ellipse discarded LF2's per-frame authored
+ * offset and moved the visible feet sideways (#97). */
+static void light_emit_shadow(LightVertex *v, const EngineQuad *q, float depth, float across, float up)
 {
-    const float cx = q->ground_cx;
-    const float gy = q->ground_gy;
-    const float air = gy - (q->y + q->h);
-    const float lift = air > 0.0f ? air : 0.0f;
     float o[8];
-    stagelight_shadow_quad(across, up, cx, gy, q->w, q->h, lift, o);
+    stagelight_shadow_quad(across, up, q->x, q->y, q->w, q->h, q->ground_gy, o);
     /* The corners come back in the order the sprite's UVs map onto: head-TL, head-TR, foot-BR,
      * foot-BL, and the triangle fan below preserves it. */
-    const LightVertex tl = { o[0], o[1], 0.5f, q->u0, q->v0, 1, 1, 1, 1 };
-    const LightVertex tr = { o[2], o[3], 0.5f, q->u1, q->v0, 1, 1, 1, 1 };
-    const LightVertex br = { o[4], o[5], 0.5f, q->u1, q->v1, 1, 1, 1, 1 };
-    const LightVertex bl = { o[6], o[7], 0.5f, q->u0, q->v1, 1, 1, 1, 1 };
+    const LightVertex tl = { o[0], o[1], depth, q->u0, q->v0, 1, 1, 1, 1 };
+    const LightVertex tr = { o[2], o[3], depth, q->u1, q->v0, 1, 1, 1, 1 };
+    const LightVertex br = { o[4], o[5], depth, q->u1, q->v1, 1, 1, 1, 1 };
+    const LightVertex bl = { o[6], o[7], depth, q->u0, q->v1, 1, 1, 1, 1 };
     v[0] = tl; v[1] = tr; v[2] = br;
     v[3] = tl; v[4] = br; v[5] = bl;
 }
@@ -713,7 +718,7 @@ static int show_stage_name(void)
 static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
 {
     const int show = show_stage_name();
-    const int want_chars  = show == 1 || show == 2 || !show;
+    const int want_chars  = show == 1 || !show;
     const int want_shadow = show == 2 || !show;
     const int want_light  = !show;
 
@@ -724,21 +729,15 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
      * picture is already the whole story. */
     if (want_light && !opt_lighting()) return tex_color;
 
-    int no = 0;
-    for (int i = 0; i < n; i++) if (q[i].is_object) no++;
-    if (!want_chars || no == 0) {
-        if (!want_light) {
-            /* Showing a mask that has nothing in it: an empty mask is the DIAGNOSTIC's answer,
-             * not a reason to fall back to the picture -- and it must be the mask that was
-             * ASKED FOR, or SHOW=shadow would hand back the character buffer. */
-            return show == 2 ? tex_shadow : tex_chars;
-        }
-        /* No characters means there is no shading or cast shadow to apply. */
-        return tex_color;
+    int nc = 0, ns = 0;
+    for (int i = 0; i < n; i++) {
+        if (q[i].is_object) nc++;
+        if (q[i].casts_shadow) ns++;
     }
+    if (want_light && nc == 0 && ns == 0) return tex_color;
 
     /* One buffer: chars quads, then shadow quads, then the full-screen light quad. */
-    const int chars_v = no * 6, shadow_v = no * 6;
+    const int chars_v = nc * 6, shadow_v = ns * 6;
     if (!lvbuf_reserve((chars_v + shadow_v + 6) * (int)sizeof(LightVertex))) return tex_color;
 
     float across = 0.0f, up = 0.0f;
@@ -747,14 +746,14 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
     void *map = SDL_MapGPUTransferBuffer(DEV, lvxfer, false);
     if (!map) return tex_color;
     LightVertex *p = (LightVertex *)map;
-    int on = 0;
+    int cn = 0, sn = 0;
     for (int i = 0; i < n; i++) {
-        if (!q[i].is_object) continue;
-        light_emit_char(p + (size_t)on * 6, &q[i], painter_depth(i, n));
-        light_emit_shadow(p + (size_t)(no + on) * 6, &q[i], across, up);
-        on++;
+        const float depth = painter_depth(i, n);
+        if (q[i].is_object) light_emit_char(p + (size_t)cn++ * 6, &q[i], depth);
+        if (q[i].casts_shadow)
+            light_emit_shadow(p + (size_t)(nc + sn++) * 6, &q[i], depth, across, up);
     }
-    light_emit_full(p + (size_t)(no + no) * 6, w, h);
+    light_emit_full(p + (size_t)(nc + ns) * 6, w, h);
     SDL_UnmapGPUTransferBuffer(DEV, lvxfer);
 
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
@@ -819,20 +818,27 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
         ci.clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 0.0f };
         ci.load_op = SDL_GPU_LOADOP_CLEAR;
         ci.store_op = SDL_GPU_STOREOP_STORE;
-        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ci, 1, NULL);
+        SDL_GPUDepthStencilTargetInfo receiver;
+        SDL_zero(receiver);
+        receiver.texture = tex_depth;
+        receiver.load_op = SDL_GPU_LOADOP_LOAD;
+        receiver.store_op = SDL_GPU_STOREOP_STORE;
+        receiver.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+        receiver.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ci, 1, &receiver);
         if (pass) {
             SDL_BindGPUGraphicsPipeline(pass, p_shadow);
             SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
             const float unused[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
             int on = 0;
             for (int i = 0; i < n; i++) {
-                if (!q[i].is_object) continue;
+                if (!q[i].casts_shadow) continue;
                 SDL_GPUTexture *t = engine_texture_for(&q[i]);
                 if (!t) { on++; continue; }
                 SDL_GPUTextureSamplerBinding tsb = { t, SMP };
                 SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
                 SDL_PushGPUFragmentUniformData(cmd, 0, unused, sizeof unused);
-                SDL_DrawGPUPrimitives(pass, 6, 1, (Uint32)((no + on) * 6), 0);
+                SDL_DrawGPUPrimitives(pass, 6, 1, (Uint32)((nc + on) * 6), 0);
                 stat_shadow_quads++;
                 on++;
             }
@@ -860,7 +866,7 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
             float u[20];
             hd2d_light_uniforms(u, w, h);
             SDL_PushGPUFragmentUniformData(cmd, 0, u, sizeof u);
-            SDL_DrawGPUPrimitives(pass, 6, 1, (Uint32)((no + no) * 6), 0);
+            SDL_DrawGPUPrimitives(pass, 6, 1, (Uint32)((nc + ns) * 6), 0);
             SDL_EndGPURenderPass(pass);
         }
         stat_light_frames++;

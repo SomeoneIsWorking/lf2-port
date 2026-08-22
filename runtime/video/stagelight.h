@@ -102,32 +102,35 @@ static inline void stagelight_shadow(const float dir[3], float *across, float *u
     *up     =  dir[2] / y;
 }
 
-/* THE SHADOW QUAD, laid on the ground: a sprite's silhouette sheared along the light.
+/* THE SHADOW QUAD, laid on the ground: a sprite's silhouette projected along the light.
  *
- * A point at height h above the floor lands at h * (across, -up) on the screen, both numbers
- * from stagelight_shadow above, so a shadow's direction, its length and its displacement in a
- * jump all follow the one vector. The sprite's FOOT edge sits at its ground point -- pushed
- * out by `lift`, its height off the floor, when it is airborne -- and its HEAD edge is the
- * foot edge plus the full-height shear, which is what makes a low light throw a long shadow.
+ * A source point at screen (px, py) is `ground_y - py` above the floor and therefore lands at
+ * (px + height*across, ground_y - height*up). Applying that same map to all four sprite
+ * corners preserves the frame's AUTHORED horizontal offset relative to the object. Recentring
+ * the rectangle on the ground ellipse loses that offset: the visible feet move sideways by a
+ * different amount in every animation frame even though the game's sprite draw had already
+ * put them at the object origin (issue #97).
  *
- * (cx, gy) is the ground point in output pixels: the centre and the bottom edge of the ellipse
- * the game itself drew at the object's feet. `out` is the four corners in the order
+ * `ground_y` is the object's z row in output pixels, which is the CENTRE of the ellipse the
+ * game draws under it. The ellipse's bottom edge is artwork below the contact plane, not the
+ * height-zero row. `out` is the four corners in the order
  * head-TL, head-TR, foot-BR, foot-BL, and the sprite's UVs map onto them in that order, so the
  * silhouette stands on its own feet however far the shear has carried the head.
  *
  * This is here and not in a renderer because it was a renderer-local copy of exactly this
  * arithmetic that once drifted from the light while its comment said they agreed. Both paths
  * that lay a shadow down include this header. */
-static inline void stagelight_shadow_quad(float across, float up,
-                                          float cx, float gy, float w, float h, float lift,
-                                          float out[8])
+static inline void stagelight_shadow_quad(float across, float up, float x, float y,
+                                          float w, float h, float ground_y, float out[8])
 {
-    const float fx = cx + lift * across, fy = gy - lift * up;
-    const float hx = fx + h * across,    hy = fy - h * up;
-    out[0] = hx - w * 0.5f; out[1] = hy;   /* head, top-left     */
-    out[2] = hx + w * 0.5f; out[3] = hy;   /* head, top-right    */
-    out[4] = fx + w * 0.5f; out[5] = fy;   /* foot, bottom-right */
-    out[6] = fx - w * 0.5f; out[7] = fy;   /* foot, bottom-left  */
+    const float top_h = ground_y - y;
+    const float bottom_h = ground_y - (y + h);
+    const float top_x = top_h * across, top_y = ground_y - top_h * up;
+    const float bottom_x = bottom_h * across, bottom_y = ground_y - bottom_h * up;
+    out[0] = x + top_x;         out[1] = top_y;    /* head, top-left     */
+    out[2] = x + w + top_x;     out[3] = top_y;    /* head, top-right    */
+    out[4] = x + w + bottom_x;  out[5] = bottom_y; /* foot, bottom-right */
+    out[6] = x + bottom_x;      out[7] = bottom_y; /* foot, bottom-left  */
 }
 
 #endif

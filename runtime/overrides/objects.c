@@ -30,6 +30,7 @@
 #include "guest_ops.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "shadowcaster.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -179,11 +180,12 @@ void fn_0041a5a0(void)
         const uint32_t data = LD32(o + 0x368);
 
         /* ---- the stage's own shadow ellipse ---- */
-        if ((int32_t)LD32(o + 0x98) >= 0 &&
+        const int draws_ellipse = (int32_t)LD32(o + 0x98) >= 0 &&
             LD32(LD32(o + 0x70) * 0x178 + 0x7ac + data) != 0xbbd &&
             LD32(LD32(o + 0x70) * 0x178 + 0x7ac + data) != 0x270d &&
             LD32(data + 0x6f4) != 0xdf && LD32(data + 0x6f4) != 0xe0 &&
-            state > -0x46 && phase < 2) {
+            state > -0x46 && phase < 2;
+        if (draws_ellipse) {
             const uint32_t rec = LD32(self + BG_REC_PTR) + (uint32_t)bg * BG_REC_SIZE;
             const int32_t sw  = (int32_t)LD32(rec + SHADOW_W);
             const int32_t sh  = (int32_t)LD32(rec + SHADOW_H);
@@ -197,12 +199,17 @@ void fn_0041a5a0(void)
 
         /* ---- the sprite itself ---- */
         if (phase < 2 && (int32_t)LD32(OBJ(idx) + 8) > -0x19) {
+            const int type = (int32_t)LD32(data + DATA_TYPE);
+            render_shadow_object_begin((int32_t)LD32(OBJ(idx) + 0x18),
+                                       type == DATA_TYPE_CHARACTER,
+                                       shadowcaster_should_cast(draws_ellipse, type));
             PUSH32(arg2);
             PUSH32(arg1);
             PUSH32((uint32_t)cam);
             PUSH32(0x0041a7a4u);
             R(ECX) = OBJ(idx);
             fn_0040de30();
+            render_shadow_object_end();
         }
 
         /* ---- the multiplier label, "x<n>", drawn only when there is more than one ----

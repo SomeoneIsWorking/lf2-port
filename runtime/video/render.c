@@ -39,8 +39,13 @@ typedef struct {
     uint32_t src_pixels;
     SDL_FRect src;
     int keyed;
+    int mirror_x;
     uint32_t key_lo, key_hi;
     int sw, sh, spitch;
+    /* Set only while fn_0040de30 draws one world object's sprite composite. */
+    int shadow_character;
+    int shadow_caster;
+    float shadow_ground_y;
     /* E_FILL */
     uint32_t argb;
     /* E_TILE */
@@ -111,7 +116,8 @@ static long stat_mesh; /* geometry passes placed in the list -- see render_repor
 static long stat_soft_frames, stat_post, stat_ground, stat_shadow;
 static float ground_y_lo = 1e9f, ground_y_hi = -1e9f;
 static float stat_airborne_max;
-static long stat_ground_orphan;
+static int shadow_object_open, shadow_object_character, shadow_object_casts;
+static float shadow_object_ground_y;
 
 int render_gpu_enabled(void)
 {
@@ -298,8 +304,9 @@ void render_surface_dirty(uint32_t pixels)
 
 /* ---- recording ---- */
 
-void render_blit(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh, int spitch,
-                 int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi)
+static void render_blit_record(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh,
+                               int spitch, int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi,
+                               int mirror_x)
 {
     if (!render_gpu_enabled() || dr <= dl || db <= dt || sr <= sl || sb <= st) return;
     Entry *e = entry_push(dst_pixels);
@@ -312,9 +319,37 @@ void render_blit(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t s
     e->sh = sh;
     e->spitch = spitch;
     e->keyed = keyed;
+    e->mirror_x = mirror_x;
     e->key_lo = key_lo;
     e->key_hi = key_hi;
+    e->shadow_character = shadow_object_open && shadow_object_character;
+    e->shadow_caster = shadow_object_open && shadow_object_casts;
+    e->shadow_ground_y = shadow_object_ground_y;
 }
+
+void render_blit(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh, int spitch,
+                 int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi)
+{
+    render_blit_record(dst_pixels, dl, dt, dr, db, src_pixels, sw, sh, spitch, sl, st, sr, sb, keyed, key_lo, key_hi,
+                       0);
+}
+
+void render_blit_mirror_x(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh,
+                          int spitch, int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi)
+{
+    render_blit_record(dst_pixels, dl, dt, dr, db, src_pixels, sw, sh, spitch, sl, st, sr, sb, keyed, key_lo, key_hi,
+                       1);
+}
+
+void render_shadow_object_begin(int ground_y, int character, int casts_shadow)
+{
+    shadow_object_open = 1;
+    shadow_object_character = character;
+    shadow_object_casts = casts_shadow;
+    shadow_object_ground_y = (float)ground_y;
+}
+
+void render_shadow_object_end(void) { shadow_object_open = 0; }
 
 /* A finished geometry pass, placed at THIS point in the painter order (issue #62).
  *
@@ -518,7 +553,8 @@ static int render_skip(void)
 /* SDL_RenderTexture accepts a pixel-space source rectangle, but the GPU backend normalizes
  * its integer edges onto boundaries shared by adjacent sheet cells. Draw the quad explicitly
  * so the old renderer and the engine use the same texel-centre contract. */
-static void draw_texture_quad(Tex *t, const SDL_FRect *src, const SDL_FRect *dst)
+static void draw_texture_quad(Tex *t, const SDL_FRect *src, const SDL_FRect *dst, int logical_w, int logical_h,
+                              int mirror_x)
 {
     /* Restore the complete old run.sh path, not merely its UV values. SDL_RenderTexture
      * constructs its own quad internally, so an injector that kept this function and only
@@ -528,8 +564,19 @@ static void draw_texture_quad(Tex *t, const SDL_FRect *src, const SDL_FRect *dst
         return;
     }
     float u0, v0, u1, v1;
-    texrect_for_blit(src->x, src->y, src->w, src->h, (int)dst->w, (int)dst->h, t->w, t->h,
-                     getenv("LF2_TEXRECT_EDGE") != NULL, &u0, &v0, &u1, &v1);
+    /* DirectDraw's logical extents decide whether each axis is 1:1 or stretched; the output
+     * rectangle decides the sampling rate only for a true stretch. The negative restores the
+     * old unit confusion by treating every magnified 1:1 copy as a StretchBlt. */
+    if (getenv("LF2_TEXRECT_RASTER_DEST"))
+        texrect_for_blit(src->x, src->y, src->w, src->h, (int)dst->w, (int)dst->h, t->w, t->h, 0, &u0, &v0, &u1, &v1);
+    else
+        texrect_for_output_blit(src->x, src->y, src->w, src->h, logical_w, logical_h, dst->x, dst->y, dst->w, dst->h,
+                                t->w, t->h, 0, &u0, &v0, &u1, &v1);
+    if (mirror_x) {
+        const float swap = u0;
+        u0 = u1;
+        u1 = swap;
+    }
     const SDL_FColor white = {1.0f, 1.0f, 1.0f, 1.0f};
     const SDL_Vertex v[4] = {
         {{dst->x, dst->y}, white, {u0, v0}},
@@ -650,7 +697,7 @@ static void draw_list(List *l, float world, float ox, float oy, int from, int to
             Tex *t = tex_for(e->src_pixels, e->sw, e->sh, e->spitch, e->keyed, e->key_lo, e->key_hi);
             if (!t) continue;
             SDL_SetTextureBlendMode(t->tex, e->keyed ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
-            draw_texture_quad(t, &e->src, &dst);
+            draw_texture_quad(t, &e->src, &dst, (int)e->dst.w, (int)e->dst.h, e->mirror_x);
             stat_tex++;
             continue;
         }
@@ -740,23 +787,13 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
 
     const int skip = render_skip();
     int n = 0, ng = 0;
-    /* THE GROUND PAIRING, exactly as draw_list does it (C019): the game draws an object's shadow
-     * ellipse immediately before the object, so a sprite preceded by a marker is an object
-     * STANDING IN THE STAGE rather than a HUD element or a piece of text.
-     *
-     * The engine uses that pair to shade only the character and to anchor its cast shadow at the
-     * same ground point the game drew. */
-    int have_ground = 0;
-    SDL_FRect ground = {0, 0, 0, 0};
+    /* Ground ellipses remain counted evidence, but caster/character ownership comes from the
+     * hand-ported world-object pass. The old "next sprite after a marker" rule could identify
+     * only one texture and therefore dropped separately painted held objects (#98). */
     for (int i = 0; i < ov; i++) {
         if (skip > 0 && (i % skip) == 0) continue; /* the negative arm, honoured identically */
         Entry *e = &l->e[i];
         if (e->kind == E_GROUND) {
-            ground.x = (e->dst.x + world) * scale + ox;
-            ground.y = e->dst.y * scale + oy;
-            ground.w = e->dst.w * scale;
-            ground.h = e->dst.h * scale;
-            have_ground = 1;
             /* COUNTED HERE TOO, and that is not bookkeeping. This function REPLACES the
              * PASS_COLOUR walk, which is where draw_list counts markers -- so with the engine
              * selected the counters stayed at zero while shadows were being drawn, and
@@ -773,12 +810,6 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
             continue;
         }
         if (e->kind == E_MESH) {
-            /* The marker binds to the next SPRITE, so a mesh between the two must not consume
-             * it. draw_list clears `have_ground` for every kind at one place; here the two
-             * early returns meant this one did not. Unreachable today -- geometry is submitted
-             * per layer gap, never between a marker and its object -- and it is one rule
-             * written in two places, which is how the two drift. */
-            have_ground = 0;
             /* INTO THE SAME PASS, at this point in the painter order -- not composited back as
              * a texture. `at` is the quad index it precedes, so the engine can give it the
              * sliver of depth between this quad and the last. Recording where it goes is all
@@ -800,14 +831,6 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
             continue;
         }
 
-        /* The marker binds to the NEXT sprite, and the pairing is CHECKED rather than assumed:
-         * a sprite clipped entirely off the composition never enters the list, and the marker
-         * would then bind to the next object's sprite instead -- measured once at a thousand
-         * pixels away. The test is the game's own geometry: the ellipse is at the object's feet,
-         * so the sprite must overlap it horizontally. */
-        const int was_ground = have_ground;
-        have_ground = 0;
-
         EngineQuad *q = &out[n];
         memset(q, 0, sizeof *q);
         q->x = (e->dst.x + world) * scale + ox;
@@ -815,27 +838,13 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
         q->w = e->dst.w * scale;
         q->h = e->dst.h * scale;
         q->r = q->g = q->b = q->a = 1.0f;
-        if (was_ground && e->kind == E_TEX) {
-            const float qx = (e->dst.x + world) * scale + ox, qw = e->dst.w * scale;
-            if (qx < ground.x + ground.w && qx + qw > ground.x) {
-                /* MARKED FOR THE LIGHTING CHAIN, with the ground it stands on: the engine
-                 * draws the object's own quad into the character mask and its sheared
-                 * silhouette into the cast-shadow mask. The shadow is anchored to the GROUND
-                 * ELLIPSE's centre (issue #72) -- the ellipse is the game's own answer for
-                 * where the character's feet are -- not to the sprite quad's centre, which
-                 * carries a per-frame offset from the feet (measured 9 px on one frame). */
-                q->is_object = 1;
-                q->ground_gy = ground.y + ground.h;
-                q->ground_cx = ground.x + ground.w * 0.5f;
-                /* One cast shadow per object -- the count draw_list's PASS_SHADOW used to
-                 * keep, moved here with the shadow itself. */
-                stat_shadow++;
-                /* The airborne term, measured here so render_report's "highest lift" keeps a
-                 * writer after draw_cast_shadow left. Same numbers the engine's shadow quad
-                 * uses -- how far the object's own base sits above the floor. */
-                const float air = q->ground_gy - (q->y + q->h);
-                if (air > stat_airborne_max) stat_airborne_max = air;
-            } else stat_ground_orphan++; /* the same failed pairing draw_list counts */
+        if (e->kind == E_TEX && (e->shadow_character || e->shadow_caster)) {
+            q->is_object = e->shadow_character;
+            q->casts_shadow = e->shadow_caster;
+            q->ground_gy = e->shadow_ground_y * scale + oy;
+            if (q->casts_shadow) stat_shadow++;
+            const float air = q->ground_gy - (q->y + q->h);
+            if (air > stat_airborne_max) stat_airborne_max = air;
         }
 
         if (e->kind == E_FILL) {
@@ -876,8 +885,13 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
          * injector. At 1x they often happen to select the right texel; magnification is the
          * discriminator, where it produces issue #67's green line and issue #68's adjacent
          * Bandit eye. */
-        texrect_for_blit(e->src.x, e->src.y, e->src.w, e->src.h, (int)e->dst.w, (int)e->dst.h, e->sw, e->sh,
-                         getenv("LF2_TEXRECT_EDGE") != NULL, &q->u0, &q->v0, &q->u1, &q->v1);
+        texrect_for_output_blit(e->src.x, e->src.y, e->src.w, e->src.h, (int)e->dst.w, (int)e->dst.h, q->x, q->y, q->w,
+                                q->h, e->sw, e->sh, getenv("LF2_TEXRECT_EDGE") != NULL, &q->u0, &q->v0, &q->u1, &q->v1);
+        if (e->mirror_x) {
+            const float swap = q->u0;
+            q->u0 = q->u1;
+            q->u1 = swap;
+        }
         q->blend = e->keyed ? 1 : 0;
         n++;
     }
@@ -1095,8 +1109,8 @@ void render_report(void)
                 "text is MISSING from those frames\n",
                 FL.pool_exhausted, TILE_TEX_MAX);
     fprintf(stderr,
-            "render: the light ran on %ld frame(s); %ld cast shadows from %ld ground "
-            "markers\n",
+            "render: the light ran on %ld frame(s); %ld sprite pieces cast shadows; "
+            "%ld game ground markers were observed\n",
             stat_post, stat_shadow, stat_ground);
     if (stat_ground)
         fprintf(stderr,
@@ -1108,13 +1122,6 @@ void render_report(void)
      * never moved" and "nothing ever jumped" look identical on a screenshot. So the highest
      * lift seen is reported: a zero here means the offset was NEVER EXERCISED, not that it
      * does not work. */
-    if (stat_ground_orphan)
-        fprintf(stderr,
-                "render: %ld ground markers were discarded because the sprite that "
-                "followed did not overlap them -- that object's own sprite was "
-                "dropped (clipped off the composition), so the marker had nothing to "
-                "belong to\n",
-                stat_ground_orphan);
     if (stat_shadow)
         fprintf(stderr, "render: the highest an object got off its ground point was %.0f px%s\n",
                 (double)stat_airborne_max,
@@ -1122,19 +1129,18 @@ void render_report(void)
                                            "never exercised"
                                          : ", and its shadow was offset along the light by that much");
     else
-        fprintf(stderr, "render: NO ground markers were seen, so the floor band is UNKNOWN -- "
-                        "this run reached no match, or the stage's shadow object was never "
-                        "identified\n");
+        fprintf(stderr, "render: NO shadow-caster sprite pieces were recorded -- this run reached no "
+                        "match, or the world-object pass did not identify a caster\n");
     mesh_report();
     engine_report();
     if (engine_enabled() && opt_lighting() && stat_ground && !stat_shadow)
         fprintf(stderr,
-                "render: %ld ground markers but NO cast shadows -- every one was "
-                "followed by something that could not be drawn\n",
+                "render: %ld ground markers but NO caster metadata -- the game's ellipse "
+                "evidence reached the renderer without its authoritative world-object scope\n",
                 stat_ground);
     if (engine_enabled() && opt_lighting() && stat_frames && !stat_ground)
-        fprintf(stderr, "render: NO ground markers were seen, so no shadow was replaced -- "
-                        "the stage's shadow object was never identified\n");
+        fprintf(stderr, "render: NO game ground markers were seen -- ellipse replacement was not "
+                        "exercised, although independently identified physical casters may still cast\n");
     if (render_gpu_enabled() && stat_frames == 0)
         fprintf(stderr, "render: the GPU path presented NO frames -- every one fell back to "
                         "the software compositor, so these counters describe nothing\n");

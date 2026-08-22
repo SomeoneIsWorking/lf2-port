@@ -220,4 +220,7 @@ want it, it belongs in the game's own behaviour or its menus.
 `game/`, `LF2_v2.0a.exe`, `scratch/` and `re/instructions.tsv` are gitignored and must stay
 that way — the last is Ghidra's dump *with raw bytes*, from which `.text` can be rebuilt.
 `re/entries.tsv` and `re/functions.tsv` (addresses, sizes, names, no code) are committed.
-Never commit an extracted asset, a frame dump, or anything derived from the shipped binary.
+Never commit an extracted asset or raw frame-dump corpus. The only visual-output exception is
+the small, intentionally selected promotional gallery under `docs/screenshots/`; each image must
+come from a locally extracted copy, be reviewed as a whole screenshot, and remain unusable as a
+replacement for any separately distributed game asset.

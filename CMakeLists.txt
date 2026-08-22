@@ -248,6 +248,8 @@ add_test(NAME clang_format COMMAND ${Python3_EXECUTABLE}
 add_test(NAME clang_tidy COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tools/build/check_cpp_quality.py tidy
          --build-dir ${CMAKE_BINARY_DIR})
+add_test(NAME gallery_capture_tool COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_gallery_capture.py)
 
 # ---- RmlUi (issue #70) ----
 #
@@ -416,9 +418,11 @@ target_compile_options(test_blit PRIVATE -Wall -Wextra)
 add_test(NAME blit COMMAND test_blit)
 
 add_executable(test_backdrop tests/test_backdrop.c)
-target_include_directories(test_backdrop PRIVATE runtime/video)
+target_include_directories(test_backdrop PRIVATE runtime/video runtime/overrides)
 target_compile_options(test_backdrop PRIVATE -Wall -Wextra)
 add_test(NAME backdrop COMMAND test_backdrop)
+add_test(NAME backdrop_pixels COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_backdrop_pixels.py)
 
 add_executable(test_result_panel tests/test_result_panel.c runtime/video/result_panel.c)
 target_include_directories(test_result_panel PRIVATE runtime/video runtime/overrides)
