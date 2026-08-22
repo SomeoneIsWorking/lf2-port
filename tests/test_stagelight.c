@@ -16,6 +16,7 @@
  * each stated as the relation it is rather than as a number copied out of a run.
  */
 #include "video/stagelight.h"
+#include "video/shadowcaster.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -186,15 +187,17 @@ lengths_done:
      * lengthen as the light dropped; one that failed the third would stay welded under a
      * jumping fighter however high they went (issue #35's shape of bug). */
     {
-        float across, up, q[8], r[8];
+        float across, up, q[8], r[8], s[8];
         stagelight_vector(-48.7f, 70.0f, v);
         stagelight_shadow(v, &across, &up);
 
-        /* Grounded: the foot edge IS the ground point, however the light is angled. */
-        stagelight_shadow_quad(across, up, 100.0f, 300.0f, 40.0f, 80.0f, 0.0f, q);
-        eqf("a grounded shadow's foot edge sits at the ground point (x)",
-            (q[4] + q[6]) * 0.5f, 100.0f, 0.001f);
-        eqf("...(y)", q[5], 300.0f, 0.001f);
+        /* Grounded: every foot point keeps its authored x; it is not recentered on an
+         * ellipse. The old ground_cx +/- w/2 map produces 80 and 120 here, so this is the
+         * off-centre frame that distinguishes the two contracts. */
+        stagelight_shadow_quad(across, up, 86.0f, 220.0f, 40.0f, 80.0f, 300.0f, q);
+        eqf("a grounded shadow preserves the frame's left foot x", q[6], 86.0f, 0.001f);
+        eqf("...and its right foot x", q[4], 126.0f, 0.001f);
+        eqf("...at the object's z row", q[5], 300.0f, 0.001f);
         eqf("...and is the sprite's own width wide", q[4] - q[6], 40.0f, 0.001f);
 
         /* The head edge is the foot edge plus the full-height shear. */
@@ -202,12 +205,37 @@ lengths_done:
         eqf("...and up the picture by h * up", q[1], q[7] - 80.0f * up, 0.001f);
 
         /* Airborne: the WHOLE quad moves by the lift, feet included. */
-        stagelight_shadow_quad(across, up, 100.0f, 300.0f, 40.0f, 80.0f, 25.0f, r);
+        stagelight_shadow_quad(across, up, 86.0f, 195.0f, 40.0f, 80.0f, 300.0f, r);
         eqf("a jump carries the foot edge across by lift * across",
-            (r[4] + r[6]) * 0.5f, 100.0f + 25.0f * across, 0.001f);
+            r[6], 86.0f + 25.0f * across, 0.001f);
         eqf("...and up by lift * up", r[5], 300.0f - 25.0f * up, 0.001f);
         eqf("...and the head by the same, so the shadow keeps its shape",
             r[1] - q[1], -25.0f * up, 0.001f);
+
+        /* A second, wider authored frame keeps its own contact span as well. This prevents a
+         * projection that happens to fit the first silhouette from becoming the contract. */
+        stagelight_shadow_quad(across, up, 151.0f, 231.0f, 70.0f, 69.0f, 300.0f, s);
+        eqf("a second fighter silhouette keeps its authored left foot", s[6], 151.0f, 0.001f);
+        eqf("...and its authored right foot", s[4], 221.0f, 0.001f);
+        eqf("...on the same object-z contact row", s[5], 300.0f, 0.001f);
+    }
+
+    /* data.txt's physical item types keep casting while carried even if their ordinary flat
+     * ellipse is suppressed. Effects are not promoted by this rule; a real ellipse remains
+     * authoritative for every type outside the physical set. */
+    {
+        ok("a light weapon is a physical caster without an ellipse",
+           shadowcaster_should_cast(0, SHADOWCASTER_LIGHT_WEAPON));
+        ok("a heavy carried object is a physical caster without an ellipse",
+           shadowcaster_should_cast(0, SHADOWCASTER_HEAVY_WEAPON));
+        ok("a thrown item is a physical caster without an ellipse",
+           shadowcaster_should_cast(0, SHADOWCASTER_THROWN_ITEM));
+        ok("a drink is a physical caster without an ellipse",
+           shadowcaster_should_cast(0, SHADOWCASTER_DRINK));
+        ok("an effect is not promoted merely because it is a world draw",
+           !shadowcaster_should_cast(0, 3));
+        ok("the game's ellipse remains authoritative for any object type",
+           shadowcaster_should_cast(1, 3));
     }
 
     printf("stage light: %d checks, %d failure(s)\n", checks, failures);

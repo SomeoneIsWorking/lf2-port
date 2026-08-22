@@ -49,18 +49,19 @@ void render_shutdown(void);
  * the key range turned into alpha 0, which is where this port's blend stage comes from. */
 void render_blit(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh, int spitch,
                  int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi);
+void render_blit_mirror_x(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh,
+                          int spitch, int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi);
 
-/* The game's own shadow ellipse, identified by the object it is drawn on. It is NOT added to
- * the list as a picture: its rectangle is where the object stands on the ground, and that is
- * the one thing a cast shadow needs that the sprite itself cannot supply. The next sprite
- * drawn is the object it belongs to -- the game draws the ellipse immediately before it. */
+/* The game's own shadow ellipse. It is NOT added to the list as a picture while cast shadows
+ * are enabled; its rectangle remains independent evidence of the walkable floor. Caster and
+ * character ownership instead come from the world-object scope around the object's draw. */
 void render_shadow_ground(uint32_t dst_pixels, int dl, int dt, int dr, int db);
 
 /* Whether the cast shadows are in force. With them off -- or with the shaders unavailable,
  * because the mask they draw into would then be consumed by nothing -- the game's own ellipse
  * is recorded as an ordinary picture and the GPU frame stays byte-comparable with the
- * software one. It is also what MARKS AN OBJECT: a sprite with a ground marker in front of
- * it is a fighter standing in the field, which is the only thing the lighting touches. */
+ * software one. Object lighting and caster metadata are supplied independently by the
+ * hand-ported world-object pass. */
 int render_shadows_enabled(void);
 
 /* A solid rectangle, the game's DDBLT_COLORFILL. */

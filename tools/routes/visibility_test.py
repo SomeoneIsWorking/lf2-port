@@ -30,6 +30,10 @@ def run_arm(binary: Path, game: Path, arm: str) -> bool:
     elif arm.startswith("chars"):
         env["LF2_HD2D"] = "off"
         env["LF2_HD2D_SHOW"] = "chars"
+    elif arm.startswith("shadow-"):
+        env["LF2_HD2D"] = "on"
+        env["LF2_HD2D_SHOW"] = "shadow"
+        env["LF2_HD2D_LIGHT"] = "-60,45"
     else:
         env["LF2_HD2D"] = "on"
         # Make mask consumption a large, deterministic colour change while leaving pixels
@@ -57,7 +61,8 @@ def run_arm(binary: Path, game: Path, arm: str) -> bool:
 
     text = log.read_text(errors="replace")
     match = re.search(
-        rf"^visibility probe: PASS arm={re.escape(arm)} left=#[0-9a-f]{{6}} right=#[0-9a-f]{{6}}$",
+        rf"^visibility probe: PASS arm={re.escape(arm)} left=#[0-9a-f]{{6}} "
+        rf"right=#[0-9a-f]{{6}} third=#[0-9a-f]{{6}} fourth=#[0-9a-f]{{6}}$",
         text,
         re.MULTILINE,
     )
@@ -88,11 +93,22 @@ def main() -> int:
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     print("visibility: procedural character under an opaque/transparent occluder")
-    arms = ("unlit", "chars", "chars-reversed", "lit")
+    arms = (
+        "unlit",
+        "chars",
+        "chars-reversed",
+        "lit",
+        "shadow-carried",
+        "shadow-fighter-only",
+        "shadow-occluded",
+        "shadow-occluded-reversed",
+        "shadow-self-lequal",
+    )
     passed = [run_arm(binary, game, arm) for arm in arms]
     if not all(passed):
         return 1
-    print("visibility: PASS -- colour, mask order, transparent depth, and mask consumption")
+    print("visibility: PASS -- colour, character/caster separation, and earlier/equal/later "
+          "shadow receiver depth with the LEQUAL other-answer mutation")
     return 0
 
 

@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "backdrop.h"
+
 typedef struct {
     long frame;
     int selected;
@@ -22,5 +24,6 @@ typedef struct {
 
 /* LF2_BLT_FRAME=<frame>[,...] records every composition blit for selected frames. */
 void blt_trace_log(const BltTrace *trace);
+void blt_trace_backdrop(const BltTrace *trace, const BackdropBlit *blit);
 
 #endif

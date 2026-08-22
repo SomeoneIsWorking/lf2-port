@@ -12,20 +12,20 @@ auto-detect and hotswap, and borderless windowed mode.
 
 ## Screenshots
 
-![Native ultrawide Stage Mode PvE](docs/screenshots/ultrawide-stage-mode.png)
+![Native ultrawide Stage Mode PvE](docs/screenshots/stage-mode-pve-ultrawide.png)
 
 *Stage Mode PvE at 3440×1440: the ultrawide viewport exposes more of the stage while preserving
 the original pixel geometry.*
 
-![Native widescreen demo match](docs/screenshots/widescreen-demo.png)
+![Native widescreen demo match](docs/screenshots/demo-match-widescreen.png)
 
 *Native 16:9 presentation expands the world view instead of stretching the original 4:3 frame.*
 
 | In-game port menu | Native renderer and lighting controls |
 |---|---|
-| ![The in-game RmlUi port menu](docs/screenshots/port-menu.png) | ![Native renderer and lighting controls in RmlUi](docs/screenshots/graphics.png) |
+| ![The in-game RmlUi port menu](docs/screenshots/port-menu-overview.png) | ![Native renderer and lighting controls in RmlUi](docs/screenshots/port-menu-graphics.png) |
 
-![Remappable keyboard and controller inputs](docs/screenshots/input-mapping.png)
+![Remappable keyboard and controller inputs](docs/screenshots/port-menu-controls.png)
 
 *Keyboard and controller bindings use the same device-independent input layer.*
 

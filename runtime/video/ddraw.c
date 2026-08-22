@@ -151,11 +151,9 @@ void shadow_hint_set(int on) { shadow_hint = on; }
  * cost. Counted so the widening cannot become a rule nobody has ever seen fire. */
 static int  world_band_hint;
 static int  world_backdrop_hint;
-static int  world_layer_span_hint;
 static long world_band_fills, world_band_widened;
 void world_band_hint_set(int on) { world_band_hint = on; }
 void world_backdrop_hint_set(int on) { world_backdrop_hint = on; }
-void world_layer_span_hint_set(int span) { world_layer_span_hint = span; }
 
 void glyph_hint_clear(void) { glyph_hint = -1; }
 
@@ -359,11 +357,10 @@ static void dump_path(char *out, size_t n, const char *fmt, ...)
  *
  * The grammar lives in runtime/app/framespec.h so tests/test_framespec.c can walk it without
  * booting the game; script_when is the resolver, because it is what knows the screens. */
-static int spec_lists(const char *spec, long frame)
+int hostwin_frame_selected(const char *spec, long frame)
 {
     return framespec_matches(spec, frame, script_when);
 }
-
 /* A capture aimed at a fixed frame number and a probe that fires off game STATE can
  * disagree, and when they do the picture is of the wrong thing while looking perfectly
  * valid -- an A/B of two spawns produced one arm whose run never reached the match, and the
@@ -375,7 +372,7 @@ void gfx_request_frame_dump(void) { frame_requested = 1; }
 static int frame_wanted(long frame)
 {
     if (frame_requested) { frame_requested = 0; return 1; }
-    return spec_lists(getenv("LF2_FRAME_DUMP"), frame);
+    return hostwin_frame_selected(getenv("LF2_FRAME_DUMP"), frame);
 }
 
 /* LF2_MEM_DUMP=<frame>[,<frame>...] writes the game's whole .data section to
@@ -395,7 +392,7 @@ uint32_t guest_heap_used(void);          /* imports.c */
 
 static void dump_heap(long frame)
 {
-    if (!spec_lists(getenv("LF2_HEAP_DUMP"), frame)) return;
+    if (!hostwin_frame_selected(getenv("LF2_HEAP_DUMP"), frame)) return;
     const uint32_t used = guest_heap_used();
     char path[256];
     dump_path(path, sizeof path, "heap_%06ld.bin", frame);
@@ -409,7 +406,7 @@ static void dump_heap(long frame)
 
 static void dump_data(long frame)
 {
-    if (!spec_lists(getenv("LF2_MEM_DUMP"), frame)) return;
+    if (!hostwin_frame_selected(getenv("LF2_MEM_DUMP"), frame)) return;
     char path[256];
     dump_path(path, sizeof path, "data_%06ld.bin", frame);
     FILE *f = fopen(path, "wb");
@@ -936,9 +933,9 @@ static void read_rect(uint32_t p, int *l, int *t, int *r, int *b, int dw, int dh
  * shift pixels, and this path draws every sprite in the game. */
 enum { BLIT_MAXW = 4096 };
 
-static void blit(Surface *d, int dx, int dy, int dw, int dh,
-                 Surface *s, int sx, int sy, int sw, int sh,
-                 int keyed, uint32_t klo, uint32_t khi)
+static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh,
+                        Surface *s, int sx, int sy, int sw, int sh,
+                        int keyed, uint32_t klo, uint32_t khi, int mirror_x)
 {
     if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
 
@@ -950,7 +947,9 @@ static void blit(Surface *d, int dx, int dy, int dw, int dh,
     int ncol = 0;
     const int wlim = dw < BLIT_MAXW ? dw : BLIT_MAXW;
     for (int x = 0; x < wlim; x++) {
-        const int sxx = sx + (int)((int64_t)x * sw / dw), dxx = dx + x;
+        const int source_offset = (int)((int64_t)x * sw / dw);
+        const int sxx = mirror_x ? sx + sw - 1 - source_offset : sx + source_offset;
+        const int dxx = dx + x;
         if (sxx < 0 || sxx >= s->w || dxx < 0 || dxx >= d->w) continue;
         col_src[ncol] = sxx; col_dst[ncol] = dxx; ncol++;
     }
@@ -993,6 +992,20 @@ static void blit(Surface *d, int dx, int dy, int dw, int dh,
     surface_changed(d);
 }
 
+static void blit(Surface *d, int dx, int dy, int dw, int dh,
+                 Surface *s, int sx, int sy, int sw, int sh,
+                 int keyed, uint32_t klo, uint32_t khi)
+{
+    blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 0);
+}
+
+static void blit_mirror_x(Surface *d, int dx, int dy, int dw, int dh,
+                          Surface *s, int sx, int sy, int sw, int sh,
+                          int keyed, uint32_t klo, uint32_t khi)
+{
+    blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 1);
+}
+
 /* ---- THE SPACE BESIDE A SCREEN WHOSE BACKDROP IS A PICTURE (issue #44) ----
  *
  * SAY THIS FIRST: THERE IS NO FAITHFUL ANSWER HERE AND THIS IS A PORT DECISION, NOT THE
@@ -1019,7 +1032,8 @@ static void blit(Surface *d, int dx, int dy, int dw, int dh,
  *
  * The runs are merged so a gradient costs a few dozen display-list entries rather than one per
  * row, and both the software composition and the recorded list get the same rectangles, so the
- * GPU and software frames stay comparable. */
+ * GPU and software frames stay comparable. Stage art does not use this colour clamp: Lion
+ * Forest's explicitly authored opaque far plane continues as native-size reflected segments. */
 static void band_paint(Surface *d, int x, int w, int top, int bot, uint32_t c)
 {
     if (w <= 0 || bot <= top) return;
@@ -1034,12 +1048,17 @@ static void band_paint(Surface *d, int x, int w, int top, int bot, uint32_t c)
     }
 }
 
-static void backdrop_picture_bands(Surface *d, Surface *s,
-                                   int sl, int st_, int sr, int sb,
-                                   int dl, int dt, int dr, int db)
+static void backdrop_edge_bands(Surface *d, Surface *s,
+                                int sl, int st_, int sr, int sb,
+                                int dl, int dt, int dr, int db)
 {
     if (db <= dt || sb <= st_ || sr <= sl) return;
     if (sl < 0 || sr > s->w) return;
+
+    BackdropBand left, right;
+    const int have_left = backdrop_side_band(1, d->w, -1, dl, dt, dr, db, sl, sr, &left);
+    const int have_right = backdrop_side_band(1, d->w, 1, dl, dt, dr, db, sl, sr, &right);
+    if (!have_left && !have_right) return;
 
     int have = 0, run_from = dt;
     uint32_t run_l = 0, run_r = 0;
@@ -1051,20 +1070,59 @@ static void backdrop_picture_bands(Surface *d, Surface *s,
             if (sy >= 0 && sy < s->h) {
                 const uint32_t *row =
                     (const uint32_t *)(g_mem + s->pixels + (size_t)sy * (size_t)s->pitch);
-                cl = row[sl] & 0x00ffffffu;
-                cr = row[sr - 1] & 0x00ffffffu;
+                if (have_left) cl = row[left.source_x] & 0x00ffffffu;
+                if (have_right) cr = row[right.source_x] & 0x00ffffffu;
                 valid = 1;
             }
         }
         if (have && (!valid || cl != run_l || cr != run_r)) {
-            band_paint(d, 0, dl, run_from, y, run_l);
-            band_paint(d, dr, d->w - dr, run_from, y, run_r);
+            if (have_left) band_paint(d, left.dl, left.dr - left.dl, run_from, y, run_l);
+            if (have_right) band_paint(d, right.dl, right.dr - right.dl, run_from, y, run_r);
             have = 0;
         }
-        if (valid && !have) { run_from = y; run_l = cl; run_r = cr; have = 1; }
+        if (valid && !have) {
+            run_from = y;
+            run_l = cl;
+            run_r = cr;
+            have = 1;
+        }
     }
 }
 
+/* A declared far-plane edge continues in native-size segments whose X direction alternates.
+ * This costs one quad per segment rather than one per column; destination/source extents remain
+ * exactly equal, and keyed scenery never reaches this boundary with continuation flags. */
+static void backdrop_mirror_segments(Surface *d, Surface *s, int flags,
+                                     int sl, int st_, int sr, int sb,
+                                     int dl, int dt, int dr, int db,
+                                     int keyed, const BltTrace *trace)
+{
+    for (int segment = 0;; segment++) {
+        BackdropBlit piece;
+        if (!backdrop_mirror_segment(flags, d->w, segment, dl, dt, dr, db, sl, st_, sr, sb, &piece)) break;
+        blt_trace_backdrop(trace, &piece);
+        if (!d->primary) {
+            if (piece.mirror_x)
+                render_blit_mirror_x(d->pixels, piece.dl, piece.dt, piece.dr, piece.db,
+                                     s->pixels, s->w, s->h, s->pitch,
+                                     piece.sl, piece.st, piece.sr, piece.sb,
+                                     keyed, s->key_lo, s->key_hi);
+            else
+                render_blit(d->pixels, piece.dl, piece.dt, piece.dr, piece.db,
+                            s->pixels, s->w, s->h, s->pitch,
+                            piece.sl, piece.st, piece.sr, piece.sb,
+                            keyed, s->key_lo, s->key_hi);
+        }
+        if (piece.mirror_x)
+            blit_mirror_x(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt,
+                          s, piece.sl, piece.st, piece.sr - piece.sl, piece.sb - piece.st,
+                          keyed, s->key_lo, s->key_hi);
+        else
+            blit(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt,
+                 s, piece.sl, piece.st, piece.sr - piece.sl, piece.sb - piece.st,
+                 keyed, s->key_lo, s->key_hi);
+    }
+}
 static void dump_surface(uint32_t obj, const char *tag)
 {
     Surface *s = com_host(obj);
@@ -1478,7 +1536,7 @@ static void surf_Blt(uint32_t self)
 
     const long trace_frame = hostwin_frames() + 1;
     const BltTrace trace = {
-        .frame = trace_frame, .selected = spec_lists(getenv("LF2_BLT_FRAME"), trace_frame),
+        .frame = trace_frame, .selected = hostwin_frame_selected(getenv("LF2_BLT_FRAME"), trace_frame),
         .destination = self, .destination_w = d->w, .destination_h = d->h,
         .destination_primary = d->primary,
         .dl = dl, .dt = dt, .dr = dr, .db = db,
@@ -1628,26 +1686,12 @@ static void surf_Blt(uint32_t self)
         }
     }
 
-    /* The semantic span hint owns multi-piece backdrop scaling. The older native-width
-     * fallback below still covers a one-piece sky whose guest draw was clipped to 794; both
-     * rules are world-only so fixed menu artwork retains its screen framing. */
     if (getenv("LF2_BAND_DEBUG") && lf2_wide_width() && panel_hud_up() && srcobj && dl == 0)
         fprintf(stderr, "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n",
                 dl, dr, dt, db, d->w, NATIVE_W);
-    /* Scale every piece against the same authored plane span. Adjacent pieces therefore keep
-     * one boundary, and the plane's outer bitmap edges land at the viewport rather than
-     * becoming visible vertical cuts. The background override withholds this hint from props. */
-    int scaled_l, scaled_r;
-    if (backdrop_scale_span(world_layer_span_hint, d->w, dl, dr, &scaled_l, &scaled_r)) {
-        dl = scaled_l;
-        dr = scaled_r;
-    }
-    const int extend_world_backdrop = lf2_wide_width() && panel_hud_up() && s
-                                      && world_backdrop_hint && d->w > NATIVE_W;
-    if (lf2_wide_width() && panel_hud_up() && srcobj
-        && dl == 0 && dr == NATIVE_W
-        && d->w > NATIVE_W)
-        dr = d->w;
+    const int backdrop_flags = lf2_wide_width() && panel_hud_up() && s && d->w > NATIVE_W
+                             ? world_backdrop_hint : 0;
+    const int extend_world_backdrop = (backdrop_flags & BACKDROP_EXTEND_BOTTOM) != 0;
 
     /* The Summary screen is a fixed-width panel drawn over a world that remains wide. Its
      * first bitmap identifies the branch in fn_0041bc90; only draws inside that panel take
@@ -1832,10 +1876,14 @@ static void surf_Blt(uint32_t self)
             }
             blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
                  keyed, s->key_lo, s->key_hi);
+            if (backdrop_flags & (BACKDROP_MIRROR_LEFT | BACKDROP_MIRROR_RIGHT))
+                backdrop_mirror_segments(d, s, backdrop_flags, sl, st_, sr, sb,
+                                         dl, dt, dr, db, keyed, &trace);
             BackdropBlit ext;
-            if (backdrop_bottom_extension(extend_world_backdrop,
-                                          d->h < GEOM_WORLD_BOTTOM ? d->h : GEOM_WORLD_BOTTOM,
-                                          dl, dt, dr, db, sl, st_, sr, sb, &ext)) {
+            const int backdrop_bottom = d->h < GEOM_WORLD_BOTTOM ? d->h : GEOM_WORLD_BOTTOM;
+            for (int row = db; backdrop_bottom_row(extend_world_backdrop, backdrop_bottom, row,
+                                                   dl, dt, dr, db, sl, st_, sr, sb, &ext); row++) {
+                blt_trace_backdrop(&trace, &ext);
                 if (!d->primary)
                     render_blit(d->pixels, ext.dl, ext.dt, ext.dr, ext.db,
                                 s->pixels, s->w, s->h, s->pitch,
@@ -1844,9 +1892,11 @@ static void surf_Blt(uint32_t self)
                 blit(d, ext.dl, ext.dt, ext.dr - ext.dl, ext.db - ext.dt,
                      s, ext.sl, ext.st, ext.sr - ext.sl, ext.sb - ext.st,
                      keyed, s->key_lo, s->key_hi);
+                backdrop_mirror_segments(d, s, backdrop_flags, ext.sl, ext.st, ext.sr, ext.sb,
+                                         ext.dl, ext.dt, ext.dr, ext.db, keyed, &trace);
             }
             if (backdrop_picture) {
-                backdrop_picture_bands(d, s, sl, st_, sr, sb, dl, dt, dr, db);
+                backdrop_edge_bands(d, s, sl, st_, sr, sb, dl, dt, dr, db);
                 framing_n_picture++;
                 framing_note("screen with a PICTURE backdrop, side bands extended from its "
                              "edge columns (a declared port choice, not the game's)",
