@@ -445,6 +445,7 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
 void hostwin_shutdown(void)
 {
     script_report();
+    pause_report();
     menu_click_report();
     clock_sites_report();
     window_resize_report();
