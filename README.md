@@ -12,6 +12,11 @@ auto-detect and hotswap, and borderless windowed mode.
 
 ## Screenshots
 
+![Native ultrawide Stage Mode PvE](docs/screenshots/ultrawide-stage-mode.png)
+
+*Stage Mode PvE at 3440×1440: the ultrawide viewport exposes more of the stage while preserving
+the original pixel geometry.*
+
 ![Native widescreen demo match](docs/screenshots/widescreen-demo.png)
 
 *Native 16:9 presentation expands the world view instead of stretching the original 4:3 frame.*
