@@ -100,10 +100,11 @@ what a real panel reports. The port, run inside it at a 794x550 window:
     widescreen: window 1588x1100 -> composition 794x550 at scale 2.000, drawn into 1588x1100
                 at (0,0) -- fills the window
 
-That is the answer this entry said to look for, line for line: SDL_WINDOW_HIGH_PIXEL_DENSITY
-takes effect, the geometry is seeded from the PIXEL size, and the composition is the game's own
-794 columns of world at a world scale of 2 -- drawn at four times the pixels rather than blown
-up to them.
+Those lines prove that SDL_WINDOW_HIGH_PIXEL_DENSITY takes effect and that geometry is seeded
+from the PIXEL size. They did not prove the final clause this entry originally attached to
+them -- that the engine rasterised at four times the pixels rather than blowing up a small
+target. The later whole-scene regression printed the same composition line. The nested route
+now separately requires the engine's own target report to be 1588x1100 output pixels.
 
 TWO SIMULATIONS THAT DO NOT WORK, recorded so they are not retried:
   - Xvfb at -dpi 192 with Xft.dpi merged. SDL3's X11 backend reports points == pixels BY
@@ -136,7 +137,7 @@ same compositor the reporter runs, so this is closer to the real thing than it s
 is still a simulation and the entry should be reopened if the reporter sees the symptom.
 
 ### Resolution (2026-08-12)
-The fix (SDL_WINDOW_HIGH_PIXEL_DENSITY, geometry seeded from SDL_GetWindowSizeInPixels, the pointer multiplied by the density) was already in but unverified. It is now verified on a SIMULATED 4K display -- kwin_wayland --virtual at 3840x2160 with kscreen-doctor setting the output to scale 2 -- where the port reports 794x550 points -> 1588x1100 pixels at density 2.00 and composes 794 columns of world at scale 2.000 into the full drawable. tools/e2e.py hidpi is that run; ctest geometry's test_density walks five densities offline and fails 161 checks with the density multiply removed.
+The fix (SDL_WINDOW_HIGH_PIXEL_DENSITY, geometry seeded from SDL_GetWindowSizeInPixels, the pointer multiplied by the density) was already in but unverified. It is now verified on a SIMULATED 4K display -- kwin_wayland --virtual at 3840x2160 with kscreen-doctor setting the output to scale 2 -- where the port reports 794x550 points -> 1588x1100 pixels at density 2.00 and composes 794 columns of world at scale 2.000. That original run verified drawable discovery and field of view only; it was vacuous about the engine's raster size. `tools/e2e.py hidpi` now additionally requires the engine to report a 1588x1100 output target. `ctest geometry`'s test_density walks five densities offline and fails 161 checks with the density multiply removed.
 
 ### Reopened (2026-08-21)
 USER 2026-08-21: screen DPI causes RmlUi mouse position to be misread; RmlUi pointer input must be DPI-compatible. The old proof covered the game pointer path, not necessarily the RmlUi backend's direct SDL event coordinates.

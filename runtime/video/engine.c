@@ -14,6 +14,8 @@
 #include "stagelight.h"
 #include "options.h"
 #include "engine_textures.h"
+#include "engine_visibility_probe.h"
+#include "painter_depth.h"
 
 #include "../shaders/gen/quad_vert_spv.h"
 #include "../shaders/gen/quad_spv.h"
@@ -62,9 +64,9 @@ static SDL_Texture    *wrapped_chars, *wrapped_shadow, *wrapped_lit;
 static SDL_GPUShader     *sh_light_vert;
 static SDL_GPUGraphicsPipeline *p_chars, *p_shadow, *p_light;
 static SDL_GPUSampler   *smp_linear;
-/* The mask passes need a vertex format of their own (pos2, uv2, colour4 -- the hd2d shaders
- * were written for SDL_Render's varying convention, see hd2d_quad.vert), so they draw from
- * their own buffer rather than from the sprite quad buffer. */
+/* The mask passes need a vertex format of their own (pos2, depth1, uv2, colour4 -- the hd2d
+ * shaders were written for SDL_Render's varying convention, see hd2d_quad.vert), so they draw
+ * from their own buffer rather than from the sprite quad buffer. */
 static SDL_GPUBuffer    *lvbuf;
 static SDL_GPUTransferBuffer *lvxfer;
 static int lvbuf_cap;
@@ -88,10 +90,10 @@ static long stat_frames, stat_quads, stat_batches, stat_dropped;
 
 typedef struct { float x, y, depth, u, v, r, g, b, a; } QuadVertex;
 
-/* The vertex format the lighting passes draw from (hd2d_quad.vert): output pixels, sprite UV
- * and a tint. The two masks and the full-screen light pass all speak it, so one buffer serves
- * all three. */
-typedef struct { float x, y, u, v, r, g, b, a; } LightVertex;
+/* The vertex format the lighting passes draw from (hd2d_quad.vert): output pixels, the same
+ * painter depth as the colour pass, sprite UV and a tint. The character pass uses the depth;
+ * the shadow and final light passes merely share the format, so one buffer serves all three. */
+typedef struct { float x, y, depth, u, v, r, g, b, a; } LightVertex;
 
 void engine_surface_dirty(uint32_t pixels)
 {
@@ -296,8 +298,8 @@ int engine_init(SDL_Renderer *r)
     {
         /* The hd2d fragment shaders were written for SDL_Render's varying convention (colour
          * at location 0, uv at location 1) and speak a different vertex format from the
-         * sprite pipeline's -- hd2d_quad.vert explains. They draw into single colour targets
-         * with no depth attachment. */
+         * sprite pipeline's -- hd2d_quad.vert explains. The character mask additionally
+         * depth-tests against the completed scene; the other two draw into colour only. */
         sh_light_vert = shader_make(hd2d_quad_vert_spv, sizeof hd2d_quad_vert_spv,
                                     SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, "lighting vertex");
 
@@ -307,14 +309,16 @@ int engine_init(SDL_Renderer *r)
         lvbd.pitch = sizeof(LightVertex);
         lvbd.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
-        SDL_GPUVertexAttribute la[3];
+        SDL_GPUVertexAttribute la[4];
         SDL_zero(la);
         la[0].location = 0; la[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
         la[0].offset = (Uint32)offsetof(LightVertex, x);
-        la[1].location = 1; la[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
-        la[1].offset = (Uint32)offsetof(LightVertex, u);
-        la[2].location = 2; la[2].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
-        la[2].offset = (Uint32)offsetof(LightVertex, r);
+        la[1].location = 1; la[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
+        la[1].offset = (Uint32)offsetof(LightVertex, depth);
+        la[2].location = 2; la[2].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
+        la[2].offset = (Uint32)offsetof(LightVertex, u);
+        la[3].location = 3; la[3].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+        la[3].offset = (Uint32)offsetof(LightVertex, r);
 
         SDL_GPUColorTargetDescription lct;
         SDL_zero(lct);
@@ -330,7 +334,7 @@ int engine_init(SDL_Renderer *r)
             lp.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
             lp.vertex_input_state.num_vertex_buffers = 1;
             lp.vertex_input_state.vertex_buffer_descriptions = &lvbd;
-            lp.vertex_input_state.num_vertex_attributes = 3;
+            lp.vertex_input_state.num_vertex_attributes = 4;
             lp.vertex_input_state.vertex_attributes = la;
             lp.target_info.num_color_targets = 1;
             lp.target_info.color_target_descriptions = &lct;
@@ -340,6 +344,11 @@ int engine_init(SDL_Renderer *r)
             lp.fragment_shader = shader_make(hd2d_character_spv, sizeof hd2d_character_spv,
                                              SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1,
                                              "character mask");
+            lp.target_info.has_depth_stencil_target = true;
+            lp.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+            lp.depth_stencil_state.enable_depth_test = true;
+            lp.depth_stencil_state.enable_depth_write = false;
+            lp.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
             p_chars = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
             if (!p_chars) {
                 fprintf(stderr, "engine: the character-mask pipeline failed: %s -- no lighting "
@@ -347,6 +356,8 @@ int engine_init(SDL_Renderer *r)
             }
             SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
 
+            lp.target_info.has_depth_stencil_target = false;
+            SDL_zero(lp.depth_stencil_state);
             lp.fragment_shader = shader_make(hd2d_shadow_spv, sizeof hd2d_shadow_spv,
                                              SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1,
                                              "cast-shadow mask");
@@ -407,6 +418,7 @@ int engine_init(SDL_Renderer *r)
     init_why = "ready";
     fprintf(stderr, "engine: up on the %s backend, sharing the renderer's device "
                     "(D32_FLOAT depth, one texture pool)\n", SDL_GetGPUDeviceDriver(DEV));
+    engine_visibility_probe_run(R);
     return 1;
 }
 
@@ -634,12 +646,12 @@ static int gvbuf_reserve(int bytes)
 
 /* The sprite quad, in the mask pass's own vertex format. The shader only alpha-tests the
  * texture, so the tint is white and the quad is the object's own rect. */
-static void light_emit_char(LightVertex *v, const EngineQuad *q)
+static void light_emit_char(LightVertex *v, const EngineQuad *q, float depth)
 {
-    const LightVertex a = { q->x, q->y, q->u0, q->v0, 1, 1, 1, 1 };
-    const LightVertex b = { q->x + q->w, q->y, q->u1, q->v0, 1, 1, 1, 1 };
-    const LightVertex c = { q->x + q->w, q->y + q->h, q->u1, q->v1, 1, 1, 1, 1 };
-    const LightVertex d = { q->x, q->y + q->h, q->u0, q->v1, 1, 1, 1, 1 };
+    const LightVertex a = { q->x, q->y, depth, q->u0, q->v0, 1, 1, 1, 1 };
+    const LightVertex b = { q->x + q->w, q->y, depth, q->u1, q->v0, 1, 1, 1, 1 };
+    const LightVertex c = { q->x + q->w, q->y + q->h, depth, q->u1, q->v1, 1, 1, 1, 1 };
+    const LightVertex d = { q->x, q->y + q->h, depth, q->u0, q->v1, 1, 1, 1, 1 };
     v[0] = a; v[1] = b; v[2] = c;
     v[3] = a; v[4] = c; v[5] = d;
 }
@@ -661,10 +673,10 @@ static void light_emit_shadow(LightVertex *v, const EngineQuad *q, float across,
     stagelight_shadow_quad(across, up, cx, gy, q->w, q->h, lift, o);
     /* The corners come back in the order the sprite's UVs map onto: head-TL, head-TR, foot-BR,
      * foot-BL, and the triangle fan below preserves it. */
-    const LightVertex tl = { o[0], o[1], q->u0, q->v0, 1, 1, 1, 1 };
-    const LightVertex tr = { o[2], o[3], q->u1, q->v0, 1, 1, 1, 1 };
-    const LightVertex br = { o[4], o[5], q->u1, q->v1, 1, 1, 1, 1 };
-    const LightVertex bl = { o[6], o[7], q->u0, q->v1, 1, 1, 1, 1 };
+    const LightVertex tl = { o[0], o[1], 0.5f, q->u0, q->v0, 1, 1, 1, 1 };
+    const LightVertex tr = { o[2], o[3], 0.5f, q->u1, q->v0, 1, 1, 1, 1 };
+    const LightVertex br = { o[4], o[5], 0.5f, q->u1, q->v1, 1, 1, 1, 1 };
+    const LightVertex bl = { o[6], o[7], 0.5f, q->u0, q->v1, 1, 1, 1, 1 };
     v[0] = tl; v[1] = tr; v[2] = br;
     v[3] = tl; v[4] = br; v[5] = bl;
 }
@@ -672,10 +684,10 @@ static void light_emit_shadow(LightVertex *v, const EngineQuad *q, float across,
 /* The full-screen quad the light pass draws. */
 static void light_emit_full(LightVertex *v, int w, int h)
 {
-    const LightVertex a = { 0, 0, 0, 0, 1, 1, 1, 1 };
-    const LightVertex b = { (float)w, 0, 1, 0, 1, 1, 1, 1 };
-    const LightVertex c = { (float)w, (float)h, 1, 1, 1, 1, 1, 1 };
-    const LightVertex d = { 0, (float)h, 0, 1, 1, 1, 1, 1 };
+    const LightVertex a = { 0, 0, 0.5f, 0, 0, 1, 1, 1, 1 };
+    const LightVertex b = { (float)w, 0, 0.5f, 1, 0, 1, 1, 1, 1 };
+    const LightVertex c = { (float)w, (float)h, 0.5f, 1, 1, 1, 1, 1, 1 };
+    const LightVertex d = { 0, (float)h, 0.5f, 0, 1, 1, 1, 1, 1 };
     v[0] = a; v[1] = b; v[2] = c;
     v[3] = a; v[4] = c; v[5] = d;
 }
@@ -738,7 +750,7 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
     int on = 0;
     for (int i = 0; i < n; i++) {
         if (!q[i].is_object) continue;
-        light_emit_char(p + (size_t)on * 6, &q[i]);
+        light_emit_char(p + (size_t)on * 6, &q[i], painter_depth(i, n));
         light_emit_shadow(p + (size_t)(no + on) * 6, &q[i], across, up);
         on++;
     }
@@ -768,7 +780,17 @@ static SDL_GPUTexture *lighting_passes(const EngineQuad *q, int n, int w, int h)
         ci.clear_color = (SDL_FColor){ 0.0f, 0.0f, 0.0f, 0.0f };
         ci.load_op = SDL_GPU_LOADOP_CLEAR;
         ci.store_op = SDL_GPU_STOREOP_STORE;
-        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ci, 1, NULL);
+        /* LOAD the colour pass's completed depth. The mask quad carries the same painter
+         * ordinal as its colour draw, so equal depth is visible; a later solid painter left a
+         * smaller depth and rejects the hidden character fragment. */
+        SDL_GPUDepthStencilTargetInfo visible;
+        SDL_zero(visible);
+        visible.texture = tex_depth;
+        visible.load_op = SDL_GPU_LOADOP_LOAD;
+        visible.store_op = SDL_GPU_STOREOP_STORE;
+        visible.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+        visible.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ci, 1, &visible);
         if (pass) {
             SDL_BindGPUGraphicsPipeline(pass, p_chars);
             SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
@@ -883,7 +905,7 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
     }
     QuadVertex *vp = (QuadVertex *)map;
     for (int i = 0; i < n; i++)
-        emit(vp + (size_t)i * 6, &q[i], 1.0f - (float)(i + 1) / (float)(n + 1));
+        emit(vp + (size_t)i * 6, &q[i], painter_depth(i, n));
     SDL_UnmapGPUTransferBuffer(DEV, vxfer);
 
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
@@ -941,11 +963,10 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
     dti.texture = tex_depth;
     dti.clear_depth = 1.0f;
     dti.load_op = SDL_GPU_LOADOP_CLEAR;
-    /* STORED, and honestly labelled: nothing reads it yet. `:522` creates it with usage
-     * DEPTH_STENCIL_TARGET only -- no SAMPLER -- and SDL declares no pixel format for depth,
-     * so it cannot even be wrapped as an SDL_Texture. A sampled pass would need that usage bit
-     * added first. It is stored rather than discarded because a later pass in the SAME frame
-     * can depth-test against it, which is what the geometry submitted between layers does. */
+    /* Store the final visible painter depth. Geometry uses it while sharing this pass, then the
+     * character-mask pass reloads it as a depth attachment to reject silhouettes covered by
+     * later solid painters. It needs DEPTH_STENCIL_TARGET usage only: both consumers use fixed
+     * depth testing, not shader sampling. */
     dti.store_op = SDL_GPU_STOREOP_STORE;
     dti.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
     dti.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
@@ -1076,6 +1097,7 @@ void engine_report(void)
                     "%ld quad(s) DROPPED\n",
             engine_enabled() ? "DRAWING" : "not drawing", init_why,
             stat_frames, stat_quads, stat_batches, stat_dropped);
+    fprintf(stderr, "engine: render targets are %dx%d output pixels\n", tgt_w, tgt_h);
     engine_textures_report();
     /* The zero is printed and named, because zero is the ordinary answer when the engine is
      * built but not selected -- and "built but not selected" must not look like "selected and

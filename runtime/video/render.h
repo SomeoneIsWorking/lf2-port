@@ -92,15 +92,15 @@ void render_tile_end(void);
  * centring offset, and w/h the primary's size. Returns 1 if it drew and presented the frame,
  * 0 if the caller should fall back to the software present.
  */
-int render_present(uint32_t src_pixels, int off, int w, int h, int frozen);
+int render_present(uint32_t src_pixels, int off, int w, int h);
 
 /* Called when a surface's pixels change outside the renderer's knowledge (a palette write,
  * a fresh load) so its cached texture is rebuilt. */
 void render_surface_dirty(uint32_t pixels);
 
-/* Mark the display list presented. LF2 starts some next-frame drawing before its update
- * returns, so the first later recording call clears it. A paused match is presented from
- * render.c's immutable completed-frame texture, not from this list. */
+/* Consume the presented display list and release its per-frame tile claims immediately. Any
+ * recording LF2 does after its mid-update present starts the next ordinary frame. RmlUi
+ * continues through this path rather than introducing a retained/frozen frame. */
 void render_frame_reset(void);
 
 /* Mark where the port's own UI begins in a LIVE frame's list (the controls hint on a menu the

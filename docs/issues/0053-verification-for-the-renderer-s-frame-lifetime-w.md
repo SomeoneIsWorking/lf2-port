@@ -53,11 +53,9 @@ exercising a copy. tests/test_framelife.c walks it in `ctest framelife`, 0.00 s.
 
 WHAT IS ASSERTED OFFLINE NOW:
 
-  - a frame is marked spent at the mid-update present and cleared by the first later recording
-    call, because LF2 can begin the following frame before its update returns
-  - only a successfully copied completed output is valid for frozen presentation, and only for
-    the same composition source; a failed live copy invalidates the previous snapshot
-  - a resized frozen output contains the immutable raster without changing its aspect
+  - present immediately clears every display-list length, overlay boundary, tile-arena offset,
+    and pooled-texture claim; any draw LF2 records later in that update starts the next frame
+    without a spent/retained state
   - the overlay boundary is set once and does not move, and a list that does not exist reports
     no picture rather than reading off the end
   - the pool serves any free texture the tile FITS IN, bucketed to 32 -- a 880-wide string
@@ -66,11 +64,11 @@ WHAT IS ASSERTED OFFLINE NOW:
   - two tiles in one frame never share a texture, because both are live at once
   - exhaustion is counted, and the peak is PER FRAME rather than a running total
 
-THE ROUTE KEEPS ONE RUNTIME ASSERTION. `tools/e2e.py pause_dropout` checks that a real pause in
-a real match restores the native snapshot (121 frames in issue #94's verification), because
-that is a fact about a running game. The old extra negative run remains unnecessary; the pure
-state negatives live in `ctest framelife`.
+Issue #94 later removed the frozen-frame lifecycle entirely. `ctest rmlui_lifecycle` now owns
+the other offline invariant: a close callback inside RmlUi input invalidates that document
+generation's in-progress UI frame. `ui_global` is the runtime assertion that the underlying
+game matches a deterministic control outside the modal and that the first hidden frame (+362)
+plus two successors match the full control frames. The old extra negative run remains unnecessary.
 
-Suite: 9 tests, 1.97 s, nothing in it over a second. `tools/e2e.sh render background` and
-`pause_dropout` all pass after the refactor, and the paused frame at 1920x1080 still draws
-correctly.
+The suite remains offline and sub-second apart from its Clang gates; the running checks stay in
+`tools/e2e.py`.

@@ -71,13 +71,21 @@ static inline float geom_world_scale(int win_w, int win_h)
 
 /* The composition's width: how much WORLD is on screen, in the game's own pixels. Floored at
  * the game's 794 (below that the HUD strip does not fit) and capped at what the build
- * allocated surface pitch for. */
+ * allocated surface pitch for.
+ *
+ * The width is CEILED from the aspect rather than rounded to nearest. The composition is an
+ * integer-sized game surface while the ideal view generally is not: at 3840x1975 it is
+ * 1069.367 game pixels. Rounding that down to 1069 makes its uniformly-scaled right edge stop
+ * short of the drawable and exposes a column of the cleared target. One extra world column
+ * can be clipped symmetrically; a missing one cannot cover the output. Use integer aspect
+ * arithmetic so an exactly integral view is not accidentally ceiled by floating-point noise. */
 static inline int geom_compose_width(int win_w, int win_h, int wide_max)
 {
-    const float s = geom_world_scale(win_w, win_h);
-    int w = (int)((float)win_w / s + 0.5f);
+    if (win_w <= 0 || win_h <= 0) return GEOM_SCREEN_W;
+    const long long numerator = (long long)win_w * GEOM_SCREEN_H;
+    long long w = (numerator + win_h - 1) / win_h;
     if (w < GEOM_SCREEN_W) w = GEOM_SCREEN_W;
-    return w > wide_max ? wide_max : w;
+    return w > wide_max ? wide_max : (int)w;
 }
 
 /* Where the scaled composition sits in the window, as a destination rectangle. Both present

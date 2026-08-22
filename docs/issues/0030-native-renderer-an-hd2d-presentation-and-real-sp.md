@@ -440,9 +440,9 @@ same failure as one that claims unfinished work is done -- the next session buil
   "the pause menu and the controls hint still present through the software compositor, because
    they draw straight onto the primary and are in no display list."  NOT TRUE, and this is what
    issue #52 fixed. The hint appends glyph tiles to the live composition (render_overlay_mark).
-   The current pause path copies the completed native target after those decorations and before
-   RmlUi, then restores that immutable texture while the game update is frozen (issue #94).
-   `tools/e2e.py pause_dropout` asserts the native snapshot on a real match pause.
+   RmlUi composites after the game's current native target while the ordinary game
+   update/draw/present path continues beneath it (issue #94). There is no retained or frozen
+   renderer path; `tools/e2e.py ui_global` checks live underlying pixels and the close frame.
 
 WHAT IS GENUINELY STILL OPEN on this entry, so the corrected list is not read as "nothing left":
   - DEPTH-SORTED LIGHTING. The shadows are still placed from the game's own ellipse rather than

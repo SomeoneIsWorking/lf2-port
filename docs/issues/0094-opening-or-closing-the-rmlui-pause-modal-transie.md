@@ -18,49 +18,48 @@ Fix the frame-lifetime or composition transition that produces the transient cor
 
 ## Investigation
 
-At 1920x1080 the match first appeared at frame 1212. RmlUi opened at `@match+300` and mapped
-Cancel closed it at `@match+360`. The first frame with the document hidden was frame 1574. In
-the failing build it had black gaps, missing HUD sections, and garbled text tiles; its non-black
-coverage was 0.824556 against 0.885122 before opening, only 93.2% of the completed frame.
+The first implementation froze matches by declining `fn_004246b0__orig` and invented a second
+presentation lifecycle for the missing game frame. Retaining display-list lengths was invalid:
+present-time decorations could clear the spent list and reuse its tile arena before the hold was
+reacquired, so restoring metadata resurrected entries over changed backing. Replacing that with
+an immutable output texture removed that corruption but retained the deeper architectural error:
+RmlUi still switched the game between live and snapshot render paths.
 
-The cause was in `present_primary`: HUD and device decorations recorded tiles before
-`render_hold_begin` tried to reacquire the old frame. The prior present had marked the list
-spent, so that recording call cleared the display lists, tile arena, and pooled-texture claims.
-The hold then restored only lengths and high-water metadata over backing that had already been
-reused. Transparent RmlUi exposed the corrupted base while open; closing it during
-`rmlui_render` exposed one naked corrupted frame. The software path separately repeated the
-same alpha-composited SVG over unchanged primary pixels.
-
-Adding a validity bit proved the deeper design defect rather than fixing it: drawing can begin
-after LF2's mid-update present and before the pause override next runs, so mutable list backing
-can legitimately change before a hold is acquired. A list-length rewind cannot own a frozen
-frame.
+Closing can also happen *inside* `rmlui_render`: mapped Cancel is dispatched by
+`rmlui_input_update`, whose callback hides the document and clears its active flag. The old
+function nevertheless continued through `Context::Update`, `Context::Render`, and the backend
+frame after the close. The frozen/live state had already been latched by `present_primary`, so
+that present also remained on the snapshot side of the transition. This is why a later captured
+frame could look recovered while the first hidden frame still glitched.
 
 ## Resolution
 
-Frozen presentation now owns an immutable completed frame:
+There is now one frame lifecycle: the game's ordinary one.
 
-- Live native presentation draws the game and port decorations once, copies the finished
-  output-resolution target to `render_snapshot.c`, then composites RmlUi.
-- Frozen native presentation restores only a successfully copied snapshot for the same
-  composition source, composites RmlUi, and never replays the old display list.
-- Live/frozen mode is latched before RmlUi callbacks, so a mapped close during rendering cannot
-  change which frame source that present owns.
-- A paused resize aspect-preserves the captured raster. The software backend retains the last
-  completed primary region and skips repeated decorations, so widened surface metadata cannot
-  expose unwritten columns or accumulate SVG alpha.
-- The old hold lengths, tile-arena rewind, pooled busy-state rewind, and pause painter call
-  boundaries were deleted. Deferred display-list clearing remains because LF2's actual present
-  is inside its update and next-frame drawing can begin after it; that is a producer boundary,
-  not pause retention.
+- `fn_004246b0__orig` always runs, so every screen—including a match beneath RmlUi—continues
+  through its normal update, display-list build, render, and present. Modal behavior is owned by
+  the existing input boundary, which consumes physical input before LF2 sees it.
+- Native snapshot capture/restore, software completed-region retention, frozen presentation,
+  and the on-demand pause present were deleted. RmlUi composites after the current native or
+  software game frame exactly as it does on non-match screens.
+- `rmlui_lifecycle.h` gives each open document generation a frame token. If an input or update
+  callback closes or replaces the document, that token is invalid and the interrupted RmlUi
+  frame stops before backend rendering. This is lifecycle cancellation, not suppression or an
+  extra redraw.
+- Presentation immediately clears display-list lengths, tile-arena usage, and pooled-texture
+  claims. LF2's real present occurs inside its update, so any later record simply begins the
+  next ordinary frame in an already-empty list; there is no spent/retained state.
 
-`tests/test_framelife.c` checks snapshot validity, composition identity, failed-copy
-invalidation, frozen counting, resize containment, the true deferred-clear boundary, overlay
-separation, and tile-pool reuse offline. `tools/e2e.py ui_global` captures six exact GPU frames
-around open/close at 1920x1080; the first closed frame now has 0.8851 coverage against 0.8851
-before opening. It also proves the modal appeared and was removed rather than accepting an
-unchanged buffer. `tools/e2e.py pause_dropout` measured 121 native snapshot presents in a real
-paused match.
+`ctest rmlui_lifecycle` exercises ordinary completion, close-during-frame, and close/reopen
+replacement against the shipping header. `tools/e2e.py ui_global` runs a deterministic no-match-
+modal control at the same `@match` offsets: the two open-modal captures must match that control
+exactly outside the centered document, and the first hidden frame at +362 plus its two successors
+must match the full control frames byte-for-byte. The +360 action reaches RmlUi after the
++360/+361 dumps, so those remain modal frames and are not close evidence. Coverage alone cannot
+accept stale replay.
 
 ### Resolution (2026-08-22)
-Replaced mutable display-list rewind with an output-resolution immutable completed-frame snapshot captured before RmlUi; latched transition ownership, preserved completed dimensions across paused resize, and added exact 1920x1080 open/close pixel verification.
+Removed the second frozen-frame lifecycle rather than retaining another picture of the game: fn_004246b0__orig now always owns the ordinary update/draw/present beneath modal RmlUi, and input ownership alone makes the shell modal. Closing from rmlui_input_update had hidden the document but continued Context::Update/Render in that same UI frame; a document-generation token now cancels the interrupted frame before backend rendering. Deleted native snapshot capture/restore, software completed-region retention, and on-demand frozen present. Added offline lifecycle checks and an exact ui_global route that targets the first hidden frame after close and requires live pixels beneath the modal.
+
+### Note (2026-08-22)
+Follow-up audit removed the last spent/fl_touch deferred-clear state: present now clears list lengths, overlay boundaries, tile-arena use, and pool claims immediately. ui_global no longer accepts coverage as proof; it runs a deterministic no-match-modal control at the same @match offsets, requires exact outside-document pixels while open, and byte-identical full frames for the first hidden frame (+362) and two successors.

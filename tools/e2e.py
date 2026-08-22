@@ -28,6 +28,8 @@ ROUTES = (
     ("two_human_match", "pad two drives its fighter in the FIGHT, not just at selection"),
     ("widescreen", "the composition follows the window, both directions, natives as negatives"),
     ("hidpi", "game and RmlUi use a SIMULATED 4K/200% drawable in a nested compositor (issues #56, #82)"),
+    ("fullres", "the native engine targets 3840x1975 and covers both outer columns (issue #41)"),
+    ("visibility", "procedural GPU occlusion proves painter depth and transparent holes (issue #85)"),
     ("resize", "a resize leaves no stale pixels standing (issue #29)"),
     ("background", "the background override draws what the recompiled body drew, byte for byte"),
     ("caption", "the mode caption follows the view, with the recompiled body as control (issue #60)"),

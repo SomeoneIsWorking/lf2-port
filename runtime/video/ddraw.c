@@ -15,7 +15,6 @@
 #include "result_panel.h"
 #include "stage_banner.h"
 #include "framespec.h"
-#include "framesnapshot.h"
 #include "script.h"
 #include "rmlui.h"
 #include "startup.h"
@@ -486,7 +485,7 @@ void frame_source_note(uint32_t pixels, int off) { frame_src_pixels = pixels; fr
 uint32_t frame_source_pixels(void) { return frame_src_pixels; }
 
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch,
-                     uint32_t source_pixels, int source_off, int frozen)
+                     uint32_t source_pixels, int source_off)
 {
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
@@ -507,10 +506,10 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch,
     static int shot_w, shot_h;
     const uint8_t *shown = pixels;
     int shown_pitch = src_pitch;
-    /* LIVE snapshots before RmlUi; FROZEN restores that output. If no matching native
-     * snapshot exists, render_present leaves the same completed software primary in charge. */
+    /* RmlUi uses the game's ordinary update/draw/present path; it does not substitute a
+     * retained or frozen frame beneath the document. */
     const int gpu = hw.renderer && render_gpu_enabled()
-                    && render_present(source_pixels, source_off, w, h, frozen);
+                    && render_present(source_pixels, source_off, w, h);
     int shown_w = w, shown_h = h;
     /* READ THE FRAME BACK ONLY IF SOMETHING WILL LOOK AT IT (issue #57). A readback is a
      * full GPU-to-CPU stall: the CPU waits for every queued draw to finish before the pixels
@@ -594,11 +593,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch,
      * Presenting it 1:1 in the middle of a large window instead would leave the fallback
      * showing a small picture in a black field, which is worse and no more honest. */
     SDL_FRect place;
-    if (frozen)
-        frame_snapshot_contain(w, h, hw.win_w, hw.win_h,
-                               &place.x, &place.y, &place.w, &place.h);
-    else
-        lf2_compose_rect(w, h, &place);
+    lf2_compose_rect(w, h, &place);
     SDL_SetRenderDrawColor(hw.renderer, 0, 0, 0, 255);
     SDL_RenderClear(hw.renderer);
     SDL_RenderTexture(hw.renderer, hw.texture, NULL, &place);
@@ -781,47 +776,18 @@ static void charselect_device_labels_present(const Surface *s)
         charselect_device_labels_draw(s);
 }
 
-/* Pausing skips the update that normally owns present, so the menu calls the same present on
- * demand to keep its immutable completed frame visible. */
 static void present_primary(void);
-void present_frozen_frame(void) { present_primary(); }
 
 static void present_primary(void)
 {
     if (!primary_surface) return;
     LOADPROF_SCOPE(LP_PRESENT);
     Surface *s = com_host(primary_surface);
-    /* Latch before an RmlUi callback can close the document during this present. */
-    const int frozen = pause_active();
-    /* Decorations belong to the completed live frame. Repeating them would alpha-composite
-     * the same SVG edge onto unchanged software pixels. */
-    if (!frozen) {
-        if (hint_on) controls_hint_draw(s);
-        hud_device_labels(s);
-        charselect_device_labels_present(s);
-    }
-
-    /* Surface metadata follows a paused resize. Retain the completed region so new columns
-     * in the wide backing allocation cannot become part of the frozen picture. */
-    static uint32_t completed_primary_pixels, completed_source_pixels;
-    static int completed_w, completed_h, completed_pitch, completed_source_off;
-    if (!frozen) {
-        completed_primary_pixels = s->pixels;
-        completed_source_pixels = frame_src_pixels;
-        completed_source_off = frame_src_off;
-        completed_w = s->w;
-        completed_h = s->h;
-        completed_pitch = s->pitch;
-    }
-    const int have_completed = completed_primary_pixels && completed_source_pixels &&
-                               completed_w > 0 && completed_h > 0;
-    const uint32_t primary_pixels = frozen && have_completed ? completed_primary_pixels : s->pixels;
-    const uint32_t source_pixels = frozen && have_completed ? completed_source_pixels : frame_src_pixels;
-    const int source_off = frozen && have_completed ? completed_source_off : frame_src_off;
-    const int present_w = frozen && have_completed ? completed_w : s->w;
-    const int present_h = frozen && have_completed ? completed_h : s->h;
-    const int present_pitch = frozen && have_completed ? completed_pitch : s->pitch;
-    hostwin_present(g_mem + primary_pixels, present_w, present_h, present_pitch, source_pixels, source_off, frozen);
+    if (hint_on) controls_hint_draw(s);
+    hud_device_labels(s);
+    charselect_device_labels_present(s);
+    hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch,
+                    frame_src_pixels, frame_src_off);
     LOADPROF_END();
 }
 

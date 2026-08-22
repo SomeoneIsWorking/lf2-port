@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A joined player leaves from its own pad while native snapshot presentation stays active."""
+"""A joined player leaves from its own pad through the live-rendered RmlUi shell."""
 
 from __future__ import annotations
 
@@ -93,13 +93,6 @@ def main() -> int:
 
     checks.append(("coop leave: slot 0 dropped out" not in text,
                    "player one remained in the match"))
-    reports = re.findall(
-        r"render: (\d+) frame\(s\) used the immutable completed-frame snapshot",
-        text,
-    )
-    frozen_frames = int(reports[-1]) if reports else 0
-    checks.append((frozen_frames > 0,
-                   f"the native renderer restored its snapshot for {frozen_frames} frozen frame(s)"))
     checks.append(("LF2_VIRTUAL_PAD: 13 of 13 items fired" in text and
                    "LF2_VIRTUAL_PAD2: 5 of 5 items fired" in text,
                    "all route and per-device pause actions fired"))
