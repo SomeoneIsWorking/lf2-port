@@ -5,7 +5,7 @@ status: resolved
 symptom: The cast shadow does not line up with the fighter it belongs to (exact misalignment measured against a frame dump)
 tags: reported,rendering,shadows
 created: 2026-08-16
-updated: 2026-08-17
+updated: 2026-08-22
 ---
 
 ## Reported
@@ -54,22 +54,22 @@ SHOW=chars masks plus the LF2_HD2D=off frame (which draws the game's own shadow 
    was `want_light ? tex_lit : (want_chars ? tex_chars : tex_shadow)`, and `want_chars` is
    true for SHOW=shadow too (a shadow needs the character mask to shade against), so the
    diagnostic could never show a cast shadow. It now returns `show == 2 ? tex_shadow : tex_chars`.
-3. **The anchor.** EngineQuad gained `ground_cx` (the ellipse's horizontal centre), filled in
-   render.c from the ground marker rect, and light_emit_shadow uses it as the shadow's anchor
-   instead of q.x + q.w/2. The projection arithmetic in stagelight.h is unchanged; only the
-   ground point passed to it changed.
+3. **The former anchor correction was later falsified by issue #97.** `EngineQuad.ground_cx`
+   moved the whole texture rectangle to the ellipse centre. That happened to improve the two
+   measured frames above, but it discarded LF2's hand-authored frame placement (`centerx` and
+   `centery`) and detached other silhouettes' feet. The current shared projection preserves the
+   authored sprite rectangle in x/y and uses the world object's z row only as the contact plane.
+   See issue #97 and `stagelight_shadow_quad`.
 
 ## What is already settled (do not re-derive)
 
-- Issues #35 (airborne offset) and #38 (shadow shape follows the light) are resolved: the
-  projection is h * (across, -up), the foot edge sits at the ground point, the head edge is
-  the foot edge plus the full-height shear. All of it is shared arithmetic in
-  runtime/video/stagelight.h (stagelight_shadow_quad), with offline checks in
-  tests/test_stagelight.c. The arithmetic was NOT changed by this fix -- only the cx the
-  engine passes (the ellipse centre rather than the sprite quad centre).
-- The pairing of a shadow marker with its sprite is checked against the game's own geometry
-  (the ellipse is drawn AT the object's feet), and 102 orphaned markers per run are discarded
-  and counted (issue #35).
+- Issues #35 and #38 established the light-vector shear. Issue #97 corrected its anchor:
+  each source point is projected by its height above object z, without reconstructing x from
+  an ellipse centre. The production formula and its off-centre/wide-silhouette falsifiers are
+  shared in `runtime/video/stagelight.h` and `tests/test_stagelight.c`.
+- Ground-marker adjacency is no longer caster ownership. Issue #98 required independently
+  authored world-object metadata so a carried physical object can cast even when LF2 suppresses
+  its ellipse. The marker remains evidence for replacement and floor-band diagnostics.
 
 ## Verified
 
@@ -77,5 +77,6 @@ SHOW=chars masks plus the LF2_HD2D=off frame (which draws the game's own shadow 
 - The lit frame after the fix differs from before ONLY in the two shadow regions
   (207 px, bbox x 208..358 y 315..339): the shadows moved onto the fighters' feet, nothing
   else moved.
-- Shadow foot-centres after the fix (above table) sit on the ellipse centres (within ~2 px,
-  which is the silhouette's own feet pixels, not the anchor).
+- These measurements remain the evidence for the 2026-08-17 intermediate fix. The conclusion
+  that ellipse-centre reconstruction was generally correct was falsified and replaced by the
+  authored-frame projection verified under issue #97.

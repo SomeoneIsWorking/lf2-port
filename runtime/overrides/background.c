@@ -41,8 +41,8 @@
  *
  * WHAT FOLLOWS FROM IT for widescreen (issues #23/#87 and claim C017): a non-looping layer
  * has no additional picture to uncover. Looping layers continue at their declared step.
- * Complete non-looping BACKDROP PLANES are instead scaled as planes when the live view exceeds
- * their span, while isolated props retain native size; backdrop_plane_span owns that policy.
+ * A wider view never changes a bitmap's dimensions or the layers' shared world origin.
+ * backdrop_layout.h declares the one opaque far plane whose edge may continue behind them.
  *
  * Verified against the body it replaces by drawing the same frames both ways: see
  * tools/routes/background_test.sh.
@@ -58,6 +58,7 @@
 #include "stagegeom.h"
 #include "render.h"
 #include "backdrop.h"
+#include "backdrop_layout.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -159,10 +160,9 @@ static void fill_layer(uint32_t registry, uint32_t bg, int i, uint32_t tint)
 static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, int32_t w)
 {
     /* The formula, and the pin for a layer with less picture than the view is wide, are
-     * geom_layer_offset -- checked by tests/test_geom.c without booting the game. The
-     * pin is issue #23: every stage's sky is non-looping and only just wider than 794. The
-     * plane-scale policy is applied later at its blit boundary; parallax itself remains the
-     * game's formula and isolated art is never manufactured here. */
+     * geom_layer_offset -- checked by tests/test_geom.c without booting the game. The pin is
+     * issue #23: every stage's sky is non-looping and only just wider than 794. Any declared
+     * native-size continuation is placed later; parallax itself remains the game's formula. */
     if (stage_width <= w || span <= w) return 0;      /* pinned: the skew must not move it */
     const int32_t off = geom_layer_offset(span, stage_width, camera, w);
     /* LF2_BG_SKEW=<n> shifts every parallax offset by n. It exists so the byte-identity
@@ -833,6 +833,12 @@ void fn_0041a250(void)
      * objects are -- their parallax included, because a re-centring IS a camera pan and a
      * nearer layer must move further than a distant one. */
     const int32_t camera = (int32_t)bg_draw_camera();
+    const long trace_frame = hostwin_frames() + 1;
+    const int trace_selected = hostwin_frame_selected(getenv("LF2_BLT_FRAME"), trace_frame);
+    if (trace_selected)
+        fprintf(stderr,
+                "backdrop camera frame %ld guest=%d draw=%d view=%d stage=%d\n",
+                trace_frame, (int32_t)LD32(BG_CAMERA_X), camera, view, stage_width);
 
     /* The hand-woven geometry, planned before the loop and submitted INSIDE it, because where
      * each pass lands in the painter order is the whole point (issue #62). */
@@ -850,18 +856,7 @@ void fn_0041a250(void)
     if (stage_geom.n) geom_frames++;
     int next_gap = 0;
 
-    BackdropLayerLayout layouts[30];
-    for (int i = 0; i < (int)count; i++) {
-        layouts[i] = (BackdropLayerLayout){
-            .span = (int32_t)lf(registry, bg, BG_LAYER_SPAN, i),
-            .x = (int32_t)lf(registry, bg, BG_LAYER_X, i),
-            .y = (int32_t)lf(registry, bg, BG_LAYER_Y, i),
-            .loop = (int32_t)lf(registry, bg, BG_LAYER_LOOP, i),
-            .tint = (int32_t)lf(registry, bg, BG_LAYER_TINT, i),
-        };
-    }
-    int floor_top = 0, floor_bottom = 0;
-    if (!bg_z_bounds(&floor_top, &floor_bottom)) floor_top = 0;
+    const char *stage_name = bg_stage_name();
 
     for (int i = 0; i < (int)count; i++) {
         while (next_gap < geom_ngaps && geom_gaps[next_gap] == i)
@@ -905,15 +900,18 @@ void fn_0041a250(void)
         } else {
             /* loop < 0 would spin for ever; the game would too, but it is a data error and
              * drawing the layer once is the closest thing to what was meant. */
-            /* Complete backdrop planes are selected from the stage record as a group, not by
-             * rectangle shape and not by assuming layer zero is always the sky (CUHK begins
-             * with floor strips). All pieces in one selected span receive the same scale;
-             * only its opaque painted pieces extend backing below later keyed scenery. */
-            const int plane_span = backdrop_plane_span(layouts, (int)count, i, view, floor_top);
-            world_backdrop_hint_set(plane_span > 0 && transparent == 0);
-            world_layer_span_hint_set(plane_span);
-            draw_layer(obj, off + lx, y, transparent, arg0);
-            world_layer_span_hint_set(0);
+            /* The keyed mountain pieces are not tiles or separate canvases: repeating or
+             * independently centring them breaks their baked registration. Every layer keeps
+             * the game's shared origin. Only the declared opaque far plane continues behind it. */
+            int translation, backdrop_flags;
+            backdrop_plane_placement(stage_name, span, lx, view, &translation, &backdrop_flags);
+            if (transparent) backdrop_flags &= ~BACKDROP_EXTEND_BOTTOM;
+            if (trace_selected)
+                fprintf(stderr,
+                        "backdrop layer frame %ld index=%d span=%d x=%d off=%d flags=%d\n",
+                        trace_frame, i, span, lx, off + translation, backdrop_flags);
+            world_backdrop_hint_set(backdrop_flags);
+            draw_layer(obj, off + lx + translation, y, transparent, arg0);
             world_backdrop_hint_set(0);
         }
     }

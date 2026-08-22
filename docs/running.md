@@ -1302,6 +1302,21 @@ whatever the desktop put behind it. Two attempts at photographing a match via `i
 landed on the preceding menu instead; the frame dump is what established that those runs
 genuinely never reached the match.
 
+The README's five-image showcase has one durable serial capture recipe:
+
+```sh
+python3 tools/capture_readme_gallery.py --plan
+python3 tools/capture_readme_gallery.py
+```
+
+It captures 1920x1080 Demo combat and the GAME, GRAPHICS, and CONTROLS RmlUi pages, plus a
+3440x1440 Stage 1-1 PvE match. The raw presented-target PPMs, logs, and dimension-checked PNG
+candidates stay under `scratch/readme_gallery/`; the tool never overwrites
+`docs/screenshots/`. It rejects output outside the project scratch tree, clears that one tree
+through the scoped cleanup tool, launches each game process serially, and converts encoding
+without resizing or cropping. Review the candidates before deliberately installing them in
+the README gallery.
+
 `LF2_MEM_DUMP=<frame>[,...]` is the same idea for state: it writes the whole `.data`
 section to `data_<frame>.bin`, and `tools/re/diff_data.py` compares two of them. Together they
 answer "which variable is behind this pixel" — dump both, change one thing, diff. See the
@@ -1831,10 +1846,10 @@ stable phase; frame dumps in GPU mode remain the size of the window.
 
 **What the lighting touches, and what it does not.** One key light, given as a direction in the
 stage's own three axes (x across, y up — LF2's jump axis, claim C018 — z toward the camera).
-It **shades** only the objects standing in the stage, which the game itself identifies by
-drawing a shadow ellipse at their feet immediately before drawing them. Backgrounds, authored
-stage geometry, HUD, text, and leftover bands are never relit. Outside a character silhouette,
-the only permitted change is the character's cast-shadow mask.
+It **shades** only character draws identified by the hand-ported world-object pass. Shadow
+casting is a separate fact: physical held objects contribute their silhouette without being
+relit as fighter skin. Backgrounds, authored stage geometry, HUD, text, and leftover bands are
+never relit. Outside a character silhouette, the only permitted change is the cast-shadow mask.
 
 On a frame with no stage and no fighters in it — the menu, character selection — the pass
 changes **nothing at all**, byte for byte, and `tools/e2e.py render` asserts that alongside asserting
@@ -1842,10 +1857,19 @@ that the match frame *does* change. An effect that has quietly spread over the w
 passes the second check and fails the first, which is exactly how the bloom-and-haze version
 of this pass would have been caught.
 
-The shadow is the sprite's own silhouette **projected** onto the ground: a point at height *h*
-lands at `h * (-Lx/Ly, Lz/Ly)` in screen units, and both terms come from the same light vector
-the shading uses. So a low light throws a long shadow, an overhead one throws almost none, and
-a fighter in the air has their shadow displaced along the light rather than welded under them.
+The shadow is the sprite's own silhouette **projected** onto the ground. Its screen rectangle
+already contains the frame's hand-authored `centerx`/`centery` placement; the renderer preserves
+that x rather than recentering the frame on the ground ellipse. A source point at screen
+`(px,py)` is `object_z-py` above the floor and lands at that height times
+`(-Lx/Ly, -Lz/Ly)`, with both terms from the same light vector the shading uses. So a low light
+throws a long shadow, an overhead one throws almost none, and a fighter in the air has their
+shadow displaced along the light rather than welded under them. Projected fragments carry the
+caster's painter depth: earlier-painted ground receives them, equal-depth caster pixels reject
+self-shadow, and a later foreground object occludes a rear caster. `tools/e2e.py visibility`
+verifies all three depths independently and its `LESS_OR_EQUAL` other-answer mutation makes
+the equal-caster sample self-shadow. `tools/e2e.py shadow_contact` captures nine paired real
+LF2 masks; its accepted frame measured two distinct grounded fighter silhouettes at 0 px and
+1 px contact gaps while two airborne controls remained separated by 9 px.
 Measured at two elevations on the same frame: 13102 shadowed floor pixels spanning 311 rows at
 20°, against 5131 spanning 203 rows at 85°. An earlier version used the sideways term and a
 **constant** 0.30 in place of the other, which is why moving the light changed where a shadow
@@ -1983,6 +2007,15 @@ plain composition; there is deliberately no approximation to fall back to.
   In the default renderer it restores the complete old `SDL_RenderTexture` call; in the
   optional engine it restores normalized UVs on shared cell edges. At magnified resolutions
   the adjacent cell may leak into the selected menu row or animation frame.
+
+- **`LF2_TEXRECT_RASTER_DEST=1`** is the DirectDraw mapping-order defect injector for issue
+  #96. It treats every magnified logical 1:1 copy as a raster StretchBlt, reproducing the
+  bright green top/left separators on the 3840x1975 pre-fight panel. The shared default
+  contract classifies each axis from DirectDraw's logical rectangles: a 1:1 axis retains its
+  texel-centre interval, while a true stretched axis maps once across the output fragments it
+  actually covers. `tools/e2e.py overlay_sampling` pins and asserts the classic renderer, then
+  requires zero exact-green pixels in the default arm and the reported 1,080-pixel L in this
+  negative arm.
 
 - **`LF2_STAGE_GEOM=1`** makes the hand-woven stage geometry report its **negative** (issue
   #62). A loaded `.stage` always announces itself — its solid count, its vertices, the OBJ

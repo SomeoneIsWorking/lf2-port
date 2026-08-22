@@ -48,42 +48,37 @@ struct SDL_Texture;
  * as a render target. It does not second-guess the order it was given.
  */
 typedef struct {
-    float    x, y, w, h;        /* destination, output-target pixels */
-    float    u0, v0, u1, v1;    /* source, 0..1; ignored when there is no texture */
-    float    depth;             /* 0 nearest .. 1 farthest -- the PAINTER ORDER, not a distance */
-    float    r, g, b, a;        /* tint, or the colour when there is no texture */
+    float x, y, w, h;     /* destination, output-target pixels */
+    float u0, v0, u1, v1; /* source, 0..1; ignored when there is no texture */
+    float depth;      /* 0 nearest .. 1 farthest -- the PAINTER ORDER, not a distance */
+    float r, g, b, a; /* tint, or the colour when there is no texture */
     /* The source SHEET, as guest memory. The engine owns the upload and the cache, so both
      * sprites and stage geometry sample the same object -- which is the whole of defect 2
      * above. 0 for a colour fill. */
     uint32_t src_pixels;
-    int      sw, sh, spitch;
-    int      keyed;
+    int sw, sh, spitch;
+    int keyed;
     uint32_t key_lo, key_hi;
-    int      blend;             /* 0 opaque, 1 alpha, 2 premultiplied (GDI text tiles) */
+    int blend; /* 0 opaque, 1 alpha, 2 premultiplied (GDI text tiles) */
     /* A tile already living in host memory rather than in the guest: GDI text the port
      * rasterises itself. ARGB32 WORDS and PREMULTIPLIED, which is what the tile arena holds --
      * the writer has already multiplied the colour by its coverage, so `blend` must be
      * BLEND_PREMUL for these or every glyph edge darkens. Non-NULL takes precedence over
      * src_pixels. */
     const void *host_argb;
-    int         host_w, host_h, host_pitch;
-    /* ---- the lighting chain (issues #37, #69) ----
+    int host_w, host_h, host_pitch;
+    /* ---- the lighting chain (issues #37, #69, #97-#99) ----
      *
-     * The engine shades the OBJECTS STANDING IN THE STAGE and nothing else, and "object" is
-     * the game's own answer: a sprite with a ground marker (its shadow ellipse) drawn in front
-     * of it. `is_object` marks such a quad -- it is drawn again into the character mask and,
-     * as its sheared silhouette, into the cast-shadow mask -- and `ground_gy` is the bottom
-     * edge of that ellipse in output pixels, which is where the object meets the floor.
-     *
-     * `ground_cx` is the ellipse's HORIZONTAL centre, and it is the anchor the cast shadow
-     * stands under. The sprite quad's own centre is NOT the same point: LF2's frame art carries
-     * a per-frame offset inside its rectangle, so the character's feet sit wherever the game
-     * drew the ellipse, not at the middle of the frame that happens to hold them (issue #72 --
-     * anchoring at q.x + q.w/2 put the shadow up to a sprite-width to the side of the fighter).
-     * The ellipse centre is the object's true base and is what the game's own draw used. */
-    int      is_object;
-    float    ground_gy;
-    float    ground_cx;
+     * The engine shades the OBJECTS STANDING IN THE STAGE and nothing else. The hand-ported
+     * world-object pass supplies the game's own character, caster and z-row facts around each
+     * sprite draw; ellipse adjacency is only replacement evidence. `is_object` marks the
+     * character quad drawn again into the character mask.
+     * `casts_shadow` is deliberately independent: a held object belongs in the projected
+     * silhouette without being relit as character skin. `ground_gy` is the object's z row
+     * (the centre of the game's ellipse), shared by every piece in that object draw. */
+    int is_object;
+    int casts_shadow;
+    float ground_gy;
 } EngineQuad;
 
 /* Hand-woven stage geometry, submitted into the SAME pass as the sprites (issue #64).
@@ -101,26 +96,26 @@ typedef struct {
  * that can interpenetrate.
  */
 typedef struct {
-    const void *v;              /* MeshVertex *, owned by the caller */
-    int         n;
-    int         at;             /* draw before quad `at` */
-    int         camera;
+    const void *v; /* MeshVertex *, owned by the caller */
+    int n;
+    int at; /* draw before quad `at` */
+    int camera;
     /* WHERE THE COMPOSITION SITS ON THE SCREEN, as an affine map from stage pixels to clip
      * space. The caller has it already -- it is the same scale and offset every sprite quad
      * gets -- and passing it rather than a viewport size is what stops the geometry sitting
      * correctly in a 794-wide window and sliding out of the stage in any other. */
-    float       sx_scale, sx_bias, sy_scale, sy_bias;
+    float sx_scale, sx_bias, sy_scale, sy_bias;
 } EngineGeom;
 
 /* Bring the engine up on the device the port's `gpu` renderer is already built on (claim C029),
  * so there is one device and one texture pool. Reports WHY not, once, rather than going quiet:
  * an engine that silently does nothing is indistinguishable from a frame with nothing in it. */
-int  engine_init(struct SDL_Renderer *r);
-int  engine_ready(void);
+int engine_init(struct SDL_Renderer *r);
+int engine_ready(void);
 
 /* Is the engine the thing that draws? False keeps the SDL_Render path, which stays as the A/B
  * control arm the way LF2_BG_ORIG did for the background override. */
-int  engine_enabled(void);
+int engine_enabled(void);
 
 /* Draw `n` quads into an offscreen target `w` x `h` and return it as a texture the caller can
  * present. NULL if the engine is unavailable or n is 0. Owned by the engine, valid until the
@@ -130,15 +125,14 @@ int  engine_enabled(void);
  * character mask and a cast-shadow mask, and a light pass re-lights the finished picture into
  * a second target -- the returned texture is the LIT frame, and the masks never leave the
  * engine. Pixels outside those masks are not treated as an effect surface. */
-struct SDL_Texture *engine_draw(const EngineQuad *q, int n,
-                               const EngineGeom *g, int ng, int w, int h);
+struct SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng, int w, int h);
 
 /* A guest surface was written to, so any cached upload of it is stale. Same contract as
  * render_surface_dirty -- the cache is validated by content hash as well, and this is the cheap
  * path for the case the port already knows about. */
 void engine_surface_dirty(uint32_t pixels);
 
-void engine_report(void);       /* LF2_ENGINE_DEBUG=1: what the engine actually drew */
+void engine_report(void); /* LF2_ENGINE_DEBUG=1: what the engine actually drew */
 void engine_shutdown(void);
 
 #endif
