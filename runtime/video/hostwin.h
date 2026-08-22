@@ -116,16 +116,13 @@ int hostwin_width(void);
 int hostwin_height(void);
 
 /* The pause menu's reach into the game. `device_player` is the slot a device is driving,
- * -1 if none. `coop_drop_out` is the deliberate half of what unplugging a pad does.
- * `exit_to_menu_begin` drives the game's own way out of a match (screens.c, which calls the
- * game's exit code directly -- the synthetic-attack path that used to dispatch the overlay
- * is gone, issue #22). */
+ * -1 if none. `coop_drop_out` is the deliberate half of what unplugging a pad does. Leave
+ * Match itself is an F4 pulse through hostwin_inject_key, so the guest owns every consequence
+ * after the modal closes (issue #22). */
 int device_player(int dev);
 int device_for_player(int slot); /* the device driving a slot, -1 = none (issue #74) */
 int coop_owns(int slot);         /* is this slot the port's to release? */
 int coop_drop_out(int slot);
-void exit_to_menu_begin(int dev);
-void exit_to_menu_tick(void);
 
 /* Ask for the NEXT presented frame to be written out, for a probe whose moment is decided
  * by game state rather than by a frame number. */
@@ -139,6 +136,7 @@ int pause_menu_can_drop(void);
 void pause_menu_close(void);
 void pause_menu_drop_out(void);
 void pause_menu_leave_match(void);
+void pause_report(void);
 void pause_draw(uint32_t pix, int w, int h, int pitch);
 /* Rewind the native renderer to the retained frame under an open modal document. */
 int pause_draw_list(uint32_t dst_pixels, int w, int h);

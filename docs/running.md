@@ -401,7 +401,7 @@ keep drawing behind the modal document.
 |---|---|
 | CONTINUE | closes RmlUi and returns to the underlying screen |
 | DROP OUT | only when the device that OPENED the menu is driving a player this port put into the match — a drop-in. It runs the same `coop_leave` an unplugged pad does, which refuses any slot the game's own character selection filled |
-| LEAVE MATCH | starts the game's own match-exit flow. No keystroke or button is injected (issue #22) |
+| LEAVE MATCH | sends the same F4 key press a player can use, then leaves the resulting overlay to the game (issue #22) |
 | GAME | the actions above plus Quit |
 | GRAPHICS | native renderer, character shading/shadows, and light angle/height. No DoF or other post-processing controls exist |
 | CONTROLS | persistent keyboard and controller bindings for all seven actions. Select a binding, then press its replacement |
@@ -417,10 +417,11 @@ out of the fight.
 update, so anything the *game* has to do — and leaving a match is one of those — would
 otherwise be delivered to a game that never runs another frame.
 
-`LEAVE MATCH` is named for what it verifiably does: it lands on the post-load mode menu,
-asserted by the screen word rather than by a picture, because character selection and the
-mode menu share a blit destination and can share a picture (issue #59). `tools/e2e.py
-exit_to_menu` is that assertion. `tools/e2e.py pause_dropout` covers the drop-out half end to
+`LEAVE MATCH` closes the modal and sends one F4 pulse through the same Win32 message and guest
+key-state path as a physical key. The game decides what F4 does and leaves its post-match overlay
+open; the port does not select Exit afterwards. `tools/e2e.py leave_match` asserts one pulse was
+requested, F4 is not left held, and LF2's overlay remains up as the receipt. `tools/e2e.py
+pause_dropout` covers the drop-out half end to
 end, including the negative that player one is still in the match afterwards.
 
 The global menu is RmlUi (issues #70 and #79) — the one C++ dependency in the port, vendored as a

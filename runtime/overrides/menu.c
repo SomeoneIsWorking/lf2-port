@@ -301,7 +301,6 @@ void fn_004246b0(void)
     bg_table_report();           /* LF2_BG_TABLE=1: the loaded stage's layers, once */
     modemenu_mouse();            /* pointer -> selection on the post-load mode menu */
     overlay_mouse();             /* pointer -> selection on the pre-fight overlay */
-    exit_to_menu_tick();         /* the pause menu's way back to the front end */
     /* Not while the overlay is up: it sits ON character selection, so both would take the
      * same pointer and the slot cursor would wander while the player aims at "Fight!". */
     if (!overlay_open()) charselect_mouse();

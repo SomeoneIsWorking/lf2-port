@@ -191,10 +191,9 @@ enum { BG_REGISTRY = 0x00458b00 + 2004,
  * WHAT THAT DOES NOT MEAN, because this comment used to say it did: "so there is no exit
  * sequence to drive". There is. These two words are the OUTER layer -- which program the
  * process is running -- and the game never leaves the game proper once it is in it. Leaving a
- * MATCH is a different layer entirely, SCREEN_WORD below, and the game drives it itself: the
- * post-match overlay's Exit item takes it to screen 10, the post-load mode menu. The port's exit
- * uses exactly that (runtime/overrides/screens.c), and issue #22 is what happens when the two
- * layers are confused for each other. */
+ * MATCH is a different layer entirely, SCREEN_WORD below. Leave Match deliberately sends F4
+ * through the existing guest input path and stops there; the game owns the post-match overlay
+ * and every transition after it (issue #22). */
 enum { GAME_TOP_MODE = 0x00458b00, GAME_MODE_WORD = 0x0044d070 };
 
 /* SCREEN_WORD is the game's own screen selector, read from the decompilation of fn_0041bc90

@@ -1,11 +1,11 @@
 ---
 id: 87
 title: Stage background does not cover ultrawide composition
-status: resolved
+status: open
 symptom: On an ultrawide Stage-mode results screen, background layers end early and expose black rectangular gaps inside the expanded view
 tags: reported,widescreen,background,stage,rendering
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-22
 ---
 
 ## Reported
@@ -74,3 +74,6 @@ antialiased text edges only.
 
 ### Resolution (2026-08-21)
 The hard cutoffs were opaque outer edges of complete non-looping 1100/1400px backdrop planes exposed by a 1571px view. Pieces sharing an authored span now use one view/span mapping, preserving joins and moving outer edges to the viewport; looping layers, isolated props, and ground remain native. DirectDraw/GPU stretch sampling was unified in texrect.h. Verified by 27 backdrop checks, 2,799 texrect checks, native-width byte identity, a seam-free exact wide engine frame, and max engine/software channel difference 2.
+
+### Reopened (2026-08-22)
+USER 2026-08-22: Lion Forest's mountain sometimes stretches depending on scroll position. Two supplied captures show the same mountain plane with different apparent vertical/shape scaling as the camera moves. The accepted plane-widening rule must be scroll-invariant: camera motion may translate the plane according to authored parallax but must never change its scale or shape. Reproduce at multiple camera positions and fix the plane transform rather than adding a screenshot-specific crop or offset.

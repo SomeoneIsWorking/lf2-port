@@ -1,11 +1,11 @@
 ---
 id: 85
 title: Held crate appears transparent over character hair
-status: resolved
+status: open
 symptom: While a fighter carries a wooden crate overhead, patches of the fighter's hair appear inside the lower face of the crate as if the box were transparent
 tags: reported,rendering,sprite,weapon,color-key,draw-order
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-22
 ---
 
 ## Reported
@@ -36,3 +36,6 @@ of the sheet also uses whole-sheet coordinates rather than a second local origin
 
 No port change. Preserving the authored `cover: 0` order is the faithful result; changing it
 would put the whole crate over Davis and hide the hands the frame was authored to expose.
+
+### Reopened (2026-08-22)
+USER 2026-08-22: hair is again visible through a solid carried boulder, and the user explicitly identifies it as the same bug previously reported with the crate. The prior resolution treated the game's authored cover:0 ordering as acceptable, but the observed solid-object occlusion is not acceptable for this port. Reopen and replace that conclusion with a general solid-held-object occlusion fix that covers both crates and boulders without per-asset pixel suppression.

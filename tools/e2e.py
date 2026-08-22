@@ -24,7 +24,7 @@ ROUTES = (
     ("coop_dropin", "a pad joins a match ALREADY RUNNING and drives the fighter it joined"),
     ("coop_select", "a late joiner picks its character from the game's own roster"),
     ("pause_dropout", "a joined player leaves from the pause menu, on its own pad"),
-    ("exit_to_menu", "LEAVE MATCH reaches the post-load mode menu, by its screen word (issue #22)"),
+    ("leave_match", "LEAVE MATCH sends one F4 pulse and leaves the result overlay to the game (issue #22)"),
     ("two_human_match", "pad two drives its fighter in the FIGHT, not just at selection"),
     ("widescreen", "the composition follows the window, both directions, natives as negatives"),
     ("hidpi", "game and RmlUi use a SIMULATED 4K/200% drawable in a nested compositor (issues #56, #82)"),

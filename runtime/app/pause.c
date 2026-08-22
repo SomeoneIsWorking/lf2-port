@@ -18,6 +18,10 @@
 static int frozen;
 static int opened_in_match;
 static int opening_device = -1;
+static int leave_f4_boundaries;
+static unsigned leave_f4_pulses;
+
+enum { VK_F4 = 0x73, LEAVE_F4_BOUNDARIES = 2 };
 
 static int edge(int *was, int now)
 {
@@ -72,14 +76,21 @@ void pause_menu_drop_out(void)
 void pause_menu_leave_match(void)
 {
     if (!opened_in_match) return;
-    const int device = opening_device >= 0 ? opening_device : 0;
     pause_menu_close();
-    exit_to_menu_begin(device);
+    /* RmlUi can activate this callback during rendering or while the Win32 pump handles a
+     * physical event. Two update boundaries make both phases equivalent: keep F4 down
+     * through the next guest update, then release it before the following one. Sending down
+     * and up together could leave LF2's message-fed key array released before fn_0041bc90
+     * takes the same branch as a physical F4 press. */
+    hostwin_inject_key(VK_F4, 1);
+    leave_f4_boundaries = LEAVE_F4_BOUNDARIES;
+    leave_f4_pulses++;
 }
 
 void pause_tick(void)
 {
     static int was_start;
+    if (leave_f4_boundaries > 0 && --leave_f4_boundaries == 0) hostwin_inject_key(VK_F4, 0);
     const int escape_edge = keyboard_take_escape();
     const int start = gamepad_start_held() != 0;
     const int start_edge = edge(&was_start, start);
@@ -91,6 +102,13 @@ void pause_tick(void)
     if (!toggle) return;
     if (rmlui_active()) pause_menu_close();
     else open_menu();
+}
+
+void pause_report(void)
+{
+    if (!leave_f4_pulses) return;
+    fprintf(stderr, "pause leave: %u F4 pulse(s); key %s; post-match overlay %s at shutdown\n", leave_f4_pulses,
+            hostwin_injected_key(VK_F4) ? "DOWN" : "released", panel_overlay_up() ? "up" : "not up");
 }
 
 /* The old software and display-list painters remain as stable call boundaries while their

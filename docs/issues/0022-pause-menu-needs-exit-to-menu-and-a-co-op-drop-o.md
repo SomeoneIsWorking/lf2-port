@@ -5,7 +5,7 @@ status: resolved
 symptom: the pause menu offers only RESUME and QUIT GAME: there is no way back to the post-load mode menu without killing the process, and a joined player has no way to leave a match deliberately
 tags: reported,pause,menu,coop,drop-in,ux
 created: 2026-08-05
-updated: 2026-08-17
+updated: 2026-08-22
 ---
 
 REPORTED. runtime/app/pause.c currently has exactly two items:
@@ -558,3 +558,9 @@ The exit reached the mode menu (screen word 0x0044d020 = 10) and was pushed off 
 
 ### Note (2026-08-17)
 SUPERSEDED (2026-08-17): the synthetic-press mechanism this entry describes was itself replaced. LEAVE MATCH now calls the game's own exit code directly (screens.c's guest_end_match / guest_overlay_exit, read off fn_0041bc90 and fn_00429730): fn_00416cd0(0x44d020,0x451160) + fn_00431c70(this) to end the match, then fn_00401a30(0x455610,0) + screen=10 + 0x457580=0 + fn_00431c70(this) for the overlay Exit. input_synth_confirm and any_playing_device are DELETED -- no keystroke or button is injected, so the 'second gather confirms the mode menu' bug class cannot recur because there is no press. tools/e2e.sh exit_to_menu (updated for the native flow) still lands on screen 10.
+
+### Reopened (2026-08-22)
+USER 2026-08-22: Leave Match should just do what F4 does. Replace the direct/native exit-to-menu call with the same guest input path as a real F4 press so the game owns all resulting state transitions and cleanup. Reuse the authoritative keyboard/message route; do not duplicate F4 behavior in the UI layer.
+
+### Resolution (2026-08-22)
+LEAVE MATCH now closes RmlUi and sends one F4 pulse through hostwin_inject_key, which feeds the same WM_KEYDOWN/WM_KEYUP and guest key-state path as a physical key. The pulse spans one complete guest update and then releases; the direct guest_end_match/guest_overlay_exit state machine and automatic overlay Exit dispatch were deleted. tools/e2e.py leave_match fired all 16 route items, observed exactly one released pulse, and found the post-match overlay still up at shutdown. The 26-test offline suite and Clang gates pass.
