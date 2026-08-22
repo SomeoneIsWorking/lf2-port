@@ -19,9 +19,17 @@ ADOPTED_C_SOURCES = (
     ROOT / "runtime" / "overrides" / "input.c",
     ROOT / "runtime" / "video" / "backdrop.h",
     ROOT / "runtime" / "video" / "render.c",
+    ROOT / "runtime" / "video" / "raster.h",
     ROOT / "runtime" / "video" / "texrect.h",
+    ROOT / "runtime" / "ui" / "device_icons.c",
+    ROOT / "runtime" / "ui" / "overlay_panel.c",
+    ROOT / "runtime" / "ui" / "overlay_panel.h",
+    ROOT / "runtime" / "ui" / "ui_rgba.c",
+    ROOT / "runtime" / "ui" / "ui_rgba.h",
     ROOT / "tests" / "test_backdrop.c",
     ROOT / "tests" / "test_keyboard.c",
+    ROOT / "tests" / "test_overlay_panel.c",
+    ROOT / "tests" / "test_ui_rgba.c",
     ROOT / "tests" / "test_texrect.c",
 )
 

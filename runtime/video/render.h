@@ -52,6 +52,10 @@ void render_blit(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t s
 void render_blit_mirror_x(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh,
                           int spitch, int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi);
 
+/* Scope one background layer's exact subpixel parallax remainder across its guest draw. The
+ * display list records it with each resulting blit; zero ends the scope. */
+void render_background_phase_set(float phase);
+
 /* The game's own shadow ellipse. It is NOT added to the list as a picture while cast shadows
  * are enabled; its rectangle remains independent evidence of the walkable floor. Caster and
  * character ownership instead come from the world-object scope around the object's draw. */
