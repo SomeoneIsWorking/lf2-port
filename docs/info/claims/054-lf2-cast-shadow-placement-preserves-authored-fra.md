@@ -5,6 +5,8 @@ status: holds
 created: 2026-08-22
 tags:
 depends: runtime/video/stagelight.h#stagelight_shadow_quad, runtime/video/shadowcaster.h#shadowcaster_should_cast, runtime/overrides/objects.c#fn_0041a5a0, runtime/video/engine.c#lighting_passes, runtime/video/engine_visibility_probe.c#engine_visibility_probe_run
+reconfirmed: 2026-08-22
+verified_at: 2026-08-22 16:26:34
 ---
 
 ## Claim
@@ -24,3 +26,7 @@ order as W/W/W/B, and the LEQUAL other-answer mutation as B/W/W/W.
 ## What would falsify it
 
 an authored frame's projected foot span differs from its fn_0040de30 destination placement, a held physical object's exclusive shadow sample is absent, or a rear caster darkens an opaque later painter
+
+## Re-confirmed 2026-08-22
+
+Post-commit tools/e2e.py visibility shadow_contact passed: carried-object and strict-depth mutation arms passed, and two grounded LF2 fighters measured 0px/1px contact gaps.
