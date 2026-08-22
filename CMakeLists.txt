@@ -111,10 +111,10 @@ add_executable(lf2
     runtime/overrides/objects.c
     runtime/overrides/audio_pan.c
     runtime/video/render.c
-    runtime/video/render_snapshot.c
     runtime/video/hd2d.c
     runtime/video/mesh.c
     runtime/video/engine.c
+    runtime/video/engine_visibility_probe.c
     runtime/video/engine_textures.c
     runtime/video/stagegeom.c
     runtime/ui/device_assets.c
@@ -186,10 +186,10 @@ set_source_files_properties(
     runtime/overrides/objects.c
     runtime/overrides/audio_pan.c
     runtime/video/render.c
-    runtime/video/render_snapshot.c
     runtime/video/hd2d.c
     runtime/video/mesh.c
     runtime/video/engine.c
+    runtime/video/engine_visibility_probe.c
     runtime/video/engine_textures.c
     runtime/video/stagegeom.c
     runtime/app/main.c
@@ -377,6 +377,11 @@ target_link_libraries(test_texrect PRIVATE m)
 target_compile_options(test_texrect PRIVATE -Wall -Wextra)
 add_test(NAME texrect COMMAND test_texrect)
 
+add_executable(test_painter_depth tests/test_painter_depth.c)
+target_include_directories(test_painter_depth PRIVATE runtime/video)
+target_compile_options(test_painter_depth PRIVATE -Wall -Wextra)
+add_test(NAME painter_depth COMMAND test_painter_depth)
+
 add_executable(test_texture_lru tests/test_texture_lru.c)
 target_include_directories(test_texture_lru PRIVATE runtime/video)
 target_compile_options(test_texture_lru PRIVATE -Wall -Wextra)
@@ -387,13 +392,18 @@ target_include_directories(test_device_icons PRIVATE runtime/ui)
 target_compile_options(test_device_icons PRIVATE -Wall -Wextra)
 add_test(NAME device_icons COMMAND test_device_icons)
 
-# The renderer's frame lifetime -- when a display list is cleared, which pooled texture serves
-# a tile, and when a completed output is valid for frozen presentation. The shipping renderer
-# includes the same headers, so this is not a copy. No SDL, no window, no game.
+# The renderer's frame lifetime -- when a display list is cleared and which pooled texture
+# serves a tile. The shipping renderer includes the same header, so this is not a copy. No
+# SDL, no window, no game.
 add_executable(test_framelife tests/test_framelife.c)
 target_include_directories(test_framelife PRIVATE runtime runtime/video)
 target_compile_options(test_framelife PRIVATE -Wall -Wextra)
 add_test(NAME framelife COMMAND test_framelife)
+
+add_executable(test_rmlui_lifecycle tests/test_rmlui_lifecycle.c)
+target_include_directories(test_rmlui_lifecycle PRIVATE runtime/ui)
+target_compile_options(test_rmlui_lifecycle PRIVATE -Wall -Wextra)
+add_test(NAME rmlui_lifecycle COMMAND test_rmlui_lifecycle)
 
 add_executable(test_framespec tests/test_framespec.c)
 target_include_directories(test_framespec PRIVATE runtime runtime/app)

@@ -37,7 +37,10 @@
 struct SDL_Renderer;
 struct SDL_Texture;
 
-/* One quad, in the composition's own pixels -- which is where the game has already placed it.
+/* One quad, already transformed into the output target's pixels. The display list records the
+ * game's composition-space placement; render.c applies the world scale and output placement
+ * before handing it to the engine so sprites, meshes, text and SVG coverage rasterise at the
+ * drawable's resolution rather than into a small composition texture that is enlarged later.
  *
  * DEPTH IS AN ORDINAL TURNED INTO A NUMBER, not a guess about the scene. The display list is
  * painter-ordered and that order is the game's own answer; the engine maps position-in-list
@@ -45,7 +48,7 @@ struct SDL_Texture;
  * as a render target. It does not second-guess the order it was given.
  */
 typedef struct {
-    float    x, y, w, h;        /* destination, composition pixels */
+    float    x, y, w, h;        /* destination, output-target pixels */
     float    u0, v0, u1, v1;    /* source, 0..1; ignored when there is no texture */
     float    depth;             /* 0 nearest .. 1 farthest -- the PAINTER ORDER, not a distance */
     float    r, g, b, a;        /* tint, or the colour when there is no texture */

@@ -1,18 +1,13 @@
-/* The renderer's frame and frozen-snapshot lifetime, walked without a window (issues #52,
- * #53, #94).
+/* The renderer's display-list lifetime, walked without a window (issues #52, #53, #94).
  *
  * runtime/video/render.c INCLUDES runtime/video/framelife.h and calls into it, so this is not
  * exercising a copy -- same arrangement as tests/test_geom.c over runtime/overrides/geom.h.
  *
- * Issue #94 proved that a list length is not an immutable frame: a presentation decoration
- * reused its tile arena before the old hold rewound metadata over that storage. Frozen output
- * now has a separate snapshot lifetime, while a display list always ends at its present.
+ * RmlUi has no separate retained/frozen frame; each game update uses this ordinary lifetime.
  */
 #include "framelife.h"
-#include "framesnapshot.h"
 
 #include <stdio.h>
-#include <string.h>
 
 static int failures;
 
@@ -32,7 +27,7 @@ static void check_eq(long got, long want, const char *what)
     }
 }
 
-/* One ordinary frame: record, present, and let the first later record start the next list. */
+/* One ordinary frame: record, present, and clear immediately. */
 static void ordinary_frames(void)
 {
     FrameLife f;
@@ -43,43 +38,12 @@ static void ordinary_frames(void)
     f.n[L] = 40;
     f.tile_used = 4096;
     fl_frame_reset(&f);
-    check_eq(f.spent, 1, "present marks the completed list as spent");
-    check_eq(f.n[L], 40, "present does not erase next-frame work before it starts");
-    check_eq(fl_touch(&f), 1, "the first later record owns the clear");
-    check_eq(f.n[L], 0, "and the list is empty");
-    check_eq(f.tile_used, 0, "and the tile arena is rewound");
-    check_eq(fl_touch(&f), 0, "later records in the same frame do not clear again");
+    check_eq(f.n[L], 0, "present consumes the completed display list");
+    check_eq(f.tile_used, 0, "present rewinds the tile arena");
 
     f.n[L] = 12;
     fl_frame_reset(&f);
-    fl_frame_reset(&f);
-    check_eq(f.n[L], 12, "a present with no later record does not erase the producer's list");
-}
-
-static void snapshot_lifetime(void)
-{
-    FrameSnapshot s;
-    frame_snapshot_init(&s);
-    check_eq(frame_snapshot_can_freeze(&s, 0x1000), 0, "nothing can freeze before a live copy succeeds");
-
-    frame_snapshot_captured(&s, 0x1000, 1920, 1080, 1);
-    check_eq(frame_snapshot_can_freeze(&s, 0x1000), 1, "the matching completed composition can freeze");
-    check_eq(frame_snapshot_can_freeze(&s, 0x2000), 0, "a different composition cannot receive a stale snapshot");
-    frame_snapshot_presented_frozen(&s);
-    check_eq(s.frozen_frames, 1, "only an actual frozen present is counted");
-
-    frame_snapshot_captured(&s, 0x1000, 1920, 1080, 0);
-    check_eq(frame_snapshot_can_freeze(&s, 0x1000), 0, "a failed live copy invalidates the previous snapshot");
-}
-
-static void snapshot_resize(void)
-{
-    float x, y, w, h;
-    frame_snapshot_contain(2560, 1080, 1920, 1080, &x, &y, &w, &h);
-    check_eq((long)(x + 0.5f), 0, "a resized ultrawide snapshot is centred horizontally");
-    check_eq((long)(y + 0.5f), 135, "and letterboxed rather than stretched vertically");
-    check_eq((long)(w + 0.5f), 1920, "the contained snapshot fills the binding axis");
-    check_eq((long)(h + 0.5f), 810, "and keeps its original aspect ratio");
+    check_eq(f.n[L], 0, "every present has the same immediate-clear boundary");
 }
 
 /* The overlay boundary separates what the lighting touches from what it must not. */
@@ -162,8 +126,6 @@ static void tile_peak(void)
 int main(void)
 {
     ordinary_frames();
-    snapshot_lifetime();
-    snapshot_resize();
     overlay_boundary();
     pool_reuse();
     tile_peak();

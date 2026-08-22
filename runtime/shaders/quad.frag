@@ -31,10 +31,11 @@ layout(location = 0) out vec4 o_color;
 void main()
 {
     /* The texture's alpha carries through untouched. The colour key became alpha on upload --
-     * that conversion is where this port's blend stage comes from -- so a sprite's keyed pixels
-     * are already transparent by the time they arrive and no discard is needed. A discard would
-     * also disable early depth testing, which is the one thing this engine has that the path it
-     * replaces could not have at all. */
+     * that conversion is where this port's blend stage comes from. Fully transparent texels must
+     * be discarded, not merely blended away: a blended zero still writes depth, turning every
+     * keyed sprite into an invisible rectangle in the completed visibility buffer. The character
+     * mask reuses that buffer to reject fighters covered by later weapons. */
     vec4 tex = texture(u_src, v_uv);
     o_color = mix(vec4(1.0), tex, f.u_flags.x) * v_color;
+    if (o_color.a <= 0.0) discard;
 }

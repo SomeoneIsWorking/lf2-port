@@ -8,14 +8,14 @@ from pathlib import Path
 import re
 import subprocess
 
+from ppm import read_ppm
+
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / os.environ.get("LF2_SCRATCH", "scratch") / "ui_global_test"
-RUN_LOG = OUTPUT / "run.log"
 
 KEY = "0x1B@modemenu+20,0x1B@modemenu+60"
-PAD = ",".join(
-    (
+PAD_ACTIONS = (
         "south@modemenu+100",
         "start@charselect+20",
         "east@charselect+60",
@@ -35,52 +35,20 @@ PAD = ",".join(
         "south@overlay+220",
         "start@match+300",
         "east@match+360",
-    )
 )
+PAD = ",".join(PAD_ACTIONS)
+CONTROL_PAD = ",".join(PAD_ACTIONS[:-2])
 
-# Pre-open, modal, and every frame around mapped Cancel. In the failing build the final frame
-# below was the first frame with RmlUi hidden and had only 93.2% of the completed frame's
-# non-black coverage because stale list lengths resurrected overwritten tile backing.
-DUMP_SPEC = "@match+299,@match+305,@match+359,@match+360,@match+361,@match+362"
+# Pre-open, two modal frames, and the first three frames after mapped Cancel is processed. The
+# route's +360 action reaches RmlUi after the +360/+361 dumps; +362 is the first hidden frame.
+# Starting there tests the transition itself rather than two still-correct modal frames.
+DUMP_SPEC = "@match+299,@match+305,@match+359,@match+362,@match+363,@match+364"
+CONTROL_DUMP_SPEC = "@match+305,@match+359,@match+362,@match+363,@match+364"
 
 
 def configured_path(name: str, default: str) -> Path:
     path = Path(os.environ.get(name, default))
     return (ROOT / path).resolve() if not path.is_absolute() else path.resolve()
-
-
-def ppm_pixels(path: Path) -> tuple[int, int, bytes]:
-    data = path.read_bytes()
-    tokens: list[bytes] = []
-    pos = 0
-    while len(tokens) < 4:
-        while pos < len(data) and data[pos] in b" \t\r\n":
-            pos += 1
-        if pos < len(data) and data[pos] == ord("#"):
-            pos = data.index(b"\n", pos) + 1
-            continue
-        end = pos
-        while end < len(data) and data[end] not in b" \t\r\n":
-            end += 1
-        tokens.append(data[pos:end])
-        pos = end
-    if tokens[0] != b"P6" or tokens[3] != b"255":
-        raise ValueError(f"{path} is not an 8-bit binary PPM")
-    while pos < len(data) and data[pos] in b" \t\r\n":
-        pos += 1
-    width, height = int(tokens[1]), int(tokens[2])
-    pixels = data[pos:]
-    if len(pixels) != width * height * 3:
-        raise ValueError(f"{path} has {len(pixels)} pixel bytes, expected {width * height * 3}")
-    return width, height, pixels
-
-
-def coverage(pixels: bytes) -> float:
-    non_black = sum(
-        pixels[offset] != 0 or pixels[offset + 1] != 0 or pixels[offset + 2] != 0
-        for offset in range(0, len(pixels), 3)
-    )
-    return non_black / (len(pixels) // 3)
 
 
 def changed_fraction(left: bytes, right: bytes) -> float:
@@ -89,6 +57,53 @@ def changed_fraction(left: bytes, right: bytes) -> float:
     changed = sum(left[offset : offset + 3] != right[offset : offset + 3]
                   for offset in range(0, len(left), 3))
     return changed / (len(left) // 3)
+
+
+def side_bands(pixels: bytes, width: int, height: int, band_width: int = 400) -> bytes:
+    """Pixels outside RmlUi's centered 900px panel, where only the game may draw."""
+    stride = width * 3
+    side = band_width * 3
+    return b"".join(
+        pixels[y * stride : y * stride + side]
+        + pixels[(y + 1) * stride - side : (y + 1) * stride]
+        for y in range(height)
+    )
+
+
+def run_case(binary: Path, game: Path, name: str, pad: str, dump_spec: str) -> tuple[subprocess.CompletedProcess[bytes], str, list[Path]] | None:
+    case = OUTPUT / name
+    case.mkdir(parents=True, exist_ok=True)
+    for old in case.glob("frame_*.ppm"):
+        old.unlink()
+    log = case / "run.log"
+    env = os.environ.copy()
+    env.update(
+        SDL_VIDEODRIVER="offscreen",
+        SDL_AUDIODRIVER="dummy",
+        LF2_UNPACED="1",
+        LF2_WINDOW_SIZE="1920x1080",
+        LF2_KEY_SCRIPT=KEY,
+        LF2_VIRTUAL_PAD=pad,
+        LF2_RMLUI_DEBUG="1",
+        LF2_FRAME_DUMP=dump_spec,
+        LF2_DUMP_DIR=str(case),
+        LF2_QUIT_AFTER="2450",
+    )
+    with log.open("w") as output:
+        try:
+            result = subprocess.run(
+                [str(binary), "lf2.exe"],
+                cwd=game,
+                env=env,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                timeout=300,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"  FAIL  the {name} route exceeded 300 seconds")
+            return None
+    return result, log.read_text(errors="replace"), sorted(case.glob("frame_*.ppm"))
 
 
 def main() -> int:
@@ -103,39 +118,13 @@ def main() -> int:
         return 77
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    for old in OUTPUT.glob("frame_*.ppm"):
-        old.unlink()
-    env = os.environ.copy()
-    env.update(
-        SDL_VIDEODRIVER="offscreen",
-        SDL_AUDIODRIVER="dummy",
-        LF2_UNPACED="1",
-        LF2_WINDOW_SIZE="1920x1080",
-        LF2_KEY_SCRIPT=KEY,
-        LF2_VIRTUAL_PAD=PAD,
-        LF2_RMLUI_DEBUG="1",
-        LF2_FRAME_DUMP=DUMP_SPEC,
-        LF2_DUMP_DIR=str(OUTPUT),
-        LF2_QUIT_AFTER="2450",
-    )
-
-    print("global RmlUi: opening one shell on every screen and checking match transitions...", flush=True)
-    with RUN_LOG.open("w") as output:
-        try:
-            result = subprocess.run(
-                [str(binary), "lf2.exe"],
-                cwd=game,
-                env=env,
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                timeout=300,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            print("  FAIL  the route exceeded 300 seconds")
-            return 1
-
-    text = RUN_LOG.read_text(errors="replace")
+    print("global RmlUi: checking modal transitions against a matching no-modal run...", flush=True)
+    modal_run = run_case(binary, game, "modal", PAD, DUMP_SPEC)
+    control_run = run_case(binary, game, "control", CONTROL_PAD, CONTROL_DUMP_SPEC)
+    if modal_run is None or control_run is None:
+        return 1
+    result, text, frames = modal_run
+    control_result, control_text, control_frames = control_run
     checks: list[tuple[bool, str]] = []
     report = re.search(r"rmlui: (\d+) settings open\(s\)", text)
     checks.append((report is not None and report.group(1) == "4",
@@ -147,25 +136,37 @@ def main() -> int:
                    "LF2_VIRTUAL_PAD: 19 of 19 items fired" in text,
                    "every open, close, and route action fired"))
     checks.append((result.returncode == 0, f"the game exited cleanly ({result.returncode})"))
+    checks.append(("LF2_KEY_SCRIPT: 2 of 2 items fired" in control_text and
+                   "LF2_VIRTUAL_PAD: 17 of 17 items fired" in control_text,
+                   "the no-match-modal control fired every matching route action"))
+    checks.append((control_result.returncode == 0,
+                   f"the no-match-modal control exited cleanly ({control_result.returncode})"))
 
-    frames = sorted(OUTPUT.glob("frame_*.ppm"))
     checks.append((len(frames) == 6, f"all six transition frames were captured ({len(frames)})"))
-    if len(frames) == 6:
-        decoded = [ppm_pixels(frame) for frame in frames]
-        checks.append((all(width == 1920 and height == 1080 for width, height, _ in decoded),
+    checks.append((len(control_frames) == 5,
+                   f"all five matching control frames were captured ({len(control_frames)})"))
+    if len(frames) == 6 and len(control_frames) == 5:
+        decoded = [read_ppm(frame) for frame in frames]
+        control = [read_ppm(frame) for frame in control_frames]
+        checks.append((all(width == 1920 and height == 1080 for width, height, _ in decoded + control),
                        "GPU readback retained the 1920x1080 output resolution"))
-        before = decoded[0][2]
         modal = decoded[1][2]
-        closed = decoded[-1][2]
-        before_coverage = coverage(before)
-        closed_coverage = coverage(closed)
-        checks.append((changed_fraction(before, modal) >= 0.05,
-                       "the captured modal frame visibly differs from the live frame"))
-        checks.append((changed_fraction(modal, closed) >= 0.05,
-                       "mapped Cancel removed the modal in the captured close frame"))
-        checks.append((closed_coverage >= before_coverage * 0.98,
-                       f"the first closed frame kept completed-frame coverage "
-                       f"({closed_coverage:.4f} vs {before_coverage:.4f})"))
+        modal_later = decoded[2][2]
+        closed_frames = [decoded[index][2] for index in range(3, 6)]
+        control_modal_times = [control[0][2], control[1][2]]
+        control_closed = [control[index][2] for index in range(2, 5)]
+        checks.append((changed_fraction(modal, control_modal_times[0]) >= 0.05,
+                       "the captured modal visibly differs from the no-modal control"))
+        checks.append((side_bands(modal, 1920, 1080) == side_bands(control_modal_times[0], 1920, 1080) and
+                       side_bands(modal_later, 1920, 1080) == side_bands(control_modal_times[1], 1920, 1080),
+                       "the ordinary game renderer exactly matches the control outside the modal"))
+        checks.append((changed_fraction(modal_later, closed_frames[0]) >= 0.05,
+                       "mapped Cancel removed the modal in the first hidden frame (+362)"))
+        differences = [changed_fraction(modal_frame, control_frame)
+                       for modal_frame, control_frame in zip(closed_frames, control_closed)]
+        checks.append((all(value == 0.0 for value in differences),
+                       "the first hidden frame (+362) and its successors exactly match the "
+                       f"no-modal control ({', '.join(f'{value:.6f}' for value in differences)})"))
 
     failed = False
     for passed, description in checks:
@@ -173,7 +174,7 @@ def main() -> int:
         failed |= not passed
     print(f"global RmlUi test {'FAILED' if failed else 'PASSED'}")
     if failed:
-        print(f"        log and transition frames: {OUTPUT}")
+        print(f"        logs and transition frames: {OUTPUT}")
     return int(failed)
 
 

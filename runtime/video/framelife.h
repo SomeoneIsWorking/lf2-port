@@ -11,10 +11,10 @@
  * drift. render.c owns the SDL objects; this owns the bookkeeping that decides what happens
  * to them, and the two are indexed alike.
  *
- * A display list has one ordinary lifetime: record, draw, present, clear. The pause menu does
- * not extend that lifetime; render.c copies the completed output into an immutable texture and
- * composites RmlUi over that texture. The overlay boundary only says where the game's picture
- * ends, because the port's UI must be drawn after the lighting rather than lit with the scene.
+ * A display list has one ordinary lifetime: record, draw, present, clear. RmlUi does not
+ * create a second frame lifecycle; the game continues through this same producer/present path
+ * behind the modal. The overlay boundary only says where the game's picture ends, because the
+ * port's UI must be drawn after the lighting rather than lit with the scene.
  */
 #ifndef LF2_FRAMELIFE_H
 #define LF2_FRAMELIFE_H
@@ -33,10 +33,6 @@ typedef struct {
     int pool_w[FL_POOL_MAX], pool_h[FL_POOL_MAX];
     unsigned char pool_busy[FL_POOL_MAX];
 
-    /* Present occurs before all of LF2's update returns. Drawing after it starts the next
-     * frame, so the first following record owns the clear. */
-    int spent;
-
     /* ---- what the report prints ---- */
     int peak_tiles, tiles_this_frame;
     long pool_exhausted;
@@ -49,7 +45,6 @@ static inline void fl_init(FrameLife *f)
     f->nlists = 0;
     f->tile_used = 0;
     f->pool_n = 0;
-    f->spent = 0;
     f->peak_tiles = 0;
     f->tiles_this_frame = 0;
     f->pool_exhausted = 0;
@@ -84,17 +79,9 @@ static inline void fl_clear(FrameLife *f)
     f->tiles_this_frame = 0;
 }
 
-/* Called by every recording entry point. The first record after present starts the next
- * display list; later records in that frame append normally. */
-static inline int fl_touch(FrameLife *f)
-{
-    if (!f->spent) return 0;
-    f->spent = 0;
-    fl_clear(f);
-    return 1;
-}
-
-static inline void fl_frame_reset(FrameLife *f) { f->spent = 1; }
+/* Presentation consumes the display list immediately. Any records LF2 emits after its
+ * mid-update present therefore build the next ordinary frame into an already-empty list. */
+static inline void fl_frame_reset(FrameLife *f) { fl_clear(f); }
 
 /* The port is about to draw its own UI over a LIVE frame -- the controls hint on a menu the
  * game is still updating. The boundary does not move once set: the hint marks itself on every

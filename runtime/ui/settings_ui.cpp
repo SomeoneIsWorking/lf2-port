@@ -20,6 +20,7 @@
 #include "RmlUi_Platform_SDL.h"
 #include "rmlui_backend.h"
 #include "rmlui_input.h"
+#include "rmlui_lifecycle.h"
 
 extern "C" {
 #include "config.h"
@@ -203,7 +204,7 @@ static SDL_Window *g_W = nullptr;
 static RmlUiRenderBackend *g_render = nullptr;
 static Rml::Context *g_ctx = nullptr;
 static Rml::ElementDocument *g_doc = nullptr;
-static bool g_open = false;
+static RmlUiLifecycle g_lifecycle;
 static int g_key_capture = -1;
 static int g_pad_capture = -1;
 static bool g_pad_capture_armed;
@@ -433,19 +434,19 @@ void rmlui_shutdown(void)
     g_render = nullptr;
     g_R = nullptr;
     g_W = nullptr;
-    g_open = false;
+    rmlui_lifecycle_init(&g_lifecycle);
     g_key_capture = g_pad_capture = -1;
     rmlui_input_reset();
     g_metrics_reported = 0;
     g_open_count = g_render_frames = 0;
 }
 
-int rmlui_active(void) { return g_open ? 1 : 0; }
+int rmlui_active(void) { return g_lifecycle.active; }
 
 void rmlui_open(void)
 {
     if (!g_ctx) return;
-    g_open = true;
+    rmlui_lifecycle_open(&g_lifecycle);
     g_open_count++;
     g_key_capture = g_pad_capture = -1;
     rmlui_input_reset();
@@ -458,8 +459,8 @@ void rmlui_open(void)
 
 void rmlui_close(void)
 {
-    if (!g_open) return;
-    g_open = false;
+    if (!g_lifecycle.active) return;
+    rmlui_lifecycle_close(&g_lifecycle);
     g_key_capture = g_pad_capture = -1;
     model_store();
     if (g_doc) g_doc->Hide();
@@ -467,10 +468,11 @@ void rmlui_close(void)
 
 void rmlui_render(void)
 {
-    if (!g_ctx || !g_open || !g_render) return;
-    g_render_frames++;
-    /* Values are stored immediately. A frozen match deliberately keeps its immutable completed
-     * frame; renderer and lighting changes appear on the first live frame after it resumes. */
+    if (!g_ctx || !g_render) return;
+    const unsigned frame = rmlui_lifecycle_frame_begin(&g_lifecycle);
+    if (!frame) return;
+    /* Values are stored immediately; the game keeps its ordinary update/draw/present path
+     * behind this document, so renderer and lighting changes remain live. */
     model_store_live();
 
     /* The context follows the render output, so the panel stays centred however the window
@@ -487,8 +489,14 @@ void rmlui_render(void)
 
     const RmlUiInputCallbacks callbacks = {activate_focused, cancel_document};
     if (g_doc) rmlui_input_update(*g_ctx, *g_doc, callbacks);
-    g_render->BeginFrame();
+    /* Cancel/Continue is allowed to close the document from rmlui_input_update.  That callback
+     * invalidates this UI frame: updating or rendering it after Hide() produced the one-frame
+     * close glitch from issue #94. */
+    if (!rmlui_lifecycle_frame_continues(&g_lifecycle, frame)) return;
     g_ctx->Update();
+    if (!rmlui_lifecycle_frame_continues(&g_lifecycle, frame)) return;
+    g_render_frames++;
+    g_render->BeginFrame();
     if (!g_metrics_reported && getenv("LF2_RMLUI_DEBUG")) {
         int window_w = 0, window_h = 0;
         int pixel_w = 0, pixel_h = 0;
@@ -507,7 +515,7 @@ void rmlui_render(void)
 
 int rmlui_event(SDL_Event *e)
 {
-    if (!g_ctx || !g_open) return 0;
+    if (!g_ctx || !g_lifecycle.active) return 0;
 
     /* A rebind capture takes the next key, whichever it is. Escape cancels it. */
     if (e->type == SDL_EVENT_KEY_DOWN && g_key_capture >= 0) {

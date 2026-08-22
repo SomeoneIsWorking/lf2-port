@@ -1,10 +1,11 @@
 ---
 id: C051
 kind: claim
-status: holds
+status: falsified
 created: 2026-08-22
 tags: renderer,rmlui,pause
 depends: runtime/video/render.c#render_present, runtime/video/render_snapshot.c#render_snapshot_capture, runtime/video/ddraw.c#present_primary, tools/routes/ui_global_test.py
+falsified_on: 2026-08-22
 ---
 
 ## Claim
@@ -18,3 +19,9 @@ Pre-fix deterministic 1920x1080 ui_global captures: frame 1574 was the first hid
 ## What would falsify it
 
 If an exact ui_global open/close capture shows the first hidden frame below 98% of the pre-open non-black coverage, or if a frozen native present can use a snapshot from another composition source.
+
+## FALSIFIED 2026-08-22
+
+The user observed a remaining transient close glitch and corrected the intended contract: RmlUi must use the game's normal render path, not an immutable completed-frame snapshot. The snapshot design therefore does not satisfy the visible transition or product requirement.
+
+> Anything that cited this claim as proof must be re-checked. Grep the repo for it.

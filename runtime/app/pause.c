@@ -1,9 +1,10 @@
 /* Global port-menu lifecycle.
  *
  * Dusklight's menu command opens its RmlUi document stack directly. LF2 follows the same
- * ownership: this module decides when the game must be frozen and exposes LF2 actions, while
- * runtime/ui owns every visible menu element and all navigation. There is deliberately no
- * second, hand-painted Escape menu here.
+ * ownership: this module tracks where the shell opened and exposes LF2 actions, while
+ * runtime/ui owns every visible menu element and all navigation. The game's normal update and
+ * render path continues behind the modal; input ownership, not a second frame lifecycle, keeps
+ * the document modal. There is deliberately no second, hand-painted Escape menu here.
  */
 #include "hostwin.h"
 #include "gamepad.h"
@@ -14,7 +15,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static int frozen;
 static int opened_in_match;
 static int opening_device = -1;
 static int leave_f4_boundaries;
@@ -40,13 +40,7 @@ static void open_menu(void)
     opened_in_match = panel_hud_up() != 0;
     opening_device = menu_device();
     rmlui_open();
-    /* Only a running match must stop advancing. Front-end screens keep rendering behind the
-     * modal document, exactly as Dusklight keeps its UI global without inventing a second game
-     * state machine. Input is still withheld from the guest while the document is active. */
-    frozen = rmlui_active() && opened_in_match;
 }
-
-int pause_active(void) { return frozen; }
 
 int pause_menu_in_match(void) { return opened_in_match; }
 
@@ -59,7 +53,6 @@ int pause_menu_can_drop(void)
 void pause_menu_close(void)
 {
     rmlui_close();
-    frozen = 0;
     opened_in_match = 0;
     opening_device = -1;
 }

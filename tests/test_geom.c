@@ -13,6 +13,7 @@
  */
 #include "overrides/geom.h"
 
+#include <limits.h>
 #include <stdio.h>
 
 static int failures, checks;
@@ -57,7 +58,8 @@ static void test_scale(void)
      * window whose aspect is at least the game's, the drawn height IS the window's height, so
      * there are no black bands. The old design put 265 rows of black above and below a 1080p
      * window and that is what this now forbids. */
-    const int win[][2] = { {794,550}, {1600,550}, {1920,1080}, {1280,720}, {2560,1440} };
+    const int win[][2] = {{794, 550},  {1600, 550}, {1920, 1080}, {1280, 720},
+                          {2560, 1440}, {3840, 1975}};
     for (unsigned i = 0; i < sizeof win / sizeof win[0]; i++) {
         float x, y, w, h;
         const int cw = geom_compose_width(win[i][0], win[i][1], 4096);
@@ -68,7 +70,13 @@ static void test_scale(void)
         eqf(what, h, (float)win[i][1]);
         snprintf(what, sizeof what, "%dx%d: no black band above", win[i][0], win[i][1]);
         eqf(what, y, 0.0f);
+        snprintf(what, sizeof what, "%dx%d: scaled composition covers the left edge", win[i][0], win[i][1]);
+        eq(what, x <= 0.0f, 1);
+        snprintf(what, sizeof what, "%dx%d: scaled composition covers the right edge", win[i][0], win[i][1]);
+        eq(what, x + w >= (float)win[i][0], 1);
     }
+
+    eq("3840x1975 ceils its fractional 1069.367-pixel view", geom_compose_width(3840, 1975, 4096), 1070);
 
     /* The narrower-than-the-game case, which is where a band is CORRECT: the width binds, the
      * view floors at 794, and the rows the game has no world for stay black. Stated as its own
@@ -493,6 +501,10 @@ static void test_compose(void)
     eq("compose 400x300 floors",   geom_compose_width(400, 300, WIDE_MAX), 794);
     /* And the build's own pitch limit still caps it. 32:9 at 550 rows asks for 1956. */
     eq("compose 9000x550 clamps",  geom_compose_width(9000, 550, WIDE_MAX), WIDE_MAX);
+    /* Cap BEFORE narrowing to int. INT_MAX:1 asks for over a trillion world columns; the old
+     * cast wrapped that quotient before the cap could see it and returned a bogus width. */
+    eq("an extreme aspect saturates at WIDE_MAX before narrowing",
+       geom_compose_width(INT_MAX, 1, WIDE_MAX), WIDE_MAX);
 }
 
 /* ---- the stage's parallax ---- */
