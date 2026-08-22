@@ -11,7 +11,6 @@ enum {
     PLAYER_DEVICE_2 = 0x00450b50,
     PLAYER_DEVICE_3 = 0x00450b54,
     PLAYER_DEVICE_4 = 0x00450b58,
-    TOP_LOAD = 1
 };
 
 static void initialise_local_players(void)
@@ -35,7 +34,7 @@ void fn_00419e40(void)
     const uint32_t game = R(ECX);
     fn_00419e40__orig();
     ST8(LOCAL_PLAY_MARKER, 'u');
-    ST32(game, TOP_LOAD);
+    ST32(game, BOOT_GUEST_LOAD);
 }
 
 void boot_guest_prepare_local_players(void)
