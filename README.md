@@ -12,12 +12,20 @@ auto-detect and hotswap, and borderless windowed mode.
 
 ## Screenshots
 
-| Global port menu | Keyboard and controller mapping |
-|---|---|
-| ![The global RmlUi port menu](docs/screenshots/port-menu.png) | ![Keyboard and controller input mapping in RmlUi](docs/screenshots/input-mapping.png) |
+![Native widescreen demo match](docs/screenshots/widescreen-demo.png)
 
-These captures show only the port-owned RmlUi shell. Game artwork is loaded from each user's
-local extracted copy and remains outside Git history.
+*Native 16:9 presentation expands the world view instead of stretching the original 4:3 frame.*
+
+| In-game port menu | Native renderer and lighting controls |
+|---|---|
+| ![The in-game RmlUi port menu](docs/screenshots/port-menu.png) | ![Native renderer and lighting controls in RmlUi](docs/screenshots/graphics.png) |
+
+![Remappable keyboard and controller inputs](docs/screenshots/input-mapping.png)
+
+*Keyboard and controller bindings use the same device-independent input layer.*
+
+These promotional screenshots were captured from a locally extracted copy of LF2. The game
+executable and extracted assets are not distributed in this repository.
 
 ## No game content is distributed here
 
@@ -25,6 +33,9 @@ This repository contains **no Little Fighter 2 code, sprites, audio, or data** �
 and notes. Little Fighter 2 is freeware by **Marti Wong and Starsky Wong** and remains their
 copyright. To use anything here you must download the official installer yourself from
 <https://lf2.net> and extract it locally; the extracted tree is gitignored.
+
+The curated promotional screenshots above are the only tracked visual output from the game;
+they do not include or replace any separately usable game asset.
 
 That applies to derivatives too. `re/instructions.tsv` — Ghidra's dump of every instruction
 *with its raw bytes* — is gitignored for the same reason, since `.text` can be rebuilt from
