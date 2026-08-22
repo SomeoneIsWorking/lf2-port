@@ -12,6 +12,7 @@
  * a running game -- the scripts under tools/ -- but they are now the only things that do.
  */
 #include "overrides/geom.h"
+#include "video/raster.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -37,6 +38,18 @@ static void eqf(const char *what, float got, float want)
     if (d > -0.25f && d < 0.25f) return;
     failures++;
     printf("  FAIL  %s: got %.4f, expected %.4f\n", what, (double)got, (double)want);
+}
+
+/* Parallax's exact-rate discriminator is much smaller than eqf's general sub-pixel layout
+ * tolerance. A 0.25-pixel window would accept almost half of Lion Forest's 0.556-pixel step,
+ * so this seam gets a dedicated arithmetic tolerance and an absolute-position assertion. */
+static void eqf_exact(const char *what, float got, float want)
+{
+    checks++;
+    const float d = got - want;
+    if (d > -0.0001f && d < 0.0001f) return;
+    failures++;
+    printf("  FAIL  %s: got %.7f, expected %.7f\n", what, (double)got, (double)want);
 }
 
 /* ---- the world FILLS the window: scale from the height, field of view from the width ---- */
@@ -518,6 +531,46 @@ static void test_parallax(void)
     eq("a layer narrower than the view is pinned", geom_layer_offset(700, 1500, 300, 794), 0);
     eq("a stage narrower than the view is pinned", geom_layer_offset(1379, 700, 300, 794), 0);
     eq("camera 0 is offset 0", geom_layer_offset(1379, 1500, 0, 794), 0);
+
+    /* Issue #76's full-output discriminator. At 3.591x the original integer quotient sits
+     * still for several frames and then jumps by a whole 3.591-pixel logical block. The
+     * production phase + raster helpers instead advance by the exact rational parallax rate
+     * on every camera step. This is spatial precision, not a temporal filter: every result is
+     * a pure function of the current camera. */
+    {
+        enum { SPAN = 1400, STAGE = 3200, VIEW = 1070 };
+        const float scale = 1975.0f / 550.0f;
+        const float expected_step = -(float)(SPAN - VIEW) * scale / (float)(STAGE - VIEW);
+        float previous = raster_place_x((float)geom_layer_offset(SPAN, STAGE, 0, VIEW),
+                                        geom_layer_offset_phase(SPAN, STAGE, 0, VIEW),
+                                        0.0f, scale, 0.0f);
+        int integer_stalls = 0, integer_jumps = 0;
+        int previous_integer = geom_layer_offset(SPAN, STAGE, 0, VIEW);
+        for (int camera = 1; camera <= 32; camera++) {
+            const int whole = geom_layer_offset(SPAN, STAGE, camera, VIEW);
+            const float placed = raster_place_x((float)whole,
+                                                geom_layer_offset_phase(SPAN, STAGE, camera, VIEW),
+                                                0.0f, scale, 0.0f);
+            const float expected_position =
+                -(float)(SPAN - VIEW) * (float)camera * scale / (float)(STAGE - VIEW);
+            eqf_exact("full-output parallax advances at one exact rate",
+                      placed - previous, expected_step);
+            eqf_exact("full-output parallax has the exact absolute position",
+                      placed, expected_position);
+            integer_stalls += whole == previous_integer;
+            integer_jumps += whole != previous_integer;
+            previous = placed;
+            previous_integer = whole;
+        }
+        eq("integer-only negative contains stalls", integer_stalls > 0, 1);
+        eq("integer-only negative contains magnified jumps", integer_jumps > 0, 1);
+        eqf_exact("native output retains the game's integer raster",
+                  raster_place_x(-3.0f, -0.75f, 0.0f, 1.0f, 0.0f), -3.0f);
+        eq("parallax product does not overflow at a signed-int boundary",
+           geom_layer_offset(INT_MAX, INT_MAX, INT_MAX, GEOM_SCREEN_W), -INT_MAX);
+        eqf_exact("an exact boundary quotient has no invented phase",
+                  geom_layer_offset_phase(INT_MAX, INT_MAX, INT_MAX, GEOM_SCREEN_W), 0.0f);
+    }
 }
 
 /* ---- where the camera may stop ---- */

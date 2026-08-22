@@ -1838,11 +1838,16 @@ Three hooks in `runtime/video/ddraw.c`:
     by the current frame is protected. `tools/e2e.py texture_cache` fills the cache in a real
     Stage match, requires nonzero safe evictions, and fails on any missing-art report.
 
-The engine draws the complete world on the composition's native integer grid, then scales that
-single finished texture to the window with nearest sampling. Previously each scrolling layer was
-placed directly at fractional output coordinates, so its sampling phase changed independently as
-the camera moved and backgrounds jittered. One native-grid composition gives every layer the same
-stable phase; frame dumps in GPU mode remain the size of the window.
+The engine rasterises each display-list entry directly into an output-sized target; there is no
+whole-scene composition capture or final upscale. For a scrolling background layer, the override
+preserves the fractional remainder that LF2's integer parallax division discarded. The shared
+classic/engine output transform consumes that remainder only above native 1x, so a magnified layer
+advances at its exact rational rate while the original 794x550 integer raster remains unchanged.
+`tools/e2e.py parallax_jitter` authenticates a 3440x1440 Lion Forest match and moving camera in two
+serial runs, requires the arms' ordered camera trajectories to match, then requires the exact-phase
+arm to move every frame and the integer-only negative to stall and catch up. Every invocation
+allocates and prints a collision-safe `scratch/parallax_jitter_test/run_*` directory rather than
+cleaning or reusing previous evidence.
 
 **What the lighting touches, and what it does not.** One key light, given as a direction in the
 stage's own three axes (x across, y up — LF2's jump axis, claim C018 — z toward the camera).
@@ -1901,6 +1906,13 @@ plain composition; there is deliberately no approximation to fall back to.
   the skewed arm differs. Without the third arm, "the two agreed" would be indistinguishable
   from "the dump does not contain the background at all".
 
+- **`LF2_BG_INTEGER_RASTER=1`** discards each background layer's exact rational parallax
+  remainder before the native output transform, reproducing issue #76's magnified stalls and
+  catch-up jumps. It is the negative arm for `tools/routes/parallax_jitter.py ACCEPTED_DIR
+  INTEGER_NEGATIVE_DIR`, which compares consecutive full-resolution Lion Forest PPMs in the
+  keyed upper-mountain band. The accepted 3440x1440 run had 0 stalls and 109..820 changed
+  bytes per transition; this negative had 18 stalls and a 4,859-byte catch-up jump.
+
 
 - **`LF2_GLYPH_POS=1`** prints every glyph drawn from one of the game's three font sheets with
   the position **the game asked for**, before any of the port's offsets. It exists because the
@@ -1949,6 +1961,23 @@ plain composition; there is deliberately no approximation to fall back to.
   falls in, `screen_offset_x` by whether the surface is wider than 794 — and a line carrying
   only the final x cannot show which of them declined or why. That is how issue #54 was
   settled, and it overturned two earlier guesses about which branch was at fault.
+
+- **`LF2_OVERLAY_PANEL_DEBUG=1`** reports how many complete native pre-fight panels were
+  appended after FUN_00429730's final static producer, how many original final parts remain
+  underneath, the exact output raster dimensions and CJK run rectangles, selected row, and
+  Background/Stage label branch. **`LF2_OVERLAY_PANEL_FORCE_FAILURE=1`** is its acceptance-only
+  allocation-failure diagnostic: it declines the appended panel after the original draw so a
+  capture must expose the complete authored bitmap underneath. `tools/e2e.py overlay_labels` is
+  issue #84's persistent acceptance: explicit VS, Stage, and forced-fallback arms run serially at
+  3840×1975, authenticate the 1092×596 panel raster and the game's later dynamic values, require
+  zero dropped draws and texture failures, sample both authored black value wells, independently
+  require pixels and within-logical-cell edge detail in all 20 native CJK glyph cells and every
+  Latin-before/after run, and reject both a logical nearest-upscaled negative and a native-CJK-only
+  hybrid made from the same captured panel. At this fixed output the six CJK run rectangles are
+  `(564,57,94,62)`, `(503,143,282,62)`, `(568,229,282,62)`, `(487,314,94,62)`,
+  `(487,404,94,62)`, and `(544,497,94,62)` relative to the 1092×596 panel; the route rejects a
+  runtime report that moves or enlarges them before sampling. It strips an inherited `LF2_*`
+  environment from every arm.
 
 - **`LF2_BG_TABLE=1`** prints the loaded stage's layer table once, the first frame a match is
   actually on screen. **`LF2_BG_TABLE=all`** prints *every* background record the registry

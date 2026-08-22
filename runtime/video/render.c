@@ -3,6 +3,7 @@
 #include "mesh.h"
 #include "engine.h"
 #include "texrect.h"
+#include "raster.h"
 #include "framelife.h"
 #include "overrides/geom.h"
 #include "hd2d.h"
@@ -40,6 +41,7 @@ typedef struct {
     SDL_FRect src;
     int keyed;
     int mirror_x;
+    float background_phase;
     uint32_t key_lo, key_hi;
     int sw, sh, spitch;
     /* Set only while fn_0040de30 draws one world object's sprite composite. */
@@ -118,6 +120,7 @@ static float ground_y_lo = 1e9f, ground_y_hi = -1e9f;
 static float stat_airborne_max;
 static int shadow_object_open, shadow_object_character, shadow_object_casts;
 static float shadow_object_ground_y;
+static float background_phase;
 
 int render_gpu_enabled(void)
 {
@@ -320,12 +323,15 @@ static void render_blit_record(uint32_t dst_pixels, int dl, int dt, int dr, int 
     e->spitch = spitch;
     e->keyed = keyed;
     e->mirror_x = mirror_x;
+    e->background_phase = background_phase;
     e->key_lo = key_lo;
     e->key_hi = key_hi;
     e->shadow_character = shadow_object_open && shadow_object_character;
     e->shadow_caster = shadow_object_open && shadow_object_casts;
     e->shadow_ground_y = shadow_object_ground_y;
 }
+
+void render_background_phase_set(float phase) { background_phase = phase; }
 
 void render_blit(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh, int spitch,
                  int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi)
@@ -545,6 +551,17 @@ static int render_skip(void)
     return n;
 }
 
+/* LF2_BG_INTEGER_RASTER=1 discards the exact background remainder and restores issue #76's
+ * several-output-pixel jumps. It is a defect injector for the scrolling pixel gate, never a
+ * player setting. Both native renderer paths call this one transform. */
+static float entry_output_x(const Entry *e, float world, float scale, float output_x)
+{
+    static int integer_background = -1;
+    if (integer_background < 0) integer_background = getenv("LF2_BG_INTEGER_RASTER") != NULL;
+    const float phase = integer_background ? 0.0f : e->background_phase;
+    return raster_place_x(e->dst.x, phase, world, scale, output_x);
+}
+
 /* The cast-shadow machinery that lived here moved into the engine with the lighting
  * (engine.c's lighting_passes): the shadow is a mask the light pass reads, which is the whole
  * reason it exists, and the engine is the thing that has the mask. render_shadows_enabled()
@@ -643,7 +660,7 @@ static void draw_list(List *l, float world, float ox, float oy, int from, int to
         if (skip > 0 && (i % skip) == 0) continue;
         Entry *e = &l->e[i];
         SDL_FRect dst;
-        dst.x = (e->dst.x + world) * scale + ox;
+        dst.x = entry_output_x(e, world, scale, ox);
         dst.y = e->dst.y * scale + oy;
         dst.w = e->dst.w * scale;
         dst.h = e->dst.h * scale;
@@ -833,7 +850,7 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
 
         EngineQuad *q = &out[n];
         memset(q, 0, sizeof *q);
-        q->x = (e->dst.x + world) * scale + ox;
+        q->x = entry_output_x(e, world, scale, ox);
         q->y = e->dst.y * scale + oy;
         q->w = e->dst.w * scale;
         q->h = e->dst.h * scale;

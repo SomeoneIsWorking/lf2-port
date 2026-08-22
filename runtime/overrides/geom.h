@@ -22,6 +22,8 @@
 #ifndef LF2_GEOM_H
 #define LF2_GEOM_H
 
+#include <stdint.h>
+
 /* The game's own screen. Every constant below is expressed against it, because that is how
  * the game expressed them. */
 enum {
@@ -296,10 +298,26 @@ static inline int geom_item_offset_x(int comp_w, int item_left, int item_w)
  * Rearranging changes the rounding -- x86 IDIV and C both truncate toward zero -- and that is
  * a different picture, one pixel at a time. A layer with less picture than the view is wide
  * cannot be scrolled to cover it, and the formula run past that point inverts. */
+static inline int64_t geom_layer_scroll_product(int span, int camera, int view)
+{
+    return (int64_t)(span - view) * (int64_t)camera;
+}
+
 static inline int geom_layer_offset(int span, int stage_width, int camera, int view)
 {
     if (stage_width <= view || span <= view) return 0;
-    return -(((span - view) * camera) / (stage_width - view));
+    const int64_t divisor = (int64_t)stage_width - (int64_t)view;
+    return (int)(-(geom_layer_scroll_product(span, camera, view) / divisor));
+}
+
+/* LF2's IDIV answer above is the correct native 1x coordinate, but it discards a rational
+ * remainder that a magnified per-draw raster can represent. Return that signed fraction so
+ * both native renderers can retain the spatial precision without changing the guest value. */
+static inline float geom_layer_offset_phase(int span, int stage_width, int camera, int view)
+{
+    if (stage_width <= view || span <= view) return 0.0f;
+    const int64_t divisor = (int64_t)stage_width - (int64_t)view;
+    return -(float)(geom_layer_scroll_product(span, camera, view) % divisor) / (float)divisor;
 }
 
 /* ---- where the camera may stop (runtime/overrides/background.c) ----

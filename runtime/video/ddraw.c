@@ -19,6 +19,7 @@
 #include "rmlui.h"
 #include "startup.h"
 #include "device_icons.h"
+#include "overlay_panel.h"
 
 void menu_click_report(void);   /* issue #27: the click flag as the front-end menu sees it */
 
@@ -29,7 +30,6 @@ void gdi_last_bitmap_consume(void);
 
 #include <time.h>
 #include "loadprof.h"
-
 
 #include <SDL3/SDL.h>
 #include <stdarg.h>
@@ -448,6 +448,7 @@ void hostwin_shutdown(void)
     window_resize_report();
     if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
     render_shutdown();
+    overlay_panel_shutdown();
     device_icons_shutdown();
     if (hw.texture)  { SDL_DestroyTexture(hw.texture);   hw.texture = NULL; }
     if (hw.renderer) { SDL_DestroyRenderer(hw.renderer); hw.renderer = NULL; }
@@ -1827,9 +1828,6 @@ static void surf_Blt(uint32_t self)
                 fprintf(stderr, "Blt flags=%08x has_key=%d from guest %08x\n",
                         flags, s->has_key, caller);
         }
-        /* A glyph the port can draw better is drawn instead of copied. Anything it
-         * declines -- no font, or a character outside printable ASCII, which is how the
-         * sheets' CJK stays correct -- falls through to the original copy. */
         if (glyph_hint >= 0
             && game_glyph_draw(glyph_hint, dl, dt, glyph_ink(s, sl, st_, sr, sb),
                                d->pixels, d->w, d->h, d->pitch)) {
@@ -1903,6 +1901,7 @@ static void surf_Blt(uint32_t self)
                              0x80000000u, dl, 0);
             }
         }
+        if (overlay_panel_apply(d->pixels, d->w, d->h, d->pitch, dl, dt, lf2_world_scale())) surface_changed(d);
     }
     /* There used to be a widescreen "finish a tiling series the game stopped at 794" hook
      * here: it recognised a run of edge-to-edge copies by CONTIGUITY and kept repeating the

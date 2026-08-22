@@ -119,6 +119,8 @@ add_executable(lf2
     runtime/video/stagegeom.c
     runtime/ui/device_assets.c
     runtime/ui/device_icons.c
+    runtime/ui/overlay_panel.c
+    runtime/ui/ui_rgba.c
     runtime/ui/settings_ui.cpp
     runtime/ui/rmlui_input.cpp
     runtime/ui/rmlui_backend.cpp
@@ -192,6 +194,8 @@ set_source_files_properties(
     runtime/video/engine_visibility_probe.c
     runtime/video/engine_textures.c
     runtime/video/stagegeom.c
+    runtime/ui/overlay_panel.c
+    runtime/ui/ui_rgba.c
     runtime/app/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
@@ -240,7 +244,21 @@ target_include_directories(test_boot_mode PRIVATE runtime/overrides)
 target_compile_options(test_boot_mode PRIVATE -Wall -Wextra)
 add_test(NAME boot_mode COMMAND test_boot_mode)
 
+add_executable(test_overlay_panel tests/test_overlay_panel.c)
+target_include_directories(test_overlay_panel PRIVATE runtime/ui runtime/overrides)
+target_compile_options(test_overlay_panel PRIVATE -Wall -Wextra)
+add_test(NAME overlay_panel COMMAND test_overlay_panel)
+
+add_executable(test_ui_rgba tests/test_ui_rgba.c runtime/ui/ui_rgba.c)
+target_include_directories(test_ui_rgba PRIVATE runtime/ui)
+target_compile_options(test_ui_rgba PRIVATE -Wall -Wextra)
+add_test(NAME ui_rgba COMMAND test_ui_rgba)
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME overlay_font COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_overlay_font.py
+         ${CMAKE_SOURCE_DIR}/assets/fonts/DroidSansFallback-LF2OverlaySubset.ttf
+         ${CMAKE_SOURCE_DIR}/runtime/ui/overlay_panel.c)
 add_test(NAME structure COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tools/build/check_structure.py)
 add_test(NAME clang_format COMMAND ${Python3_EXECUTABLE}
@@ -286,8 +304,8 @@ endif()
 
 # ---- the text faces, COMPILED IN (issue #45) ----
 #
-# assets/fonts/ holds two unmodified SIL OFL 1.1 faces, and they are turned into byte arrays
-# here rather than opened from disk at runtime. That is the point: there is no font search, no
+# assets/fonts/ holds two unmodified SIL OFL 1.1 faces and one documented Apache-2.0 CJK subset;
+# they are turned into byte arrays here rather than opened from disk at runtime. There is no font search, no
 # system font, and no fallback. A port whose text silently changes with whatever the host has
 # installed is a port whose screenshots cannot be compared with each other -- and the previous
 # arrangement did exactly that, walking a list of nine candidate paths and quietly dropping to
@@ -316,6 +334,7 @@ file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/gen)
 set(LF2_FONT_SOURCES "")
 lf2_embed_bytes(lf2_font_sans ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationSans-Regular.ttf LF2_FONT_SOURCES)
 lf2_embed_bytes(lf2_font_mono ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationMono-Regular.ttf LF2_FONT_SOURCES)
+lf2_embed_bytes(lf2_font_overlay_cjk ${CMAKE_SOURCE_DIR}/assets/fonts/DroidSansFallback-LF2OverlaySubset.ttf LF2_FONT_SOURCES)
 target_sources(lf2 PRIVATE ${LF2_FONT_SOURCES})
 
 # Device art is shared by every port rather than copied into each tree. Consumers embed the
@@ -339,7 +358,7 @@ find_package(SDL3_ttf QUIET CONFIG)
 if(SDL3_ttf_FOUND)
     target_link_libraries(lf2 PRIVATE SDL3_ttf::SDL3_ttf)
     target_compile_definitions(lf2 PRIVATE LF2_HAVE_TTF)
-    message(STATUS "SDL3_ttf found: text is drawn from the committed Liberation faces")
+    message(STATUS "SDL3_ttf found: text is drawn from the committed outline faces")
 else()
     message(FATAL_ERROR
             "SDL3_ttf not found. It is required: the port draws all of its text from the "
@@ -423,6 +442,8 @@ target_compile_options(test_backdrop PRIVATE -Wall -Wextra)
 add_test(NAME backdrop COMMAND test_backdrop)
 add_test(NAME backdrop_pixels COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_backdrop_pixels.py)
+add_test(NAME parallax_jitter COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_parallax_jitter.py)
 
 add_executable(test_result_panel tests/test_result_panel.c runtime/video/result_panel.c)
 target_include_directories(test_result_panel PRIVATE runtime/video runtime/overrides)
