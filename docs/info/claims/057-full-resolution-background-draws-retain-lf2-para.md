@@ -6,7 +6,7 @@ created: 2026-08-22
 tags:
 depends: runtime/overrides/geom.h#geom_layer_offset_phase, runtime/video/raster.h#raster_place_x, runtime/video/render.c#entry_output_x, runtime/overrides/background.c#fn_0041a250, tools/routes/ppm.py#read_ppm, tools/routes/parallax_jitter.py#accept, tools/routes/parallax_jitter_test.py#authenticate_log, tools/routes/parallax_jitter_test.py#camera_sequence_error
 reconfirmed: 2026-08-22
-verified_at: 2026-08-22 17:00:05
+verified_at: 2026-08-22 17:52:07
 ---
 
 ## Claim
@@ -30,3 +30,7 @@ engine target, 21 moving-camera traces and 21 captures in each arm, then measure
 stalls=0 at 109..820 changed bytes versus integer-negative stalls=18 at 0..4859. The saved
 camera sequences match exactly; the durable route now rejects a trajectory mismatch before
 pixel analysis, with an offline deliberate mismatch proving that gate can fail.
+
+## Re-confirmed 2026-08-22
+
+Commit cb3951b built with Clang; all 34 offline tests passed. The final serial 3440x1440 parallax route authenticated matching moving-camera sequences and measured 0 accepted stalls at 109..820 changed bytes versus 18 integer-negative stalls and a 4,859-byte catch-up jump.

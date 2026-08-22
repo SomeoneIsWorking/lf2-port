@@ -5,6 +5,8 @@ status: holds
 created: 2026-08-22
 tags: rendering,ui,issue-84
 depends: runtime/ui/overlay_panel.c, runtime/ui/overlay_panel.h, runtime/ui/ui_rgba.c, runtime/overrides/text.c, runtime/overrides/geom.h, runtime/video/ddraw.c, runtime/video/render.c, tools/routes/overlay_labels_test.py, assets/fonts/DroidSansFallback-LF2OverlaySubset.ttf
+reconfirmed: 2026-08-22
+verified_at: 2026-08-22 17:52:07
 ---
 
 ## Claim
@@ -18,3 +20,7 @@ At 3840x1975 the pre-fight CHARMENU branch retains every authored draw, then app
 ## What would falsify it
 
 if overlay_labels reports a moved CJK rectangle, any Latin/CJK run lacks native within-logical-cell detail, any renderer resource drop occurs, or the forced-failure capture loses the original static labels
+
+## Re-confirmed 2026-08-22
+
+Commit cb3951b built with Clang; all 34 offline tests passed. Final exact-PID 3840x1975 VS/Stage/fallback route authenticated the 1092x596 outline raster, all 20 CJK glyph cells, all 12 Latin runs, nearest/hybrid other-answers, dynamic wells, zero drops, and visible original labels under 0/194 forced native appends.
