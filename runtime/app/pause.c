@@ -8,7 +8,6 @@
 #include "hostwin.h"
 #include "gamepad.h"
 #include "keyboard.h"
-#include "render.h"
 #include "rmlui.h"
 
 #include <stdint.h>
@@ -109,24 +108,4 @@ void pause_report(void)
     if (!leave_f4_pulses) return;
     fprintf(stderr, "pause leave: %u F4 pulse(s); key %s; post-match overlay %s at shutdown\n", leave_f4_pulses,
             hostwin_injected_key(VK_F4) ? "DOWN" : "released", panel_overlay_up() ? "up" : "not up");
-}
-
-/* The old software and display-list painters remain as stable call boundaries while their
- * implementation is gone. RmlUi is the sole visual owner. */
-void pause_draw(uint32_t pixels, int width, int height, int pitch)
-{
-    (void)pixels;
-    (void)width;
-    (void)height;
-    (void)pitch;
-}
-
-int pause_draw_list(uint32_t dst_pixels, int width, int height)
-{
-    (void)width;
-    (void)height;
-    if (!frozen || !rmlui_active() || !dst_pixels) return 0;
-    /* Rewind to the retained gameplay frame before RmlUi is composited. Without this, the
-     * document is drawn over the empty list assembled while the game update is frozen. */
-    return render_hold_begin();
 }

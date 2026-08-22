@@ -1,22 +1,15 @@
-/* The renderer's frame lifetime, walked without a window (issues #52, #53).
+/* The renderer's frame and frozen-snapshot lifetime, walked without a window (issues #52,
+ * #53, #94).
  *
  * runtime/video/render.c INCLUDES runtime/video/framelife.h and calls into it, so this is not
  * exercising a copy -- same arrangement as tests/test_geom.c over runtime/overrides/geom.h.
  *
- * WHAT MADE THIS WORTH WRITING. Every bug in the pause menu's first cut was in here, and each
- * one was found by looking at a 1920x1080 screenshot after a five-minute route run:
- *
- *   - a recording call cleared the retained frame out from under the overlay about to be drawn
- *     over it, and the failure was silent -- the list came back on rewind and only the TILE
- *     ARENA was gone, so the frozen frame's text was garbage while everything drawn from a
- *     cached texture looked perfect
- *   - the frame reset re-took the retained extent on a held frame, which folds the menu into
- *     the frozen picture so it is drawn on top of itself for as long as the pause lasts
- *   - the tile pool, keyed on exact size, filled and silently dropped 42402 tiles
- *
- * Not one of those needed a GPU to find. They needed these assertions.
+ * Issue #94 proved that a list length is not an immutable frame: a presentation decoration
+ * reused its tile arena before the old hold rewound metadata over that storage. Frozen output
+ * now has a separate snapshot lifetime, while a display list always ends at its present.
  */
 #include "framelife.h"
+#include "framesnapshot.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -25,7 +18,10 @@ static int failures;
 
 static void check(int ok, const char *what)
 {
-    if (!ok) { printf("  FAIL  %s\n", what); failures++; }
+    if (!ok) {
+        printf("  FAIL  %s\n", what);
+        failures++;
+    }
 }
 
 static void check_eq(long got, long want, const char *what)
@@ -36,7 +32,7 @@ static void check_eq(long got, long want, const char *what)
     }
 }
 
-/* One ordinary frame: record, present, and the NEXT frame's first record is what clears. */
+/* One ordinary frame: record, present, and let the first later record start the next list. */
 static void ordinary_frames(void)
 {
     FrameLife f;
@@ -47,67 +43,43 @@ static void ordinary_frames(void)
     f.n[L] = 40;
     f.tile_used = 4096;
     fl_frame_reset(&f);
-    check_eq(f.spent, 1, "after the present the frame is spent");
-    check_eq(f.n[L], 40, "and NOT yet cleared -- clearing is the next record's job");
-    check_eq(f.hold_n[L], 40, "the retained extent is the frame that was just presented");
-
-    check_eq(fl_touch(&f), 1, "the first record of the next frame clears");
+    check_eq(f.spent, 1, "present marks the completed list as spent");
+    check_eq(f.n[L], 40, "present does not erase next-frame work before it starts");
+    check_eq(fl_touch(&f), 1, "the first later record owns the clear");
     check_eq(f.n[L], 0, "and the list is empty");
     check_eq(f.tile_used, 0, "and the tile arena is rewound");
-    check_eq(fl_touch(&f), 0, "a second record in the same frame clears nothing");
+    check_eq(fl_touch(&f), 0, "later records in the same frame do not clear again");
 
-    /* The whole point of the deferral: a frame that records NOTHING keeps the last one. */
     f.n[L] = 12;
     fl_frame_reset(&f);
-    fl_frame_reset(&f);          /* two presents, no record between them */
-    check_eq(f.n[L], 12, "a frame that recorded nothing still has the last frame's list");
+    fl_frame_reset(&f);
+    check_eq(f.n[L], 12, "a present with no later record does not erase the producer's list");
 }
 
-/* The pause menu: hold, extend, rewind, and do it again. */
-static void held_frames(void)
+static void snapshot_lifetime(void)
 {
-    FrameLife f;
-    fl_init(&f);
-    const int L = fl_list_add(&f);
+    FrameSnapshot s;
+    frame_snapshot_init(&s);
+    check_eq(frame_snapshot_can_freeze(&s, 0x1000), 0, "nothing can freeze before a live copy succeeds");
 
-    f.n[L] = 100;
-    f.tile_used = 8192;
-    fl_frame_reset(&f);                       /* the last frame the game built */
+    frame_snapshot_captured(&s, 0x1000, 1920, 1080, 1);
+    check_eq(frame_snapshot_can_freeze(&s, 0x1000), 1, "the matching completed composition can freeze");
+    check_eq(frame_snapshot_can_freeze(&s, 0x2000), 0, "a different composition cannot receive a stale snapshot");
+    frame_snapshot_presented_frozen(&s);
+    check_eq(s.frozen_frames, 1, "only an actual frozen present is counted");
 
-    for (int frame = 0; frame < 5; frame++) {
-        check_eq(fl_hold_begin(&f), 1, "there is a retained frame to draw over");
-        check_eq(f.n[L], 100, "the list is rewound to what the GAME built, every time");
-        check_eq(f.tile_used, 8192, "and so is the tile arena");
-        check_eq(fl_overlay_at(&f, L), 100, "the overlay boundary is where the game stopped");
-        check_eq(f.spent, 0, "a held frame is not spent -- it is about to be presented again");
-
-        /* The port draws its menu: a dim, a panel, four rows of text. */
-        f.n[L] += 30;
-        f.tile_used += 2048;
-        check_eq(fl_touch(&f), 0, "recording the overlay does NOT clear the frame under it");
-
-        fl_frame_reset(&f);
-        check_eq(f.hold_n[L], 100, "the retained extent still EXCLUDES the overlay");
-    }
-    check_eq(f.n[L], 130, "one hold's worth of overlay, not five");
-    check_eq(f.held_frames, 5, "and the count says five frames were held");
-
-    /* Unpause: the game records again and everything goes back to normal. */
-    check_eq(fl_touch(&f), 1, "the first real record after the pause clears");
-    check_eq(f.n[L], 0, "the frozen frame is gone");
-    check_eq(fl_overlay_at(&f, L), 0, "and so is the overlay boundary");
+    frame_snapshot_captured(&s, 0x1000, 1920, 1080, 0);
+    check_eq(frame_snapshot_can_freeze(&s, 0x1000), 0, "a failed live copy invalidates the previous snapshot");
 }
 
-/* fl_hold_begin must refuse when there is nothing retained, because the caller has to keep
- * presenting the software frame in that case -- a GPU present with the menu missing leaves a
- * game that ignores every key and shows nothing to say why. */
-static void nothing_to_hold(void)
+static void snapshot_resize(void)
 {
-    FrameLife f;
-    fl_init(&f);
-    fl_list_add(&f);
-    check_eq(fl_hold_begin(&f), 0, "no retained frame yet, so the hold is refused");
-    check_eq(f.held_frames, 0, "and nothing was counted as held");
+    float x, y, w, h;
+    frame_snapshot_contain(2560, 1080, 1920, 1080, &x, &y, &w, &h);
+    check_eq((long)(x + 0.5f), 0, "a resized ultrawide snapshot is centred horizontally");
+    check_eq((long)(y + 0.5f), 135, "and letterboxed rather than stretched vertically");
+    check_eq((long)(w + 0.5f), 1920, "the contained snapshot fills the binding axis");
+    check_eq((long)(h + 0.5f), 810, "and keeps its original aspect ratio");
 }
 
 /* The overlay boundary separates what the lighting touches from what it must not. */
@@ -185,24 +157,13 @@ static void tile_peak(void)
     fl_clear(&f);
     for (int i = 0; i < 30; i++) fl_tile_drawn(&f);
     check_eq(f.peak_tiles, 121, "the peak is the busiest single frame");
-
-    /* A held frame is a frame too -- its tiles must not be added to the one it froze. */
-    FrameLife g;
-    fl_init(&g);
-    const int L = fl_list_add(&g);
-    g.n[L] = 10;
-    fl_frame_reset(&g);
-    for (int i = 0; i < 5; i++) fl_tile_drawn(&g);
-    fl_hold_begin(&g);
-    for (int i = 0; i < 7; i++) fl_tile_drawn(&g);
-    check_eq(g.peak_tiles, 7, "a hold starts the frame's tile count again");
 }
 
 int main(void)
 {
     ordinary_frames();
-    held_frames();
-    nothing_to_hold();
+    snapshot_lifetime();
+    snapshot_resize();
     overlay_boundary();
     pool_reuse();
     tile_peak();

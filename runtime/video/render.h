@@ -33,7 +33,7 @@ struct SDL_Renderer;
 struct SDL_Texture;
 
 /* Which path presents. Read once; LF2_RENDERER=soft selects the software compositor. */
-int  render_gpu_enabled(void);
+int render_gpu_enabled(void);
 
 /* ddraw.c hands the renderer the SDL renderer once the window exists. */
 void render_init(struct SDL_Renderer *r);
@@ -47,11 +47,8 @@ void render_shutdown(void);
 
 /* One textured quad. `key` is honoured only when `keyed`; a keyed source is uploaded with
  * the key range turned into alpha 0, which is where this port's blend stage comes from. */
-void render_blit(uint32_t dst_pixels,
-                 int dl, int dt, int dr, int db,
-                 uint32_t src_pixels, int sw, int sh, int spitch,
-                 int sl, int st, int sr, int sb,
-                 int keyed, uint32_t key_lo, uint32_t key_hi);
+void render_blit(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh, int spitch,
+                 int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi);
 
 /* The game's own shadow ellipse, identified by the object it is drawn on. It is NOT added to
  * the list as a picture: its rectangle is where the object stands on the ground, and that is
@@ -64,7 +61,7 @@ void render_shadow_ground(uint32_t dst_pixels, int dl, int dt, int dr, int db);
  * is recorded as an ordinary picture and the GPU frame stays byte-comparable with the
  * software one. It is also what MARKS AN OBJECT: a sprite with a ground marker in front of
  * it is a fighter standing in the field, which is the only thing the lighting touches. */
-int  render_shadows_enabled(void);
+int render_shadows_enabled(void);
 
 /* A solid rectangle, the game's DDBLT_COLORFILL. */
 void render_fill(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t argb);
@@ -87,7 +84,7 @@ void render_fill(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t a
  * rasterised. Pass tw/th larger to draw text at the window's real resolution (issue #45);
  * pass 0 for both to mean "the same as w,h", which is what every non-text caller wants. */
 uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h, int tw, int th);
-void      render_tile_end(void);
+void render_tile_end(void);
 
 /* ---- presenting ----
  *
@@ -95,30 +92,20 @@ void      render_tile_end(void);
  * centring offset, and w/h the primary's size. Returns 1 if it drew and presented the frame,
  * 0 if the caller should fall back to the software present.
  */
-int render_present(uint32_t src_pixels, int off, int w, int h);
+int render_present(uint32_t src_pixels, int off, int w, int h, int frozen);
 
 /* Called when a surface's pixels change outside the renderer's knowledge (a palette write,
  * a fresh load) so its cached texture is rebuilt. */
 void render_surface_dirty(uint32_t pixels);
 
-/* Marks the frame spent. Called after every present, by whichever path drew it.
- *
- * The lists are not emptied here but by the first call that RECORDS over them, which on an
- * ordinary frame is the same thing. It differs for a frame during which the game records
- * nothing -- the pause menu freezes the world by declining to call the game's update, so no
- * blit arrives, and a renderer that had thrown its list away at the last present would have
- * nothing to draw the menu on top of (issue #52). */
+/* Mark the display list presented. LF2 starts some next-frame drawing before its update
+ * returns, so the first later recording call clears it. A paused match is presented from
+ * render.c's immutable completed-frame texture, not from this list. */
 void render_frame_reset(void);
-
-/* Draw over the frame that is already there. Returns 0 when there is no retained frame -- the
- * GPU path is off, or nothing has been drawn yet -- and the caller must then do without the
- * renderer. It REWINDS the previous held frame's overlay first, so a menu held up for a
- * minute is recorded once per frame rather than appended to itself sixty times a second. */
-int render_hold_begin(void);
 
 /* Mark where the port's own UI begins in a LIVE frame's list (the controls hint on a menu the
  * game is still updating). Everything from that point is drawn after the lighting pass and is
- * not part of the scene. render_hold_begin does the same for a frozen frame. */
+ * not part of the scene. */
 void render_overlay_mark(uint32_t dst_pixels);
 
 /* RECORD hand-woven stage geometry at THIS point in the painter order (issues #62, #64).
@@ -132,8 +119,7 @@ void render_overlay_mark(uint32_t dst_pixels);
  * It is a REFERENCE, not a copy, and it is recorded rather than rendered -- a display list
  * records; it does not draw. `slot` is used only by the SDL_Render path, which has to composite
  * each gap as its own texture because it cannot take geometry at all. */
-void render_stage_mesh(uint32_t dst_pixels, const void *verts, int n, int slot,
-                       int camera, int view_w, int view_h);
+void render_stage_mesh(uint32_t dst_pixels, const void *verts, int n, int slot, int camera, int view_w, int view_h);
 
 /* The presented frame, read back off the GPU into an ARGB8888 buffer. This is what makes the
  * two paths diffable: without it every LF2_FRAME_DUMP would be the software compositor's
@@ -145,6 +131,6 @@ int render_readback(uint32_t *dst, int w, int h, int dst_pitch);
  * renderer: the frame is built at the window's resolution rather than point-scaled up to it. */
 void render_output_size(int *w, int *h);
 
-void render_report(void);       /* LF2_RENDER_DEBUG=1: what the frame was made of */
+void render_report(void); /* LF2_RENDER_DEBUG=1: what the frame was made of */
 
 #endif

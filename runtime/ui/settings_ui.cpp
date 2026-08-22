@@ -238,9 +238,9 @@ static float content_scale()
 
 /* ---- the data model ----
  *
- * Three booleans riding straight onto options.c (so a toggle takes effect on the next
- * present; the renderer and character lighting read the options live, issue #69), and the seven
- * key rows as text over the config's real bindings. */
+ * Three booleans riding straight onto options.c (the renderer and character lighting read the
+ * options on the next live game frame, issue #69), and the seven key rows as text over the
+ * config's real bindings. */
 static struct {
     bool engine;
     bool lighting;
@@ -469,7 +469,8 @@ void rmlui_render(void)
 {
     if (!g_ctx || !g_open || !g_render) return;
     g_render_frames++;
-    /* The booleans apply live, so a toggle shows on the frame already paused behind it. */
+    /* Values are stored immediately. A frozen match deliberately keeps its immutable completed
+     * frame; renderer and lighting changes appear on the first live frame after it resumes. */
     model_store_live();
 
     /* The context follows the render output, so the panel stays centred however the window

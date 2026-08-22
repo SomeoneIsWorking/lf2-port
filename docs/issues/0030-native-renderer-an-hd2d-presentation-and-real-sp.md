@@ -439,11 +439,10 @@ same failure as one that claims unfinished work is done -- the next session buil
 
   "the pause menu and the controls hint still present through the software compositor, because
    they draw straight onto the primary and are in no display list."  NOT TRUE, and this is what
-   issue #52 fixed. The hint appends glyph tiles to the live composition (render_overlay_mark)
-   and the pause menu is drawn over a RETAINED frame (pause_draw_list), because pausing freezes
-   the game by declining to call its update and no blit arrives while the menu is up.
-   tools/e2e.sh pause_dropout asserts it on a real pause in a real match and reported 120
-   frames drawn over the retained list in this session's sweep.
+   issue #52 fixed. The hint appends glyph tiles to the live composition (render_overlay_mark).
+   The current pause path copies the completed native target after those decorations and before
+   RmlUi, then restores that immutable texture while the game update is frozen (issue #94).
+   `tools/e2e.py pause_dropout` asserts the native snapshot on a real match pause.
 
 WHAT IS GENUINELY STILL OPEN on this entry, so the corrected list is not read as "nothing left":
   - DEPTH-SORTED LIGHTING. The shadows are still placed from the game's own ellipse rather than

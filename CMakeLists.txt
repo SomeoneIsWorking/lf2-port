@@ -111,6 +111,7 @@ add_executable(lf2
     runtime/overrides/objects.c
     runtime/overrides/audio_pan.c
     runtime/video/render.c
+    runtime/video/render_snapshot.c
     runtime/video/hd2d.c
     runtime/video/mesh.c
     runtime/video/engine.c
@@ -185,6 +186,7 @@ set_source_files_properties(
     runtime/overrides/objects.c
     runtime/overrides/audio_pan.c
     runtime/video/render.c
+    runtime/video/render_snapshot.c
     runtime/video/hd2d.c
     runtime/video/mesh.c
     runtime/video/engine.c
@@ -385,9 +387,9 @@ target_include_directories(test_device_icons PRIVATE runtime/ui)
 target_compile_options(test_device_icons PRIVATE -Wall -Wextra)
 add_test(NAME device_icons COMMAND test_device_icons)
 
-# The renderer's frame lifetime -- when a display list is cleared, how a frame held up under
-# the pause menu is rewound, which pooled texture serves a tile. runtime/video/render.c
-# includes the same header, so this is not a copy. No SDL, no window, no game.
+# The renderer's frame lifetime -- when a display list is cleared, which pooled texture serves
+# a tile, and when a completed output is valid for frozen presentation. The shipping renderer
+# includes the same headers, so this is not a copy. No SDL, no window, no game.
 add_executable(test_framelife tests/test_framelife.c)
 target_include_directories(test_framelife PRIVATE runtime runtime/video)
 target_compile_options(test_framelife PRIVATE -Wall -Wextra)
