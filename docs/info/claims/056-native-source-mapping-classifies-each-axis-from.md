@@ -5,6 +5,8 @@ status: holds
 created: 2026-08-22
 tags:
 depends: runtime/video/texrect.h#texrect_for_output_blit, runtime/video/render.c#draw_texture_quad, runtime/video/render.c#engine_colour_pass, tests/test_texrect.c#magnified_stretch_matches_output
+reconfirmed: 2026-08-22
+verified_at: 2026-08-22 16:26:34
 ---
 
 ## Claim
@@ -18,3 +20,7 @@ The shared shipping helper passes a 41->17 stretch over all 51 integer-position 
 ## What would falsify it
 
 Classic and engine produce different UVs for the same logical/output rectangles, any 41->17 output fragment disagrees with the one-stage output map, or the accepted magnified overlay exposes an adjacent separator.
+
+## Re-confirmed 2026-08-22
+
+Post-commit ctest texrect passed and the pinned classic overlay route produced 0 green pixels versus the 1080-pixel raster-feedback negative.
