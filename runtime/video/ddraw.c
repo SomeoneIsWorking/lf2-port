@@ -15,6 +15,7 @@
 #include "result_panel.h"
 #include "stage_banner.h"
 #include "framespec.h"
+#include "framesnapshot.h"
 #include "script.h"
 #include "rmlui.h"
 #include "startup.h"
@@ -468,10 +469,6 @@ static void frame_pace(void);
 /* Declared here because both the present and the frame boundary need it, and its definition
  * sits further down with the controls hint it belongs to. */
 static int hint_on;
-/* Whether this frame's pause menu made it into the renderer's retained list. Set by
- * present_primary just before the present, read by the gate below. */
-static int pause_in_list;
-
 /* The composition the last copy-to-primary came from, and the centring offset it was copied
  * with. Recorded at the copy and consumed at the present, because those are two different
  * calls and only the first knows which surface the frame was built in. */
@@ -488,7 +485,8 @@ void frame_source_note(uint32_t pixels, int off) { frame_src_pixels = pixels; fr
  * known yet" and "there was nothing to draw" produce the same empty frame. */
 uint32_t frame_source_pixels(void) { return frame_src_pixels; }
 
-void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
+void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch,
+                     uint32_t source_pixels, int source_off, int frozen)
 {
     rwatch_frame();
     if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
@@ -509,19 +507,10 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     static int shot_w, shot_h;
     const uint8_t *shown = pixels;
     int shown_pitch = src_pitch;
-    /* BOTH PIECES OF PORT UI ARE IN THE FRAME NOW, so neither turns the renderer off (issue
-     * #52). The controls hint appends its glyphs to the live composition list; the pause menu
-     * is recorded over the RETAINED frame, because pause freezes the game by not calling its
-     * update and no blit arrives while it is up.
-     *
-     * The pause condition is `!pause_active() || pause_in_list` and not simply "paused is
-     * fine now": if the retained frame was not there to draw over -- the very first frames of
-     * a run, or a list the renderer never built -- the menu is only on the primary, and
-     * presenting the GPU frame would show a game that ignores every key with nothing on
-     * screen to say why. */
+    /* LIVE snapshots before RmlUi; FROZEN restores that output. If no matching native
+     * snapshot exists, render_present leaves the same completed software primary in charge. */
     const int gpu = hw.renderer && render_gpu_enabled()
-                    && (!pause_active() || pause_in_list)
-                    && render_present(frame_src_pixels, frame_src_off, w, h);
+                    && render_present(source_pixels, source_off, w, h, frozen);
     int shown_w = w, shown_h = h;
     /* READ THE FRAME BACK ONLY IF SOMETHING WILL LOOK AT IT (issue #57). A readback is a
      * full GPU-to-CPU stall: the CPU waits for every queued draw to finish before the pixels
@@ -605,7 +594,11 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
      * Presenting it 1:1 in the middle of a large window instead would leave the fallback
      * showing a small picture in a black field, which is worse and no more honest. */
     SDL_FRect place;
-    lf2_compose_rect(w, h, &place);
+    if (frozen)
+        frame_snapshot_contain(w, h, hw.win_w, hw.win_h,
+                               &place.x, &place.y, &place.w, &place.h);
+    else
+        lf2_compose_rect(w, h, &place);
     SDL_SetRenderDrawColor(hw.renderer, 0, 0, 0, 255);
     SDL_RenderClear(hw.renderer);
     SDL_RenderTexture(hw.renderer, hw.texture, NULL, &place);
@@ -746,7 +739,10 @@ static void device_icon_draw(const Surface *s, int x, int y, int dev)
     /* The helper records a premultiplied display-list tile and composites the same decoded
      * pixels into the software primary. Both renderer paths therefore use one rasterisation. */
     const uint32_t record_pixels = s->primary ? frame_src_pixels : s->pixels;
-    if (record_pixels) device_icon_record(record_pixels, x, y, dev);
+    if (record_pixels) {
+        render_overlay_mark(record_pixels);
+        device_icon_record(record_pixels, x, y, dev);
+    }
     device_icon_paint(s->pixels, s->w, s->h, s->pitch, x, y, dev);
 }
 
@@ -769,11 +765,6 @@ static const int CS_YBASE[2] = { 95, 306 };
 
 static void charselect_device_labels_draw(const Surface *s)
 {
-    /* Mark the entries as OVERLAY so the game's own charselect redraws (which record over
-     * the composition list each frame) do not wipe the labels: the controls hint does the
-     * same before its tiles, issue #52. */
-    if (frame_src_pixels && frame_src_pixels != s->pixels)
-        render_overlay_mark(frame_src_pixels);
     const int off = screen_offset_x();
     for (int i = 0; i < 8; i++) {
         const int dev = device_for_player(i);
@@ -790,10 +781,8 @@ static void charselect_device_labels_present(const Surface *s)
         charselect_device_labels_draw(s);
 }
 
-/* The pause menu needs the frame to keep being shown while the game's update is not
- * running -- and the present turned out to live INSIDE that update, so freezing it stopped
- * the picture entirely (frames simply stopped at the pause). This is the same present, on
- * demand. */
+/* Pausing skips the update that normally owns present, so the menu calls the same present on
+ * demand to keep its immutable completed frame visible. */
 static void present_primary(void);
 void present_frozen_frame(void) { present_primary(); }
 
@@ -802,26 +791,37 @@ static void present_primary(void)
     if (!primary_surface) return;
     LOADPROF_SCOPE(LP_PRESENT);
     Surface *s = com_host(primary_surface);
-    if (hint_on) controls_hint_draw(s);
-    hud_device_labels(s);
-    charselect_device_labels_present(s);
-    /* After the frame is assembled and before it is shown. The pixels go on the primary for
-     * the software compositor; the same menu is also recorded over the renderer's RETAINED
-     * frame, and whether that worked is what decides which path may present (issue #52).
-     * A GPU present with the menu missing would leave it invisible while it still swallowed
-     * input, which is worse than presenting the software frame. */
-    /* THE LIST FIRST, AND THE ORDER IS LOAD-BEARING. pause_draw paints the primary through
-     * the same glyph renderer the game's text uses, and that renderer records a tile into the
-     * PRIMARY's display list as a side effect -- which is a recording call, which is what
-     * tells the renderer the retained frame has been superseded and clears it. Painting the
-     * pixels first therefore destroyed the frame the menu was about to be drawn over, and it
-     * did not fail loudly: the entries came back when the list was rewound, but the tile
-     * arena underneath them had been overwritten, so the frozen frame's text came out as
-     * garbage while everything drawn from a cached texture looked perfect. */
-    pause_in_list = pause_active() && frame_src_pixels && frame_src_pixels != s->pixels
-                    && pause_draw_list(frame_src_pixels, s->w, s->h);
-    pause_draw(s->pixels, s->w, s->h, s->pitch);
-    hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
+    /* Latch before an RmlUi callback can close the document during this present. */
+    const int frozen = pause_active();
+    /* Decorations belong to the completed live frame. Repeating them would alpha-composite
+     * the same SVG edge onto unchanged software pixels. */
+    if (!frozen) {
+        if (hint_on) controls_hint_draw(s);
+        hud_device_labels(s);
+        charselect_device_labels_present(s);
+    }
+
+    /* Surface metadata follows a paused resize. Retain the completed region so new columns
+     * in the wide backing allocation cannot become part of the frozen picture. */
+    static uint32_t completed_primary_pixels, completed_source_pixels;
+    static int completed_w, completed_h, completed_pitch, completed_source_off;
+    if (!frozen) {
+        completed_primary_pixels = s->pixels;
+        completed_source_pixels = frame_src_pixels;
+        completed_source_off = frame_src_off;
+        completed_w = s->w;
+        completed_h = s->h;
+        completed_pitch = s->pitch;
+    }
+    const int have_completed = completed_primary_pixels && completed_source_pixels &&
+                               completed_w > 0 && completed_h > 0;
+    const uint32_t primary_pixels = frozen && have_completed ? completed_primary_pixels : s->pixels;
+    const uint32_t source_pixels = frozen && have_completed ? completed_source_pixels : frame_src_pixels;
+    const int source_off = frozen && have_completed ? completed_source_off : frame_src_off;
+    const int present_w = frozen && have_completed ? completed_w : s->w;
+    const int present_h = frozen && have_completed ? completed_h : s->h;
+    const int present_pitch = frozen && have_completed ? completed_pitch : s->pitch;
+    hostwin_present(g_mem + primary_pixels, present_w, present_h, present_pitch, source_pixels, source_off, frozen);
     LOADPROF_END();
 }
 

@@ -19,7 +19,8 @@ extern HostWin hw;
 void hostwin_pump(void);
 /* Surfaces are 32-bit XRGB; the palette parameter this used to take was dead from
  * the point the 8-bit assumption was dropped, and every caller passed NULL. */
-void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch);
+void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch, uint32_t source_pixels, int source_off,
+                     int frozen);
 
 /* The surface the frame is composed into, discovered from the game's own copy to the
  * primary. 0 until that copy has happened. See ddraw.c. */
@@ -137,8 +138,5 @@ void pause_menu_close(void);
 void pause_menu_drop_out(void);
 void pause_menu_leave_match(void);
 void pause_report(void);
-void pause_draw(uint32_t pix, int w, int h, int pitch);
-/* Rewind the native renderer to the retained frame under an open modal document. */
-int pause_draw_list(uint32_t dst_pixels, int w, int h);
 void present_frozen_frame(void);
 void controls_hint_enable(int on);
