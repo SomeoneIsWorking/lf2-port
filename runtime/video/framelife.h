@@ -1,7 +1,7 @@
 /* THE RENDERER'S FRAME LIFETIME, as arithmetic over plain integers.
  *
- * Everything here answers a question about WHEN a frame's display list is cleared, HOW an
- * overlay drawn over a frozen frame is rewound, and WHICH pooled texture serves a tile. None
+ * Everything here answers a question about WHEN a frame's display list is cleared, WHERE the
+ * port-owned overlay begins, and WHICH pooled texture serves a tile. None
  * of that involves a window, a GPU or the game, so none of it is verified by running one --
  * runtime/video/render.c includes this header and calls into it, and tests/test_framelife.c
  * walks it in microseconds (issues #52, #53).
@@ -11,18 +11,10 @@
  * drift. render.c owns the SDL objects; this owns the bookkeeping that decides what happens
  * to them, and the two are indexed alike.
  *
- * WHAT THE BOOKKEEPING IS FOR. The game's own frames are easy: record, draw, present, clear.
- * The pause menu is not. It freezes the world by declining to call the game's update, so on a
- * paused frame the game records NOTHING -- and a renderer that cleared its list at the last
- * present would have nothing to draw the menu on top of. So:
- *
- *   - a frame is marked SPENT at the present and cleared by the first call that RECORDS over
- *     it, which on an ordinary frame is the same thing one instruction later
- *   - a HELD frame is the retained one, extended with the port's own UI and rewound before the
- *     next extension, so a menu up for a minute is recorded once per frame rather than
- *     appended to itself 3600 times
- *   - the overlay boundary says where the game's picture ends, because the port's UI must be
- *     drawn after the lighting rather than lit with the scene
+ * A display list has one ordinary lifetime: record, draw, present, clear. The pause menu does
+ * not extend that lifetime; render.c copies the completed output into an immutable texture and
+ * composites RmlUi over that texture. The overlay boundary only says where the game's picture
+ * ends, because the port's UI must be drawn after the lighting rather than lit with the scene.
  */
 #ifndef LF2_FRAMELIFE_H
 #define LF2_FRAMELIFE_H
@@ -31,26 +23,22 @@ enum { FL_LISTS_MAX = 8, FL_POOL_MAX = 512 };
 
 typedef struct {
     /* ---- the frame being built ---- */
-    int      nlists;
-    int      n[FL_LISTS_MAX];             /* entries recorded per destination surface */
-    int      overlay_from[FL_LISTS_MAX];  /* where the port's own UI starts, or -1 */
-    unsigned tile_used;                   /* bytes of the tile arena handed out */
+    int nlists;
+    int n[FL_LISTS_MAX];            /* entries recorded per destination surface */
+    int overlay_from[FL_LISTS_MAX]; /* where the port's own UI starts, or -1 */
+    unsigned tile_used;             /* bytes of the tile arena handed out */
 
     /* ---- the pooled tile textures ---- */
-    int           pool_n;
-    int           pool_w[FL_POOL_MAX], pool_h[FL_POOL_MAX];
+    int pool_n;
+    int pool_w[FL_POOL_MAX], pool_h[FL_POOL_MAX];
     unsigned char pool_busy[FL_POOL_MAX];
 
-    /* ---- the retained frame ---- */
-    int           hold_n[FL_LISTS_MAX];
-    unsigned      hold_tile_used;
-    unsigned char hold_busy[FL_POOL_MAX];
-    int           spent;                  /* presented; clear on the next recording call */
-    int           holding;                /* this frame is the retained one, extended */
+    /* Present occurs before all of LF2's update returns. Drawing after it starts the next
+     * frame, so the first following record owns the clear. */
+    int spent;
 
     /* ---- what the report prints ---- */
-    long held_frames;
-    int  peak_tiles, tiles_this_frame;
+    int peak_tiles, tiles_this_frame;
     long pool_exhausted;
 } FrameLife;
 
@@ -61,15 +49,15 @@ static inline void fl_init(FrameLife *f)
     f->nlists = 0;
     f->tile_used = 0;
     f->pool_n = 0;
-    f->hold_tile_used = 0;
     f->spent = 0;
-    f->holding = 0;
-    f->held_frames = 0;
     f->peak_tiles = 0;
     f->tiles_this_frame = 0;
     f->pool_exhausted = 0;
-    for (i = 0; i < FL_LISTS_MAX; i++) { f->n[i] = 0; f->overlay_from[i] = -1; f->hold_n[i] = 0; }
-    for (i = 0; i < FL_POOL_MAX; i++) { f->pool_busy[i] = 0; f->hold_busy[i] = 0; }
+    for (i = 0; i < FL_LISTS_MAX; i++) {
+        f->n[i] = 0;
+        f->overlay_from[i] = -1;
+    }
+    for (i = 0; i < FL_POOL_MAX; i++) { f->pool_busy[i] = 0; }
 }
 
 /* A new destination surface. Returns its index, or -1 when there is no room. render.c keeps
@@ -83,19 +71,21 @@ static inline int fl_list_add(FrameLife *f)
     return i;
 }
 
-/* Empty every list and release the whole pool. Not called directly by the frame loop -- see
- * fl_touch, which is what decides the moment. */
+/* Empty every list and release the whole pool after the completed frame is presented. */
 static inline void fl_clear(FrameLife *f)
 {
     int i;
-    for (i = 0; i < f->nlists; i++) { f->n[i] = 0; f->overlay_from[i] = -1; }
+    for (i = 0; i < f->nlists; i++) {
+        f->n[i] = 0;
+        f->overlay_from[i] = -1;
+    }
     for (i = 0; i < f->pool_n; i++) f->pool_busy[i] = 0;
     f->tile_used = 0;
     f->tiles_this_frame = 0;
 }
 
-/* Called by every entry point that RECORDS. Returns 1 if it cleared a spent frame, which is
- * what render.c needs in order to drop the SDL texture pointers that went with it. */
+/* Called by every recording entry point. The first record after present starts the next
+ * display list; later records in that frame append normally. */
 static inline int fl_touch(FrameLife *f)
 {
     if (!f->spent) return 0;
@@ -104,53 +94,11 @@ static inline int fl_touch(FrameLife *f)
     return 1;
 }
 
-/* Called after every present. Marks the frame spent and, unless this frame WAS the retained
- * one, records its extent so an overlay over it can be rewound.
- *
- * The `holding` guard is the whole reason this is not one line: on a held frame the list ends
- * with the pause menu, and recording THAT as the frame's extent is how the menu would become
- * part of the frozen picture and be drawn again, on top of itself, every frame after. */
-static inline void fl_frame_reset(FrameLife *f)
-{
-    if (!f->holding) {
-        int i;
-        for (i = 0; i < f->nlists; i++) f->hold_n[i] = f->n[i];
-        f->hold_tile_used = f->tile_used;
-        for (i = 0; i < f->pool_n; i++) f->hold_busy[i] = f->pool_busy[i];
-    }
-    f->holding = 0;
-    f->spent = 1;
-}
-
-/* Extend the retained frame instead of building a new one. Returns 0 when there is no
- * retained frame -- nothing has been drawn yet -- and the caller must then do without.
- *
- * Rewinding is what keeps a held frame bounded: the previous hold's overlay is dropped, and
- * the tile arena and the texture pool go back with it, so the pool does not leak a texture per
- * frame while the game sits paused. Entries from hold_n[i] up are the ones render.c must
- * forget the textures of; the caller reads the returned boundary from f->hold_n. */
-static inline int fl_hold_begin(FrameLife *f)
-{
-    int i, any = 0;
-    for (i = 0; i < f->nlists; i++) if (f->hold_n[i] > 0) any = 1;
-    if (!any) return 0;
-    for (i = 0; i < f->nlists; i++) {
-        f->n[i] = f->hold_n[i];
-        /* Everything recorded from here is the port's UI over a frozen picture. */
-        f->overlay_from[i] = f->hold_n[i];
-    }
-    f->tile_used = f->hold_tile_used;
-    for (i = 0; i < f->pool_n; i++) f->pool_busy[i] = f->hold_busy[i];
-    f->spent = 0;
-    f->holding = 1;
-    f->tiles_this_frame = 0;
-    f->held_frames++;
-    return 1;
-}
+static inline void fl_frame_reset(FrameLife *f) { f->spent = 1; }
 
 /* The port is about to draw its own UI over a LIVE frame -- the controls hint on a menu the
- * game is still updating. Same boundary fl_hold_begin sets for a frozen one, and it does not
- * move once set: the hint marks itself on every glyph and only the first is the boundary. */
+ * game is still updating. The boundary does not move once set: the hint marks itself on every
+ * glyph and only the first is the boundary. */
 static inline void fl_overlay_mark(FrameLife *f, int list)
 {
     if (list < 0 || list >= f->nlists) return;
@@ -186,9 +134,7 @@ static inline int fl_pool_claim(FrameLife *f, int tw, int th)
     int i, best = -1;
     for (i = 0; i < f->pool_n; i++) {
         if (f->pool_busy[i] || f->pool_w[i] < tw || f->pool_h[i] < th) continue;
-        if (best < 0 || (long)f->pool_w[i] * f->pool_h[i]
-                      < (long)f->pool_w[best] * f->pool_h[best])
-            best = i;
+        if (best < 0 || (long)f->pool_w[i] * f->pool_h[i] < (long)f->pool_w[best] * f->pool_h[best]) best = i;
     }
     if (best >= 0) f->pool_busy[best] = 1;
     return best;
@@ -198,7 +144,10 @@ static inline int fl_pool_claim(FrameLife *f, int tw, int th)
  * when the pool is full, which the caller must report as text MISSING from the frame. */
 static inline int fl_pool_add(FrameLife *f, int tw, int th)
 {
-    if (f->pool_n >= FL_POOL_MAX) { f->pool_exhausted++; return -1; }
+    if (f->pool_n >= FL_POOL_MAX) {
+        f->pool_exhausted++;
+        return -1;
+    }
     const int i = f->pool_n++;
     f->pool_w[i] = fl_pool_bucket(tw);
     f->pool_h[i] = fl_pool_bucket(th);

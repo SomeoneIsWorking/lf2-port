@@ -1814,10 +1814,9 @@ Three hooks in `runtime/video/ddraw.c`:
     counters live inside `render_present`, so a frame the present gate skips increments
     neither. This is how the menus were stretched by SDL for the whole life of the renderer
     without a single test noticing (issue #52).
-  - `N frame(s) were drawn over a RETAINED list` — frames the game recorded nothing for and
-    the renderer redrew what it already had, which is how the pause menu is presented. Zero is
-    the correct answer for a run that never paused, and `tools/e2e.py pause_dropout` asserts
-    both directions: non-zero in the run that pauses, zero in the same route without one.
+  - `N frame(s) used the immutable completed-frame snapshot` — frozen match presents restore
+    that native output rather than replaying mutable display-list resources. Zero is correct
+    for a run that never paused; `tools/e2e.py pause_dropout` requires non-zero in a real pause.
   - `the busiest frame drew N tile(s) against a pool of M` — the tile-texture pool must be at
     least as large as the busiest frame, because every tile in a frame is live at once. When
     N reaches M the report says how many tiles were dropped, and a dropped tile is text

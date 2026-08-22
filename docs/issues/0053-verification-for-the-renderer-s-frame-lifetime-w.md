@@ -51,17 +51,13 @@ The frame lifetime moved into runtime/video/framelife.h -- pure bookkeeping over
 integers, no SDL -- which runtime/video/render.c INCLUDES and calls into, so the test is not
 exercising a copy. tests/test_framelife.c walks it in `ctest framelife`, 0.00 s.
 
-WHAT IS ASSERTED OFFLINE NOW, and every one of these was a bug found by looking at a
-1920x1080 screenshot after a five-minute route run:
+WHAT IS ASSERTED OFFLINE NOW:
 
-  - a frame is marked spent at the present and cleared by the first call that RECORDS over it;
-    a frame that records nothing keeps the last one
-  - a held frame rewinds to the length the GAME built, every time, so five held frames leave
-    one overlay in the list and not five
-  - the frame reset does NOT re-take the retained extent on a held frame (that is how the menu
-    folds into the frozen picture and gets drawn on top of itself)
-  - recording the overlay does not clear the frame under it
-  - fl_hold_begin refuses when nothing is retained, which is what keeps the software present
+  - a frame is marked spent at the mid-update present and cleared by the first later recording
+    call, because LF2 can begin the following frame before its update returns
+  - only a successfully copied completed output is valid for frozen presentation, and only for
+    the same composition source; a failed live copy invalidates the previous snapshot
+  - a resized frozen output contains the immutable raster without changing its aspect
   - the overlay boundary is set once and does not move, and a list that does not exist reports
     no picture rather than reading off the end
   - the pool serves any free texture the tile FITS IN, bucketed to 32 -- a 880-wide string
@@ -70,11 +66,10 @@ WHAT IS ASSERTED OFFLINE NOW, and every one of these was a bug found by looking 
   - two tiles in one frame never share a texture, because both are live at once
   - exhaustion is counted, and the peak is PER FRAME rather than a running total
 
-THE ROUTE SCRIPT KEPT ONE ASSERTION AND LOST THE EXTRA RUN. tools/e2e.sh pause_dropout still
-checks that a real pause in a real match is presented by the renderer -- 120 held frames --
-because that is a fact about a running game. The negative control that cost a second 300-second
-run is gone, and its job is done by the offline test, which can ask it in more ways than the
-script ever could.
+THE ROUTE KEEPS ONE RUNTIME ASSERTION. `tools/e2e.py pause_dropout` checks that a real pause in
+a real match restores the native snapshot (121 frames in issue #94's verification), because
+that is a fact about a running game. The old extra negative run remains unnecessary; the pure
+state negatives live in `ctest framelife`.
 
 Suite: 9 tests, 1.97 s, nothing in it over a second. `tools/e2e.sh render background` and
 `pause_dropout` all pass after the refactor, and the paused frame at 1920x1080 still draws

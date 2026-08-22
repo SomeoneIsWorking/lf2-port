@@ -131,20 +131,20 @@ THE CONTROLS HINT appends its glyphs to the live composition's display list (gam
 the display-list half of the glyph renderer split out of game_glyph_draw). Menus went from
 0 of 901 GPU-drawn frames at 1920x1080 to 900.
 
-THE PAUSE MENU is drawn over a RETAINED frame. Pause freezes the world by declining to call
-the game's update, so no blit arrives; a frame's lists are therefore cleared by the first call
-that RECORDS over them rather than by the present that finished them, and render_hold_begin
-rewinds a held frame's overlay before the next one is recorded. Measured: 573 held frames in a
-run, the menu crisp at 1080p over a dimmed frozen picture.
+THE PAUSE MENU is drawn over an immutable completed-frame snapshot. Pause freezes the world by
+declining to call the game's update, so no new live frame arrives. The renderer copies its
+finished output-resolution target after live port decorations and before RmlUi, then restores
+that texture on each frozen present. Display-list entries and tile-pool backing are ordinary
+per-frame resources and never become the pause-frame authority (issue #94).
 
 THREE THINGS BROKE ON THE WAY, each with its own cause, and all three are worth keeping:
 
-  THE SOFTWARE PAINTER DESTROYED THE FRAME THE LIST PAINTER WAS ABOUT TO DRAW OVER. pause_draw
-  paints the primary through the same glyph renderer the game's text uses, and that renderer
-  records a tile as a side effect -- a recording call, which is what clears a spent frame. It
-  did not fail loudly: the entries came back when the list was rewound, but the tile arena
-  underneath them had been overwritten, so the frozen frame's TEXT came out as garbage while
-  everything drawn from a cached texture looked perfect. The list is recorded first now.
+  THE RETAINED-LIST REWIND WAS NOT A FRAME. Present-time decorations could record before the
+  hold was reacquired, clearing the spent list and reusing its tile arena. Restoring old list
+  lengths then resurrected metadata over changed backing: text became garbage while cached
+  textures looked correct. A validity bit only proved the hold could legitimately be
+  invalidated before pause code ran. The immutable output texture is the single current fix;
+  the list rewind and old pause painters are deleted (issue #94).
 
   THE TILE POOL FILLED AND SILENTLY DROPPED 42402 TILES. It was keyed on exact size, which
   rests on "a tile's size repeats constantly" -- true of a glyph, one 8x16 cell scaled, and
@@ -160,11 +160,10 @@ THREE THINGS BROKE ON THE WAY, each with its own cause, and all three are worth 
   before it is the game's picture and is lit, everything from it on is drawn onto the finished
   target afterwards.
 
-VERIFIED. `ctest` 9/9 in 1.97 s -- including the new `framelife` test, which walks the
-retained-frame bookkeeping and the pool offline (issue #53). All 13 e2e routes pass, and the
-two that can see this change specifically: `render` compares GPU against software on both its
-frames (max channel diff 1 on the menu, 2 on the match) and `pause_dropout` asserts the
-renderer drew the paused frames. `background`'s byte-identity arm at 794x550 still holds.
+CURRENT VERIFICATION. `ctest framelife` walks deferred list clearing, snapshot validity and
+identity, resize containment, the overlay boundary, and the tile pool offline (issues #53,
+#94). `ui_global` checks six exact open/close GPU frames at 1920x1080, and `pause_dropout`
+asserts a real match used the native snapshot rather than software fallback.
 
 AND ONE LYING INSTRUMENT, recorded as I010: render_test dumps frame 1300, character selection,
 which has the hint up -- so its `gpu` arm was dumping the SOFTWARE buffer and "gpu matches
