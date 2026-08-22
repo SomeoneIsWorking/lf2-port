@@ -217,9 +217,12 @@ of following the window (issue #20). Both are now unconditional and derived from
 The `LF2_*` namespace is for probes, dumps, traces and test scaffolding — if a player would
 want it, it belongs in the game's own behaviour or its menus.
 
-## No game content is distributed here
+## No distributable game content is shipped here
 
 `game/`, `LF2_v2.0a.exe`, `scratch/` and `re/instructions.tsv` are gitignored and must stay
 that way — the last is Ghidra's dump *with raw bytes*, from which `.text` can be rebuilt.
 `re/entries.tsv` and `re/functions.tsv` (addresses, sizes, names, no code) are committed.
-Never commit an extracted asset, a frame dump, or anything derived from the shipped binary.
+Never commit an extracted asset, executable, or anything from which shipped game content can be
+reconstructed. Curated promotional screenshots under `docs/screenshots/` are the sole visual-output
+exception: they may show the running game, but must be intentional README/documentation captures,
+not an archival frame-dump corpus.
