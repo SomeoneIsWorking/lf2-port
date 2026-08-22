@@ -45,3 +45,11 @@ USER 2026-08-21: the keyboard SVG overlaps the Stage selector in the pre-fight s
 
 ### Resolution (2026-08-21)
 The overlap was not bad SVG geometry: the pre-fight overlay borrows panel_hud_up while drawing Stage/Difficulty, so ddraw treated it as player HUD. Device visibility now requires HUD up AND overlay down through device_icon_hud_visible; the offline device_icons test covers every signal combination, and the 1920x1080 overlay capture shows the Stage cell unobstructed.
+
+### Correction (2026-08-22, issue #88)
+
+That fixed the in-match HUD icon but its explanation of the character-select icon was false:
+the pre-fight panel keeps `SCREEN_CHARSELECT`; it does not raise `SCREEN_MATCH`. The remaining
+icon was appended from `present_primary` after every guest draw and therefore covered the panel.
+Character-select labels are now recorded immediately before the panel's own blit, so the guest
+panel covers them by normal painter order. The present hook adds them only when no overlay is up.

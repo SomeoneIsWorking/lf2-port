@@ -13,6 +13,7 @@
 #include "backdrop.h"
 #include "blt_trace.h"
 #include "result_panel.h"
+#include "stage_banner.h"
 #include "framespec.h"
 #include "script.h"
 #include "rmlui.h"
@@ -737,15 +738,14 @@ static void controls_hint_draw(const Surface *s)
  *
  * THE CHARACTER-SELECT SLOTS are the same 2x4 grid of portraits (screens.c's CS_COL/CS_ROW),
  * so the same (col, row) cell and the same icon work for both screens; charselect is
- * centred by screen_offset_x() like the other fixed-794 screens. The character-select gate is
- * `panel_charselect_up() && !panel_overlay_up()` -- the overlay sits on character selection,
- * and its own panels must not be mistaken for the slot portraits. */
+ * centred by screen_offset_x() like the other fixed-794 screens. The overlay keeps that screen
+ * word, so labels enter painter order before its panel instead of being appended at present. */
 static void device_icon_draw(const Surface *s, int x, int y, int dev)
 {
     /* The helper records a premultiplied display-list tile and composites the same decoded
      * pixels into the software primary. Both renderer paths therefore use one rasterisation. */
-    if (frame_src_pixels && frame_src_pixels != s->pixels)
-        device_icon_record(frame_src_pixels, x, y, dev);
+    const uint32_t record_pixels = s->primary ? frame_src_pixels : s->pixels;
+    if (record_pixels) device_icon_record(record_pixels, x, y, dev);
     device_icon_paint(s->pixels, s->w, s->h, s->pitch, x, y, dev);
 }
 
@@ -766,13 +766,8 @@ static void hud_device_labels(const Surface *s)
 static const int CS_XBASE[4] = { 147, 300, 453, 606 };
 static const int CS_YBASE[2] = { 95, 306 };
 
-static void charselect_device_labels(const Surface *s)
+static void charselect_device_labels_draw(const Surface *s)
 {
-    /* The game's own screen word, not the 2-frame panel_blit window: character selection
-     * holds 1 (world.h SCREEN_CHARSELECT) the whole time it is up, and the overlay -- which
-     * sits on top of it and must not be labelled -- raises 0 (SCREEN_MATCH) in fn_0041bc90.
-     * The overlay's own panels would otherwise be mistaken for the slot portraits. */
-    if (LD32(0x0044d020u) != 1) return;
     /* Mark the entries as OVERLAY so the game's own charselect redraws (which record over
      * the composition list each frame) do not wipe the labels: the controls hint does the
      * same before its tiles, issue #52. */
@@ -784,6 +779,14 @@ static void charselect_device_labels(const Surface *s)
         if (dev < 0) continue;
         device_icon_draw(s, CS_XBASE[i & 3] + off + 2, CS_YBASE[i >> 2] + 2, dev);
     }
+}
+
+static void charselect_device_labels_present(const Surface *s)
+{
+    const int charselect_up = LD32(0x0044d020u) == 1;
+    if (device_icon_charselect_phase(charselect_up, panel_overlay_up())
+        == DEVICE_ICON_CHARSELECT_PRESENT)
+        charselect_device_labels_draw(s);
 }
 
 /* The pause menu needs the frame to keep being shown while the game's update is not
@@ -800,7 +803,7 @@ static void present_primary(void)
     Surface *s = com_host(primary_surface);
     if (hint_on) controls_hint_draw(s);
     hud_device_labels(s);
-    charselect_device_labels(s);
+    charselect_device_labels_present(s);
     /* After the frame is assembled and before it is shown. The pixels go on the primary for
      * the software compositor; the same menu is also recorded over the renderer's RETAINED
      * frame, and whether that worked is what decides which path may present (issue #52).
@@ -1509,6 +1512,8 @@ static void surf_Blt(uint32_t self)
     const long trace_frame = hostwin_frames() + 1;
     const BltTrace trace = {
         .frame = trace_frame, .selected = spec_lists(getenv("LF2_BLT_FRAME"), trace_frame),
+        .destination = self, .destination_w = d->w, .destination_h = d->h,
+        .destination_primary = d->primary,
         .dl = dl, .dt = dt, .dr = dr, .db = db,
         .source = srcobj, .source_w = s ? s->w : -1, .source_h = s ? s->h : -1,
         .has_source_rect = srect != 0, .sl = sl, .st = st_, .sr = sr, .sb = sb,
@@ -1644,29 +1649,14 @@ static void surf_Blt(uint32_t self)
         dl += off; dr += off;
     }
 
-    /* Widescreen: the STAGE n-n ANNOUNCEMENT banner (issue #73).
-     *
-     * The stage-intro logo is a fixed 794-wide piece of art -- a bitmap banner showing the
-     * stage number -- that FUN_00437860 draws at the START of a stage, in the world band
-     * (y 299..340, below the HUD, above the ground fill at y 356). It is composed at fixed
-     * 794 coordinates against the game's own screen, so on a wider composition it sits 184
-     * px short of the left edge at 978 -- the same mistake the name tags made before issue
-     * #55 -- and it is a BLIT, so the GDI band that settled the persistent STAGE n-n text
-     * (issue #54) does not reach it.
-     *
-     * It is identified the same way the banner's own draw is: its source sheet is the one
-     * surface in the whole game that is 794 wide and 600 tall, and the draw lands in the
-     * banner's band. Both halves are the game's own geometry -- the sheet's size from the
-     * blit, the band from the drawn logo -- so a wrong identification would be a size and a
-     * row agreeing by coincidence. It is a FULL-SCREEN wipe's banner, so it is CENTRED like
-     * every other fixed-794 screen furniture, against the composition. At 794 none of this
-     * fires (the rule requires d->w > NATIVE_W up front). */
+    /* Centre the fixed-width STAGE n-n announcement (issues #73, #90). Sheet geometry is
+     * insufficient identity: selected Demo shares the 794x600 source and y=339. The helper
+     * therefore owns the running-match signal too. */
     {
         const Surface *banner = srcobj ? com_host(srcobj) : NULL;
-        if (lf2_wide_width() && banner && !d->primary && d->w > NATIVE_W
-            && banner->w == 794 && banner->h == 600
-            && dt >= 294 && dt <= 341) {
-            const int off = (d->w - NATIVE_W) / 2;
+        if (banner && !d->primary) {
+            const int match_up = panel_hud_up() && !panel_overlay_up();
+            const int off = stage_banner_offset(match_up, d->w, banner->w, banner->h, dt);
             dl += off; dr += off;
         }
     }
@@ -1702,7 +1692,14 @@ static void surf_Blt(uint32_t self)
         dr += off;
     }
 
+    const int overlay_panel_draw = dl == 3 && dt == 3 && dr == 307 && db == 159;
     panel_note(dl, dt, dr, db);
+
+    /* Record the label before the pre-fight panel so ordinary painter order covers it. */
+    if (overlay_panel_draw && !d->primary
+        && device_icon_charselect_phase(LD32(0x0044d020u) == 1, 1)
+               == DEVICE_ICON_CHARSELECT_BEFORE_OVERLAY)
+        charselect_device_labels_draw(d);
 
     /* A PICTURE THAT COVERS THE WHOLE OF THE GAME'S SCREEN IS THAT SCREEN'S BACKGROUND, and
      * the only one in the game is the loading screen's MENU_WAIT (issue #44). It is decided

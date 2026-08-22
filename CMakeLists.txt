@@ -84,6 +84,7 @@ add_executable(lf2
     runtime/video/blt_trace.c
     runtime/video/ddraw.c
     runtime/video/result_panel.c
+    runtime/video/stage_banner.c
     runtime/audio/dsound.c
     runtime/win32/dshow.c
     runtime/win32/gdi.c
@@ -164,7 +165,8 @@ add_dependencies(lf2 stages)
 # left unchecked -- which is how four real warnings sat unnoticed.
 set_source_files_properties(
     runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c
-    runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/result_panel.c runtime/audio/dsound.c runtime/win32/dshow.c
+    runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/result_panel.c runtime/video/stage_banner.c
+    runtime/audio/dsound.c runtime/win32/dshow.c
     runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/app/script.c
     runtime/app/options.c
     runtime/app/config.c
@@ -220,6 +222,21 @@ target_include_directories(test_keyboard PRIVATE runtime/input)
 target_link_libraries(test_keyboard PRIVATE SDL3::SDL3)
 target_compile_options(test_keyboard PRIVATE -Wall -Wextra)
 add_test(NAME keyboard COMMAND test_keyboard)
+
+add_executable(test_stage_banner tests/test_stage_banner.c runtime/video/stage_banner.c)
+target_include_directories(test_stage_banner PRIVATE runtime/video)
+target_compile_options(test_stage_banner PRIVATE -Wall -Wextra)
+add_test(NAME stage_banner COMMAND test_stage_banner)
+
+add_executable(test_guest_cursor tests/test_guest_cursor.c)
+target_include_directories(test_guest_cursor PRIVATE runtime/overrides)
+target_compile_options(test_guest_cursor PRIVATE -Wall -Wextra)
+add_test(NAME guest_cursor COMMAND test_guest_cursor)
+
+add_executable(test_boot_mode tests/test_boot_mode.c)
+target_include_directories(test_boot_mode PRIVATE runtime/overrides)
+target_compile_options(test_boot_mode PRIVATE -Wall -Wextra)
+add_test(NAME boot_mode COMMAND test_boot_mode)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME structure COMMAND ${Python3_EXECUTABLE}

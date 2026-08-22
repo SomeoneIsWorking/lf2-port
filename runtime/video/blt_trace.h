@@ -6,6 +6,9 @@
 typedef struct {
     long frame;
     int selected;
+    uint32_t destination;
+    int destination_w, destination_h;
+    int destination_primary;
     int dl, dt, dr, db;
     uint32_t source;
     int source_w, source_h;

@@ -5,6 +5,7 @@
  */
 
 #include "overrides.h"
+#include "boot_guest.h"
 #include "world.h"
 
 #include "guest_ops.h"
@@ -220,6 +221,13 @@ void fn_004246b0(void)
     }
     const uint32_t self = R(ECX);
     uint32_t mode = self ? LD32(self) : 0xffffffffu;
+    const uint32_t target_mode = boot_guest_target_mode(mode);
+    if (self && target_mode != mode) {
+        ST32(self, target_mode);
+        mode = target_mode;
+        fprintf(stderr, "startup: retired front-end state was discarded; entering the "
+                        "project loader\n");
+    }
     startup_before_game_frame(self, mode);
     mode = self ? LD32(self) : 0xffffffffu;
     const uint32_t screen = LD32(GX_SCREEN);

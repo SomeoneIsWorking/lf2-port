@@ -19,3 +19,11 @@ The sheet handle is a heap pointer; the stable identity is the .data slot holdin
 Fix: fn_0043f010 override declines the draw when sheet == LD32(0x00451170) and (x,y) == (mouse_x, mouse_y+2). LF2_CURSOR_ON=1 restores it.
 
 Verified with a control: 11x19 blit count 4 -> 0, and 4 again with LF2_CURSOR_ON=1. NOTE: comparing frame dumps ACROSS runs is not a usable A/B here -- load timing differs, so frame N holds different content.
+
+## Correction (2026-08-22, issue #91)
+
+The coordinate correlation above was discovery evidence, not stable identity. Tracing before the
+shared draw helper identified the three exact producers (`0x00424660`, `0x00428778`, and
+`0x004329ea`). The override now declines only those callers when they use the cursor sheet. The
+coordinate test and `LF2_CURSOR_ON` restoration path are gone; a host-owned product never draws a
+second guest cursor.
