@@ -27,9 +27,11 @@ void blt_trace_log(const BltTrace *trace)
     char fill[48] = "";
     if (trace->has_fill) snprintf(fill, sizeof fill, " COLORFILL=%08x", trace->fill);
     fprintf(stderr,
-            "blt %ld dst=(%d,%d)-(%d,%d) src=%08x[%dx%d] srect=%s(%d,%d)-(%d,%d)"
+            "blt %ld dst=%08x[%dx%d%s] rect=(%d,%d)-(%d,%d) "
+            "src=%08x[%dx%d] srect=%s(%d,%d)-(%d,%d)"
             " flags=%08x from=%08x%s\n",
-            count, trace->dl, trace->dt, trace->dr, trace->db, trace->source, trace->source_w, trace->source_h,
-            trace->has_source_rect ? "" : "NULL", trace->sl, trace->st, trace->sr, trace->sb, trace->flags,
-            trace->caller, fill);
+            count, trace->destination, trace->destination_w, trace->destination_h,
+            trace->destination_primary ? " primary" : "", trace->dl, trace->dt, trace->dr, trace->db, trace->source,
+            trace->source_w, trace->source_h, trace->has_source_rect ? "" : "NULL", trace->sl, trace->st, trace->sr,
+            trace->sb, trace->flags, trace->caller, fill);
 }

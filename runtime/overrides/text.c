@@ -6,6 +6,7 @@
 
 #include "overrides.h"
 #include "world.h"
+#include "guest_cursor.h"
 #include "geom.h"
 
 #include "guest_ops.h"
@@ -127,23 +128,13 @@ void fn_0043f010(void)
      * sprite among full-screen backgrounds. Aggregating by call site is the wrong key when
      * one call site draws the whole game.
      *
-     * The sheet handle is a heap pointer with no identity across runs, so the test is the
-     * .data slot that holds it, found by scanning .data for the handle at the moment of the
-     * draw. Three call sites use it (0x428778, 0x424660, 0x4329ea -- front end, mode menu,
-     * in game), so declining by sheet removes it on every screen at once rather than one
-     * call site at a time.
-     *
-     * LF2_CURSOR_ON=1 restores it. */
-    if (R(ECX) && R(ECX) == LD32(CURSOR_SHEET) && !getenv("LF2_CURSOR_ON")) {
-        /* Declining the whole SHEET was wrong: it is shared with the menu's character
-         * artwork, and dropping it blanked 51492 pixels down the left of the screen. The
-         * cursor is the draw of that sheet that lands ON the pointer, so that is the test.
-         * The +2 is the sprite's own vertical offset, measured from the blit. */
-        const int ax = (int)LD32(R(ESP) + 4), ay = (int)LD32(R(ESP) + 8);
-        if (ax == (int)LD32(GX_MOUSE_X) && ay == (int)LD32(GX_MOUSE_Y) + 2) {
-            R(ESP) += 4 + 24;                /* RET 0x18: return address and six args */
-            return;
-        }
+     * The old test also required `(draw x,y) == (mouse x,mouse.y+2)`. That was layout
+     * coincidence, not identity, and a widescreen transform could let the cursor through.
+     * The exact three producer calls are stable and guest_cursor_draw tests both them and
+     * the shared sheet, so the menu artwork on that sheet remains. */
+    if (guest_cursor_draw(LD32(R(ESP)), R(ECX), LD32(CURSOR_SHEET))) {
+        R(ESP) += 4 + 24;                    /* RET 0x18: return address and six args */
+        return;
     }
 
     /* Which call draws the mouse cursor? It reaches Blt as an 11x19 sprite at the
