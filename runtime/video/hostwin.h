@@ -19,8 +19,7 @@ extern HostWin hw;
 void hostwin_pump(void);
 /* Surfaces are 32-bit XRGB; the palette parameter this used to take was dead from
  * the point the 8-bit assumption was dropped, and every caller passed NULL. */
-void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch, uint32_t source_pixels, int source_off,
-                     int frozen);
+void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch, uint32_t source_pixels, int source_off);
 
 /* The surface the frame is composed into, discovered from the game's own copy to the
  * primary. 0 until that copy has happened. See ddraw.c. */
@@ -130,7 +129,6 @@ int coop_drop_out(int slot);
 void gfx_request_frame_dump(void);
 
 /* Global RmlUi menu lifecycle and LF2 action bridge, runtime/app/pause.c. */
-int pause_active(void);
 void pause_tick(void);
 int pause_menu_in_match(void);
 int pause_menu_can_drop(void);
@@ -138,5 +136,4 @@ void pause_menu_close(void);
 void pause_menu_drop_out(void);
 void pause_menu_leave_match(void);
 void pause_report(void);
-void present_frozen_frame(void);
 void controls_hint_enable(int on);

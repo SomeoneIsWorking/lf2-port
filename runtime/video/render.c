@@ -4,7 +4,6 @@
 #include "engine.h"
 #include "texrect.h"
 #include "framelife.h"
-#include "render_snapshot.h"
 #include "overrides/geom.h"
 #include "hd2d.h"
 #include "options.h"
@@ -88,7 +87,6 @@ typedef struct {
 
 static SDL_Renderer *R;
 static FrameLife FL;
-static RenderSnapshot snapshot;
 static List lists[SURF_MAX];
 static Tex texes[TEX_MAX];
 static int ntexes;
@@ -129,7 +127,6 @@ void render_init(SDL_Renderer *r)
 {
     R = r;
     fl_init(&FL);
-    render_snapshot_init(&snapshot);
     /* RmlUi is the global shell, not a native-renderer feature. Its backend uses the shared
      * SDL_Renderer and also composites over the software fallback. */
     if (!rmlui_init(r, hw.window)) fprintf(stderr, "render: the global RmlUi shell is not available\n");
@@ -151,13 +148,7 @@ static void target_free(void)
     target_w = target_h = 0;
 }
 
-static void snapshot_free(void) { render_snapshot_destroy(&snapshot); }
-
-static void targets_free(void)
-{
-    target_free();
-    snapshot_free();
-}
+static void targets_free(void) { target_free(); }
 
 void render_shutdown(void)
 {
@@ -196,23 +187,8 @@ static int list_index(uint32_t dst_pixels)
     return lists[i].e ? i : -1;
 }
 
-/* The present is inside LF2's update rather than at its outer boundary. The first later
- * recording call starts the next frame and releases the prior frame's pooled tile pointers. */
-static void frame_touch(void)
-{
-    if (!FL.spent) return;
-    int was[FL_LISTS_MAX];
-    const int nl = FL.nlists;
-    for (int i = 0; i < nl; i++) was[i] = FL.n[i];
-    fl_touch(&FL);
-    for (int i = 0; i < nl; i++)
-        for (int j = 0; j < was[i]; j++) lists[i].e[j].tile_tex = NULL;
-    tile_list = -1;
-}
-
 static Entry *entry_push(uint32_t dst_pixels)
 {
-    frame_touch();
     const int li = list_index(dst_pixels);
     if (li < 0) return NULL;
     if (FL.n[li] >= LIST_MAX) {
@@ -408,7 +384,6 @@ uint32_t *render_tile_begin(uint32_t dst_pixels, int x, int y, int w, int h, int
     if (tw <= 0) tw = w;
     if (th <= 0) th = h;
     if (!render_gpu_enabled() || !tile_arena || w <= 0 || h <= 0 || tw <= 0 || th <= 0) return NULL;
-    frame_touch();
     const uint32_t need = (uint32_t)tw * (uint32_t)th * 4u;
     if (need > TILE_BYTES_MAX - FL.tile_used) {
         stat_dropped++;
@@ -711,7 +686,11 @@ static int target_ensure(int w, int h)
 {
     if (target && (target_w != w || target_h != h)) target_free();
     if (!target) {
-        target = render_target_make(R, w, h, SDL_SCALEMODE_NEAREST);
+        target = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w, h);
+        if (target) {
+            SDL_SetTextureScaleMode(target, SDL_SCALEMODE_NEAREST);
+            SDL_SetTextureBlendMode(target, SDL_BLENDMODE_NONE);
+        }
         if (!target) return 0;
         target_w = w;
         target_h = h;
@@ -751,7 +730,7 @@ static EngineQuad *eq_reserve(int n)
 }
 
 static int engine_colour_pass(List *l, int li, int ov, float world, float ox, float oy, float scale, int ow, int oh,
-                              SDL_Texture *dst, const SDL_FRect *place)
+                              SDL_Texture *dst)
 {
     (void)li;
     if (!engine_enabled()) return 0;
@@ -906,19 +885,18 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
     SDL_Texture *frame = engine_draw(out, n, egeom, ng, ow, oh);
     if (!frame) return 0; /* engine_draw said why; fall back */
 
-    /* The scene is rasterised at the composition's integer pixel grid, then enlarged ONCE.
-     * Scaling each scrolling layer independently at a fractional output coordinate changes its
-     * nearest-sampling phase as the camera moves; different parallax layers then shimmer against
-     * one another. A single final scale has one stable phase for the whole scene. */
+    /* `frame` already is the full output size. Every display-list entry was transformed into
+     * that space before engine_draw, so this copy is 1:1: sprites are sampled once and host
+     * font/SVG coverage is never reduced to the composition grid first. */
     SDL_SetRenderTarget(R, dst);
     SDL_SetTextureBlendMode(frame, SDL_BLENDMODE_NONE);
-    SDL_RenderTexture(R, frame, NULL, place);
+    SDL_RenderTexture(R, frame, NULL, NULL);
     if (opt_lighting()) stat_post++; /* "the light ran" -- the engine's own count is engine_report's */
     stat_engine_frames++;
     return 1;
 }
 
-int render_present(uint32_t src_pixels, int off, int w, int h, int frozen)
+int render_present(uint32_t src_pixels, int off, int w, int h)
 {
     if (!render_gpu_enabled() || !R) return 0;
     int li = -1;
@@ -929,7 +907,7 @@ int render_present(uint32_t src_pixels, int off, int w, int h, int frozen)
      * renderer captures. Say so once and hand the frame back to the software path rather
      * than presenting an empty screen -- a black frame is the one failure mode that looks
      * like a crash and tells nobody why. */
-    if (!frozen && (!l || FL.n[li] == 0)) {
+    if (!l || FL.n[li] == 0) {
         static int said;
         if (!said) {
             said = 1;
@@ -939,7 +917,6 @@ int render_present(uint32_t src_pixels, int off, int w, int h, int frozen)
                     "records draws per destination surface and this one had none.\n",
                     src_pixels);
         }
-        render_snapshot_invalidate(&snapshot);
         stat_soft_frames++;
         return 0;
     }
@@ -973,7 +950,6 @@ int render_present(uint32_t src_pixels, int off, int w, int h, int frozen)
         SDL_SetRenderLogicalPresentation(R, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
 
     if (!target_ensure(ow, oh)) {
-        if (!frozen) render_snapshot_invalidate(&snapshot);
         fprintf(stderr,
                 "render: could not create the %dx%d render target (%s) -- the "
                 "software compositor is presenting\n",
@@ -983,19 +959,6 @@ int render_present(uint32_t src_pixels, int off, int w, int h, int frozen)
         return 0;
     }
 
-    if (frozen) {
-        if (!render_snapshot_restore(&snapshot, R, target, src_pixels, ow, oh)) {
-            fprintf(stderr,
-                    "render: no completed native frame is available for the frozen "
-                    "composition at %08x -- the software compositor is presenting\n",
-                    src_pixels);
-            SDL_SetRenderTarget(R, NULL);
-            if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED) SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
-            stat_soft_frames++;
-            return 0;
-        }
-        goto compose_rmlui;
-    }
     /* WHERE THE PICTURE GOES AND HOW BIG IT IS DRAWN (issue #41). The composition is `w` x `h`
      * game pixels; geom_compose_rect says what rectangle of the window that fills, and every
      * quad below is scaled into it as it is drawn.
@@ -1014,17 +977,15 @@ int render_present(uint32_t src_pixels, int off, int w, int h, int frozen)
      *    off the engine returns the unlit picture and the frame IS what the game drew, which
      *    is what tools/routes/render_test.sh compares against the software compositor byte for
      *    byte. */
-    /* WHERE THE GAME'S PICTURE ENDS AND THE PORT'S OWN UI BEGINS. The controls hint and the
-     * pause menu are recorded into this same list -- that is what lets the renderer present
-     * the frames they sit on at all (issue #52) -- but they are not part of the scene and
-     * must not be lit. The engine marks objects from the ground-pairing in the FIRST part of
-     * the list only, so a fighter is never re-composited over the menu that is supposed to be
-     * frozen and dimmed. */
+    /* WHERE THE GAME'S PICTURE ENDS AND RECORDED PORT UI BEGINS. The controls hint is in this
+     * list so it follows the native renderer, but it must not be lit. RmlUi is a separate
+     * output-space layer below. The engine marks objects from the ground-pairing in the FIRST
+     * part of the list only, so a fighter is never re-composited over recorded UI. */
     const int ov = fl_overlay_at(&FL, li);
     const int ln = FL.n[li];
 
     clear_to(target, 0, 0, 0, 255);
-    if (!engine_colour_pass(l, li, ov, (float)off, 0.0f, 0.0f, 1.0f, w, h, target, &place))
+    if (!engine_colour_pass(l, li, ov, (float)off, ox, oy, scale, ow, oh, target))
         draw_list(l, (float)off, ox, oy, 0, ov);
 
     /* The port's UI, over the finished picture and after the light. */
@@ -1033,18 +994,6 @@ int render_present(uint32_t src_pixels, int off, int w, int h, int frozen)
         draw_list(l, (float)off, ox, oy, ov, ln);
     }
 
-    /* This is the one ownership transfer from a mutable live display list to a frozen frame.
-     * A failed copy invalidates the snapshot, so a later pause cannot silently show stale
-     * output from another screen or composition. The current live frame still presents. */
-    if (!render_snapshot_capture(&snapshot, R, target, src_pixels, target_w, target_h)) {
-        static int said;
-        if (!said) {
-            said = 1;
-            fprintf(stderr, "render: could not copy the completed native frame for pause: %s\n", SDL_GetError());
-        }
-    }
-
-compose_rmlui:
     /* The RmlUi settings screen, over the same frame (issue #70): the document composites
      * into the composed frame between the game's draw and the present, so it is a layer of
      * the picture rather than a separate window. */
@@ -1062,7 +1011,7 @@ compose_rmlui:
     SDL_RenderPresent(R);
     if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED) SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
     stat_frames++;
-    if (stat_frames == 1 && !frozen)
+    if (stat_frames == 1)
         fprintf(stderr,
                 "render: %dx%d of game scaled x%.3f per quad into a %dx%d target, "
                 "filling %.0fx%.0f at (%.0f,%.0f), lighting %s\n",
@@ -1104,9 +1053,13 @@ int render_readback(uint32_t *dst, int w, int h, int dst_pitch)
     return ok;
 }
 
-/* Mark the list presented. LF2 can begin recording the next frame before its update returns,
- * so the first later recording call performs the clear. */
-void render_frame_reset(void) { fl_frame_reset(&FL); }
+/* Presentation consumes the frame immediately. LF2 can begin recording its next frame before
+ * the current update returns, and those later records now enter an already-empty list. */
+void render_frame_reset(void)
+{
+    fl_frame_reset(&FL);
+    tile_list = -1;
+}
 
 /* The port is about to draw its own UI over a LIVE frame -- the controls hint on a menu the
  * game is still updating. */
@@ -1141,13 +1094,6 @@ void render_report(void)
                 "render: %ld tiles were NOT DRAWN -- the %d-texture pool was full, so "
                 "text is MISSING from those frames\n",
                 FL.pool_exhausted, TILE_TEX_MAX);
-    /* Prints the zero and says what it means, because zero is the ordinary answer: a run
-     * that never paused SHOULD report none, and a run that paused and reports none is the
-     * pause menu having fallen back to the software compositor (issue #52). */
-    fprintf(stderr,
-            "render: %ld frame(s) used the immutable completed-frame snapshot while the "
-            "match was frozen. Zero is correct for a run that never paused.\n",
-            render_snapshot_frozen_frames(&snapshot));
     fprintf(stderr,
             "render: the light ran on %ld frame(s); %ld cast shadows from %ld ground "
             "markers\n",

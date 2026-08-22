@@ -5,7 +5,7 @@ status: resolved
 symptom: in a window taller than 550 the game's picture sits in a 550-row band with black above and below; it should fill the window, and it should do so by drawing every sprite larger at draw time rather than by scaling a finished 794x550 frame
 tags: reported,rendering,renderer,widescreen,scaling
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-22
 ---
 
 REPORTED 2026-08-11. Filed on receipt.
@@ -197,3 +197,9 @@ frames have been looked at at 1920x1080 -- front end, character selection, a mat
 menu -- and nothing about the sprites reads as wrong. It stays a judgement rather than a
 measurement, and if it ever looks wrong the choice is between a fractional scale, an
 integer-floored one, and a filter. Reopen with a frame rather than an opinion.
+
+### Reopened (2026-08-22)
+REPORTED AGAIN 2026-08-22. The native engine regressed to composing the world into a 1069x550 intermediate and scaling that completed image to a 3840x1975 drawable. The 1069x550 dimensions are field-of-view coordinates, not raster dimensions: every sprite/mesh must be transformed into and sampled in the full drawable, and host fonts/SVGs must be rasterized there. At 3840x1975 geom_compose_rect gives 3838.682px of coverage starting at x=0.659, which rasterises as a 3839px rectangle at x=1 and visibly leaves a band. Do not hide the band with a clear or an edge extension; restore the per-draw full-resolution render contract described by this issue and derive exact output coverage from the viewport transform.
+
+### Resolution (2026-08-22)
+The regression was in runtime/video/render.c's engine path: it transformed quads with scale=1 and zero output offset into a composition-sized GPU target, then enlarged that finished texture into the window, even though the SDL_Render fallback still used the required per-quad output transform. engine_colour_pass now receives the real world scale/output placement, targets the drawable dimensions, and copies its finished full-resolution target 1:1. GDI/font/SVG host tiles therefore retain their output-resolution coverage. Separately, when the aspect-derived view fits within `WIDE_MAX`, the integer composition width uses exact aspect arithmetic and ceil: 3840x1975's ideal 1069.367-wide view becomes 1070, which slightly overfills and clips symmetrically instead of rounding to 1069 and leaving an uncovered column. The offline geometry test covers both output edges and proves an extreme aspect saturates before narrowing to `int`. A real 3840x1975 offscreen native capture reported 1070x550 world, a 3840x1975 target and 3842x1975 coverage at (-1,0); the captured first and last columns were both nonblack (means 0.241 and 0.204). `tools/e2e.py fullres` preserves that proof by requiring the engine's actual target report and zero black pixels in either captured outer column.

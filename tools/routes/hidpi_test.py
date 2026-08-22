@@ -100,6 +100,7 @@ def check_results() -> int:
     widescreen = re.search(r"^widescreen: window .*?$", text, re.MULTILINE)
     metrics = re.search(r"^rmlui metrics: .*?$", text, re.MULTILINE)
     glyphs = re.search(r"^glyph scale: .*?$", text, re.MULTILINE)
+    engine_target = re.search(r"^engine: render targets are .*?$", text, re.MULTILINE)
     checks = (
         (
             "794x550 points -> 1588x1100 pixels" in window.group(0),
@@ -137,6 +138,11 @@ def check_results() -> int:
             "engine: DRAWING (ready)." in text,
             "the scaled-display run exercised the shipping GPU renderer",
             "the scaled-display run did not exercise the shipping GPU renderer",
+        ),
+        (
+            engine_target is not None and "1588x1100 output pixels" in engine_target.group(0),
+            f"native engine drawable target: {engine_target.group(0) if engine_target else ''}",
+            "the native engine did not report a 1588x1100 target; requested glyph scale alone cannot prove full-resolution rasterization",
         ),
     )
     failed = False

@@ -206,19 +206,10 @@ void fn_004246b0(void)
 {
     wide_apply();
 
-    /* The pause menu is built on this: declining to call the original body is what freezes
-     * the game, because this is the function the main loop calls to advance and draw
-     * everything. The main loop's own present still runs, so the last drawn frame stays on
-     * screen with the menu painted over it. */
+    /* RmlUi is composited by the ordinary present inside the original body. Keeping that body
+     * as the single update/draw owner avoids a separate frozen-frame transition; the active
+     * document remains modal because the host input boundary withholds input from LF2. */
     pause_tick();
-    if (pause_active()) {
-        /* The present lives inside the body that is not being called, so it has to be done
-         * here or the window simply stops updating -- which is what happened the first time,
-         * and it looked like a hang rather than a pause. */
-        present_frozen_frame();
-        R(ESP) += 8;                               /* same stack contract as the body */
-        return;
-    }
     const uint32_t self = R(ECX);
     uint32_t mode = self ? LD32(self) : 0xffffffffu;
     const uint32_t target_mode = boot_guest_target_mode(mode);

@@ -131,20 +131,19 @@ THE CONTROLS HINT appends its glyphs to the live composition's display list (gam
 the display-list half of the glyph renderer split out of game_glyph_draw). Menus went from
 0 of 901 GPU-drawn frames at 1920x1080 to 900.
 
-THE PAUSE MENU is drawn over an immutable completed-frame snapshot. Pause freezes the world by
-declining to call the game's update, so no new live frame arrives. The renderer copies its
-finished output-resolution target after live port decorations and before RmlUi, then restores
-that texture on each frozen present. Display-list entries and tile-pool backing are ordinary
-per-frame resources and never become the pause-frame authority (issue #94).
+THE RMLUI MENU is drawn after the game's normal native frame. It neither turns the renderer off
+nor creates a frozen/retained presentation path: the ordinary game update, display list and
+present continue behind the modal, while the input boundary withholds physical input from LF2.
+This is the corrected issue #94 lifecycle.
 
 THREE THINGS BROKE ON THE WAY, each with its own cause, and all three are worth keeping:
 
   THE RETAINED-LIST REWIND WAS NOT A FRAME. Present-time decorations could record before the
   hold was reacquired, clearing the spent list and reusing its tile arena. Restoring old list
   lengths then resurrected metadata over changed backing: text became garbage while cached
-  textures looked correct. A validity bit only proved the hold could legitimately be
-  invalidated before pause code ran. The immutable output texture is the single current fix;
-  the list rewind and old pause painters are deleted (issue #94).
+  textures looked correct. Replacing that rewind with an immutable output snapshot preserved
+  a second transition lifecycle and still produced a visible close glitch. Both retention
+  designs are gone; RmlUi now uses the ordinary live frame path (issue #94).
 
   THE TILE POOL FILLED AND SILENTLY DROPPED 42402 TILES. It was keyed on exact size, which
   rests on "a tile's size repeats constantly" -- true of a glyph, one 8x16 cell scaled, and
@@ -160,10 +159,11 @@ THREE THINGS BROKE ON THE WAY, each with its own cause, and all three are worth 
   before it is the game's picture and is lit, everything from it on is drawn onto the finished
   target afterwards.
 
-CURRENT VERIFICATION. `ctest framelife` walks deferred list clearing, snapshot validity and
-identity, resize containment, the overlay boundary, and the tile pool offline (issues #53,
-#94). `ui_global` checks six exact open/close GPU frames at 1920x1080, and `pause_dropout`
-asserts a real match used the native snapshot rather than software fallback.
+CURRENT VERIFICATION. `ctest framelife` walks immediate present-time list/tile/pool clearing,
+the overlay boundary and the tile pool offline (issue #53); `ctest rmlui_lifecycle` proves a
+close callback invalidates the UI frame that invoked it. `ui_global` compares the modal route
+against a deterministic no-modal control at matching offsets: outside-document pixels and the
+first hidden frame (+362) plus two successors must match exactly.
 
 AND ONE LYING INSTRUMENT, recorded as I010: render_test dumps frame 1300, character selection,
 which has the hint up -- so its `gpu` arm was dumping the SOFTWARE buffer and "gpu matches
