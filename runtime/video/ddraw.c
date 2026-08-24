@@ -11,24 +11,21 @@
 #include "render.h"
 #include "engine.h"
 #include "backdrop.h"
+#include "ddraw_diag.h"
 #include "blt_trace.h"
 #include "result_panel.h"
 #include "stage_banner.h"
 #include "framespec.h"
 #include "script.h"
 #include "rmlui.h"
-#include "startup.h"
 #include "device_icons.h"
 #include "overlay_panel.h"
 
-void menu_click_report(void);   /* issue #27: the click flag as the front-end menu sees it */
-
 /* runtime/win32/gdi.c -- the picture the game just loaded, so a surface created to hold it can be
  * told from the composition surface (issue #50). */
-int  gdi_last_bitmap(int *w, int *h, long *loaded_total);
+int gdi_last_bitmap(int *w, int *h, long *loaded_total);
 void gdi_last_bitmap_consume(void);
 
-#include <time.h>
 #include "loadprof.h"
 
 #include <SDL3/SDL.h>
@@ -43,10 +40,18 @@ void gdi_last_bitmap_consume(void);
 enum { NATIVE_W = GEOM_SCREEN_W, NATIVE_H = GEOM_SCREEN_H };
 
 /* DDSURFACEDESC field offsets */
-enum { SD_SIZE = 0, SD_FLAGS = 4, SD_HEIGHT = 8, SD_WIDTH = 12, SD_PITCH = 16,
-       SD_SURFACE = 36, SD_PIXELFORMAT = 72, SD_CAPS = 104, SD_BYTES = 108 };
-enum { DDSD_CAPS = 1, DDSD_HEIGHT = 2, DDSD_WIDTH = 4, DDSD_PITCH = 8,
-       DDSD_PIXELFORMAT = 0x1000 };
+enum {
+    SD_SIZE = 0,
+    SD_FLAGS = 4,
+    SD_HEIGHT = 8,
+    SD_WIDTH = 12,
+    SD_PITCH = 16,
+    SD_SURFACE = 36,
+    SD_PIXELFORMAT = 72,
+    SD_CAPS = 104,
+    SD_BYTES = 108
+};
+enum { DDSD_CAPS = 1, DDSD_HEIGHT = 2, DDSD_WIDTH = 4, DDSD_PITCH = 8, DDSD_PIXELFORMAT = 0x1000 };
 enum { DDSCAPS_PRIMARYSURFACE = 0x200 };
 enum { DDBLT_COLORFILL = 0x400, DDBLT_KEYSRC = 0x8000 };
 
@@ -66,22 +71,24 @@ void draw_paths_report(void);
 enum { DDCKEY_SRCBLT = 0x8 };
 
 typedef struct {
-    int      w, h, pitch;
-    int      rows;          /* rows the buffer was ALLOCATED for; 0 when h is the allocation.
-                               A window-following surface is allocated once at the maximum and
-                               only moves w/h, because vram_alloc is a bump allocator with no
-                               free and reallocating per resize event exhausts the arena
-                               during a single drag of a window edge (issue #20). */
-    uint32_t pixels;        /* guest address of the pixel buffer */
-    int      primary;
-    int      has_key;
+    int w, h, pitch;
+    int rows;        /* rows the buffer was ALLOCATED for; 0 when h is the allocation.
+                        A window-following surface is allocated once at the maximum and
+                        only moves w/h, because vram_alloc is a bump allocator with no
+                        free and reallocating per resize event exhausts the arena
+                        during a single drag of a window edge (issue #20). */
+    uint32_t pixels; /* guest address of the pixel buffer */
+    int primary;
+    int has_key;
     uint32_t key_lo, key_hi;
-    uint32_t palette;       /* guest object address of the attached palette, 0 if none */
-    uint32_t attached;      /* back buffer handed out by GetAttachedSurface */
-    uint32_t clipper;   /* IDirectDrawClipper set via SetClipper, 0 if none */
+    uint32_t palette;  /* guest object address of the attached palette, 0 if none */
+    uint32_t attached; /* back buffer handed out by GetAttachedSurface */
+    uint32_t clipper;  /* IDirectDrawClipper set via SetClipper, 0 if none */
 } Surface;
 
-typedef struct { uint32_t entries[256]; } Palette;
+typedef struct {
+    uint32_t entries[256];
+} Palette;
 
 static uint32_t primary_surface;
 static uint32_t active_palette;
@@ -117,8 +124,9 @@ void blt_stack_report(void)
         fprintf(stderr, "blt stack: NO BLITS AT ALL this run -- %s was never tested\n", want);
         return;
     }
-    fprintf(stderr, "blt stack: nothing landed on %s. The match is on the exact top-left\n"
-                    "           corner; the nearest destination seen was (%d,%d).\n",
+    fprintf(stderr,
+            "blt stack: nothing landed on %s. The match is on the exact top-left\n"
+            "           corner; the nearest destination seen was (%d,%d).\n",
             want, blt_stack_best_l, blt_stack_best_t);
 }
 
@@ -149,8 +157,8 @@ void shadow_hint_set(int on) { shadow_hint = on; }
  * game's colour-fill helper is shared with the front end and the blit cannot tell them apart.
  * See the comment at that call site -- and issue #42, which is what a rectangle-shaped guess
  * cost. Counted so the widening cannot become a rule nobody has ever seen fire. */
-static int  world_band_hint;
-static int  world_backdrop_hint;
+static int world_band_hint;
+static int world_backdrop_hint;
 static long world_band_fills, world_band_widened;
 void world_band_hint_set(int on) { world_band_hint = on; }
 void world_backdrop_hint_set(int on) { world_backdrop_hint = on; }
@@ -177,14 +185,14 @@ void glyph_hint_clear(void) { glyph_hint = -1; }
  * If no such blit is ever seen the port simply never replaces the shadow, and says so.
  */
 static uint32_t clip_obj, shadow_obj_learned;
-static int      shadow_obj_stage = -1;
+static int shadow_obj_stage = -1;
 void clip_obj_note(uint32_t obj) { clip_obj = obj; }
 uint32_t shadow_object(void) { return shadow_obj_learned; }
 
 static void shadow_learn(const Surface *s)
 {
     const int stage = (int)bg_shadow_stage();
-    if (stage != shadow_obj_stage) {          /* a new stage: the old object is stale */
+    if (stage != shadow_obj_stage) { /* a new stage: the old object is stale */
         shadow_obj_stage = stage;
         shadow_obj_learned = 0;
     }
@@ -197,13 +205,13 @@ static void shadow_learn(const Surface *s)
     if (abs(s->w - sw) > 2 || abs(s->h - sh) > 2) return;
     shadow_obj_learned = clip_obj;
     if (getenv("LF2_SHADOW_DEBUG"))
-        fprintf(stderr, "shadow: stage %d draws its ellipse on object %08x "
-                        "(source %dx%d, shadowsize %dx%d)\n",
+        fprintf(stderr,
+                "shadow: stage %d draws its ellipse on object %08x "
+                "(source %dx%d, shadowsize %dx%d)\n",
                 stage, clip_obj, s->w, s->h, sw, sh);
 }
 
-int game_glyph_draw(int ch, int x, int y, uint32_t ink,
-                    uint32_t dpix, int dwid, int dhei, int dpitch);
+int game_glyph_draw(int ch, int x, int y, uint32_t ink, uint32_t dpix, int dwid, int dhei, int dpitch);
 /* The display-list half of the same glyph, for text the port draws over a frame it did not
  * compose -- see controls_hint_draw. */
 int game_glyph_tile(int ch, int x, int y, uint32_t ink, uint32_t dst_pixels);
@@ -216,14 +224,15 @@ static uint32_t glyph_ink(const Surface *s, int sl, int st, int sr, int sb)
     uint32_t best = 0x00ffffffu;
     int best_lum = -1;
     for (int y = st; y < sb && y < s->h; y++) {
-        const uint32_t *row = (const uint32_t *)(g_mem + s->pixels
-                                                 + (size_t)y * (size_t)s->pitch);
+        const uint32_t *row = (const uint32_t *)(g_mem + s->pixels + (size_t)y * (size_t)s->pitch);
         for (int x = sl; x < sr && x < s->w; x++) {
             const uint32_t px = row[x] & 0x00ffffffu;
             if (s->has_key && px >= s->key_lo && px <= s->key_hi) continue;
-            const int lum = (int)((px >> 16) & 0xff) + (int)((px >> 8) & 0xff)
-                          + (int)(px & 0xff);
-            if (lum > best_lum) { best_lum = lum; best = px; }
+            const int lum = (int)((px >> 16) & 0xff) + (int)((px >> 8) & 0xff) + (int)(px & 0xff);
+            if (lum > best_lum) {
+                best_lum = lum;
+                best = px;
+            }
         }
     }
     return best;
@@ -242,19 +251,19 @@ void world_band_report(void)
                         "nothing about whether widening works.\n");
         return;
     }
-    fprintf(stderr, "bands: %ld stage fill(s), %ld widened to the viewport (view %d, the "
-                    "game's own screen %d)%s\n",
+    fprintf(stderr,
+            "bands: %ld stage fill(s), %ld widened to the viewport (view %d, the "
+            "game's own screen %d)%s\n",
             world_band_fills, world_band_widened, hw.width, GEOM_SCREEN_W,
-            world_band_widened ? ""
-                : " -- none spanned the whole 794 at x 0, so none is a full-width band");
+            world_band_widened ? "" : " -- none spanned the whole 794 at x 0, so none is a full-width band");
 }
 
 void vram_report(void)
 {
     /* Reported relative to VRAM_BASE. Printing the raw cursor makes a 316 MB arena look
      * like 1.5 GB, because the base is 0x50000000. */
-    fprintf(stderr, "vram: %ld allocations, %ld KB requested, %u KB of arena used\n",
-            vram_allocs, vram_bytes / 1024, (vram_next - VRAM_BASE) / 1024);
+    fprintf(stderr, "vram: %ld allocations, %ld KB requested, %u KB of arena used\n", vram_allocs, vram_bytes / 1024,
+            (vram_next - VRAM_BASE) / 1024);
 }
 
 static uint32_t vram_alloc(uint32_t n)
@@ -270,7 +279,8 @@ static uint32_t vram_alloc(uint32_t n)
                 n, vram_next, (unsigned)GUEST_VRAM_END, vram_allocs, vram_bytes / 1024);
         abort();
     }
-    vram_allocs++; vram_bytes += n;
+    vram_allocs++;
+    vram_bytes += n;
     uint32_t p = vram_next;
     vram_next = (vram_next + n + 4095u) & ~4095u;
     return p;
@@ -282,12 +292,12 @@ static uint32_t vram_alloc(uint32_t n)
 static void write_pixelformat(uint32_t pf)
 {
     if (!pf) return;
-    ST32(pf, 32);                    /* dwSize */
-    ST32(pf + 4, 0x40);              /* DDPF_RGB */
-    ST32(pf + 12, 32);               /* bit count */
-    ST32(pf + 16, 0x00ff0000);       /* R */
-    ST32(pf + 20, 0x0000ff00);       /* G */
-    ST32(pf + 24, 0x000000ff);       /* B */
+    ST32(pf, 32);              /* dwSize */
+    ST32(pf + 4, 0x40);        /* DDPF_RGB */
+    ST32(pf + 12, 32);         /* bit count */
+    ST32(pf + 16, 0x00ff0000); /* R */
+    ST32(pf + 20, 0x0000ff00); /* G */
+    ST32(pf + 24, 0x000000ff); /* B */
     ST32(pf + 28, 0);
 }
 
@@ -315,12 +325,14 @@ static void screen_change_check(const uint8_t *px, int w, int h, int pitch, long
         sig[i] = px[(long)y * pitch + x];
     }
     if (!have_prev) {
-        memcpy(prev, sig, SIG_N); have_prev = 1;
+        memcpy(prev, sig, SIG_N);
+        have_prev = 1;
         fprintf(stderr, "screen: first frame %ld\n", frame);
         return;
     }
     int diff = 0;
-    for (int i = 0; i < SIG_N; i++) if (sig[i] != prev[i]) diff++;
+    for (int i = 0; i < SIG_N; i++)
+        if (sig[i] != prev[i]) diff++;
     const int pct = diff * 100 / SIG_N;
     if (pct >= SCREEN_CHANGE_PCT) {
         fprintf(stderr, "screen: CHANGED at frame %ld (%d%% of samples)\n", frame, pct);
@@ -336,7 +348,10 @@ static void dump_path(char *out, size_t n, const char *fmt, ...)
     const char *dir = getenv("LF2_DUMP_DIR");
     if (!dir || !*dir) dir = "scratch";
     int k = snprintf(out, n, "%s/", dir);
-    if (k < 0 || (size_t)k >= n) { out[0] = 0; return; }
+    if (k < 0 || (size_t)k >= n) {
+        out[0] = 0;
+        return;
+    }
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(out + k, n - (size_t)k, fmt, ap);
@@ -357,10 +372,7 @@ static void dump_path(char *out, size_t n, const char *fmt, ...)
  *
  * The grammar lives in runtime/app/framespec.h so tests/test_framespec.c can walk it without
  * booting the game; script_when is the resolver, because it is what knows the screens. */
-int hostwin_frame_selected(const char *spec, long frame)
-{
-    return framespec_matches(spec, frame, script_when);
-}
+int hostwin_frame_selected(const char *spec, long frame) { return framespec_matches(spec, frame, script_when); }
 /* A capture aimed at a fixed frame number and a probe that fires off game STATE can
  * disagree, and when they do the picture is of the wrong thing while looking perfectly
  * valid -- an A/B of two spawns produced one arm whose run never reached the match, and the
@@ -371,7 +383,10 @@ void gfx_request_frame_dump(void) { frame_requested = 1; }
 
 static int frame_wanted(long frame)
 {
-    if (frame_requested) { frame_requested = 0; return 1; }
+    if (frame_requested) {
+        frame_requested = 0;
+        return 1;
+    }
     return hostwin_frame_selected(getenv("LF2_FRAME_DUMP"), frame);
 }
 
@@ -388,7 +403,7 @@ enum { DATA_BASE = 0x0044d000, DATA_SIZE = 0xc724 };
 /* LF2_HEAP_DUMP=<frame>[,...] snapshots the guest heap in use, for the same
  * before/after diffing as LF2_MEM_DUMP but over the region .data cannot reach.
  * tools/re/diff_data.py --base 0x20000000 reads it. */
-uint32_t guest_heap_used(void);          /* imports.c */
+uint32_t guest_heap_used(void); /* imports.c */
 
 static void dump_heap(long frame)
 {
@@ -397,11 +412,13 @@ static void dump_heap(long frame)
     char path[256];
     dump_path(path, sizeof path, "heap_%06ld.bin", frame);
     FILE *f = fopen(path, "wb");
-    if (!f) { fprintf(stderr, "heap dump: cannot write %s\n", path); return; }
+    if (!f) {
+        fprintf(stderr, "heap dump: cannot write %s\n", path);
+        return;
+    }
     fwrite(g_mem + GUEST_HEAP_BASE, 1, used, f);
     fclose(f);
-    fprintf(stderr, "heap dump: wrote %s (%u bytes from %08x)\n",
-            path, used, (unsigned)GUEST_HEAP_BASE);
+    fprintf(stderr, "heap dump: wrote %s (%u bytes from %08x)\n", path, used, (unsigned)GUEST_HEAP_BASE);
 }
 
 static void dump_data(long frame)
@@ -410,7 +427,10 @@ static void dump_data(long frame)
     char path[256];
     dump_path(path, sizeof path, "data_%06ld.bin", frame);
     FILE *f = fopen(path, "wb");
-    if (!f) { fprintf(stderr, "data dump: cannot write %s\n", path); return; }
+    if (!f) {
+        fprintf(stderr, "data dump: cannot write %s\n", path);
+        return;
+    }
     fwrite(g_mem + DATA_BASE, 1, DATA_SIZE, f);
     fclose(f);
     fprintf(stderr, "data dump: wrote %s (%d bytes from %08x)\n", path, DATA_SIZE, DATA_BASE);
@@ -422,13 +442,15 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
     char path[256];
     dump_path(path, sizeof path, "frame_%06ld.ppm", frame);
     FILE *f = fopen(path, "wb");
-    if (!f) { fprintf(stderr, "frame dump: cannot write %s\n", path); return; }
+    if (!f) {
+        fprintf(stderr, "frame dump: cannot write %s\n", path);
+        return;
+    }
     fprintf(f, "P6\n%d %d\n255\n", w, h);
     for (int y = 0; y < h; y++) {
         const uint32_t *row = (const uint32_t *)(px + (size_t)y * (size_t)pitch);
         for (int x = 0; x < w; x++) {
-            const uint8_t rgb[3] = { (uint8_t)(row[x] >> 16), (uint8_t)(row[x] >> 8),
-                                     (uint8_t)row[x] };
+            const uint8_t rgb[3] = {(uint8_t)(row[x] >> 16), (uint8_t)(row[x] >> 8), (uint8_t)row[x]};
             fwrite(rgb, 1, 3, f);
         }
     }
@@ -436,244 +458,43 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
     fprintf(stderr, "frame dump: wrote %s (%dx%d)\n", path, w, h);
 }
 
-/* Release SDL explicitly at exit. Leaving it to process teardown is usually harmless, but
- * it means the audio device and window outlive the game's own shutdown, and a diagnostic
- * that runs at exit cannot tell an orderly stop from a crash. */
-void hostwin_shutdown(void)
+int ddraw_frame_pixels_wanted(long frame) { return frame_wanted(frame) || getenv("LF2_SCREEN_HASH") != NULL; }
+
+void ddraw_frame_diagnostics(const uint8_t *pixels, int w, int h, int pitch, long frame)
 {
-    script_report();
-    pause_report();
-    menu_click_report();
-    clock_sites_report();
-    window_resize_report();
-    if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
-    render_shutdown();
-    overlay_panel_shutdown();
-    device_icons_shutdown();
-    if (hw.texture)  { SDL_DestroyTexture(hw.texture);   hw.texture = NULL; }
-    if (hw.renderer) { SDL_DestroyRenderer(hw.renderer); hw.renderer = NULL; }
-    if (hw.window)   { SDL_DestroyWindow(hw.window);     hw.window = NULL; }
-    SDL_Quit();
-}
-
-/* ---- presentation ---- */
-
-/* File scope so the quit hook can read it; the counter was previously function-local. */
-static long frames;
-long hostwin_frames(void) { return frames; }
-
-static void frame_pace(void);
-/* Declared here because both the present and the frame boundary need it, and its definition
- * sits further down with the controls hint it belongs to. */
-static int hint_on;
-/* The composition the last copy-to-primary came from, and the centring offset it was copied
- * with. Recorded at the copy and consumed at the present, because those are two different
- * calls and only the first knows which surface the frame was built in. */
-static uint32_t frame_src_pixels;
-static int      frame_src_off;
-void frame_source_note(uint32_t pixels, int off) { frame_src_pixels = pixels; frame_src_off = off; }
-
-/* WHICH surface the frame is being composed into, for a caller that wants to put something in
- * the display list at a particular point rather than at the end (issue #62's stage geometry).
- *
- * It is DISCOVERED, from the source of the game's own copy to the primary, not hardcoded -- so
- * it is 0 until the first such copy has happened, which is once per process and not once per
- * frame. A caller that gets 0 must count that rather than skip quietly: "the composition is not
- * known yet" and "there was nothing to draw" produce the same empty frame. */
-uint32_t frame_source_pixels(void) { return frame_src_pixels; }
-
-void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch,
-                     uint32_t source_pixels, int source_off)
-{
-    rwatch_frame();
-    if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
-    /* The real loader runs, but its draw list is never part of the port's presentation. Keep
-     * pacing/frame boundaries and discard the list until startup admits the mode menu. */
-    if (!startup_present_enabled()) {
-        render_frame_reset();
-        frame_pace();
-        return;
-    }
-    /* DRAW FIRST, then look at what was drawn. The GPU frame has to exist before it can be
-     * read back, and getting this order wrong is not a subtle bug with an obvious symptom:
-     * reading the target before drawing dumps the PREVIOUS frame, and with the camera
-     * scrolling about a pixel a frame that presents as a clean one-pixel horizontal shift of
-     * the whole world -- which reads as a sampler or half-texel problem and sends you looking
-     * in entirely the wrong place. */
-    static uint32_t *shot;
-    static int shot_w, shot_h;
-    const uint8_t *shown = pixels;
-    int shown_pitch = src_pitch;
-    /* RmlUi uses the game's ordinary update/draw/present path; it does not substitute a
-     * retained or frozen frame beneath the document. */
-    const int gpu = hw.renderer && render_gpu_enabled()
-                    && render_present(source_pixels, source_off, w, h);
-    int shown_w = w, shown_h = h;
-    /* READ THE FRAME BACK ONLY IF SOMETHING WILL LOOK AT IT (issue #57). A readback is a
-     * full GPU-to-CPU stall: the CPU waits for every queued draw to finish before the pixels
-     * can be copied, so doing it per frame throws away the pipelining that makes a GPU
-     * renderer worth having. Both consumers are off in an ordinary run -- the screen-change
-     * detector needs LF2_SCREEN_HASH and the dump needs this frame to be in LF2_FRAME_DUMP --
-     * and the readback was being paid for on every frame regardless.
-     *
-     * Measured on a 2400-frame headless run: the GPU path was about three times the software
-     * one and spent roughly 30% of its wall clock waiting, while the software path ran at 96%
-     * CPU. That wait is this call. */
-    const int want_pixels = gpu && (frame_wanted(frames) || getenv("LF2_SCREEN_HASH") != NULL);
-    if (want_pixels) {
-        /* The GPU frame is the size of the OUTPUT, not of the composition -- the renderer
-         * draws at the window's resolution. Dumping it at the composition's size would slice
-         * the top-left corner out of it and call that the frame. */
-        render_output_size(&shown_w, &shown_h);
-        if (shown_w <= 0 || shown_h <= 0) { shown_w = w; shown_h = h; }
-        if (shot && (shot_w != shown_w || shot_h != shown_h)) { free(shot); shot = NULL; }
-        if (!shot) {
-            shot = malloc((size_t)shown_w * (size_t)shown_h * 4);
-            shot_w = shown_w; shot_h = shown_h;
-        }
-        if (shot && render_readback(shot, shown_w, shown_h, shown_w * 4)) {
-            shown = (const uint8_t *)shot;
-            shown_pitch = shown_w * 4;
-        } else { shown_w = w; shown_h = h; }
-    }
-    /* Whatever was presented is what the dumps and the screen-change detector see. Dumping
-     * `pixels` regardless would hand every A/B the software compositor's buffer no matter
-     * which renderer drew the screen, and the comparison would be of a buffer against
-     * itself. */
-    screen_change_check(shown, shown_w, shown_h, shown_pitch, frames);
-    dump_frame(shown, shown_w, shown_h, shown_pitch, frames);
-    dump_data(frames);
-    dump_heap(frames);
+    screen_change_check(pixels, w, h, pitch, frame);
+    dump_frame(pixels, w, h, pitch, frame);
+    dump_data(frame);
+    dump_heap(frame);
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
-    if (frames % 900 == 0) { colorkey_report(); draw_paths_report(); render_report(); vram_report(); world_band_report(); glyph_scale_report(); framing_report(); com_release_report(); input_report(); audio_pan_report(); bg_camera_report(); bg_geom_report(); mode_force_report(); if (getenv("LF2_AUDIO_DEBUG")) audio_report(); }
+    if (frame % 900 == 0) {
+        colorkey_report();
+        draw_paths_report();
+        render_report();
+        vram_report();
+        world_band_report();
+        glyph_scale_report();
+        framing_report();
+        com_release_report();
+        input_report();
+        audio_pan_report();
+        bg_camera_report();
+        bg_geom_report();
+        mode_force_report();
+        if (getenv("LF2_AUDIO_DEBUG")) audio_report();
+    }
     /* The read profile is reported on the same periodic boundary and reset each time, so
      * each block covers one window rather than the whole run: an array swept only during a
      * match would otherwise be averaged with the menus that came before it. */
-    if (frames % 300 == 0) {
+    if (frame % 300 == 0) {
         char when[32];
-        snprintf(when, sizeof when, "frames %ld-%ld", frames - 299, frames);
+        snprintf(when, sizeof when, "frames %ld-%ld", frame - 299, frame);
         rwatch_raw_flush(when);
     }
-    render_frame_reset();
-    if (!hw.renderer) return;
-    if (gpu) { startup_reveal_window(hw.window); frame_pace(); return; }
-    /* The texture is the size of the composition, and the composition follows the window, so
-     * it is checked against the frame in hand rather than created once. Sizes are kept here
-     * because SDL_GetTextureSize is a call per frame to learn what this port already knows. */
-    static int tex_w, tex_h;
-    if (hw.texture && (tex_w != w || tex_h != h)) {
-        SDL_DestroyTexture(hw.texture);
-        hw.texture = NULL;
-    }
-    if (!hw.texture) {
-        hw.texture = SDL_CreateTexture(hw.renderer, SDL_PIXELFORMAT_XRGB8888,
-                                       SDL_TEXTUREACCESS_STREAMING, w, h);
-        SDL_SetTextureScaleMode(hw.texture, SDL_SCALEMODE_NEAREST);
-        tex_w = w; tex_h = h;
-    }
-    void *dst = NULL;
-    int pitch = 0;
-    if (SDL_LockTexture(hw.texture, NULL, &dst, &pitch)) {
-        for (int y = 0; y < h; y++) {
-            uint32_t *row = (uint32_t *)((uint8_t *)dst + (size_t)y * (size_t)pitch);
-            /* Rows are src_pitch apart, not width apart. */
-            const uint32_t *src = (const uint32_t *)(pixels + (size_t)y * (size_t)src_pitch);
-            memcpy(row, src, (size_t)w * 4);
-        }
-        SDL_UnlockTexture(hw.texture);
-    }
-    /* THE SOFTWARE PATH STRETCHES ONE FINISHED BUFFER, and there is nothing better it can do:
-     * by the time a frame reaches here every sprite has been flattened into these pixels, so
-     * the only scale available is a scale of the whole picture. That is exactly what issue #41
-     * says not to ship as the feature -- and it is not the feature; the native renderer scales
-     * per quad at full resolution and this is the fallback for when it is off or unavailable.
-     * Presenting it 1:1 in the middle of a large window instead would leave the fallback
-     * showing a small picture in a black field, which is worse and no more honest. */
-    SDL_FRect place;
-    lf2_compose_rect(w, h, &place);
-    SDL_SetRenderDrawColor(hw.renderer, 0, 0, 0, 255);
-    SDL_RenderClear(hw.renderer);
-    SDL_RenderTexture(hw.renderer, hw.texture, NULL, &place);
-    if (rmlui_active()) rmlui_render();
-    SDL_RenderPresent(hw.renderer);
-    startup_reveal_window(hw.window);
-    frame_pace();
 }
 
-/* ---- real time, and it lives HERE now ----
- *
- * The guest clock is the frame counter (runtime/win32/imports.c), so the game's main loop is
- * always "overdue" by its own reckoning and never sleeps -- it runs frames as fast as it is
- * given them. What makes those frames arrive thirty times a second is this: each present
- * waits until the WALL reaches the frame's due time. The guest counts, the host paces.
- *
- * Waiting until a deadline rather than sleeping a fixed amount is what absorbs nanosleep's
- * overshoot: a frame that ran long leaves the next one with less to wait, so the rate holds
- * instead of drifting. When the machine cannot keep up there is nothing to wait for and the
- * frames simply arrive late -- the guest's timeline does not notice, which is the point.
- *
- * NOT WHILE LOADING. The data load draws a frame per file and has no business being held to
- * thirty a second; pacing it would put ten seconds back into a load this port spent real
- * effort taking out. The anchor is re-taken when the debt passes a quarter second, so a load
- * or a stall cannot leave the game sprinting through the following minute to catch up. */
-/* LF2_UNPACED=1 runs frames as fast as the machine will do them.
- *
- * The pacer exists so the game runs at the speed a player experiences: the guest clock IS the
- * frame counter, so the game never sleeps of its own accord and every frame would otherwise
- * arrive as fast as the CPU could make it. That is exactly what a scripted test wants. Route
- * tests are frame-numbered end to end -- LF2_QUIT_AFTER, LF2_FRAME_DUMP and every `@screen+N`
- * key are counts, not clocks -- so removing the sleep changes which frames happen not at all,
- * only how long it takes to get to them. A 3000-frame route spent 100 seconds of its 100
- * seconds asleep.
- *
- * IT IS AN EXPLICIT SWITCH AND NOT DERIVED FROM THE VIDEO DRIVER, which was the first idea:
- * "nobody can watch an offscreen surface, so do not pace it". That would silently break the
- * one test that must stay paced. tools/routes/smoke_test.sh asserts CPU usage under 50% of a core --
- * the busy-wait guard, which separates a run that honours Sleep (~13%) from one that spins
- * (~96%) -- and that check is only meaningful while the pacer is doing its job. Two headless
- * runs need opposite behaviour and nothing about the environment tells them apart, so the
- * caller says which it wants. */
-static int frame_unpaced(void)
-{
-    static int on = -1;
-    if (on < 0) {
-        on = getenv("LF2_UNPACED") != NULL;
-        if (on)
-            fprintf(stderr, "pacing: LF2_UNPACED -- frames run as fast as the machine allows. "
-                            "Every route key is a frame count, so this changes how long the "
-                            "run takes and nothing about what happens in it.\n");
-    }
-    return on;
-}
-
-static void frame_pace(void)
-{
-    static uint64_t anchor_wall, anchor_frame;
-
-    if (frame_unpaced()) return;
-
-    /* The anchor is DROPPED while loading, not merely unused. Frames keep being counted
-     * through the load and the wall does not follow them, so an anchor taken before it
-     * would leave every frame after it due far in the future -- measured, the game then
-     * slept its way through a whole run at under 12 fps with 1.8 s of CPU used. Pacing
-     * re-anchors on the first frame after the load instead. */
-    if (lf2_loading_now()) { anchor_wall = 0; return; }
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    const uint64_t w = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-    const uint64_t f = (uint64_t)hostwin_frames();
-
-    if (!anchor_wall) { anchor_wall = w; anchor_frame = f; return; }
-    const uint64_t due = anchor_wall + (f - anchor_frame) * (uint64_t)GUEST_FRAME_NS;
-    if (due > w) {
-        const uint64_t d = due - w;
-        struct timespec req = { (time_t)(d / 1000000000ull), (long)(d % 1000000000ull) };
-        nanosleep(&req, NULL);
-    } else if (w - due > 250000000ull) {
-        anchor_wall = w; anchor_frame = f;
-    }
-}
+static int hint_on;
 
 /* The one keyboard layout, shown where the advertising used to sit. Drawn onto the
  * primary just before present, so it rides above whatever the game composed; the menu
@@ -700,12 +521,11 @@ static void controls_hint_draw(const Surface *s)
      * land at the END of the list, which is exactly where a hint drawn over the frame
      * belongs. Both surfaces are the same size and the centring is already baked into the
      * composition (frame_source_note passes off 0), so one x serves both. */
-    if (frame_src_pixels && frame_src_pixels != s->pixels)
-        render_overlay_mark(frame_src_pixels);
+    const uint32_t frame_pixels = frame_source_pixels();
+    if (frame_pixels && frame_pixels != s->pixels) render_overlay_mark(frame_pixels);
     for (int i = 0; TEXT[i]; i++) {
         const int x = x0 + i * 8, y = s->h - 16;
-        if (frame_src_pixels && frame_src_pixels != s->pixels)
-            game_glyph_tile(TEXT[i], x, y, 0xffffffu, frame_src_pixels);
+        if (frame_pixels && frame_pixels != s->pixels) game_glyph_tile(TEXT[i], x, y, 0xffffffu, frame_pixels);
         game_glyph_draw(TEXT[i], x, y, 0xffffffu, s->pixels, s->w, s->h, s->pitch);
     }
 }
@@ -731,7 +551,7 @@ static void device_icon_draw(const Surface *s, int x, int y, int dev)
 {
     /* The helper records a premultiplied display-list tile and composites the same decoded
      * pixels into the software primary. Both renderer paths therefore use one rasterisation. */
-    const uint32_t record_pixels = s->primary ? frame_src_pixels : s->pixels;
+    const uint32_t record_pixels = s->primary ? frame_source_pixels() : s->pixels;
     if (record_pixels) {
         render_overlay_mark(record_pixels);
         device_icon_record(record_pixels, x, y, dev);
@@ -744,7 +564,7 @@ static void hud_device_labels(const Surface *s)
     if (!device_icon_hud_visible(panel_hud_up(), panel_overlay_up())) return;
     for (int i = 0; i < 8; i++) {
         const int dev = device_for_player(i);
-        if (dev < 0) continue;                       /* a computer, or nobody claimed it */
+        if (dev < 0) continue; /* a computer, or nobody claimed it */
         const int off = hud_offset_x(s->w, (i >> 2) * 54 + 54);
         device_icon_draw(s, (i & 3) * 198 + off + 2, (i >> 2) * 54 + 2, dev);
     }
@@ -753,8 +573,8 @@ static void hud_device_labels(const Surface *s)
 /* Character-select rows and columns are NOT the HUD's grid: the portraits sit at x
  * {147,300,453,606} and y {95,306} (screens.c's CS_COL/CS_ROW), each 153 px wide -- the HUD's
  * 198-wide panels are only the strip along the top. */
-static const int CS_XBASE[4] = { 147, 300, 453, 606 };
-static const int CS_YBASE[2] = { 95, 306 };
+static const int CS_XBASE[4] = {147, 300, 453, 606};
+static const int CS_YBASE[2] = {95, 306};
 
 static void charselect_device_labels_draw(const Surface *s)
 {
@@ -769,8 +589,7 @@ static void charselect_device_labels_draw(const Surface *s)
 static void charselect_device_labels_present(const Surface *s)
 {
     const int charselect_up = LD32(0x0044d020u) == 1;
-    if (device_icon_charselect_phase(charselect_up, panel_overlay_up())
-        == DEVICE_ICON_CHARSELECT_PRESENT)
+    if (device_icon_charselect_phase(charselect_up, panel_overlay_up()) == DEVICE_ICON_CHARSELECT_PRESENT)
         charselect_device_labels_draw(s);
 }
 
@@ -784,8 +603,7 @@ static void present_primary(void)
     if (hint_on) controls_hint_draw(s);
     hud_device_labels(s);
     charselect_device_labels_present(s);
-    hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch,
-                    frame_src_pixels, frame_src_off);
+    hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
     LOADPROF_END();
 }
 
@@ -797,8 +615,7 @@ static void pal_SetEntries(uint32_t self)
     const uint32_t start = ARG(2), count = ARG(3), src = ARG(4);
     for (uint32_t i = 0; i < count && start + i < 256; i++) {
         const uint32_t e = src + i * 4;
-        p->entries[start + i] = ((uint32_t)LD8(e) << 16) | ((uint32_t)LD8(e + 1) << 8)
-                              | (uint32_t)LD8(e + 2);
+        p->entries[start + i] = ((uint32_t)LD8(e) << 16) | ((uint32_t)LD8(e + 1) << 8) | (uint32_t)LD8(e + 2);
     }
     com_ret(5, DD_OK);
 }
@@ -809,8 +626,10 @@ static void pal_GetEntries(uint32_t self)
     const uint32_t start = ARG(2), count = ARG(3), dst = ARG(4);
     for (uint32_t i = 0; i < count && start + i < 256; i++) {
         const uint32_t c = p->entries[start + i], e = dst + i * 4;
-        ST8(e, (uint8_t)(c >> 16)); ST8(e + 1, (uint8_t)(c >> 8));
-        ST8(e + 2, (uint8_t)c); ST8(e + 3, 0);
+        ST8(e, (uint8_t)(c >> 16));
+        ST8(e + 1, (uint8_t)(c >> 8));
+        ST8(e + 2, (uint8_t)c);
+        ST8(e + 3, 0);
     }
     com_ret(5, DD_OK);
 }
@@ -844,7 +663,10 @@ static uint32_t surface_hash(const Surface *s)
     uint32_t h = 2166136261u;
     for (int y = 0; y < s->h; y++) {
         const uint32_t *row = (const uint32_t *)(g_mem + s->pixels + (size_t)y * (size_t)s->pitch);
-        for (int x = 0; x < s->w; x++) { h ^= row[x]; h *= 16777619u; }
+        for (int x = 0; x < s->w; x++) {
+            h ^= row[x];
+            h *= 16777619u;
+        }
     }
     return h;
 }
@@ -855,14 +677,16 @@ static uint32_t surface_hash(const Surface *s)
 void draw_paths_report(void)
 {
     if (!draw_paths_on()) return;
-    fprintf(stderr, "draw paths: Blt=%ld BltFast=%ld Lock=%ld (of which changed pixels=%ld)\n",
-            path_blt, path_bltfast, path_lock, path_lock_wrote);
+    fprintf(stderr, "draw paths: Blt=%ld BltFast=%ld Lock=%ld (of which changed pixels=%ld)\n", path_blt, path_bltfast,
+            path_lock, path_lock_wrote);
     if (!path_blt && !path_bltfast && !path_lock)
         fprintf(stderr, "draw paths: ALL ZERO -- this run drew nothing at all, so it says "
                         "nothing about which route the game uses\n");
     else if (!path_lock_wrote && path_lock)
-        fprintf(stderr, "draw paths: %ld locks and none of them changed a pixel, so on this "
-                        "route the game reads and does not draw\n", path_lock);
+        fprintf(stderr,
+                "draw paths: %ld locks and none of them changed a pixel, so on this "
+                "route the game reads and does not draw\n",
+                path_lock);
     fprintf(stderr, "draw paths: NOT covered -- GDI text goes straight into the surface "
                     "without Lock (runtime/win32/gdi.c), and a lock whose writes cancel out would "
                     "hash the same. Both would read as no-draw here.\n");
@@ -890,8 +714,7 @@ static void surf_Lock(uint32_t self)
 static void surf_Unlock(uint32_t self)
 {
     Surface *s = com_host(self);
-    if (draw_paths_on() && self == lock_hash_surface
-        && surface_hash(s) != lock_hash_at_lock) path_lock_wrote++;
+    if (draw_paths_on() && self == lock_hash_surface && surface_hash(s) != lock_hash_at_lock) path_lock_wrote++;
     surface_changed(s);
     if (s->primary) present_primary();
     com_ret(2, DD_OK);
@@ -914,9 +737,17 @@ static void surf_GetSurfaceDesc(uint32_t self)
 
 static void read_rect(uint32_t p, int *l, int *t, int *r, int *b, int dw, int dh)
 {
-    if (!p) { *l = 0; *t = 0; *r = dw; *b = dh; return; }
-    *l = (int)LD32(p); *t = (int)LD32(p + 4);
-    *r = (int)LD32(p + 8); *b = (int)LD32(p + 12);
+    if (!p) {
+        *l = 0;
+        *t = 0;
+        *r = dw;
+        *b = dh;
+        return;
+    }
+    *l = (int)LD32(p);
+    *t = (int)LD32(p + 4);
+    *r = (int)LD32(p + 8);
+    *b = (int)LD32(p + 12);
 }
 
 /* DirectDraw stretches when the destination rectangle differs in size from the source,
@@ -934,8 +765,7 @@ static void read_rect(uint32_t p, int *l, int *t, int *r, int *b, int dw, int dh
  * shift pixels, and this path draws every sprite in the game. */
 enum { BLIT_MAXW = 4096 };
 
-static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh,
-                        Surface *s, int sx, int sy, int sw, int sh,
+static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh,
                         int keyed, uint32_t klo, uint32_t khi, int mirror_x)
 {
     if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
@@ -952,15 +782,16 @@ static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh,
         const int sxx = mirror_x ? sx + sw - 1 - source_offset : sx + source_offset;
         const int dxx = dx + x;
         if (sxx < 0 || sxx >= s->w || dxx < 0 || dxx >= d->w) continue;
-        col_src[ncol] = sxx; col_dst[ncol] = dxx; ncol++;
+        col_src[ncol] = sxx;
+        col_dst[ncol] = dxx;
+        ncol++;
     }
     if (!ncol) return;
 
     /* A run of columns that is contiguous and 1:1 (the unscaled case, which is most of
      * them) can be copied without indirection. */
-    const int direct = (ncol > 1) && (col_src[1] - col_src[0] == 1)
-                    && (col_src[ncol - 1] - col_src[0] == ncol - 1)
-                    && (col_dst[ncol - 1] - col_dst[0] == ncol - 1);
+    const int direct = (ncol > 1) && (col_src[1] - col_src[0] == 1) && (col_src[ncol - 1] - col_src[0] == ncol - 1) &&
+                       (col_dst[ncol - 1] - col_dst[0] == ncol - 1);
 
     for (int y = 0; y < dh; y++) {
         const int syy = sy + (int)((int64_t)y * sh / dh), dyy = dy + y;
@@ -993,19 +824,13 @@ static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh,
     surface_changed(d);
 }
 
-static void blit(Surface *d, int dx, int dy, int dw, int dh,
-                 Surface *s, int sx, int sy, int sw, int sh,
-                 int keyed, uint32_t klo, uint32_t khi)
-{
-    blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 0);
-}
+static void blit(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh, int keyed,
+                 uint32_t klo, uint32_t khi)
+{ blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 0); }
 
-static void blit_mirror_x(Surface *d, int dx, int dy, int dw, int dh,
-                          Surface *s, int sx, int sy, int sw, int sh,
+static void blit_mirror_x(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh,
                           int keyed, uint32_t klo, uint32_t khi)
-{
-    blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 1);
-}
+{ blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 1); }
 
 /* ---- THE SPACE BESIDE A SCREEN WHOSE BACKDROP IS A PICTURE (issue #44) ----
  *
@@ -1038,7 +863,10 @@ static void blit_mirror_x(Surface *d, int dx, int dy, int dw, int dh,
 static void band_paint(Surface *d, int x, int w, int top, int bot, uint32_t c)
 {
     if (w <= 0 || bot <= top) return;
-    if (x < 0) { w += x; x = 0; }
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
     if (x + w > d->w) w = d->w - x;
     if (w <= 0) return;
     render_fill(d->pixels, x, top, x + w, bot, c);
@@ -1049,9 +877,7 @@ static void band_paint(Surface *d, int x, int w, int top, int bot, uint32_t c)
     }
 }
 
-static void backdrop_edge_bands(Surface *d, Surface *s,
-                                int sl, int st_, int sr, int sb,
-                                int dl, int dt, int dr, int db)
+static void backdrop_edge_bands(Surface *d, Surface *s, int sl, int st_, int sr, int sb, int dl, int dt, int dr, int db)
 {
     if (db <= dt || sb <= st_ || sr <= sl) return;
     if (sl < 0 || sr > s->w) return;
@@ -1069,8 +895,7 @@ static void backdrop_edge_bands(Surface *d, Surface *s,
         if (y < db && y >= 0 && y < d->h) {
             const int sy = st_ + (int)((int64_t)(y - dt) * (sb - st_) / (db - dt));
             if (sy >= 0 && sy < s->h) {
-                const uint32_t *row =
-                    (const uint32_t *)(g_mem + s->pixels + (size_t)sy * (size_t)s->pitch);
+                const uint32_t *row = (const uint32_t *)(g_mem + s->pixels + (size_t)sy * (size_t)s->pitch);
                 if (have_left) cl = row[left.source_x] & 0x00ffffffu;
                 if (have_right) cr = row[right.source_x] & 0x00ffffffu;
                 valid = 1;
@@ -1093,10 +918,8 @@ static void backdrop_edge_bands(Surface *d, Surface *s,
 /* A declared far-plane edge continues in native-size segments whose X direction alternates.
  * This costs one quad per segment rather than one per column; destination/source extents remain
  * exactly equal, and keyed scenery never reaches this boundary with continuation flags. */
-static void backdrop_mirror_segments(Surface *d, Surface *s, int flags,
-                                     int sl, int st_, int sr, int sb,
-                                     int dl, int dt, int dr, int db,
-                                     int keyed, const BltTrace *trace)
+static void backdrop_mirror_segments(Surface *d, Surface *s, int flags, int sl, int st_, int sr, int sb, int dl, int dt,
+                                     int dr, int db, int keyed, const BltTrace *trace)
 {
     for (int segment = 0;; segment++) {
         BackdropBlit piece;
@@ -1104,24 +927,18 @@ static void backdrop_mirror_segments(Surface *d, Surface *s, int flags,
         blt_trace_backdrop(trace, &piece);
         if (!d->primary) {
             if (piece.mirror_x)
-                render_blit_mirror_x(d->pixels, piece.dl, piece.dt, piece.dr, piece.db,
-                                     s->pixels, s->w, s->h, s->pitch,
-                                     piece.sl, piece.st, piece.sr, piece.sb,
-                                     keyed, s->key_lo, s->key_hi);
+                render_blit_mirror_x(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch,
+                                     piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
             else
-                render_blit(d->pixels, piece.dl, piece.dt, piece.dr, piece.db,
-                            s->pixels, s->w, s->h, s->pitch,
-                            piece.sl, piece.st, piece.sr, piece.sb,
-                            keyed, s->key_lo, s->key_hi);
+                render_blit(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch,
+                            piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
         }
         if (piece.mirror_x)
-            blit_mirror_x(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt,
-                          s, piece.sl, piece.st, piece.sr - piece.sl, piece.sb - piece.st,
-                          keyed, s->key_lo, s->key_hi);
+            blit_mirror_x(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st,
+                          piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
         else
-            blit(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt,
-                 s, piece.sl, piece.st, piece.sr - piece.sl, piece.sb - piece.st,
-                 keyed, s->key_lo, s->key_hi);
+            blit(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st,
+                 piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
     }
 }
 static void dump_surface(uint32_t obj, const char *tag)
@@ -1136,7 +953,7 @@ static void dump_surface(uint32_t obj, const char *tag)
     for (int y = 0; y < s->h; y++) {
         const uint32_t *r = (const uint32_t *)(g_mem + s->pixels + (size_t)y * (size_t)s->pitch);
         for (int x = 0; x < s->w; x++) {
-            const uint8_t px[3] = { (uint8_t)(r[x] >> 16), (uint8_t)(r[x] >> 8), (uint8_t)r[x] };
+            const uint8_t px[3] = {(uint8_t)(r[x] >> 16), (uint8_t)(r[x] >> 8), (uint8_t)r[x]};
             fwrite(px, 1, 3, f);
         }
     }
@@ -1161,11 +978,15 @@ static void dump_surface(uint32_t obj, const char *tag)
 void cursor_find_note(int dl, int dt, const char *via)
 {
     static int on = -1;
-    if (on < 0) on = getenv("LF2_CURSOR_FIND") != NULL;   /* cached: this is on every blit */
+    if (on < 0) on = getenv("LF2_CURSOR_FIND") != NULL; /* cached: this is on every blit */
     if (!on) return;
     enum { MAX_SITES = 64 };
-    static struct { uint32_t ra; const char *via; long n; int lo_x, hi_x, lo_y, hi_y; }
-        site[MAX_SITES];
+    static struct {
+        uint32_t ra;
+        const char *via;
+        long n;
+        int lo_x, hi_x, lo_y, hi_y;
+    } site[MAX_SITES];
     static int nsite;
     static long frames;
     static int p_lo_x = 1 << 30, p_hi_x = -(1 << 30), p_lo_y = 1 << 30, p_hi_y = -(1 << 30);
@@ -1179,9 +1000,12 @@ void cursor_find_note(int dl, int dt, const char *via)
     const uint32_t ra = LD32(R(ESP));
     const int ox = dl - mx, oy = dt - my;
     int k = 0;
-    for (; k < nsite; k++) if (site[k].ra == ra) break;
+    for (; k < nsite; k++)
+        if (site[k].ra == ra) break;
     if (k == nsite && nsite < MAX_SITES) {
-        site[k].ra = ra; site[k].via = via; site[k].n = 0;
+        site[k].ra = ra;
+        site[k].via = via;
+        site[k].n = 0;
         site[k].lo_x = site[k].hi_x = ox;
         site[k].lo_y = site[k].hi_y = oy;
         nsite++;
@@ -1194,15 +1018,14 @@ void cursor_find_note(int dl, int dt, const char *via)
         if (oy > site[k].hi_y) site[k].hi_y = oy;
     }
     if (++frames % 4000 == 0) {
-        fprintf(stderr, "cursor-find: pointer travelled x %d..%d, y %d..%d\n",
-                p_lo_x, p_hi_x, p_lo_y, p_hi_y);
+        fprintf(stderr, "cursor-find: pointer travelled x %d..%d, y %d..%d\n", p_lo_x, p_hi_x, p_lo_y, p_hi_y);
         if (p_hi_x - p_lo_x < 40 && p_hi_y - p_lo_y < 40)
             fprintf(stderr, "  POINTER BARELY MOVED -- this cannot identify a cursor\n");
         for (int i = 0; i < nsite; i++) {
             const int sx = site[i].hi_x - site[i].lo_x, sy = site[i].hi_y - site[i].lo_y;
             if (site[i].n < 50) continue;
-            fprintf(stderr, "  %-8s ra=%08x n=%-6ld spread x=%-5d y=%-5d offset(%d,%d) %s\n",
-                    site[i].via, site[i].ra, site[i].n, sx, sy, site[i].lo_x, site[i].lo_y,
+            fprintf(stderr, "  %-8s ra=%08x n=%-6ld spread x=%-5d y=%-5d offset(%d,%d) %s\n", site[i].via, site[i].ra,
+                    site[i].n, sx, sy, site[i].lo_x, site[i].lo_y,
                     (sx <= 8 && sy <= 8) ? "<== TRACKS THE POINTER" : "");
         }
     }
@@ -1234,12 +1057,13 @@ static long panel_modemenu_frame = -1000;
 
 static void panel_note(int l, int t, int r, int b)
 {
-    if (l == 40 && t == 33 && r == 745 && b == 520) panel_charselect_frame = frames;
-    else if (l == 3 && t == 3 && r == 307 && b == 159) panel_overlay_frame = frames;
+    const long frame = hostwin_frames();
+    if (l == 40 && t == 33 && r == 745 && b == 520) panel_charselect_frame = frame;
+    else if (l == 3 && t == 3 && r == 307 && b == 159) panel_overlay_frame = frame;
     /* The in-match HUD strip: eight player slots as two rows of four 198x54 panels. It is
      * drawn only while a match is on screen, which makes it the signal for "the world view
      * is up" -- the one screen that should be WIDE rather than centred. */
-    else if (r - l == 198 && b - t == 54 && (t == 0 || t == 54)) panel_hud_frame = frames;
+    else if (r - l == 198 && b - t == 54 && (t == 0 || t == 54)) panel_hud_frame = frame;
 }
 
 /* ---- WHICH SCREEN IS UP, FROM THE COLOUR IT PAINTS ITSELF (issue #44) ----
@@ -1267,7 +1091,7 @@ static void panel_note(int l, int t, int r, int b)
  * correctly. */
 enum { FILL_FRONT_END = 0x0010206cu, FILL_MODE_MENU = 0x00122565u };
 static int screen_align_left;
-static long backdrop_art_seen;   /* counted so the framing report cannot claim a draw it never saw */
+static long backdrop_art_seen; /* counted so the framing report cannot claim a draw it never saw */
 
 /* WHAT THE FRAMING ACTUALLY DID, per screen, so a test can assert it from the run's own
  * output instead of from a screenshot somebody once looked at (LF2_FRAMING_DEBUG=1).
@@ -1284,10 +1108,10 @@ static void framing_note(const char *what, uint32_t key, int off, int left)
     if (key == framing_last) return;
     framing_last = key;
     if (!getenv("LF2_FRAMING_DEBUG")) return;
-    fprintf(stderr, "framing: frame %ld %s -> %s, offset %d in a %d-wide composition "
-                    "(the game's own screen is %d)\n",
-            frames, what, left ? "CENTRED, backdrop art LEFT at x 0" : "CENTRED",
-            off, hw.width, NATIVE_W);
+    fprintf(stderr,
+            "framing: frame %ld %s -> %s, offset %d in a %d-wide composition "
+            "(the game's own screen is %d)\n",
+            hostwin_frames(), what, left ? "CENTRED, backdrop art LEFT at x 0" : "CENTRED", off, hw.width, NATIVE_W);
 }
 
 void framing_report(void)
@@ -1297,13 +1121,15 @@ void framing_report(void)
      * seen" and "their left-anchored picture was actually drawn without the centring" are
      * different facts, and a report giving only the first would read as a pass on a build
      * where the picture never matched and quietly got centred with everything else. */
-    fprintf(stderr, "framing: %ld menu screen(s) with a left-anchored backdrop (%ld such "
-                    "draw(s) kept at x 0), %ld centred flat-backdrop screen(s), %ld "
-                    "picture-backdrop screen(s) so far%s\n",
+    fprintf(stderr,
+            "framing: %ld menu screen(s) with a left-anchored backdrop (%ld such "
+            "draw(s) kept at x 0), %ld centred flat-backdrop screen(s), %ld "
+            "picture-backdrop screen(s) so far%s\n",
             framing_n_left, backdrop_art_seen, framing_n_centre, framing_n_picture,
-            (framing_n_left || framing_n_centre || framing_n_picture) ? ""
-              : " -- NO fixed-794 screen has been framed at all, so this run measured NOTHING "
-                "about per-screen framing (not wide, or never left the world view)");
+            (framing_n_left || framing_n_centre || framing_n_picture)
+                ? ""
+                : " -- NO fixed-794 screen has been framed at all, so this run measured NOTHING "
+                  "about per-screen framing (not wide, or never left the world view)");
 }
 
 static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
@@ -1315,9 +1141,10 @@ static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
     /* The mode menu's own colour, for the same reason: it is the only honest way to
      * say "the mode menu is on screen". The word screens.c used to gate on is the game
      * MODE, which reads 1/4/5 during a match (issue #51). */
-    if (c == FILL_MODE_MENU) panel_modemenu_frame = frames;
+    if (c == FILL_MODE_MENU) panel_modemenu_frame = hostwin_frames();
     if (!lf2_wide_width() || panel_hud_up()) return;
-    if (left) framing_n_left++; else framing_n_centre++;
+    if (left) framing_n_left++;
+    else framing_n_centre++;
     char what[64];
     snprintf(what, sizeof what, "screen with backdrop fill %06x", c);
     /* The offset REPORTED must be the offset APPLIED. This said GEOM_ALIGN_LEFT -> 0 for the
@@ -1336,14 +1163,14 @@ static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
  * content is centred like every other screen's. */
 int screen_backdrop_left(void) { return screen_align_left; }
 
-int panel_charselect_up(void) { return frames - panel_charselect_frame <= PANEL_FRESH; }
-int panel_overlay_up(void)    { return frames - panel_overlay_frame    <= PANEL_FRESH; }
-int panel_hud_up(void)        { return frames - panel_hud_frame        <= PANEL_FRESH; }
+int panel_charselect_up(void) { return hostwin_frames() - panel_charselect_frame <= PANEL_FRESH; }
+int panel_overlay_up(void) { return hostwin_frames() - panel_overlay_frame <= PANEL_FRESH; }
+int panel_hud_up(void) { return hostwin_frames() - panel_hud_frame <= PANEL_FRESH; }
 /* The front end repaints its backdrop every frame it is up, so the same freshness window that
  * suits the panels suits it. It is deliberately NOT the loading screen or the mode menu: those
  * paint other colours, and a route anchored here means "the first screen, before anything has
  * been chosen". */
-int panel_modemenu_up(void)   { return frames - panel_modemenu_frame   <= PANEL_FRESH; }
+int panel_modemenu_up(void) { return hostwin_frames() - panel_modemenu_frame <= PANEL_FRESH; }
 
 /* ---- centring what cannot be made wide ----
  *
@@ -1390,7 +1217,7 @@ int panel_modemenu_up(void)   { return frames - panel_modemenu_frame   <= PANEL_
  * instance, on a machine that then ran out of it. An allocation sized for a feature that was
  * measured and abandoned is exactly the kind of thing that survives a revert. */
 enum { WIDE_MAX = 4096, HIGH_MAX = NATIVE_H };
-enum { HUD_W = 792, HUD_BAND_H = 118 };   /* the in-match HUD strip and the band it owns */
+enum { HUD_W = 792, HUD_BAND_H = 118 }; /* the in-match HUD strip and the band it owns */
 /* THE TEXT BAND IS TALLER THAN THE BLIT BAND, and the two cannot be one number (issue #54).
  *
  * HUD_BAND_H stops at 118 because the WORLD's layer blits start at y 128 -- measured from a
@@ -1490,15 +1317,17 @@ static void surf_Blt(uint32_t self)
     if (getenv("LF2_DUMP_SRC")) {
         static int done;
         const uint32_t want = (uint32_t)strtoul(getenv("LF2_DUMP_SRC"), NULL, 16);
-        if (!done && ARG(2) == want) { dump_surface(want, "src"); done = 1; }
+        if (!done && ARG(2) == want) {
+            dump_surface(want, "src");
+            done = 1;
+        }
     }
     const uint32_t drect = ARG(1), srcobj = ARG(2), srect = ARG(3), flags = ARG(4);
 
     /* Value-level trace: the call sequence already matches the oracle, so the next
      * signal is the arguments. Flags are comparable across runs; pointers are not. */
     if (getenv("LF2_COM_TRACE"))
-        fprintf(stderr, "ARG Blt flags=0x%x dst=%s src=%s\n", flags,
-                drect ? "rect" : "null", srcobj ? "surf" : "null");
+        fprintf(stderr, "ARG Blt flags=0x%x dst=%s src=%s\n", flags, drect ? "rect" : "null", srcobj ? "surf" : "null");
 
     int dl, dt, dr, db;
     read_rect(drect, &dl, &dt, &dr, &db, d->w, d->h);
@@ -1537,13 +1366,27 @@ static void surf_Blt(uint32_t self)
 
     const long trace_frame = hostwin_frames() + 1;
     const BltTrace trace = {
-        .frame = trace_frame, .selected = hostwin_frame_selected(getenv("LF2_BLT_FRAME"), trace_frame),
-        .destination = self, .destination_w = d->w, .destination_h = d->h,
+        .frame = trace_frame,
+        .selected = hostwin_frame_selected(getenv("LF2_BLT_FRAME"), trace_frame),
+        .destination = self,
+        .destination_w = d->w,
+        .destination_h = d->h,
         .destination_primary = d->primary,
-        .dl = dl, .dt = dt, .dr = dr, .db = db,
-        .source = srcobj, .source_w = s ? s->w : -1, .source_h = s ? s->h : -1,
-        .has_source_rect = srect != 0, .sl = sl, .st = st_, .sr = sr, .sb = sb,
-        .flags = flags, .caller = LD32(R(ESP)), .has_fill = flags & DDBLT_COLORFILL,
+        .dl = dl,
+        .dt = dt,
+        .dr = dr,
+        .db = db,
+        .source = srcobj,
+        .source_w = s ? s->w : -1,
+        .source_h = s ? s->h : -1,
+        .has_source_rect = srect != 0,
+        .sl = sl,
+        .st = st_,
+        .sr = sr,
+        .sb = sb,
+        .flags = flags,
+        .caller = LD32(R(ESP)),
+        .has_fill = flags & DDBLT_COLORFILL,
         .fill = (flags & DDBLT_COLORFILL) && ARG(5) ? LD32(ARG(5) + DDBLTFX_FILLCOLOR) : 0,
     };
     blt_trace_log(&trace);
@@ -1607,7 +1450,8 @@ static void surf_Blt(uint32_t self)
              * rule requires `d->w > NATIVE_W` up front. */
             dr = d->w;
         } else if (compose_off && dl >= 0 && dr <= NATIVE_W) {
-            dl += compose_off; dr += compose_off;
+            dl += compose_off;
+            dr += compose_off;
         }
         if (!d->primary) render_fill(d->pixels, dl, dt, dr, db, fill);
         for (int y = dt; y < db && y < d->h; y++) {
@@ -1629,8 +1473,7 @@ static void surf_Blt(uint32_t self)
         int wx = 0, wy = 0;
         sscanf(want, "%d,%d", &wx, &wy);
         if (!done && dl == wx && dt == wy) {
-            fprintf(stderr, "blt (%d,%d)-(%d,%d) issued from guest %08x\n",
-                    dl, dt, dr, db, LD32(R(ESP)));
+            fprintf(stderr, "blt (%d,%d)-(%d,%d) issued from guest %08x\n", dl, dt, dr, db, LD32(R(ESP)));
             done = 1;
         }
     }
@@ -1640,7 +1483,9 @@ static void surf_Blt(uint32_t self)
          * found nothing and read as "that is never drawn". Distinct rectangles are what the
          * hook is for, and there are only a few hundred of them across a whole run. */
         enum { MAX_RECTS = 4096 };
-        static struct { int l, t, r, b; } seen[MAX_RECTS];
+        static struct {
+            int l, t, r, b;
+        } seen[MAX_RECTS];
         static int nseen;
         static long dropped;
 
@@ -1652,13 +1497,17 @@ static void surf_Blt(uint32_t self)
             }
         if (!known) {
             if (nseen < MAX_RECTS) {
-                seen[nseen].l = dl; seen[nseen].t = dt;
-                seen[nseen].r = dr; seen[nseen].b = db;
+                seen[nseen].l = dl;
+                seen[nseen].t = dt;
+                seen[nseen].r = dr;
+                seen[nseen].b = db;
                 nseen++;
                 fprintf(stderr, "RECT %d %d %d %d\n", dl, dt, dr, db);
             } else if (++dropped == 1) {
-                fprintf(stderr, "RECT: more than %d distinct rectangles; the rest are NOT "
-                                "logged\n", (int)MAX_RECTS);
+                fprintf(stderr,
+                        "RECT: more than %d distinct rectangles; the rest are NOT "
+                        "logged\n",
+                        (int)MAX_RECTS);
             }
         }
     }
@@ -1672,7 +1521,8 @@ static void surf_Blt(uint32_t self)
      * starts at y 128, measured from the layer blits in a widescreen match frame. */
     if (lf2_wide_width() && panel_hud_up() && d->w > NATIVE_W && db <= HUD_BAND_H) {
         const int off = (d->w - HUD_W) / 2;
-        dl += off; dr += off;
+        dl += off;
+        dr += off;
     }
 
     /* Centre the fixed-width STAGE n-n announcement (issues #73, #90). Sheet geometry is
@@ -1683,23 +1533,21 @@ static void surf_Blt(uint32_t self)
         if (banner && !d->primary) {
             const int match_up = panel_hud_up() && !panel_overlay_up();
             const int off = stage_banner_offset(match_up, d->w, banner->w, banner->h, dt);
-            dl += off; dr += off;
+            dl += off;
+            dr += off;
         }
     }
 
     if (getenv("LF2_BAND_DEBUG") && lf2_wide_width() && panel_hud_up() && srcobj && dl == 0)
-        fprintf(stderr, "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n",
-                dl, dr, dt, db, d->w, NATIVE_W);
-    const int backdrop_flags = lf2_wide_width() && panel_hud_up() && s && d->w > NATIVE_W
-                             ? world_backdrop_hint : 0;
+        fprintf(stderr, "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n", dl, dr, dt, db, d->w, NATIVE_W);
+    const int backdrop_flags = lf2_wide_width() && panel_hud_up() && s && d->w > NATIVE_W ? world_backdrop_hint : 0;
     const int extend_world_backdrop = (backdrop_flags & BACKDROP_EXTEND_BOTTOM) != 0;
 
     /* The Summary screen is a fixed-width panel drawn over a world that remains wide. Its
      * first bitmap identifies the branch in fn_0041bc90; only draws inside that panel take
      * the fixed-screen offset, while the stage and the HUD keep their world placement. */
     if (s) {
-        const int off = result_panel_blit_offset(frames, d->w, dl, dt, dr, db,
-                                                 s->w, s->h, sl, st_, sr, sb);
+        const int off = result_panel_blit_offset(hostwin_frames(), d->w, dl, dt, dr, db, s->w, s->h, sl, st_, sr, sb);
         dl += off;
         dr += off;
     }
@@ -1708,9 +1556,8 @@ static void surf_Blt(uint32_t self)
     panel_note(dl, dt, dr, db);
 
     /* Record the label before the pre-fight panel so ordinary painter order covers it. */
-    if (overlay_panel_draw && !d->primary
-        && device_icon_charselect_phase(LD32(0x0044d020u) == 1, 1)
-               == DEVICE_ICON_CHARSELECT_BEFORE_OVERLAY)
+    if (overlay_panel_draw && !d->primary &&
+        device_icon_charselect_phase(LD32(0x0044d020u) == 1, 1) == DEVICE_ICON_CHARSELECT_BEFORE_OVERLAY)
         charselect_device_labels_draw(d);
 
     /* A PICTURE THAT COVERS THE WHOLE OF THE GAME'S SCREEN IS THAT SCREEN'S BACKGROUND, and
@@ -1722,9 +1569,8 @@ static void surf_Blt(uint32_t self)
      *
      * Gated off the world view: during a match the rule above has already widened a full-width
      * stage layer, and a stage layer is not a screen's backdrop. */
-    const int backdrop_picture = srcobj && !d->primary && lf2_wide_width() && !panel_hud_up()
-                              && d->w > NATIVE_W
-                              && dl == 0 && dt == 0 && dr == NATIVE_W && db == NATIVE_H;
+    const int backdrop_picture = srcobj && !d->primary && lf2_wide_width() && !panel_hud_up() && d->w > NATIVE_W &&
+                                 dl == 0 && dt == 0 && dr == NATIVE_W && db == NATIVE_H;
     /* A screen whose backdrop is a picture is one of the CENTRED ones, and it says so here
      * rather than by not saying anything: the alignment is whatever the last screen to draw a
      * backdrop asked for, so a screen that stayed silent would keep the previous screen's. */
@@ -1748,11 +1594,11 @@ static void surf_Blt(uint32_t self)
      * near-full height. A menu strip also starts at x 0 sometimes, and it is short -- taking
      * only the x would drag those to the edge as well and pull the list apart. Anything that
      * fails either half is ordinary screen content and is centred. */
-    const int backdrop_art = screen_backdrop_left() && srcobj && dl == 0
-                          && (db - dt) >= NATIVE_H - 60;
+    const int backdrop_art = screen_backdrop_left() && srcobj && dl == 0 && (db - dt) >= NATIVE_H - 60;
     if (backdrop_art) backdrop_art_seen++;
     if (compose_off && !backdrop_art && dl >= 0 && dr <= NATIVE_W) {
-        dl += compose_off; dr += compose_off;
+        dl += compose_off;
+        dr += compose_off;
     }
 
     cursor_find_note(dl, dt, "Blt");
@@ -1765,16 +1611,24 @@ static void surf_Blt(uint32_t self)
         const int w = dr - dl, h = db - dt;
         if (w > 0 && h > 0 && w <= 40 && h <= 40) {
             enum { MAXS = 64 };
-            static struct { int l, t, w, h; uint32_t ra; } seen[MAXS];
+            static struct {
+                int l, t, w, h;
+                uint32_t ra;
+            } seen[MAXS];
             static int n;
             int known = 0;
             for (int i = 0; i < n; i++)
-                if (seen[i].l == dl && seen[i].t == dt && seen[i].w == w && seen[i].h == h) { known = 1; break; }
+                if (seen[i].l == dl && seen[i].t == dt && seen[i].w == w && seen[i].h == h) {
+                    known = 1;
+                    break;
+                }
             if (!known && n < MAXS) {
-                seen[n].l = dl; seen[n].t = dt; seen[n].w = w; seen[n].h = h;
+                seen[n].l = dl;
+                seen[n].t = dt;
+                seen[n].w = w;
+                seen[n].h = h;
                 seen[n].ra = LD32(R(ESP));
-                fprintf(stderr, "small blt (%d,%d) %dx%d from guest %08x\n",
-                        dl, dt, w, h, seen[n].ra);
+                fprintf(stderr, "small blt (%d,%d) %dx%d from guest %08x\n", dl, dt, w, h, seen[n].ra);
                 n++;
             }
         }
@@ -1790,7 +1644,8 @@ static void surf_Blt(uint32_t self)
         const int d = abs(dl - wx) + abs(dt - wy);
         if (d < blt_stack_best) {
             blt_stack_best = d;
-            blt_stack_best_l = dl; blt_stack_best_t = dt;
+            blt_stack_best_l = dl;
+            blt_stack_best_t = dt;
         }
         static int shown;
         if (!shown && dl == wx && dt == wy) {
@@ -1815,22 +1670,28 @@ static void surf_Blt(uint32_t self)
          * either. */
         shadow_learn(s);
         const int keyed = ((flags & DDBLT_KEYSRC) || getenv("LF2_CK_FORCE")) && s->has_key;
-        if (keyed) ck_blt_keyed++; else ck_blt_plain++;
+        if (keyed) ck_blt_keyed++;
+        else ck_blt_plain++;
         if (getenv("LF2_CK_DEBUG")) {
             /* Keyed by (flags, caller): the caller is the part that leads anywhere, since
              * it names the guest code that decides whether to ask for the key. */
-            static long seen[16]; static uint32_t fv[16], cv[16]; static int nf;
+            static long seen[16];
+            static uint32_t fv[16], cv[16];
+            static int nf;
             const uint32_t caller = LD32(R(ESP));
             int hit = -1;
-            for (int i = 0; i < nf; i++) if (fv[i] == flags && cv[i] == caller) hit = i;
-            if (hit < 0 && nf < 16) { fv[nf] = flags; cv[nf] = caller; hit = nf++; }
+            for (int i = 0; i < nf; i++)
+                if (fv[i] == flags && cv[i] == caller) hit = i;
+            if (hit < 0 && nf < 16) {
+                fv[nf] = flags;
+                cv[nf] = caller;
+                hit = nf++;
+            }
             if (hit >= 0 && seen[hit]++ == 0)
-                fprintf(stderr, "Blt flags=%08x has_key=%d from guest %08x\n",
-                        flags, s->has_key, caller);
+                fprintf(stderr, "Blt flags=%08x has_key=%d from guest %08x\n", flags, s->has_key, caller);
         }
-        if (glyph_hint >= 0
-            && game_glyph_draw(glyph_hint, dl, dt, glyph_ink(s, sl, st_, sr, sb),
-                               d->pixels, d->w, d->h, d->pitch)) {
+        if (glyph_hint >= 0 &&
+            game_glyph_draw(glyph_hint, dl, dt, glyph_ink(s, sl, st_, sr, sb), d->pixels, d->w, d->h, d->pitch)) {
             glyphs_drawn++;
         } else {
             /* Recorded for the native renderer and ALSO composed in software. Both paths
@@ -1844,19 +1705,18 @@ static void surf_Blt(uint32_t self)
                  * stays comparable with the software one. */
                 if (getenv("LF2_SHADOW_DEBUG")) {
                     static long hits, miss;
-                    if (shadow_hint) hits++; else miss++;
+                    if (shadow_hint) hits++;
+                    else miss++;
                     if ((hits + miss) % 4000 == 0)
-                        fprintf(stderr, "shadow: hint set on %ld of %ld sprite blits "
-                                        "(learned obj %08x, shadows enabled %d)\n",
-                                hits, hits + miss, shadow_object(),
-                                render_shadows_enabled());
+                        fprintf(stderr,
+                                "shadow: hint set on %ld of %ld sprite blits "
+                                "(learned obj %08x, shadows enabled %d)\n",
+                                hits, hits + miss, shadow_object(), render_shadows_enabled());
                 }
-                if (shadow_hint && render_shadows_enabled())
-                    render_shadow_ground(d->pixels, dl, dt, dr, db);
+                if (shadow_hint && render_shadows_enabled()) render_shadow_ground(d->pixels, dl, dt, dr, db);
                 else
-                    render_blit(d->pixels, dl, dt, dr, db,
-                                s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb,
-                                keyed, s->key_lo, s->key_hi);
+                    render_blit(d->pixels, dl, dt, dr, db, s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb, keyed,
+                                s->key_lo, s->key_hi);
             }
             /* The injector, and it is deliberately applied to the SOFTWARE copy only --
              * see primary_stale_injected(). Advancing the source with the destination keeps
@@ -1870,28 +1730,27 @@ static void surf_Blt(uint32_t self)
                  * still could not fail. The ghost only appears where a DIFFERENTLY centred
                  * screen used to have picture, and that is this many columns wide. */
                 const int skip = (d->w - NATIVE_W) / 2;
-                if (skip > 0 && dr - dl > skip) { dl += skip; sl += skip; }
+                if (skip > 0 && dr - dl > skip) {
+                    dl += skip;
+                    sl += skip;
+                }
             }
-            blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_,
-                 keyed, s->key_lo, s->key_hi);
+            blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_, keyed, s->key_lo, s->key_hi);
             if (backdrop_flags & (BACKDROP_MIRROR_LEFT | BACKDROP_MIRROR_RIGHT))
-                backdrop_mirror_segments(d, s, backdrop_flags, sl, st_, sr, sb,
-                                         dl, dt, dr, db, keyed, &trace);
+                backdrop_mirror_segments(d, s, backdrop_flags, sl, st_, sr, sb, dl, dt, dr, db, keyed, &trace);
             BackdropBlit ext;
             const int backdrop_bottom = d->h < GEOM_WORLD_BOTTOM ? d->h : GEOM_WORLD_BOTTOM;
-            for (int row = db; backdrop_bottom_row(extend_world_backdrop, backdrop_bottom, row,
-                                                   dl, dt, dr, db, sl, st_, sr, sb, &ext); row++) {
+            for (int row = db; backdrop_bottom_row(extend_world_backdrop, backdrop_bottom, row, dl, dt, dr, db, sl, st_,
+                                                   sr, sb, &ext);
+                 row++) {
                 blt_trace_backdrop(&trace, &ext);
                 if (!d->primary)
-                    render_blit(d->pixels, ext.dl, ext.dt, ext.dr, ext.db,
-                                s->pixels, s->w, s->h, s->pitch,
-                                ext.sl, ext.st, ext.sr, ext.sb,
-                                keyed, s->key_lo, s->key_hi);
-                blit(d, ext.dl, ext.dt, ext.dr - ext.dl, ext.db - ext.dt,
-                     s, ext.sl, ext.st, ext.sr - ext.sl, ext.sb - ext.st,
-                     keyed, s->key_lo, s->key_hi);
-                backdrop_mirror_segments(d, s, backdrop_flags, ext.sl, ext.st, ext.sr, ext.sb,
-                                         ext.dl, ext.dt, ext.dr, ext.db, keyed, &trace);
+                    render_blit(d->pixels, ext.dl, ext.dt, ext.dr, ext.db, s->pixels, s->w, s->h, s->pitch, ext.sl,
+                                ext.st, ext.sr, ext.sb, keyed, s->key_lo, s->key_hi);
+                blit(d, ext.dl, ext.dt, ext.dr - ext.dl, ext.db - ext.dt, s, ext.sl, ext.st, ext.sr - ext.sl,
+                     ext.sb - ext.st, keyed, s->key_lo, s->key_hi);
+                backdrop_mirror_segments(d, s, backdrop_flags, ext.sl, ext.st, ext.sr, ext.sb, ext.dl, ext.dt, ext.dr,
+                                         ext.db, keyed, &trace);
             }
             if (backdrop_picture) {
                 backdrop_edge_bands(d, s, sl, st_, sr, sb, dl, dt, dr, db);
@@ -1926,16 +1785,16 @@ static void surf_Blt(uint32_t self)
     if (d->primary && srcobj) {
         Surface *cs = com_host(srcobj);
         /* Zero, not screen_offset_x(): the centring now happens while composing (see
-             * compose_off above), so the display list the renderer replays already carries it
-             * and adding it again at present time would centre twice. */
-            if (cs) frame_source_note(cs->pixels, 0);
+         * compose_off above), so the display list the renderer replays already carries it
+         * and adding it again at present time would centre twice. */
+        if (cs) frame_source_note(cs->pixels, 0);
     }
 
     if (d->primary) {
         if (getenv("LF2_BLT_DEBUG")) {
             static long n;
-            fprintf(stderr, "blt->primary #%ld drect=%08x [%d %d %d %d] src=%08x srect=%08x flags=%08x\n",
-                    ++n, drect, dl, dt, dr, db, srcobj, srect, flags);
+            fprintf(stderr, "blt->primary #%ld drect=%08x [%d %d %d %d] src=%08x srect=%08x flags=%08x\n", ++n, drect,
+                    dl, dt, dr, db, srcobj, srect, flags);
         }
         present_primary();
     }
@@ -1953,18 +1812,24 @@ static void surf_BltFast(uint32_t self)
     if (s) {
         int sl, st_, sr, sb;
         read_rect(srect, &sl, &st_, &sr, &sb, s->w, s->h);
-        if ((flags & 1) && s->has_key) ck_blt_keyed++; else ck_blt_plain++;
+        if ((flags & 1) && s->has_key) ck_blt_keyed++;
+        else ck_blt_plain++;
         if (getenv("LF2_CK_DEBUG")) {
-            static long seen[8]; static uint32_t fv[8]; static int nf;
+            static long seen[8];
+            static uint32_t fv[8];
+            static int nf;
             int hit = -1;
-            for (int i = 0; i < nf; i++) if (fv[i] == flags) hit = i;
-            if (hit < 0 && nf < 8) { fv[nf] = flags; hit = nf++; }
-            if (hit >= 0 && seen[hit]++ == 0)
-                fprintf(stderr, "BltFast flags=%08x (has_key=%d)\n", flags, s->has_key);
+            for (int i = 0; i < nf; i++)
+                if (fv[i] == flags) hit = i;
+            if (hit < 0 && nf < 8) {
+                fv[nf] = flags;
+                hit = nf++;
+            }
+            if (hit >= 0 && seen[hit]++ == 0) fprintf(stderr, "BltFast flags=%08x (has_key=%d)\n", flags, s->has_key);
         }
         cursor_find_note(dx, dy, "BltFast");
-        blit(d, dx, dy, sr - sl, sb - st_, s, sl, st_, sr - sl, sb - st_,
-             (flags & 1) && s->has_key, s->key_lo, s->key_hi);
+        blit(d, dx, dy, sr - sl, sb - st_, s, sl, st_, sr - sl, sb - st_, (flags & 1) && s->has_key, s->key_lo,
+             s->key_hi);
     }
     if (d->primary) present_primary();
     com_ret(6, DD_OK);
@@ -1978,8 +1843,8 @@ long ck_set, ck_blt_keyed, ck_blt_plain;
 void colorkey_report(void)
 {
     if (!getenv("LF2_CK_DEBUG")) return;
-    fprintf(stderr, "colour-key: SetColorKey=%ld keyed blits=%ld unkeyed blits=%ld\n",
-            ck_set, ck_blt_keyed, ck_blt_plain);
+    fprintf(stderr, "colour-key: SetColorKey=%ld keyed blits=%ld unkeyed blits=%ld\n", ck_set, ck_blt_keyed,
+            ck_blt_plain);
 }
 
 static void surf_SetColorKey(uint32_t self)
@@ -1988,10 +1853,13 @@ static void surf_SetColorKey(uint32_t self)
     const uint32_t key = ARG(2);
     ck_set++;
     if (getenv("LF2_CK_DEBUG") && ck_set <= 4)
-        fprintf(stderr, "SetColorKey #%ld flags=%08x key=%08x range=%08x..%08x\n",
-                ck_set, ARG(1), key, key ? LD32(key) : 0, key ? LD32(key + 4) : 0);
-    if (key) { s->has_key = 1; s->key_lo = LD32(key); s->key_hi = LD32(key + 4); }
-    else s->has_key = 0;
+        fprintf(stderr, "SetColorKey #%ld flags=%08x key=%08x range=%08x..%08x\n", ck_set, ARG(1), key,
+                key ? LD32(key) : 0, key ? LD32(key + 4) : 0);
+    if (key) {
+        s->has_key = 1;
+        s->key_lo = LD32(key);
+        s->key_hi = LD32(key + 4);
+    } else s->has_key = 0;
     com_ret(3, DD_OK);
 }
 
@@ -2032,7 +1900,9 @@ static void surf_GetAttachedSurface(uint32_t self)
     Surface *s = com_host(self);
     if (!s->attached) {
         Surface *b = SDL_calloc(1, sizeof *b);
-        b->w = s->w; b->h = s->h; b->pitch = s->pitch;
+        b->w = s->w;
+        b->h = s->h;
+        b->pitch = s->pitch;
         b->pixels = vram_alloc((uint32_t)b->pitch * (uint32_t)b->h);
         memset(g_mem + b->pixels, 0, (size_t)b->pitch * (size_t)b->h);
         s->attached = com_create(IF_SURFACE, b);
@@ -2058,7 +1928,7 @@ static void surf_GetClipper(uint32_t self)
     Surface *s = com_host(self);
     if (!s || !s->clipper) {
         if (ARG(1)) ST32(ARG(1), 0);
-        com_ret(2, E_FAIL);        /* DDERR_NOCLIPPERATTACHED */
+        com_ret(2, E_FAIL); /* DDERR_NOCLIPPERATTACHED */
         return;
     }
     if (ARG(1)) ST32(ARG(1), s->clipper);
@@ -2075,7 +1945,10 @@ static void surf_SetClipper(uint32_t self)
 static void surf_GetColorKey(uint32_t self)
 {
     Surface *s = com_host(self);
-    if (ARG(2)) { ST32(ARG(2), s->key_lo); ST32(ARG(2) + 4, s->key_hi); }
+    if (ARG(2)) {
+        ST32(ARG(2), s->key_lo);
+        ST32(ARG(2) + 4, s->key_hi);
+    }
     com_ret(3, DD_OK);
 }
 
@@ -2086,7 +1959,11 @@ static void surf_GetPalette(uint32_t self)
     com_ret(2, s->palette ? DD_OK : E_FAIL);
 }
 
-static void surf_ret_ok1(uint32_t self) { (void)self; com_ret(1, DD_OK); }
+static void surf_ret_ok1(uint32_t self)
+{
+    (void)self;
+    com_ret(1, DD_OK);
+}
 
 static void surf_GetPixelFormat(uint32_t self)
 {
@@ -2105,9 +1982,10 @@ static uint32_t make_surface(int w, int h, int primary, int maxw, int maxh)
     Surface *s = SDL_calloc(1, sizeof *s);
     if (maxw < w) maxw = w;
     if (maxh < h) maxh = h;
-    s->w = w; s->h = h;
+    s->w = w;
+    s->h = h;
     s->pitch = maxw * 4;
-    s->rows  = maxh;
+    s->rows = maxh;
     s->pixels = vram_alloc((uint32_t)s->pitch * (uint32_t)maxh);
     s->primary = primary;
     memset(g_mem + s->pixels, 0, (size_t)s->pitch * (size_t)maxh);
@@ -2128,9 +2006,13 @@ static int follow_n;
 
 static void follow_add(uint32_t obj)
 {
-    if (follow_n < FOLLOW_MAX) { follow[follow_n++] = obj; return; }
-    fprintf(stderr, "widescreen: more than %d window-following surfaces exist; %08x will "
-                    "NOT follow a resize and will keep the width it was created at\n",
+    if (follow_n < FOLLOW_MAX) {
+        follow[follow_n++] = obj;
+        return;
+    }
+    fprintf(stderr,
+            "widescreen: more than %d window-following surfaces exist; %08x will "
+            "NOT follow a resize and will keep the width it was created at\n",
             FOLLOW_MAX, obj);
 }
 
@@ -2188,9 +2070,11 @@ void hostwin_window_geometry(int win_w, int win_h)
         static int said;
         if (!said) {
             said = 1;
-            fprintf(stderr, "widescreen: a %dx%d window asks for a %d-wide composition, past "
-                            "the %d this build allocates for; clamped, so the picture is "
-                            "cropped at the sides from here on\n", win_w, win_h, win_w, WIDE_MAX);
+            fprintf(stderr,
+                    "widescreen: a %dx%d window asks for a %d-wide composition, past "
+                    "the %d this build allocates for; clamped, so the picture is "
+                    "cropped at the sides from here on\n",
+                    win_w, win_h, win_w, WIDE_MAX);
         }
     }
 
@@ -2201,26 +2085,28 @@ void hostwin_window_geometry(int win_w, int win_h)
      * a claim no width on its own can make, and the one issue #41 is about. */
     {
         SDL_FRect r;
-        hw.width = (int)w;                       /* set first: lf2_compose_rect reads the window */
+        hw.width = (int)w; /* set first: lf2_compose_rect reads the window */
         hw.height = NATIVE_H;
         lf2_compose_rect((int)w, NATIVE_H, &r);
-        fprintf(stderr, "widescreen: window %dx%d -> composition %ldx%d at scale %.3f, drawn "
-                        "into %.0fx%.0f at (%.0f,%.0f)%s\n",
-                win_w, win_h, w, NATIVE_H, (double)lf2_world_scale(),
-                (double)r.w, (double)r.h, (double)r.x, (double)r.y,
-                (r.h >= (float)win_h - 1.0f && r.w >= (float)win_w - 1.0f)
-                    ? " -- fills the window" : " -- with a band");
+        fprintf(
+            stderr,
+            "widescreen: window %dx%d -> composition %ldx%d at scale %.3f, drawn "
+            "into %.0fx%.0f at (%.0f,%.0f)%s\n",
+            win_w, win_h, w, NATIVE_H, (double)lf2_world_scale(), (double)r.w, (double)r.h, (double)r.x, (double)r.y,
+            (r.h >= (float)win_h - 1.0f && r.w >= (float)win_w - 1.0f) ? " -- fills the window" : " -- with a band");
     }
 
     surfaces_follow_window(hw.width, hw.height);
     /* Logical presentation is what used to do the scaling, and there is none to do now. The
      * renderer places the composition in the window itself, because it is the only thing that
      * knows both sizes and it has to place the lighting's targets the same way. */
-    if (hw.renderer)
-        SDL_SetRenderLogicalPresentation(hw.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+    if (hw.renderer) SDL_SetRenderLogicalPresentation(hw.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
     /* The texture is sized to the composition, so it has to go with it. Recreated on the
      * next present rather than here, where the renderer may not exist yet. */
-    if (hw.texture) { SDL_DestroyTexture(hw.texture); hw.texture = NULL; }
+    if (hw.texture) {
+        SDL_DestroyTexture(hw.texture);
+        hw.texture = NULL;
+    }
 }
 
 /* WHERE THE COMPOSITION SITS IN THE WINDOW, and how big it is drawn (issue #41).
@@ -2237,16 +2123,11 @@ void hostwin_window_geometry(int win_w, int win_h)
  * buffer -- it is the fallback, and it looks like one.
  */
 void lf2_compose_rect(int comp_w, int comp_h, SDL_FRect *r)
-{
-    geom_compose_rect(hw.win_w, hw.win_h, comp_w, comp_h, &r->x, &r->y, &r->w, &r->h);
-}
+{ geom_compose_rect(hw.win_w, hw.win_h, comp_w, comp_h, &r->x, &r->y, &r->w, &r->h); }
 
 /* How many screen pixels a game pixel becomes. The renderer needs it on its own to scale the
  * quads, and hd2d needs it to put the stage's floor in the rows it is actually drawn in. */
-float lf2_world_scale(void)
-{
-    return geom_world_scale(hw.win_w, hw.win_h);
-}
+float lf2_world_scale(void) { return geom_world_scale(hw.win_w, hw.win_h); }
 
 /* A POINT ON THE WINDOW, IN THE GAME'S OWN PIXELS -- the inverse of the rectangle above, and
  * the thing every hit test needs.
@@ -2262,27 +2143,20 @@ float lf2_world_scale(void)
  * SDL_RenderCoordinatesFromWindow cannot do this job: it undoes SDL's own logical
  * presentation, which this port turns OFF precisely because it does its placement itself. */
 void lf2_window_to_compose(float wx, float wy, float *cx, float *cy)
-{
-    geom_window_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, wx, wy, cx, cy);
-}
+{ geom_window_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, wx, wy, cx, cy); }
 
 /* The same mapping for a pointer, which SDL delivers in POINTS while hw.win_w/h are PIXELS
  * (issue #56). The density enters the geometry here and nowhere else, and it is in geom.h so
  * tests/test_geom.c can walk it across densities without a scaled display to run on. */
 void lf2_pointer_to_compose(float px, float py, float density, float *cx, float *cy)
-{
-    geom_pointer_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, density, px, py, cx, cy);
-}
+{ geom_pointer_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, density, px, py, cx, cy); }
 
 /* Widescreen is ON whenever the window is wider in aspect than the game's own picture, and
  * OFF when it is not. There is no switch: an env var read once at startup was a developer's
  * escape hatch rather than a feature (issue #20). The guest half -- the game's own viewport
  * width words -- is wide_apply() in runtime/overrides/menu.c, and it reads this, so there is
  * one source of truth and not two that can disagree. */
-int lf2_wide_width(void)
-{
-    return hw.width > NATIVE_W ? hw.width : 0;
-}
+int lf2_wide_width(void) { return hw.width > NATIVE_W ? hw.width : 0; }
 
 static void dd_CreateSurface(uint32_t self)
 {
@@ -2322,17 +2196,20 @@ static void dd_CreateSurface(uint32_t self)
      * picture inside a surface whose other 1748 columns are undefined, and would hide the same
      * mismatch for any other screen-sized content surface. */
     const int primary = (caps & DDSCAPS_PRIMARYSURFACE) != 0;
-    int picture_w = 0, picture_h = 0; long bitmaps_loaded = 0;
-    const int picture = !primary && gdi_last_bitmap(&picture_w, &picture_h, &bitmaps_loaded)
-                        && picture_w == w && picture_h == h;
+    int picture_w = 0, picture_h = 0;
+    long bitmaps_loaded = 0;
+    const int picture =
+        !primary && gdi_last_bitmap(&picture_w, &picture_h, &bitmaps_loaded) && picture_w == w && picture_h == h;
     if (picture) gdi_last_bitmap_consume();
     const int follows = primary || (!picture && w == NATIVE_W && h == NATIVE_H);
-    if (follows) { w = hw.width; h = hw.height; }
+    if (follows) {
+        w = hw.width;
+        h = hw.height;
+    }
     if (w <= 0) w = 1;
     if (h <= 0) h = 1;
 
-    const uint32_t obj = make_surface(w, h, primary, follows ? WIDE_MAX : w,
-                                      follows ? HIGH_MAX : h);
+    const uint32_t obj = make_surface(w, h, primary, follows ? WIDE_MAX : w, follows ? HIGH_MAX : h);
     if (primary) primary_surface = obj;
     if (follows) follow_add(obj);
     /* LF2_SURF_DEBUG=1 -- every CreateSurface, not only the ones that follow, and the guest
@@ -2342,16 +2219,18 @@ static void dd_CreateSurface(uint32_t self)
      * surface was created" are different outputs. */
     if (getenv("LF2_SURF_DEBUG")) {
         static int n;
-        fprintf(stderr, "createsurface #%d asked %dx%d caps=%08x from guest %08x -> %dx%d %s\n",
-                ++n, (flags & DDSD_WIDTH) ? (int)LD32(desc + SD_WIDTH) : -1,
-                (flags & DDSD_HEIGHT) ? (int)LD32(desc + SD_HEIGHT) : -1,
-                caps, LD32(R(ESP)), w, h,
-                primary ? "PRIMARY (follows)" : follows ? "FOLLOWS THE WINDOW"
-                        : picture ? "fixed: holds the picture just loaded (issue #50)"
-                        : "fixed");
+        fprintf(stderr, "createsurface #%d asked %dx%d caps=%08x from guest %08x -> %dx%d %s\n", ++n,
+                (flags & DDSD_WIDTH) ? (int)LD32(desc + SD_WIDTH) : -1,
+                (flags & DDSD_HEIGHT) ? (int)LD32(desc + SD_HEIGHT) : -1, caps, LD32(R(ESP)), w, h,
+                primary   ? "PRIMARY (follows)"
+                : follows ? "FOLLOWS THE WINDOW"
+                : picture ? "fixed: holds the picture just loaded (issue #50)"
+                          : "fixed");
         if (n == 1)
-            fprintf(stderr, "createsurface: %ld bitmaps had been loaded before the first "
-                            "surface existed\n", bitmaps_loaded);
+            fprintf(stderr,
+                    "createsurface: %ld bitmaps had been loaded before the first "
+                    "surface existed\n",
+                    bitmaps_loaded);
     }
     ST32(out, obj);
     com_ret(4, DD_OK);
@@ -2365,8 +2244,7 @@ static void dd_CreatePalette(uint32_t self)
     if (src)
         for (int i = 0; i < 256; i++) {
             const uint32_t e = src + (uint32_t)i * 4;
-            p->entries[i] = ((uint32_t)LD8(e) << 16) | ((uint32_t)LD8(e + 1) << 8)
-                          | (uint32_t)LD8(e + 2);
+            p->entries[i] = ((uint32_t)LD8(e) << 16) | ((uint32_t)LD8(e + 1) << 8) | (uint32_t)LD8(e + 2);
         }
     ST32(out, com_create(IF_PALETTE, p));
     com_ret(5, DD_OK);
@@ -2379,7 +2257,11 @@ static void dd_CreateClipper(uint32_t self)
     com_ret(4, DD_OK);
 }
 
-static void dd_SetCooperativeLevel(uint32_t self) { (void)self; com_ret(3, DD_OK); }
+static void dd_SetCooperativeLevel(uint32_t self)
+{
+    (void)self;
+    com_ret(3, DD_OK);
+}
 static void dd_SetDisplayMode(uint32_t self)
 {
     (void)self;
@@ -2392,13 +2274,18 @@ static void dd_SetDisplayMode(uint32_t self)
     static int said;
     if (!said && w > 0 && h > 0 && (w != hw.width || h != hw.height)) {
         said = 1;
-        fprintf(stderr, "ddraw: the game asked for a %dx%d display mode; the window is "
-                        "%dx%d and gives a %dx%d composition, which is what it gets\n",
+        fprintf(stderr,
+                "ddraw: the game asked for a %dx%d display mode; the window is "
+                "%dx%d and gives a %dx%d composition, which is what it gets\n",
                 w, h, hw.win_w, hw.win_h, hw.width, hw.height);
     }
     com_ret(4, DD_OK);
 }
-static void dd_WaitForVerticalBlank(uint32_t self) { (void)self; com_ret(3, DD_OK); }
+static void dd_WaitForVerticalBlank(uint32_t self)
+{
+    (void)self;
+    com_ret(3, DD_OK);
+}
 static void dd_GetCaps(uint32_t self)
 {
     (void)self;
@@ -2427,10 +2314,26 @@ static void dd_GetDisplayMode(uint32_t self)
     com_ret(2, DD_OK);
 }
 
-static void dd_ret_ok1(uint32_t self) { (void)self; com_ret(1, DD_OK); }
-static void dd_ret_ok2(uint32_t self) { (void)self; com_ret(2, DD_OK); }
-static void dd_ret_ok3(uint32_t self) { (void)self; com_ret(3, DD_OK); }
-static void dd_ret_ok4(uint32_t self) { (void)self; com_ret(4, DD_OK); }
+static void dd_ret_ok1(uint32_t self)
+{
+    (void)self;
+    com_ret(1, DD_OK);
+}
+static void dd_ret_ok2(uint32_t self)
+{
+    (void)self;
+    com_ret(2, DD_OK);
+}
+static void dd_ret_ok3(uint32_t self)
+{
+    (void)self;
+    com_ret(3, DD_OK);
+}
+static void dd_ret_ok4(uint32_t self)
+{
+    (void)self;
+    com_ret(4, DD_OK);
+}
 
 static void obj_QueryInterface(uint32_t self)
 {
@@ -2438,23 +2341,42 @@ static void obj_QueryInterface(uint32_t self)
     ST32(ARG(2), self);
     com_ret(3, DD_OK);
 }
-static void obj_AddRef(uint32_t self)  { (void)self; com_ret(1, 1); }
-static void obj_Release(uint32_t self) { (void)self; com_ret(1, 0); }
+static void obj_AddRef(uint32_t self)
+{
+    (void)self;
+    com_ret(1, 1);
+}
+static void obj_Release(uint32_t self)
+{
+    (void)self;
+    com_ret(1, 0);
+}
 
 /* ---- clipper ---- */
-static void clip_SetHWnd(uint32_t self) { (void)self; com_ret(3, DD_OK); }
+static void clip_SetHWnd(uint32_t self)
+{
+    (void)self;
+    com_ret(3, DD_OK);
+}
 static void clip_GetClipList(uint32_t self)
 {
     (void)self;
     const uint32_t rgn = ARG(2), size = ARG(3);
     if (rgn && size) {
         /* One clip rect covering the whole window. */
-        ST32(rgn, 32 + 16); ST32(rgn + 4, 32); ST32(rgn + 8, 1);
-        ST32(rgn + 12, 16); ST32(rgn + 16, 0);
-        ST32(rgn + 20, 0); ST32(rgn + 24, 0);
-        ST32(rgn + 28, (uint32_t)hw.width); ST32(rgn + 32, (uint32_t)hw.height);
-        ST32(rgn + 36, 0); ST32(rgn + 40, 0);
-        ST32(rgn + 44, (uint32_t)hw.width); ST32(rgn + 48, (uint32_t)hw.height);
+        ST32(rgn, 32 + 16);
+        ST32(rgn + 4, 32);
+        ST32(rgn + 8, 1);
+        ST32(rgn + 12, 16);
+        ST32(rgn + 16, 0);
+        ST32(rgn + 20, 0);
+        ST32(rgn + 24, 0);
+        ST32(rgn + 28, (uint32_t)hw.width);
+        ST32(rgn + 32, (uint32_t)hw.height);
+        ST32(rgn + 36, 0);
+        ST32(rgn + 40, 0);
+        ST32(rgn + 44, (uint32_t)hw.width);
+        ST32(rgn + 48, (uint32_t)hw.height);
     }
     if (size) ST32(size, 48);
     com_ret(4, DD_OK);
@@ -2467,7 +2389,10 @@ int ddraw_surface_info(uint32_t obj, uint32_t *pixels, int *w, int *h, int *pitc
     if (obj < 0x30000000u || obj >= 0x40000000u) return 0;
     Surface *s = com_host(obj);
     if (!s) return 0;
-    *pixels = s->pixels; *w = s->w; *h = s->h; *pitch = s->pitch;
+    *pixels = s->pixels;
+    *w = s->w;
+    *h = s->h;
+    *pitch = s->pitch;
     return 1;
 }
 
@@ -2481,28 +2406,74 @@ void ddraw_surface_present(uint32_t obj)
 
 /* Method names, so the call trace can be diffed against Wine's ddraw channel. */
 static const char *DD_NAMES[23] = {
-    "QueryInterface", "AddRef", "Release", "Compact", "CreateClipper", "CreatePalette",
-    "CreateSurface", "DuplicateSurface", "EnumDisplayModes", "EnumSurfaces",
-    "FlipToGDISurface", "GetCaps", "GetDisplayMode", "GetFourCCCodes", "GetGDISurface",
-    "GetMonitorFrequency", "GetScanLine", "GetVerticalBlankStatus", "Initialize",
-    "RestoreDisplayMode", "SetCooperativeLevel", "SetDisplayMode", "WaitForVerticalBlank",
+    "QueryInterface",
+    "AddRef",
+    "Release",
+    "Compact",
+    "CreateClipper",
+    "CreatePalette",
+    "CreateSurface",
+    "DuplicateSurface",
+    "EnumDisplayModes",
+    "EnumSurfaces",
+    "FlipToGDISurface",
+    "GetCaps",
+    "GetDisplayMode",
+    "GetFourCCCodes",
+    "GetGDISurface",
+    "GetMonitorFrequency",
+    "GetScanLine",
+    "GetVerticalBlankStatus",
+    "Initialize",
+    "RestoreDisplayMode",
+    "SetCooperativeLevel",
+    "SetDisplayMode",
+    "WaitForVerticalBlank",
 };
 static const char *SURF_NAMES[36] = {
-    "QueryInterface", "AddRef", "Release", "AddAttachedSurface", "AddOverlayDirtyRect",
-    "Blt", "BltBatch", "BltFast", "DeleteAttachedSurface", "EnumAttachedSurfaces",
-    "EnumOverlayZOrders", "Flip", "GetAttachedSurface", "GetBltStatus", "GetCaps",
-    "GetClipper", "GetColorKey", "GetDC", "GetFlipStatus", "GetOverlayPosition",
-    "GetPalette", "GetPixelFormat", "GetSurfaceDesc", "Initialize", "IsLost", "Lock",
-    "ReleaseDC", "Restore", "SetClipper", "SetColorKey", "SetOverlayPosition",
-    "SetPalette", "Unlock", "UpdateOverlay", "UpdateOverlayDisplay", "UpdateOverlayZOrder",
+    "QueryInterface",
+    "AddRef",
+    "Release",
+    "AddAttachedSurface",
+    "AddOverlayDirtyRect",
+    "Blt",
+    "BltBatch",
+    "BltFast",
+    "DeleteAttachedSurface",
+    "EnumAttachedSurfaces",
+    "EnumOverlayZOrders",
+    "Flip",
+    "GetAttachedSurface",
+    "GetBltStatus",
+    "GetCaps",
+    "GetClipper",
+    "GetColorKey",
+    "GetDC",
+    "GetFlipStatus",
+    "GetOverlayPosition",
+    "GetPalette",
+    "GetPixelFormat",
+    "GetSurfaceDesc",
+    "Initialize",
+    "IsLost",
+    "Lock",
+    "ReleaseDC",
+    "Restore",
+    "SetClipper",
+    "SetColorKey",
+    "SetOverlayPosition",
+    "SetPalette",
+    "Unlock",
+    "UpdateOverlay",
+    "UpdateOverlayDisplay",
+    "UpdateOverlayZOrder",
 };
 static const char *CLIP_NAMES[9] = {
-    "QueryInterface", "AddRef", "Release", "GetClipList", "GetHWnd", "Initialize",
+    "QueryInterface",    "AddRef",      "Release", "GetClipList", "GetHWnd", "Initialize",
     "IsClipListChanged", "SetClipList", "SetHWnd",
 };
 static const char *PAL_NAMES[7] = {
-    "QueryInterface", "AddRef", "Release", "GetCaps", "GetEntries", "Initialize",
-    "SetEntries",
+    "QueryInterface", "AddRef", "Release", "GetCaps", "GetEntries", "Initialize", "SetEntries",
 };
 
 static void ddraw_name_tables(void);
@@ -2520,11 +2491,11 @@ void ddraw_register(void)
     c->method[4] = dd_CreateClipper;
     c->method[5] = dd_CreatePalette;
     c->method[6] = dd_CreateSurface;
-    c->method[10] = dd_ret_ok1;              /* FlipToGDISurface */
+    c->method[10] = dd_ret_ok1; /* FlipToGDISurface */
     c->method[11] = dd_GetCaps;
     c->method[12] = dd_GetDisplayMode;
-    c->method[18] = dd_ret_ok2;              /* Initialize */
-    c->method[19] = dd_ret_ok1;              /* RestoreDisplayMode */
+    c->method[18] = dd_ret_ok2; /* Initialize */
+    c->method[19] = dd_ret_ok1; /* RestoreDisplayMode */
     c->method[20] = dd_SetCooperativeLevel;
     c->method[21] = dd_SetDisplayMode;
     c->method[22] = dd_WaitForVerticalBlank;
@@ -2546,10 +2517,10 @@ void ddraw_register(void)
     c->method[17] = surf_GetDC;
     c->method[21] = surf_GetPixelFormat;
     c->method[22] = surf_GetSurfaceDesc;
-    c->method[24] = surf_ret_ok1;            /* IsLost */
+    c->method[24] = surf_ret_ok1; /* IsLost */
     c->method[25] = surf_Lock;
     c->method[26] = surf_ReleaseDC;
-    c->method[27] = surf_ret_ok1;            /* Restore */
+    c->method[27] = surf_ret_ok1; /* Restore */
     c->method[28] = surf_SetClipper;
     c->method[29] = surf_SetColorKey;
     c->method[31] = surf_SetPalette;
@@ -2565,10 +2536,10 @@ void ddraw_register(void)
     c->method[1] = obj_AddRef;
     c->method[2] = obj_Release;
     c->method[3] = clip_GetClipList;
-    c->method[4] = dd_ret_ok2;               /* GetHWnd */
-    c->method[5] = dd_ret_ok3;               /* Initialize */
-    c->method[6] = dd_ret_ok2;               /* IsClipListChanged */
-    c->method[7] = dd_ret_ok3;               /* SetClipList */
+    c->method[4] = dd_ret_ok2; /* GetHWnd */
+    c->method[5] = dd_ret_ok3; /* Initialize */
+    c->method[6] = dd_ret_ok2; /* IsClipListChanged */
+    c->method[7] = dd_ret_ok3; /* SetClipList */
     c->method[8] = clip_SetHWnd;
 
     c = &com_class[IF_PALETTE];
@@ -2577,9 +2548,9 @@ void ddraw_register(void)
     c->method[0] = obj_QueryInterface;
     c->method[1] = obj_AddRef;
     c->method[2] = obj_Release;
-    c->method[3] = dd_ret_ok2;               /* GetCaps */
+    c->method[3] = dd_ret_ok2; /* GetCaps */
     c->method[4] = pal_GetEntries;
-    c->method[5] = dd_ret_ok4;               /* Initialize(dd, flags, table) */
+    c->method[5] = dd_ret_ok4; /* Initialize(dd, flags, table) */
     c->method[6] = pal_SetEntries;
 
     ddraw_name_tables();
@@ -2603,7 +2574,6 @@ typedef void (*Handler)(void);
 
 Handler gfx_lookup(const char *dll, const char *name)
 {
-    if (strcmp(dll, "DDRAW.dll") == 0 && strcmp(name, "DirectDrawCreate") == 0)
-        return ddraw_create;
+    if (strcmp(dll, "DDRAW.dll") == 0 && strcmp(name, "DirectDrawCreate") == 0) return ddraw_create;
     return NULL;
 }

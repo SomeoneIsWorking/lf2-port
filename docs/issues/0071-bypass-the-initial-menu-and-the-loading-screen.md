@@ -5,7 +5,7 @@ status: resolved
 symptom: Every run boots to the front-end menu on frame 1, then the mode menu, then a long data load before gameplay. There is no way to jump straight into a match
 tags: reported,feature,startup
 created: 2026-08-16
-updated: 2026-08-21
+updated: 2026-08-24
 ---
 
 ## Reported
@@ -50,3 +50,6 @@ USER 2026-08-20 additionally reports the loading screen itself is still visible.
 
 ### Resolution (2026-08-21)
 The rejected startup path reproduced the launcher's Game Start transition after initialization, so it still encoded frontend selection semantics and allowed loader presentation. fn_00419e40 now runs the original world constructor then establishes loader mode as the port's initial state before the first update; no input or launcher branch is synthesized. Loader frames are discarded while SDL stays hidden, and the window is revealed only after the first mode-menu frame is presented. Smoke and the default launcher verify modemenu is first.
+
+### Note (2026-08-24)
+2026-08-24 correction (tracked as reported issue #102): the 2026-08-21 resolution was not a bypass. It kept top mode 1, hid SDL, discarded host presents, and called loading complete when top mode became 2 even though fn_0041bc90's one-time data initializer had not run yet. The corrected route creates SDL visible, bypasses mode 1, and calls that initializer synchronously with progress drawing/presentation scoped off at the guest boundary.

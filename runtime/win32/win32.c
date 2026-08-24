@@ -181,12 +181,13 @@ static void h_CreateWindowExA(void)
      * panel: at 200% a 794x550-point window is a 1588x1100 drawable, which is a world scale of
      * 2 and the game's own 794 columns of world -- the picture the player asked for, drawn at
      * twice the resolution rather than blown up to it. */
-    hw.window = SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h,
-                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
+    hw.window =
+        SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!hw.window) {
         fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         abort();
     }
+    fprintf(stderr, "startup: window created visible\n");
     /* THE GPU RENDERER BY NAME, not whichever SDL picks. SDL's default order puts the
      * OpenGL backend first, and that one has no SDL_GPUDevice -- so SDL_GPURenderState, and
      * with it every shader the HD2D pass is made of, is simply unavailable on it. The

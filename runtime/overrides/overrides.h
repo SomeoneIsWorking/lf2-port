@@ -8,7 +8,7 @@
  * replace -- one screen's behaviour is usually spread over several overrides, and one
  * override (fn_0043f010 draws everything) serves several screens:
  *
- *   boot_guest.c  construction-time ownership of the port's initial loader state
+ *   boot_guest.c  construction-time ownership of the port's direct data load
  *   menu.c        the retired front end's draw filtering and shared widescreen geometry
  *   screens.c     the post-load screens' mouse -- mode menu, character select, overlay
  *   input.c       the per-frame gather: devices to the seven buttons a fighter acts on
@@ -33,6 +33,7 @@
  * not have to open seven files:
  *
  *   fn_00419e40  boot_guest.c  world construction -- initial loader state before first update
+ *   fn_0043e940  boot_guest.c  guest present -- declined only inside the direct startup load
  *   fn_004246b0  menu.c     retired front-end draw boundary and widescreen geometry
  *   fn_00423b00  menu.c     element draw -- declines the advertising panel by descriptor
  *   fn_00419a60  input.c    per-frame player input -- devices into the game's buttons
@@ -68,7 +69,7 @@
  * character selection and the match, which is why "is a match on screen" has to be asked of
  * panel_hud_up() rather than of this. */
 enum { MODE_ENTER = 1, MODE_IN_GAME = 2 };
-uint32_t game_top_mode(void);          /* menu.c owns the storage */
+uint32_t game_top_mode(void); /* menu.c owns the storage */
 
 /* Set when a mouse click on a ported screen should read as the keyboard device's ATTACK for
  * a gather or two, so the game does its own dispatch, sound and screen change rather than
@@ -79,11 +80,10 @@ extern int mouse_confirm_frames;
 void charselect_mouse(void);
 void modemenu_mouse(void);
 void overlay_mouse(void);
-int  overlay_open(void);
+int overlay_open(void);
 
 /* The widescreen width in force, or 0 for the game's own 794 (menu.c). */
-int  lf2_wide_width(void);
-
+int lf2_wide_width(void);
 
 /* ---- the game's own .data, where more than one of these files reads it ----
  *
@@ -103,16 +103,16 @@ enum { GX_MOUSE_X = 0x004546f0, GX_MOUSE_Y = 0x00453cdc };
 enum { OVERLAY_SEL = 0x0044d06c };
 
 /* The ad system's update notice in the top-right corner; declined in text.c. */
-enum { MENU_CLIP7 = 0x00451188 };            /* sheet handle, loaded from "MENU_CLIP7" */
-enum { CURSOR_SHEET = 0x00451170 };          /* sheet handle of the game's own mouse cursor */
-enum { NOTICE_X = 725, NOTICE_Y = 5 };       /* the game's own constants for the notice */
+enum { MENU_CLIP7 = 0x00451188 };      /* sheet handle, loaded from "MENU_CLIP7" */
+enum { CURSOR_SHEET = 0x00451170 };    /* sheet handle of the game's own mouse cursor */
+enum { NOTICE_X = 725, NOTICE_Y = 5 }; /* the game's own constants for the notice */
 
 /* input.c: which player the keyboard claimed, or -1. The mouse drives the same one, so the
  * two never disagree about who they are. */
-int  keyboard_player(void);
+int keyboard_player(void);
 
 /* runtime/win32/win32.c */
-int  hostwin_pointer(int *x, int *y);
-int  hostwin_mouse_clicked(void);      /* one-shot, per press */
+int hostwin_pointer(int *x, int *y);
+int hostwin_mouse_clicked(void); /* one-shot, per press */
 
 #endif

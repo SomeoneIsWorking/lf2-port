@@ -475,12 +475,17 @@ and with how busy the machine is, and every regression test's route was once a s
 at a moving target (issue #18, which went red three times for that reason and never for a real
 one). Every route in `tools/` is screen-keyed end to end, the opening press included.
 
-**There is no opening press or emulated Game Start branch.** The overridden world constructor
-establishes loader mode as its initial state before the first update can accept input. The real
-loader runs, but its presentation is discarded while the SDL window remains hidden. The window
-is revealed only after the first mode-menu frame has been rendered and presented. Routes
-therefore begin at `@modemenu`; a click/key/button aimed at a hidden launcher is a regression,
-not a boot mechanism (issue #71).
+**There is no opening press, emulated Game Start branch, or hidden startup window.** The SDL
+window is visible from creation. The overridden world constructor marks its required one-time
+load, and the first update calls the real mode-2 data initializer synchronously instead of
+entering mode 1, whose only job was to set up and present the loading picture before selecting
+mode 2. Before it, the mode-0 shadow body synchronously performs its one-time keyboard-table and
+menu-resource initialization with drawing and presentation declined; those constructors have no
+separate guest function and remain authoritative there. The mode-2 initializer still owns all
+required sounds, registries, objects and descriptors, but its progress draws and presents are
+also declined at their guest function boundaries during that one scoped call. Ordinary
+presentation resumes after it returns, so the first presented/interactable screen is `modemenu`
+(issues #71 and #102).
 
 A press whose screen never appears **never fires**, and the run says so at exit along with the
 screens that did appear — silently not pressing is how a route that missed its screen reads as
@@ -555,7 +560,7 @@ whose defaults were the numpad; the investigation notes below still reference th
 
 ### Reaching a match, deterministically
 
-Both `tools/routes/smoke_test.sh` (mouse and keyboard) and `tools/routes/controller_test.sh` (pad only)
+Both `tools/routes/smoke_test.py` (mouse and keyboard) and `tools/routes/controller_test.sh` (pad only)
 now play a VS match every run. The part that used to be luck was the pre-fight overlay —
 Fight! / Reset All / Reset Random / Background / Difficulty / Exit — where a blind press
 landed on whatever was selected, usually Reset Random, which re-rolls the characters and
@@ -1270,7 +1275,7 @@ overrides *include* that header rather than keeping their own copy of the arithm
 `tools/e2e.py` keeps the rest — the questions only a running instance can answer. It runs
 them one at a time and prints a summary that distinguishes a skip from a pass.
 
-`tools/routes/smoke_test.sh` drives the port deep into the game headless and asserts what has
+`tools/routes/smoke_test.py` drives the port deep into the game headless and asserts what has
 actually broken before: colour-keyed blits, sound effects firing, a non-zero mix peak, the
 device being pulled, music decoding, and no aborts. Thresholds sit far below observed
 values so it fails on "broken", not on "slightly different". It skips itself if the game

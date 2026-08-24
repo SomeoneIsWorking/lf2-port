@@ -11,6 +11,11 @@ enum { BOOT_GUEST_FRONTEND = 0, BOOT_GUEST_LOAD = 1, BOOT_GUEST_GAME = 2 };
 static inline uint32_t boot_guest_target_mode(uint32_t mode)
 { return mode == BOOT_GUEST_FRONTEND ? BOOT_GUEST_LOAD : mode; }
 
-void boot_guest_prepare_local_players(void);
+static inline int boot_guest_load_required(uint32_t mode) { return mode == BOOT_GUEST_LOAD; }
+
+/* Complete the game's one-time data initialisation directly, without entering its retired
+ * mode-1 loading-screen branch. `frame_surface` is fn_004246b0's one guest argument. */
+void boot_guest_load_data(uint32_t game, uint32_t frame_surface);
+int boot_guest_loading_data(void);
 
 #endif

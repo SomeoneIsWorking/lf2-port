@@ -87,6 +87,7 @@ add_executable(lf2
     runtime/win32/win32.c
     runtime/video/blt_trace.c
     runtime/video/ddraw.c
+    runtime/video/host_frame.c
     runtime/video/result_panel.c
     runtime/video/stage_banner.c
     runtime/audio/dsound.c
@@ -172,7 +173,7 @@ add_dependencies(lf2 stages)
 # left unchecked -- which is how four real warnings sat unnoticed.
 set_source_files_properties(
     runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c
-    runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/result_panel.c runtime/video/stage_banner.c
+    runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/host_frame.c runtime/video/result_panel.c runtime/video/stage_banner.c
     runtime/audio/dsound.c runtime/win32/dshow.c
     runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/app/script.c
     runtime/app/options.c
