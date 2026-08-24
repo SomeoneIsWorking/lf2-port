@@ -1,10 +1,11 @@
 ---
 id: C060
 kind: claim
-status: holds
+status: falsified
 created: 2026-08-24
 tags: startup
 depends: runtime/win32/win32.c#h_CreateWindowExA, runtime/app/startup.c#startup_load_data, runtime/overrides/boot_guest.c#boot_guest_load_data, runtime/overrides/boot_guest.c#fn_0043e940, runtime/overrides/text.c#fn_0043f010
+falsified_on: 2026-08-25
 ---
 
 ## Claim
@@ -18,3 +19,9 @@ The ui_escape X11/XTEST route observed the visible game window before the synchr
 ## What would falsify it
 
 A normal startup presents the retired front end or loading picture, hides the SDL window until loading completes, requires an opening input event, or reaches a screen before modemenu.
+
+## FALSIFIED 2026-08-25
+
+The visible synchronous result still holds, but its claimed mechanism was replaced: startup.c and the guest mode-2 initializer path are gone. The new native port entry and nine phased initializers require a new dependency/evidence record.
+
+> Anything that cited this claim as proof must be re-checked. Grep the repo for it.

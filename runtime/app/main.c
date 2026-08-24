@@ -2,6 +2,7 @@
 #include "com.h"
 #include "hostwin.h"
 #include "config.h"
+#include "port_entry.h"
 
 void import_stats_report(void);
 void scan_prof_report(void);
@@ -17,9 +18,6 @@ void dshow_register(void);
 #include <stdio.h>
 #include <stdlib.h>
 
-/* PE AddressOfEntryPoint + image base. */
-enum { ENTRY = 0x445560 };
-
 int main(int argc, char **argv)
 {
     const char *exe = argc > 1 ? argv[1] : "game/lf2.exe";
@@ -30,7 +28,7 @@ int main(int argc, char **argv)
     dshow_register();
     com_init();
     guest_load_image(exe);
-    printf("image loaded, %d functions, entering at %08x\n", g_nfuncs, ENTRY);
+    printf("image loaded, %d functions; using native port entry\n", g_nfuncs);
     /* The game exits through the CRT's exit(), not by returning from its entry point, so
      * teardown has to be an atexit hook -- calling it after dispatch() would never run.
      * Registered here at startup rather than lazily, so it is armed on every path. */
@@ -42,7 +40,5 @@ int main(int argc, char **argv)
     atexit(blt_stack_report);
     atexit(loadprof_report);
 
-    dispatch(ENTRY);
-    printf("returned from entry point\n");
-    return 0;
+    return port_entry_run();
 }

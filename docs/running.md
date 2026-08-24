@@ -456,6 +456,19 @@ neither path first reduces the SVG to a tiny bitmap.
 `tools/e2e.py settings ui_global` proves the document renders both shared textures and opens on
 all four screens.
 
+The CHEATS pane contains only LF2's five real cheat actions: the `LF2.NET` hidden roster, F6
+Unlimited MP, F7 Restore Fighters, F8 Drop Items, and F9 Destroy Items. F1-F5, F10-F12, and the
+binary's internal "Function Keys Locked" state are not menu features. The native F3/F6-F9 leaves
+preserve LF2's event masks, counters, countdown checks, and world actions while removing the
+hidden-code/mode and permanent-lock gates. `tools/e2e.py cheats` proves an RmlUi command becomes one
+released function-key pulse consumed by LF2's own state.
+
+During a match, opening RmlUi snapshots and pins LF2's three pause-pipeline words. World state is
+therefore frozen while the ordinary draw/present tail and the RmlUi document continue rendering;
+closing restores the exact prior pause state. This is a guest update pause, not a frozen screenshot.
+`tools/e2e.py ui_global` verifies identical outside-document pixels while open and resumed changes
+after close.
+
 `tools/e2e.py ui_escape` is the physical-input gate. It runs the real X11 window under Xvfb,
 uses XTEST Escape to open and close RmlUi, clicks the Graphics tab with a real window-relative
 pointer, and activates Continue with the configured keyboard Attack action. `LF2_KEY_SCRIPT`
@@ -475,17 +488,15 @@ and with how busy the machine is, and every regression test's route was once a s
 at a moving target (issue #18, which went red three times for that reason and never for a real
 one). Every route in `tools/` is screen-keyed end to end, the opening press included.
 
-**There is no opening press, emulated Game Start branch, or hidden startup window.** The SDL
-window is visible from creation. The overridden world constructor marks its required one-time
-load, and the first update calls the real mode-2 data initializer synchronously instead of
-entering mode 1, whose only job was to set up and present the loading picture before selecting
-mode 2. Before it, the mode-0 shadow body synchronously performs its one-time keyboard-table and
-menu-resource initialization with drawing and presentation declined; those constructors have no
-separate guest function and remain authoritative there. The mode-2 initializer still owns all
-required sounds, registries, objects and descriptors, but its progress draws and presents are
-also declined at their guest function boundaries during that one scoped call. Ordinary
-presentation resumes after it returns, so the first presented/interactable screen is `modemenu`
-(issues #71 and #102).
+**There is no opening press, emulated Game Start branch, hidden startup window, PE entry dispatch,
+or guest WinMain.** `runtime/app/port_entry.c` is the entry after PE loading. It invokes the three
+actual game constructors from the PE initializer table, creates the window, then runs the
+RE-ported frontend/world initialization as nine bounded native phases. The old mode-0 frontend,
+mode-1 loading picture, and monolithic mode-2 initialization sequence are not entered. Each phase
+pumps host events for Cocoa without advancing game state. One ordinary mode-menu frame is rendered
+after every required resource exists; music handoff and the native main loop come afterwards. The
+smoke route requires the native-entry/data-begin/data-complete markers in that order and rejects
+the retired guest-entry/loading-state messages (issues #71, #102, and #103).
 
 A press whose screen never appears **never fires**, and the run says so at exit along with the
 screens that did appear — silently not pressing is how a route that missed its screen reads as
@@ -1193,9 +1204,15 @@ prefix**, so the terminator is what to trust, not the prefix. And the audio devi
 opened when a sound *effect* first played, so music alone — which is all that happens on
 the menus — decoded a full track that nothing ever pulled.
 
-ffmpeg is run with `fork`/`exec`, not `popen`: the path comes from the game's data files,
-and interpolating it into a shell command string would make a filename a shell injection.
-Quoting it would be a patch over the wrong mechanism — no shell needs to be involved.
+ffmpeg is run directly with `posix_spawnp`, not `popen`: the path comes from the game's data
+files, and interpolating it into a shell command string would make a filename a shell injection.
+Quoting it would be a patch over the wrong mechanism—no shell needs to be involved. Decode and
+child exit share a 30-second deadline; a wedged decoder is killed and reaped instead of hanging
+boot. Missing ffmpeg is reported with the spawn error and remains non-fatal.
+
+The SDL pull device is paused across the nine native initialization phases. Buffer publication is
+locked, and the first game frame is presented before the explicit music handoff, so the audio
+thread cannot observe half-built startup buffers or begin menu music during initialization.
 
 The graph's `Stop` and `Pause` silence the music. Without that a track change layers the
 new track over the old one, since the graph is the only thing that knows a track is
@@ -1206,9 +1223,8 @@ which is a gain of 0.562 — and the measured mix peak is 18426/32767 = 0.562, s
 conversion is right rather than merely plausible.
 
 The decode is synchronous and measured at **0.15 s** for a 150-second track, so it needs no
-threading or streaming. Both paths are verified: with ffmpeg the track loads and mixes;
-with `PATH=/nonexistent` it prints `ffmpeg not found on PATH`, reports `music-frames=0` and
-carries on silently.
+threading or streaming. Both paths are verified: with ffmpeg the track loads and mixes; without
+it the spawn error is named, `music-frames=0`, and the game carries on silently.
 
 ## CPU use
 
@@ -1447,7 +1463,7 @@ is sleep-bound rather than work-bound. Any load-time figure taken on this machin
    that reported this was added precisely because the previous attempt was judged by its
    effect rather than by whether it fired.
 
-### Resolved: 8.4-10.5 s to 1.2 s, and it was never the drawing
+### Resolved: native decrypt and object-frame parser
 
 Every attempt above aimed at the rendering because stack sampling pointed there. It was
 wrong, and the way it was settled is the point: `LF2_LOAD_PROF=1` times `surf_Blt`,
@@ -1477,8 +1493,10 @@ is this key seen from its offset, with the wrap missing.
 
 Byte-exactness is proved, not eyeballed: `LF2_DECRYPT_DUMP=<dir>` copies each decrypted file
 out, and it lives in the **override** so the control run dumps too. One run with
-`LF2_SLOW_DECRYPT=1` (the game's own loop) against one without gives 77 files, 2.2 MB,
-**all byte-identical**.
+`LF2_SLOW_DECRYPT=1` (the game's own loops) against one without gives 78 files, 2.06 MB,
+**all byte-identical**. The 78th is `stage.dat`, which goes through the binary's second copy of
+the same byte-at-a-time cipher (`fn_00414a30`); both entry points now share one native
+implementation.
 
 **And a skipped sleep now credits the guest clock.** Skipping the frame-pacing `Sleep`
 without moving the clock does not end the caller's deadline loop — it converts the wait into
@@ -1498,16 +1516,27 @@ shape gives the structure away: every object file is opened, decrypted to
 `data/temporary.txt`, and reopened, so the sites come in pairs with matching counts —
 77/77, 65/65, 12/12.
 
-**What is left.** 1.2 s, of which 74% now genuinely *is* drawing: 2782 `surf_Blt`, 363
-`StretchBlt`, 394 colour fills and 342 presents across the load. Cutting it means fewer
-loading-screen repaints — and note that presented frames are what `tools/*_test.sh` schedule
-their input against, so anything that changes the frame count shifts every scripted route.
+**The parser is native too.** `fn_0040ef70` used to make 466,462 guest→host scanner calls while
+constructing 65 object definitions. The override super-calls LF2's constructor over the metadata
+prefix—keeping bitmap, sound, weapon-strength, and resource setup authoritative—then tokenizes the
+frame suffix natively. It owns scalar fields, object/body/catch/weapon points, attack and body
+records, sound references, derived bounds, and the binary's `feof`-dependent checksum quirk.
+`LF2_SLOW_OBJECT_PARSER=1` restores the original frame parser, while
+`LF2_OBJECT_PARSER_DUMP=<dir>` writes the complete object block plus dynamic records, sound strings,
+and cumulative checksum. `tools/e2e.py object_parser` runs both paths and requires all 65 dumps to
+be byte-identical.
 
-An earlier follow-up did **not** pay off, recorded so it is not tried again: `h_fscanf`
-called `getenv` on every one of those 2.5M invocations, and caching it changed the load time
-by nothing measurable (10.1 s / 10.3 s against 10.2 s). glibc's `getenv` is cheap next to the
-surrounding parse. The caching was kept because it is the right shape for a flag on a hot
-path, not because it bought anything.
+The current profile is 1.22 s of active loading and 17,661 scanner calls; only 9 ms is inside the
+scanner. The remainder is actual image/resource construction and recompiled control flow, not a
+token parser or loading-screen wait. `LF2_STARTUP_TRACE=1` prints the nine native phase durations;
+`LF2_SCAN_PROF=1` prints scanner calls and time; `LF2_LOAD_PROF=1` retains the rendering/decrypt
+denominator. Development builds explicitly use Clang `RelWithDebInfo`; the previously unset CMake
+build type made the entire generated translation run at `-O0`.
+
+An earlier follow-up did **not** pay off, recorded so it is not tried again: caching the
+`h_fscanf` diagnostic flag did not measurably change the old byte-at-a-time parser. The useful
+dispatch fix was caching `LF2_WATCH` once at the common import boundary; its value is immutable for
+a process and re-reading the environment on every import had no semantic purpose.
 
 ## Persistent mappings, first come first served
 
@@ -1979,23 +2008,6 @@ regeneration refuses either missing tool rather than silently leaving one backen
   falls in, `screen_offset_x` by whether the surface is wider than 794 — and a line carrying
   only the final x cannot show which of them declined or why. That is how issue #54 was
   settled, and it overturned two earlier guesses about which branch was at fault.
-
-- **`LF2_OVERLAY_PANEL_DEBUG=1`** reports how many complete native pre-fight panels were
-  appended after FUN_00429730's final static producer, how many original final parts remain
-  underneath, the exact output raster dimensions and CJK run rectangles, selected row, and
-  Background/Stage label branch. **`LF2_OVERLAY_PANEL_FORCE_FAILURE=1`** is its acceptance-only
-  allocation-failure diagnostic: it declines the appended panel after the original draw so a
-  capture must expose the complete authored bitmap underneath. `tools/e2e.py overlay_labels` is
-  issue #84's persistent acceptance: explicit VS, Stage, and forced-fallback arms run serially at
-  3840×1975, authenticate the 1092×596 panel raster and the game's later dynamic values, require
-  zero dropped draws and texture failures, sample both authored black value wells, independently
-  require pixels and within-logical-cell edge detail in all 20 native CJK glyph cells and every
-  Latin-before/after run, and reject both a logical nearest-upscaled negative and a native-CJK-only
-  hybrid made from the same captured panel. At this fixed output the six CJK run rectangles are
-  `(564,57,94,62)`, `(503,143,282,62)`, `(568,229,282,62)`, `(487,314,94,62)`,
-  `(487,404,94,62)`, and `(544,497,94,62)` relative to the 1092×596 panel; the route rejects a
-  runtime report that moves or enlarges them before sampling. It strips an inherited `LF2_*`
-  environment from every arm.
 
 - **`LF2_BG_TABLE=1`** prints the loaded stage's layer table once, the first frame a match is
   actually on screen. **`LF2_BG_TABLE=all`** prints *every* background record the registry

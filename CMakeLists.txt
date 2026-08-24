@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.16)
 project(lf2_port C CXX)
 
+# The recompiled game is intentionally very literal C: every guest instruction becomes
+# explicit register/memory operations.  Leaving a single-config generator at CMake's empty
+# build type compiles that hot dispatch code at -O0 and turns the data parser into seconds of
+# avoidable host work.  Keep debug symbols, but make the runnable product optimized by default.
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -83,6 +92,7 @@ add_executable(lf2
     runtime/cpu/strops.c
     runtime/cpu/rwatch.c
     runtime/win32/imports.c
+    runtime/win32/paths.c
     runtime/win32/com.c
     runtime/win32/win32.c
     runtime/video/blt_trace.c
@@ -95,15 +105,20 @@ add_executable(lf2
     runtime/win32/gdi.c
     runtime/app/loadprof.c
     runtime/app/pause.c
+    runtime/app/function_keys.c
     runtime/app/options.c
     runtime/app/config.c
-    runtime/app/startup.c
+    runtime/app/port_entry.c
     runtime/input/gamepad.c
     runtime/input/bindings.c
     runtime/input/keyboard.c
     runtime/app/script.c
     runtime/win32/wsock.c
     runtime/overrides/boot_guest.c
+    runtime/overrides/startup_init.c
+    runtime/overrides/startup_frontend.c
+    runtime/overrides/startup_world.c
+    runtime/overrides/cheats.c
     runtime/overrides/menu.c
     runtime/overrides/screens.c
     runtime/overrides/input.c
@@ -112,6 +127,8 @@ add_executable(lf2
     runtime/overrides/hud.c
     runtime/overrides/text.c
     runtime/overrides/assets.c
+    runtime/overrides/object_parser.c
+    runtime/overrides/object_frames.c
     runtime/overrides/background.c
     runtime/overrides/objects.c
     runtime/overrides/audio_pan.c
@@ -124,7 +141,6 @@ add_executable(lf2
     runtime/video/stagegeom.c
     runtime/ui/device_assets.c
     runtime/ui/device_icons.c
-    runtime/ui/overlay_panel.c
     runtime/ui/ui_rgba.c
     runtime/ui/settings_ui.cpp
     runtime/ui/rmlui_input.cpp
@@ -172,15 +188,19 @@ add_dependencies(lf2 stages)
 # would bury the signal, so it is compiled without them rather than the whole target being
 # left unchecked -- which is how four real warnings sat unnoticed.
 set_source_files_properties(
-    runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c
+    runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c runtime/win32/paths.c
     runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/host_frame.c runtime/video/result_panel.c runtime/video/stage_banner.c
     runtime/audio/dsound.c runtime/win32/dshow.c
-    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/app/script.c
+    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/app/function_keys.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/app/script.c
     runtime/app/options.c
     runtime/app/config.c
-    runtime/app/startup.c
+    runtime/app/port_entry.c
     runtime/win32/wsock.c
     runtime/overrides/boot_guest.c
+    runtime/overrides/startup_init.c
+    runtime/overrides/startup_frontend.c
+    runtime/overrides/startup_world.c
+    runtime/overrides/cheats.c
     runtime/overrides/menu.c
     runtime/overrides/screens.c
     runtime/overrides/input.c
@@ -189,6 +209,8 @@ set_source_files_properties(
     runtime/overrides/hud.c
     runtime/overrides/text.c
     runtime/overrides/assets.c
+    runtime/overrides/object_parser.c
+    runtime/overrides/object_frames.c
     runtime/overrides/background.c
     runtime/overrides/objects.c
     runtime/overrides/audio_pan.c
@@ -199,7 +221,6 @@ set_source_files_properties(
     runtime/video/engine_visibility_probe.c
     runtime/video/engine_textures.c
     runtime/video/stagegeom.c
-    runtime/ui/overlay_panel.c
     runtime/ui/ui_rgba.c
     runtime/app/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
@@ -234,6 +255,16 @@ target_link_libraries(test_keyboard PRIVATE SDL3::SDL3)
 target_compile_options(test_keyboard PRIVATE -Wall -Wextra)
 add_test(NAME keyboard COMMAND test_keyboard)
 
+add_executable(test_function_keys tests/test_function_keys.c runtime/app/function_keys.c)
+target_include_directories(test_function_keys PRIVATE runtime/app runtime/video)
+target_compile_options(test_function_keys PRIVATE -Wall -Wextra)
+add_test(NAME function_keys COMMAND test_function_keys)
+
+add_executable(test_cheats tests/test_cheats.c runtime/overrides/cheats.c)
+target_include_directories(test_cheats PRIVATE runtime/cpu runtime/video runtime/app runtime/overrides)
+target_compile_options(test_cheats PRIVATE -Wall -Wextra)
+add_test(NAME cheats COMMAND test_cheats)
+
 add_executable(test_stage_banner tests/test_stage_banner.c runtime/video/stage_banner.c)
 target_include_directories(test_stage_banner PRIVATE runtime/video)
 target_compile_options(test_stage_banner PRIVATE -Wall -Wextra)
@@ -244,26 +275,12 @@ target_include_directories(test_guest_cursor PRIVATE runtime/overrides)
 target_compile_options(test_guest_cursor PRIVATE -Wall -Wextra)
 add_test(NAME guest_cursor COMMAND test_guest_cursor)
 
-add_executable(test_boot_mode tests/test_boot_mode.c)
-target_include_directories(test_boot_mode PRIVATE runtime/overrides)
-target_compile_options(test_boot_mode PRIVATE -Wall -Wextra)
-add_test(NAME boot_mode COMMAND test_boot_mode)
-
-add_executable(test_overlay_panel tests/test_overlay_panel.c)
-target_include_directories(test_overlay_panel PRIVATE runtime/ui runtime/overrides)
-target_compile_options(test_overlay_panel PRIVATE -Wall -Wextra)
-add_test(NAME overlay_panel COMMAND test_overlay_panel)
-
 add_executable(test_ui_rgba tests/test_ui_rgba.c runtime/ui/ui_rgba.c)
 target_include_directories(test_ui_rgba PRIVATE runtime/ui)
 target_compile_options(test_ui_rgba PRIVATE -Wall -Wextra)
 add_test(NAME ui_rgba COMMAND test_ui_rgba)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
-add_test(NAME overlay_font COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_overlay_font.py
-         ${CMAKE_SOURCE_DIR}/assets/fonts/DroidSansFallback-LF2OverlaySubset.ttf
-         ${CMAKE_SOURCE_DIR}/runtime/ui/overlay_panel.c)
 add_test(NAME structure COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tools/build/check_structure.py)
 add_test(NAME clang_format COMMAND ${Python3_EXECUTABLE}
@@ -313,8 +330,8 @@ endif()
 
 # ---- the text faces, COMPILED IN (issue #45) ----
 #
-# assets/fonts/ holds two unmodified SIL OFL 1.1 faces and one documented Apache-2.0 CJK subset;
-# they are turned into byte arrays here rather than opened from disk at runtime. There is no font search, no
+# assets/fonts/ holds two unmodified SIL OFL 1.1 faces. They are turned into byte arrays here
+# rather than opened from disk at runtime. There is no font search, no
 # system font, and no fallback. A port whose text silently changes with whatever the host has
 # installed is a port whose screenshots cannot be compared with each other -- and the previous
 # arrangement did exactly that, walking a list of nine candidate paths and quietly dropping to
@@ -343,7 +360,6 @@ file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/gen)
 set(LF2_FONT_SOURCES "")
 lf2_embed_bytes(lf2_font_sans ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationSans-Regular.ttf LF2_FONT_SOURCES)
 lf2_embed_bytes(lf2_font_mono ${CMAKE_SOURCE_DIR}/assets/fonts/LiberationMono-Regular.ttf LF2_FONT_SOURCES)
-lf2_embed_bytes(lf2_font_overlay_cjk ${CMAKE_SOURCE_DIR}/assets/fonts/DroidSansFallback-LF2OverlaySubset.ttf LF2_FONT_SOURCES)
 target_sources(lf2 PRIVATE ${LF2_FONT_SOURCES})
 
 # Device art is shared by every port rather than copied into each tree. Consumers embed the

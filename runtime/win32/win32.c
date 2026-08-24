@@ -1037,6 +1037,7 @@ static void h_PostQuitMessage(void)
 /* The port asking the game to shut down, through the same path the game's own quit takes --
  * so teardown, the atexit reports and a clean exit status all still happen. */
 void hostwin_request_quit(void) { quit_posted = 1; }
+int hostwin_quit_requested(void) { return quit_posted; }
 
 int hostwin_width(void) { return hw.width; }
 int hostwin_height(void) { return hw.height; }

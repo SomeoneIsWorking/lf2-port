@@ -13,6 +13,7 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "loadprof.h"
+#include "paths.h"
 #include "result_panel.h"
 
 #include <SDL3/SDL.h>
@@ -32,20 +33,18 @@ static void ret_stdcall(int nargs, uint32_t value)
     R(ESP) += 4 + 4u * (unsigned)nargs;
 }
 
-int  ddraw_surface_info(uint32_t obj, uint32_t *pixels, int *w, int *h, int *pitch);
+int ddraw_surface_info(uint32_t obj, uint32_t *pixels, int *w, int *h, int *pitch);
 void ddraw_surface_present(uint32_t obj);
-const char *host_path_of(uint32_t guest_str);
-
 typedef struct {
-    int      w, h, pitch, bpp;
-    uint8_t *pixels;            /* top-down, one byte per pixel for 8-bit */
+    int w, h, pitch, bpp;
+    uint8_t *pixels; /* top-down, one byte per pixel for 8-bit */
     uint32_t pal[256];
 } Bitmap;
 
 enum { MAX_GDI = 512, H_BITMAP = 0xB0000000u, H_DC = 0xD0000000u };
 static Bitmap *bitmaps[MAX_GDI];
 static int nbitmaps;
-static uint32_t dc_bitmap[MAX_GDI];   /* memory DC -> selected bitmap handle */
+static uint32_t dc_bitmap[MAX_GDI]; /* memory DC -> selected bitmap handle */
 static int ndcs = 1;
 
 static Bitmap *bitmap_of(uint32_t h)
@@ -74,11 +73,16 @@ static void rle8_decode(const uint8_t *src, size_t n, Bitmap *b, int flip)
                 b->pixels[(size_t)(flip ? b->h - 1 - y : y) * (size_t)b->pitch + (size_t)x] = value;
             continue;
         }
-        if (value == 0) { x = 0; y++; continue; }          /* end of line */
-        if (value == 1) break;                              /* end of bitmap */
-        if (value == 2) {                                   /* delta */
+        if (value == 0) {
+            x = 0;
+            y++;
+            continue;
+        }                      /* end of line */
+        if (value == 1) break; /* end of bitmap */
+        if (value == 2) {      /* delta */
             if (i + 1 >= n) break;
-            x += src[i]; y += src[i + 1];
+            x += src[i];
+            y += src[i + 1];
             i += 2;
             continue;
         }
@@ -86,7 +90,7 @@ static void rle8_decode(const uint8_t *src, size_t n, Bitmap *b, int flip)
             if (x < b->w && y < b->h)
                 b->pixels[(size_t)(flip ? b->h - 1 - y : y) * (size_t)b->pitch + (size_t)x] = src[i];
         }
-        if (value & 1) i++;                                 /* pad to a word */
+        if (value & 1) i++; /* pad to a word */
     }
 }
 
@@ -100,24 +104,29 @@ static Bitmap *bmp_load(const char *path)
         fclose(fh);
         return NULL;
     }
-    const uint32_t data_off = (uint32_t)hdr[10] | ((uint32_t)hdr[11] << 8)
-                            | ((uint32_t)hdr[12] << 16) | ((uint32_t)hdr[13] << 24);
-    const int32_t w = (int32_t)((uint32_t)hdr[18] | ((uint32_t)hdr[19] << 8)
-                     | ((uint32_t)hdr[20] << 16) | ((uint32_t)hdr[21] << 24));
-    const int32_t h = (int32_t)((uint32_t)hdr[22] | ((uint32_t)hdr[23] << 8)
-                     | ((uint32_t)hdr[24] << 16) | ((uint32_t)hdr[25] << 24));
+    const uint32_t data_off =
+        (uint32_t)hdr[10] | ((uint32_t)hdr[11] << 8) | ((uint32_t)hdr[12] << 16) | ((uint32_t)hdr[13] << 24);
+    const int32_t w =
+        (int32_t)((uint32_t)hdr[18] | ((uint32_t)hdr[19] << 8) | ((uint32_t)hdr[20] << 16) | ((uint32_t)hdr[21] << 24));
+    const int32_t h =
+        (int32_t)((uint32_t)hdr[22] | ((uint32_t)hdr[23] << 8) | ((uint32_t)hdr[24] << 16) | ((uint32_t)hdr[25] << 24));
     const int bpp = (int)((uint32_t)hdr[28] | ((uint32_t)hdr[29] << 8));
-    const uint32_t compression = (uint32_t)hdr[30] | ((uint32_t)hdr[31] << 8)
-                               | ((uint32_t)hdr[32] << 16) | ((uint32_t)hdr[33] << 24);
-    const uint32_t clr_used = (uint32_t)hdr[46] | ((uint32_t)hdr[47] << 8)
-                            | ((uint32_t)hdr[48] << 16) | ((uint32_t)hdr[49] << 24);
-    if (bpp != 8 || w <= 0) { fclose(fh); return NULL; }
+    const uint32_t compression =
+        (uint32_t)hdr[30] | ((uint32_t)hdr[31] << 8) | ((uint32_t)hdr[32] << 16) | ((uint32_t)hdr[33] << 24);
+    const uint32_t clr_used =
+        (uint32_t)hdr[46] | ((uint32_t)hdr[47] << 8) | ((uint32_t)hdr[48] << 16) | ((uint32_t)hdr[49] << 24);
+    if (bpp != 8 || w <= 0) {
+        fclose(fh);
+        return NULL;
+    }
 
-    const int flip = h > 0;                 /* positive height means bottom-up */
+    const int flip = h > 0; /* positive height means bottom-up */
     const int rows = flip ? h : -h;
 
     Bitmap *b = SDL_calloc(1, sizeof *b);
-    b->w = w; b->h = rows; b->bpp = bpp;
+    b->w = w;
+    b->h = rows;
+    b->bpp = bpp;
     b->pitch = w;
     b->pixels = SDL_calloc(1, (size_t)w * (size_t)rows);
 
@@ -133,7 +142,7 @@ static Bitmap *bmp_load(const char *path)
     const long file_size = ftell(fh);
     fseek(fh, (long)data_off, SEEK_SET);
 
-    if (compression == 1) {                                 /* BI_RLE8 */
+    if (compression == 1) { /* BI_RLE8 */
         const size_t n = (size_t)(file_size - (long)data_off);
         uint8_t *raw = SDL_malloc(n);
         const size_t got = fread(raw, 1, n, fh);
@@ -188,20 +197,18 @@ static int name_matches(uint32_t entry_name, const char *want)
 static uint32_t rsrc_find(const char *name)
 {
     const uint32_t pe = LD32(IMAGE_BASE + 0x3C) + IMAGE_BASE;
-    const uint32_t dir_rva = LD32(pe + 24 + 112);          /* data directory 2 */
+    const uint32_t dir_rva = LD32(pe + 24 + 112); /* data directory 2 */
     if (!dir_rva) return 0;
     rsrc_base = IMAGE_BASE + dir_rva;
 
     if (getenv("LF2_RSRC_DEBUG"))
-        fprintf(stderr, "rsrc base=%08x named=%d id=%d\n", rsrc_base,
-                LD16(rsrc_base + 12), LD16(rsrc_base + 14));
+        fprintf(stderr, "rsrc base=%08x named=%d id=%d\n", rsrc_base, LD16(rsrc_base + 12), LD16(rsrc_base + 14));
 
     /* level 1: type */
     const uint32_t n1 = (uint32_t)LD16(rsrc_base + 12) + LD16(rsrc_base + 14);
     for (uint32_t i = 0; i < n1; i++) {
         const uint32_t e = rsrc_base + 16 + i * 8;
-        if (getenv("LF2_RSRC_DEBUG"))
-            fprintf(stderr, "  type entry %u: name=%08x sub=%08x\n", i, LD32(e), LD32(e + 4));
+        if (getenv("LF2_RSRC_DEBUG")) fprintf(stderr, "  type entry %u: name=%08x sub=%08x\n", i, LD32(e), LD32(e + 4));
         if (LD32(e) != RT_BITMAP) continue;
         const uint32_t sub = LD32(e + 4);
         if (!(sub & 0x80000000u)) continue;
@@ -215,11 +222,11 @@ static uint32_t rsrc_find(const char *name)
             /* Every offset in the resource tree is relative to the section base, not
              * an address. The language level is optional. */
             uint32_t leaf = LD32(e2 + 4);
-            if (leaf & 0x80000000u) {                       /* level 3: language */
+            if (leaf & 0x80000000u) { /* level 3: language */
                 const uint32_t d3 = rsrc_base + (leaf & 0x7fffffffu);
                 leaf = LD32(d3 + 16 + 4);
             }
-            return LD32(rsrc_base + leaf);                  /* data entry -> RVA */
+            return LD32(rsrc_base + leaf); /* data entry -> RVA */
         }
     }
     return 0;
@@ -228,7 +235,7 @@ static uint32_t rsrc_find(const char *name)
 /* Build a Bitmap from a DIB already in guest memory. */
 static Bitmap *dib_load(uint32_t p)
 {
-    const uint32_t hdr = LD32(p);                           /* biSize */
+    const uint32_t hdr = LD32(p); /* biSize */
     const int32_t w = (int32_t)LD32(p + 4);
     const int32_t h = (int32_t)LD32(p + 8);
     const int bpp = (int)LD16(p + 14);
@@ -238,20 +245,22 @@ static Bitmap *dib_load(uint32_t p)
     const int flip = h > 0;
     const int rows = flip ? h : -h;
     Bitmap *b = SDL_calloc(1, sizeof *b);
-    b->w = w; b->h = rows; b->bpp = bpp; b->pitch = w;
+    b->w = w;
+    b->h = rows;
+    b->bpp = bpp;
+    b->pitch = w;
     b->pixels = SDL_calloc(1, (size_t)w * (size_t)rows);
 
     const uint32_t pal = p + hdr;
     const uint32_t ncolours = clr ? clr : 256u;
     for (uint32_t i = 0; i < ncolours && i < 256; i++)
-        b->pal[i] = ((uint32_t)LD8(pal + i * 4 + 2) << 16)
-                  | ((uint32_t)LD8(pal + i * 4 + 1) << 8) | LD8(pal + i * 4);
+        b->pal[i] = ((uint32_t)LD8(pal + i * 4 + 2) << 16) | ((uint32_t)LD8(pal + i * 4 + 1) << 8) | LD8(pal + i * 4);
 
     const uint32_t bits = pal + ncolours * 4;
     const uint32_t compression = LD32(p + 16);
 
-    if (compression == 1) {                                 /* BI_RLE8 */
-        const uint32_t n = LD32(p + 20) ? LD32(p + 20) : 0x100000u;   /* biSizeImage */
+    if (compression == 1) {                                         /* BI_RLE8 */
+        const uint32_t n = LD32(p + 20) ? LD32(p + 20) : 0x100000u; /* biSizeImage */
         rle8_decode(g_mem + bits, n, b, flip);
         return b;
     }
@@ -276,14 +285,16 @@ static void h_LoadImageA(void)
 {
     /* LoadImageA(hinst, name, type, cx, cy, fuLoad); LR_LOADFROMFILE = 0x10 */
     const uint32_t name = ARG(1), flags = ARG(5);
-    if (!name) { ret_stdcall(6, 0); return; }
+    if (!name) {
+        ret_stdcall(6, 0);
+        return;
+    }
 
     if (getenv("LF2_RSRC_DEBUG"))
-        fprintf(stderr, "LoadImage name=%s type=%u flags=%08x\n",
-                (const char *)(g_mem + name), ARG(2), flags);
+        fprintf(stderr, "LoadImage name=%s type=%u flags=%08x\n", (const char *)(g_mem + name), ARG(2), flags);
 
     Bitmap *b = NULL;
-    if (flags & 0x10u) {                       /* LR_LOADFROMFILE */
+    if (flags & 0x10u) { /* LR_LOADFROMFILE */
         b = bmp_load(host_path_of(name));
     } else {
         const uint32_t rva = rsrc_find((const char *)(g_mem + name));
@@ -292,8 +303,7 @@ static void h_LoadImageA(void)
     if (!b) {
         /* Expected: the game probes for an override file first so users can replace
          * artwork, then asks for the resource of the same name. Only noisy on request. */
-        if (getenv("LF2_RSRC_DEBUG"))
-            fprintf(stderr, "LoadImage: cannot load %s\n", (const char *)(g_mem + name));
+        if (getenv("LF2_RSRC_DEBUG")) fprintf(stderr, "LoadImage: cannot load %s\n", (const char *)(g_mem + name));
         ret_stdcall(6, 0);
         return;
     }
@@ -307,7 +317,9 @@ static void h_LoadImageA(void)
      * a request whose size is the size of the bitmap that was just loaded came from that
      * loader and must keep it. It is content-derived rather than an address, and it is
      * consumed on the first match so a later coincidence cannot revive it. */
-    gdi_loaded_w = b->w; gdi_loaded_h = b->h; gdi_loaded_n++;
+    gdi_loaded_w = b->w;
+    gdi_loaded_h = b->h;
+    gdi_loaded_n++;
     ret_stdcall(6, bitmap_handle(b));
 }
 
@@ -327,7 +339,10 @@ void gdi_last_bitmap_consume(void) { gdi_loaded_w = gdi_loaded_h = 0; }
 
 static void h_CreateCompatibleDC(void)
 {
-    if (ndcs >= (int)MAX_GDI) { ret_stdcall(1, 0); return; }
+    if (ndcs >= (int)MAX_GDI) {
+        ret_stdcall(1, 0);
+        return;
+    }
     dc_bitmap[ndcs] = 0;
     ret_stdcall(1, H_DC + (uint32_t)ndcs++);
 }
@@ -349,11 +364,11 @@ static void h_GetObjectA(void)
     Bitmap *b = bitmap_of(ARG(0));
     const uint32_t out = ARG(2);
     if (b && out && ARG(1) >= 24) {
-        ST32(out, 0);                                   /* bmType */
+        ST32(out, 0); /* bmType */
         ST32(out + 4, (uint32_t)b->w);
         ST32(out + 8, (uint32_t)b->h);
         ST32(out + 12, (uint32_t)b->pitch);
-        ST32(out + 16, 1);                              /* bmPlanes */
+        ST32(out + 16, 1); /* bmPlanes */
         ST32(out + 20, (uint32_t)b->bpp);
         ret_stdcall(3, 24);
         return;
@@ -361,7 +376,7 @@ static void h_GetObjectA(void)
     ret_stdcall(3, 0);
 }
 
-void cursor_find_note(int dl, int dt, const char *via);   /* ddraw.c */
+void cursor_find_note(int dl, int dt, const char *via); /* ddraw.c */
 
 static void h_StretchBlt(void)
 {
@@ -371,12 +386,11 @@ static void h_StretchBlt(void)
     const int dx = (int)ARG(1), dy = (int)ARG(2), dw = (int)ARG(3), dh = (int)ARG(4);
     const int sx = (int)ARG(6), sy = (int)ARG(7), sw = (int)ARG(8), sh = (int)ARG(9);
 
-    uint32_t dpix; int dwid, dhei, dpitch;
+    uint32_t dpix;
+    int dwid, dhei, dpitch;
     if (!ddraw_surface_info(hdst, &dpix, &dwid, &dhei, &dpitch) || dw <= 0 || dh <= 0) {
         static long n;
-        if (++n % 200 == 1)
-            fprintf(stderr, "stretchblt: dest %08x is not a surface (#%ld, %dx%d)\n",
-                    hdst, n, dw, dh);
+        if (++n % 200 == 1) fprintf(stderr, "stretchblt: dest %08x is not a surface (#%ld, %dx%d)\n", hdst, n, dw, dh);
         LOADPROF_END();
         ret_stdcall(11, 0);
         return;
@@ -384,8 +398,14 @@ static void h_StretchBlt(void)
     const uint32_t si = hsrc - H_DC;
     Bitmap *b = (si < (uint32_t)ndcs) ? bitmap_of(dc_bitmap[si]) : NULL;
     if (!b || sw <= 0 || sh <= 0) {
-        { static long f; if (++f % 200 == 1) fprintf(stderr, "stretchblt FAILED #%ld src_dc=%08x bitmap=%s\n", f, hsrc, b ? "ok" : "none"); }
-        LOADPROF_END(); ret_stdcall(11, 0); return;
+        {
+            static long f;
+            if (++f % 200 == 1)
+                fprintf(stderr, "stretchblt FAILED #%ld src_dc=%08x bitmap=%s\n", f, hsrc, b ? "ok" : "none");
+        }
+        LOADPROF_END();
+        ret_stdcall(11, 0);
+        return;
     }
 
     cursor_find_note(dx, dy, "StretchBlt");
@@ -401,7 +421,7 @@ static void h_StretchBlt(void)
             if (tx < 0 || tx >= dwid) continue;
             const int bx = sx + (int)((int64_t)x * sw / dw);
             if (bx < 0 || bx >= b->w) continue;
-            dst[tx] = b->pal[src[bx]];      /* index -> XRGB via the bitmap's palette */
+            dst[tx] = b->pal[src[bx]]; /* index -> XRGB via the bitmap's palette */
         }
     }
     render_surface_dirty(dpix);
@@ -419,7 +439,7 @@ static void h_StretchBlt(void)
             for (int y = 0; y < dhei; y++) {
                 const uint32_t *r = (const uint32_t *)(g_mem + dpix + (size_t)y * (size_t)dpitch);
                 for (int x = 0; x < dwid; x++) {
-                    const uint8_t px[3] = { (uint8_t)(r[x] >> 16), (uint8_t)(r[x] >> 8), (uint8_t)r[x] };
+                    const uint8_t px[3] = {(uint8_t)(r[x] >> 16), (uint8_t)(r[x] >> 8), (uint8_t)r[x]};
                     fwrite(px, 1, 3, f);
                 }
             }
@@ -429,18 +449,20 @@ static void h_StretchBlt(void)
     ddraw_surface_present(hdst);
     /* The caller is part of the line because a scaling StretchBlt is a BUG SIGNAL in this port
      * (issue #50) and "which guest call site asked for it" is the first thing wanted next. */
-    { static long n; if (getenv("LF2_RSRC_DEBUG"))
-        fprintf(stderr, "stretchblt #%ld %dx%d -> %dx%d at (%d,%d) in %dx%d from guest %08x%s\n",
-                ++n, sw, sh, dw, dh, dx, dy, dwid, dhei, LD32(R(ESP)),
-                (sw == dw && sh == dh) ? "" : "  <== SCALING"); }
+    {
+        static long n;
+        if (getenv("LF2_RSRC_DEBUG"))
+            fprintf(stderr, "stretchblt #%ld %dx%d -> %dx%d at (%d,%d) in %dx%d from guest %08x%s\n", ++n, sw, sh, dw,
+                    dh, dx, dy, dwid, dhei, LD32(R(ESP)), (sw == dw && sh == dh) ? "" : "  <== SCALING");
+    }
     LOADPROF_END();
     ret_stdcall(11, 1);
 }
 
 static void h_DeleteObject(void) { ret_stdcall(1, 1); }
-static void h_DeleteDC(void)     { ret_stdcall(1, 1); }
-static void h_SetBkColor(void)   { ret_stdcall(2, 0); }
-static uint32_t text_colour = 0x00ffffffu;   /* COLORREF is 0x00BBGGRR */
+static void h_DeleteDC(void) { ret_stdcall(1, 1); }
+static void h_SetBkColor(void) { ret_stdcall(2, 0); }
+static uint32_t text_colour = 0x00ffffffu; /* COLORREF is 0x00BBGGRR */
 
 static void h_SetTextColor(void)
 {
@@ -476,12 +498,12 @@ static void h_SetTextColor(void)
  * was sized against are the ones it gets.
  */
 #ifdef LF2_HAVE_TTF
-enum { TEXT_PT = 13 };          /* close to the ~11 px Windows default at 96 dpi */
+enum { TEXT_PT = 13 }; /* close to the ~11 px Windows default at 96 dpi */
 
 extern const unsigned char lf2_font_sans[];
-extern const unsigned int  lf2_font_sans_len;
+extern const unsigned int lf2_font_sans_len;
 extern const unsigned char lf2_font_mono[];
-extern const unsigned int  lf2_font_mono_len;
+extern const unsigned int lf2_font_mono_len;
 
 /* Opens one of the embedded faces. SDL takes ownership of the stream and closes it with the
  * font; the byte array is static, so nothing is copied and nothing is freed. */
@@ -498,7 +520,10 @@ static TTF_Font *font_from_memory(const unsigned char *data, unsigned int len, f
  * cache exists to avoid. Small and fixed: a handful of window sizes in a run, and a face that
  * does not fit is simply not cached rather than evicting anything. */
 enum { FONT_SIZES_MAX = 8 };
-static struct { int pt; TTF_Font *font; } sized_fonts[FONT_SIZES_MAX];
+static struct {
+    int pt;
+    TTF_Font *font;
+} sized_fonts[FONT_SIZES_MAX];
 static int sized_fonts_n;
 
 static TTF_Font *font_at(float pt)
@@ -514,8 +539,10 @@ static TTF_Font *font_at(float pt)
     sized_fonts[sized_fonts_n].font = f;
     sized_fonts_n++;
     if (getenv("LF2_GLYPH_DEBUG"))
-        fprintf(stderr, "text: opened Liberation Sans at %d pt for the window's scale "
-                        "(%d size(s) cached)\n", key, sized_fonts_n);
+        fprintf(stderr,
+                "text: opened Liberation Sans at %d pt for the window's scale "
+                "(%d size(s) cached)\n",
+                key, sized_fonts_n);
     return f;
 }
 
@@ -528,30 +555,31 @@ static TTF_Font *font_open(void)
     ui_font_tried = 1;
 
     if (!TTF_Init()) {
-        fprintf(stderr, "text: TTF_Init failed (%s) -- NO TEXT WILL BE DRAWN. This is not a "
-                        "cosmetic fallback; the port has no second way to draw a string.\n",
+        fprintf(stderr,
+                "text: TTF_Init failed (%s) -- NO TEXT WILL BE DRAWN. This is not a "
+                "cosmetic fallback; the port has no second way to draw a string.\n",
                 SDL_GetError());
         return NULL;
     }
     ui_font = font_from_memory(lf2_font_sans, lf2_font_sans_len, (float)TEXT_PT);
     if (!ui_font)
-        fprintf(stderr, "text: the embedded Liberation Sans (%u bytes) would not open (%s) -- "
-                        "NO TEXT WILL BE DRAWN.\n", lf2_font_sans_len, SDL_GetError());
+        fprintf(stderr,
+                "text: the embedded Liberation Sans (%u bytes) would not open (%s) -- "
+                "NO TEXT WILL BE DRAWN.\n",
+                lf2_font_sans_len, SDL_GetError());
     else if (getenv("LF2_GLYPH_DEBUG"))
-        fprintf(stderr, "text: embedded Liberation Sans, %u bytes, %d pt\n",
-                lf2_font_sans_len, TEXT_PT);
+        fprintf(stderr, "text: embedded Liberation Sans, %u bytes, %d pt\n", lf2_font_sans_len, TEXT_PT);
     return ui_font;
 }
 
 /* Returns 1 if it drew. Blends by coverage, so the anti-aliased edges sit on whatever the
  * game already drew rather than on a black box. */
-static int text_draw_ttf(const char *text, int x, int y,
-                         uint32_t dpix, int dwid, int dhei, int dpitch)
+static int text_draw_ttf(const char *text, int x, int y, uint32_t dpix, int dwid, int dhei, int dpitch)
 {
     TTF_Font *font = font_open();
     if (!font) return 0;
 
-    SDL_Color white = { 255, 255, 255, 255 };
+    SDL_Color white = {255, 255, 255, 255};
     SDL_Surface *glyphs = TTF_RenderText_Blended(font, text, 0, white);
     if (!glyphs) return 0;
     SDL_Surface *rgba = SDL_ConvertSurface(glyphs, SDL_PIXELFORMAT_ARGB8888);
@@ -594,15 +622,12 @@ static int text_draw_ttf(const char *text, int x, int y,
     uint32_t *tile = render_tile_begin(dpix, x, y, rgba->w, rgba->h, tsrc->w, tsrc->h);
     if (tile) {
         for (int ty = 0; ty < tsrc->h; ty++) {
-            const uint32_t *src = (const uint32_t *)((const uint8_t *)tsrc->pixels
-                                                     + (size_t)ty * (size_t)tsrc->pitch);
+            const uint32_t *src = (const uint32_t *)((const uint8_t *)tsrc->pixels + (size_t)ty * (size_t)tsrc->pitch);
             for (int tx = 0; tx < tsrc->w; tx++) {
                 const int a = (int)(src[tx] >> 24);
                 if (!a) continue;
-                tile[ty * tsrc->w + tx] = ((uint32_t)a << 24)
-                                        | ((uint32_t)(tr * a / 255) << 16)
-                                        | ((uint32_t)(tg * a / 255) << 8)
-                                        | (uint32_t)(tb * a / 255);
+                tile[ty * tsrc->w + tx] = ((uint32_t)a << 24) | ((uint32_t)(tr * a / 255) << 16) |
+                                          ((uint32_t)(tg * a / 255) << 8) | (uint32_t)(tb * a / 255);
             }
         }
         render_tile_end();
@@ -612,8 +637,7 @@ static int text_draw_ttf(const char *text, int x, int y,
     for (int ty = 0; ty < rgba->h; ty++) {
         const int dy = y + ty;
         if (dy < 0 || dy >= dhei) continue;
-        const uint32_t *src = (const uint32_t *)((const uint8_t *)rgba->pixels
-                                                 + (size_t)ty * (size_t)rgba->pitch);
+        const uint32_t *src = (const uint32_t *)((const uint8_t *)rgba->pixels + (size_t)ty * (size_t)rgba->pitch);
         uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
         for (int tx = 0; tx < rgba->w; tx++) {
             const int dx = x + tx;
@@ -653,7 +677,7 @@ enum { GLYPH_W = 8, GLYPH_H = 16 };
 
 static TTF_Font *mono_font;
 static int mono_tried, mono_baseline;
-static int mono_pt;   /* the size measured to fit the cell; the scaled raster multiplies it */
+static int mono_pt; /* the size measured to fit the cell; the scaled raster multiplies it */
 
 static TTF_Font *mono_open(void)
 {
@@ -679,23 +703,29 @@ static TTF_Font *mono_open(void)
             mono_pt = pt;
             mono_baseline = (GLYPH_H - TTF_GetFontHeight(f)) / 2 + TTF_GetFontAscent(f);
             if (getenv("LF2_GLYPH_DEBUG"))
-                fprintf(stderr, "glyph font: embedded Liberation Mono, %d pt, advance %d px, "
-                                "baseline %d\n", pt, adv, mono_baseline);
+                fprintf(stderr,
+                        "glyph font: embedded Liberation Mono, %d pt, advance %d px, "
+                        "baseline %d\n",
+                        pt, adv, mono_baseline);
             break;
         }
         TTF_CloseFont(f);
     }
     if (!mono_font)
-        fprintf(stderr, "glyph font: the embedded Liberation Mono fits no size into an %d px "
-                        "cell, so the game's own bitmap font is drawn instead. That should be "
-                        "impossible with a committed face and means this build is broken.\n",
+        fprintf(stderr,
+                "glyph font: the embedded Liberation Mono fits no size into an %d px "
+                "cell, so the game's own bitmap font is drawn instead. That should be "
+                "impossible with a committed face and means this build is broken.\n",
                 (int)GLYPH_W);
     return mono_font;
 }
 
 /* The fixed-cell face at `scale` times its measured size. Same size-keyed shape as the
  * proportional face; a face that will not open simply leaves the caller on the 8x16 mask. */
-static struct { int pt; TTF_Font *font; } mono_sized[FONT_SIZES_MAX];
+static struct {
+    int pt;
+    TTF_Font *font;
+} mono_sized[FONT_SIZES_MAX];
 static int mono_sized_n;
 
 static TTF_Font *mono_at(float scale)
@@ -715,7 +745,10 @@ static TTF_Font *mono_at(float scale)
 
 /* One cached 8x16 coverage mask per character. Colour is applied at blit time, so a glyph
  * drawn in two colours is still rendered once. */
-typedef struct { uint8_t cov[GLYPH_W * GLYPH_H]; int valid; } Glyph;
+typedef struct {
+    uint8_t cov[GLYPH_W * GLYPH_H];
+    int valid;
+} Glyph;
 static Glyph glyph_cache[128];
 
 /* ---- THE SAME GLYPH AGAIN, AT THE WINDOW'S RESOLUTION (issue #45) ----
@@ -732,10 +765,14 @@ static Glyph glyph_cache[128];
  * someone drags an edge. The whole cache is dropped when the scale changes rather than kept
  * per size -- a run has one window at a time, and 95 glyphs are a millisecond to redo. */
 enum { HI_MAX = GLYPH_W * 8 * GLYPH_H * 8 };
-typedef struct { uint8_t *cov; int w, h; int valid; } GlyphHi;
+typedef struct {
+    uint8_t *cov;
+    int w, h;
+    int valid;
+} GlyphHi;
 static GlyphHi glyph_hi[128];
-static int     glyph_hi_scale_x100 = -1;
-static long    glyph_hi_rasterised, glyph_hi_dropped;
+static int glyph_hi_scale_x100 = -1;
+static long glyph_hi_rasterised, glyph_hi_dropped;
 
 static void glyph_hi_reset(int scale_x100)
 {
@@ -773,8 +810,8 @@ static const GlyphHi *glyph_hi_of(int ch, float scale)
     TTF_Font *font = mono_at(scale);
     if (!font) return NULL;
 
-    const char text[2] = { (char)ch, 0 };
-    SDL_Color white = { 255, 255, 255, 255 };
+    const char text[2] = {(char)ch, 0};
+    SDL_Color white = {255, 255, 255, 255};
     SDL_Surface *surf = TTF_RenderText_Blended(font, text, 1, white);
     if (!surf) return NULL;
     SDL_Surface *rgba = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_ARGB8888);
@@ -782,8 +819,12 @@ static const GlyphHi *glyph_hi_of(int ch, float scale)
     if (!rgba) return NULL;
 
     g->cov = SDL_calloc(1, (size_t)cw * (size_t)chh);
-    g->w = cw; g->h = chh;
-    if (!g->cov) { SDL_DestroySurface(rgba); return NULL; }
+    g->w = cw;
+    g->h = chh;
+    if (!g->cov) {
+        SDL_DestroySurface(rgba);
+        return NULL;
+    }
 
     /* The baseline is the game's own, scaled -- the glyph must sit on the same line the 8x16
      * mask puts it on, or scaled text drifts vertically against the art around it. */
@@ -791,10 +832,8 @@ static const GlyphHi *glyph_hi_of(int ch, float scale)
     for (int y = 0; y < rgba->h; y++) {
         const int cy = y + top;
         if (cy < 0 || cy >= chh) continue;
-        const uint32_t *row = (const uint32_t *)((const uint8_t *)rgba->pixels
-                                                 + (size_t)y * (size_t)rgba->pitch);
-        for (int x = 0; x < rgba->w && x < cw; x++)
-            g->cov[cy * cw + x] = (uint8_t)(row[x] >> 24);
+        const uint32_t *row = (const uint32_t *)((const uint8_t *)rgba->pixels + (size_t)y * (size_t)rgba->pitch);
+        for (int x = 0; x < rgba->w && x < cw; x++) g->cov[cy * cw + x] = (uint8_t)(row[x] >> 24);
     }
     SDL_DestroySurface(rgba);
     glyph_hi_rasterised++;
@@ -814,41 +853,47 @@ void glyph_scale_report(void)
                         "game's 8x16 cell by definition -- this run says NOTHING about "
                         "window-resolution text.\n");
     else if (glyph_hi_scale_x100 < 0)
-        fprintf(stderr, "glyph scale: NOTHING was rasterised above the game's 8x16 cell "
-                        "(world scale %.3f). At a scale of 1 that is correct; above it, the "
-                        "text is not getting sharper and the feature is not working.\n",
+        fprintf(stderr,
+                "glyph scale: NOTHING was rasterised above the game's 8x16 cell "
+                "(world scale %.3f). At a scale of 1 that is correct; above it, the "
+                "text is not getting sharper and the feature is not working.\n",
                 (double)s);
     else
-        fprintf(stderr, "glyph scale: %ld glyph(s) rasterised at %.2fx the game's cell, "
-                        "%ld cache drop(s) from the window changing size\n",
+        fprintf(stderr,
+                "glyph scale: %ld glyph(s) rasterised at %.2fx the game's cell, "
+                "%ld cache drop(s) from the window changing size\n",
                 glyph_hi_rasterised, glyph_hi_scale_x100 / 100.0, glyph_hi_dropped);
 }
 
 static const Glyph *glyph_of(int ch)
 {
-    if (ch < 32 || ch > 126) return NULL;         /* CJK and control codes: not ours */
+    if (ch < 32 || ch > 126) return NULL; /* CJK and control codes: not ours */
     Glyph *g = &glyph_cache[ch];
     if (g->valid) return g;
 
     TTF_Font *font = mono_open();
     if (!font) return NULL;
 
-    const char text[2] = { (char)ch, 0 };
-    SDL_Color white = { 255, 255, 255, 255 };
+    const char text[2] = {(char)ch, 0};
+    SDL_Color white = {255, 255, 255, 255};
     SDL_Surface *surf = TTF_RenderText_Blended(font, text, 1, white);
-    if (!surf) { g->valid = 1; return g; }        /* blank, but do not retry every frame */
+    if (!surf) {
+        g->valid = 1;
+        return g;
+    } /* blank, but do not retry every frame */
     SDL_Surface *rgba = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_ARGB8888);
     SDL_DestroySurface(surf);
-    if (!rgba) { g->valid = 1; return g; }
+    if (!rgba) {
+        g->valid = 1;
+        return g;
+    }
 
     const int top = mono_baseline - TTF_GetFontAscent(font);
     for (int y = 0; y < rgba->h; y++) {
         const int cy = y + top;
         if (cy < 0 || cy >= GLYPH_H) continue;
-        const uint32_t *row = (const uint32_t *)((const uint8_t *)rgba->pixels
-                                                 + (size_t)y * (size_t)rgba->pitch);
-        for (int x = 0; x < rgba->w && x < GLYPH_W; x++)
-            g->cov[cy * GLYPH_W + x] = (uint8_t)(row[x] >> 24);
+        const uint32_t *row = (const uint32_t *)((const uint8_t *)rgba->pixels + (size_t)y * (size_t)rgba->pitch);
+        for (int x = 0; x < rgba->w && x < GLYPH_W; x++) g->cov[cy * GLYPH_W + x] = (uint8_t)(row[x] >> 24);
     }
     SDL_DestroySurface(rgba);
     g->valid = 1;
@@ -884,18 +929,15 @@ int game_glyph_tile(int ch, int x, int y, uint32_t ink, uint32_t dst_pixels)
         for (int gx = 0; gx < cw; gx++) {
             const int a = cov[gy * cw + gx];
             if (!a) continue;
-            tile[gy * cw + gx] = ((uint32_t)a << 24)
-                               | ((uint32_t)(ir * a / 255) << 16)
-                               | ((uint32_t)(ig * a / 255) << 8)
-                               | (uint32_t)(ib * a / 255);
+            tile[gy * cw + gx] = ((uint32_t)a << 24) | ((uint32_t)(ir * a / 255) << 16) |
+                                 ((uint32_t)(ig * a / 255) << 8) | (uint32_t)(ib * a / 255);
         }
     render_tile_end();
     return 1;
 }
 
 /* Returns 1 if it drew the glyph, 0 to let the game's bitmap copy proceed. */
-int game_glyph_draw(int ch, int x, int y, uint32_t ink,
-                    uint32_t dpix, int dwid, int dhei, int dpitch)
+int game_glyph_draw(int ch, int x, int y, uint32_t ink, uint32_t dpix, int dwid, int dhei, int dpitch)
 {
     const Glyph *g = glyph_of(ch);
     if (!g) return 0;
@@ -921,9 +963,8 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink,
             const uint32_t bg = dst[dx];
             const int br = (int)((bg >> 16) & 0xff), bgc = (int)((bg >> 8) & 0xff);
             const int bb = (int)(bg & 0xff);
-            dst[dx] = ((uint32_t)((ir * a + br * (255 - a)) / 255) << 16)
-                    | ((uint32_t)((ig * a + bgc * (255 - a)) / 255) << 8)
-                    | (uint32_t)((ib * a + bb * (255 - a)) / 255);
+            dst[dx] = ((uint32_t)((ir * a + br * (255 - a)) / 255) << 16) |
+                      ((uint32_t)((ig * a + bgc * (255 - a)) / 255) << 8) | (uint32_t)((ib * a + bb * (255 - a)) / 255);
         }
     }
     return 1;
@@ -931,15 +972,24 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink,
 #else
 int game_glyph_tile(int ch, int x, int y, uint32_t ink, uint32_t dst_pixels)
 {
-    (void)ch; (void)x; (void)y; (void)ink; (void)dst_pixels;
+    (void)ch;
+    (void)x;
+    (void)y;
+    (void)ink;
+    (void)dst_pixels;
     return 0;
 }
 
-int game_glyph_draw(int ch, int x, int y, uint32_t ink,
-                    uint32_t dpix, int dwid, int dhei, int dpitch)
+int game_glyph_draw(int ch, int x, int y, uint32_t ink, uint32_t dpix, int dwid, int dhei, int dpitch)
 {
-    (void)ch; (void)x; (void)y; (void)ink;
-    (void)dpix; (void)dwid; (void)dhei; (void)dpitch;
+    (void)ch;
+    (void)x;
+    (void)y;
+    (void)ink;
+    (void)dpix;
+    (void)dwid;
+    (void)dhei;
+    (void)dpitch;
     return 0;
 }
 #endif
@@ -951,7 +1001,8 @@ static void h_TextOutA(void)
     const int y = (int)ARG(2);
     int len = (int)ARG(4);
 
-    uint32_t dpix; int dwid, dhei, dpitch;
+    uint32_t dpix;
+    int dwid, dhei, dpitch;
     if (!ddraw_surface_info(hdc, &dpix, &dwid, &dhei, &dpitch) || len <= 0 || !str) {
         ret_stdcall(5, 1);
         return;
@@ -984,8 +1035,7 @@ static void h_TextOutA(void)
      * the surface is wider than 794 -- and a line that prints only the final x cannot show
      * which of them declined and why (issue #54). */
     if (getenv("LF2_TEXT_DEBUG"))
-        fprintf(stderr, "text (%d,%d) dst %08x %dx%d %d %s\n",
-                x, y, dpix, dwid, dhei, len, text);
+        fprintf(stderr, "text (%d,%d) dst %08x %dx%d %d %s\n", x, y, dpix, dwid, dhei, len, text);
 
 #ifdef LF2_HAVE_TTF
     if (text_draw_ttf(text, x, y, dpix, dwid, dhei, dpitch)) {
@@ -998,9 +1048,16 @@ static void h_TextOutA(void)
     const int w = len * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE;
     const int h = SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE;
     SDL_Surface *scratch = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_XRGB8888);
-    if (!scratch) { ret_stdcall(5, 1); return; }
+    if (!scratch) {
+        ret_stdcall(5, 1);
+        return;
+    }
     SDL_Renderer *r = SDL_CreateSoftwareRenderer(scratch);
-    if (!r) { SDL_DestroySurface(scratch); ret_stdcall(5, 1); return; }
+    if (!r) {
+        SDL_DestroySurface(scratch);
+        ret_stdcall(5, 1);
+        return;
+    }
 
     SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
     SDL_RenderClear(r);
@@ -1023,29 +1080,32 @@ static void h_TextOutA(void)
     for (int i = 0; i < len; i++) {
         int ink_l = cell, ink_r = -1;
         for (int ty = 0; ty < h; ty++) {
-            const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels
-                                                     + (size_t)ty * (size_t)scratch->pitch);
+            const uint32_t *row =
+                (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
             for (int cx = 0; cx < cell; cx++)
                 if (row[i * cell + cx] & 0x00ffffffu) {
                     if (cx < ink_l) ink_l = cx;
                     if (cx > ink_r) ink_r = cx;
                 }
         }
-        if (ink_r < 0) { pen += cell / 2; continue; }        /* blank: half-cell space */
+        if (ink_r < 0) {
+            pen += cell / 2;
+            continue;
+        } /* blank: half-cell space */
 
         for (int ty = 0; ty < h; ty++) {
             const int dy = y + ty;
             if (dy < 0 || dy >= dhei) continue;
             uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
-            const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels
-                                                     + (size_t)ty * (size_t)scratch->pitch);
+            const uint32_t *row =
+                (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
             for (int cx = ink_l; cx <= ink_r; cx++) {
                 const int dx = pen + (cx - ink_l);
                 if (dx < 0 || dx >= dwid) continue;
                 if (row[i * cell + cx] & 0x00ffffffu) dst[dx] = text_colour;
             }
         }
-        pen += (ink_r - ink_l) + 2;                          /* one pixel of side bearing */
+        pen += (ink_r - ink_l) + 2; /* one pixel of side bearing */
     }
 
     SDL_DestroyRenderer(r);
@@ -1058,17 +1118,20 @@ typedef void (*Handler)(void);
 
 Handler gdi_lookup(const char *dll, const char *name)
 {
-    static const struct { const char *dll, *name; Handler fn; } T[] = {
-        { "GDI32.dll", "CreateCompatibleDC", h_CreateCompatibleDC },
-        { "GDI32.dll", "DeleteDC",           h_DeleteDC },
-        { "GDI32.dll", "DeleteObject",       h_DeleteObject },
-        { "GDI32.dll", "SelectObject",       h_SelectObject },
-        { "GDI32.dll", "GetObjectA",         h_GetObjectA },
-        { "GDI32.dll", "SetBkColor",         h_SetBkColor },
-        { "GDI32.dll", "SetTextColor",       h_SetTextColor },
-        { "GDI32.dll", "TextOutA",           h_TextOutA },
-        { "GDI32.dll", "StretchBlt",         h_StretchBlt },
-        { "USER32.dll", "LoadImageA",        h_LoadImageA },
+    static const struct {
+        const char *dll, *name;
+        Handler fn;
+    } T[] = {
+        {"GDI32.dll", "CreateCompatibleDC", h_CreateCompatibleDC},
+        {"GDI32.dll", "DeleteDC", h_DeleteDC},
+        {"GDI32.dll", "DeleteObject", h_DeleteObject},
+        {"GDI32.dll", "SelectObject", h_SelectObject},
+        {"GDI32.dll", "GetObjectA", h_GetObjectA},
+        {"GDI32.dll", "SetBkColor", h_SetBkColor},
+        {"GDI32.dll", "SetTextColor", h_SetTextColor},
+        {"GDI32.dll", "TextOutA", h_TextOutA},
+        {"GDI32.dll", "StretchBlt", h_StretchBlt},
+        {"USER32.dll", "LoadImageA", h_LoadImageA},
     };
     for (size_t i = 0; i < sizeof T / sizeof T[0]; i++)
         if (strcmp(T[i].dll, dll) == 0 && strcmp(T[i].name, name) == 0) return T[i].fn;

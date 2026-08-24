@@ -19,7 +19,6 @@
 #include "script.h"
 #include "rmlui.h"
 #include "device_icons.h"
-#include "overlay_panel.h"
 
 /* runtime/win32/gdi.c -- the picture the game just loaded, so a surface created to hold it can be
  * told from the composition surface (issue #50). */
@@ -1552,11 +1551,11 @@ static void surf_Blt(uint32_t self)
         dr += off;
     }
 
-    const int overlay_panel_draw = dl == 3 && dt == 3 && dr == 307 && db == 159;
+    const int prefight_panel_draw = dl == 3 && dt == 3 && dr == 307 && db == 159;
     panel_note(dl, dt, dr, db);
 
     /* Record the label before the pre-fight panel so ordinary painter order covers it. */
-    if (overlay_panel_draw && !d->primary &&
+    if (prefight_panel_draw && !d->primary &&
         device_icon_charselect_phase(LD32(0x0044d020u) == 1, 1) == DEVICE_ICON_CHARSELECT_BEFORE_OVERLAY)
         charselect_device_labels_draw(d);
 
@@ -1760,7 +1759,6 @@ static void surf_Blt(uint32_t self)
                              0x80000000u, dl, 0);
             }
         }
-        if (overlay_panel_apply(d->pixels, d->w, d->h, d->pitch, dl, dt, lf2_world_scale())) surface_changed(d);
     }
     /* There used to be a widescreen "finish a tiling series the game stopped at 794" hook
      * here: it recognised a run of edge-to-edge copies by CONTIGUITY and kept repeating the

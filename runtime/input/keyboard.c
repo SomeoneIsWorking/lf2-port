@@ -50,12 +50,19 @@ unsigned keyboard_vk_from_scancode(SDL_Scancode scancode)
     case SDL_SCANCODE_RALT: return 0x12;
     case SDL_SCANCODE_TAB: return 0x09;
     case SDL_SCANCODE_DELETE: return 0x2E;
+    case SDL_SCANCODE_PERIOD: return 0xBE;
     case SDL_SCANCODE_F1:
     case SDL_SCANCODE_F2:
     case SDL_SCANCODE_F3:
     case SDL_SCANCODE_F4:
     case SDL_SCANCODE_F5:
-    case SDL_SCANCODE_F6: return 0x70u + (unsigned)(scancode - SDL_SCANCODE_F1);
+    case SDL_SCANCODE_F6:
+    case SDL_SCANCODE_F7:
+    case SDL_SCANCODE_F8:
+    case SDL_SCANCODE_F9:
+    case SDL_SCANCODE_F10:
+    case SDL_SCANCODE_F11:
+    case SDL_SCANCODE_F12: return 0x70u + (unsigned)(scancode - SDL_SCANCODE_F1);
     default: return 0;
     }
 }
@@ -65,6 +72,7 @@ SDL_Scancode keyboard_scancode_from_vk(unsigned vk)
     if (vk >= 'A' && vk <= 'Z') return (SDL_Scancode)(SDL_SCANCODE_A + (vk - 'A'));
     if (vk >= '1' && vk <= '9') return (SDL_Scancode)(SDL_SCANCODE_1 + (vk - '1'));
     if (vk == '0') return SDL_SCANCODE_0;
+    if (vk >= 0x70 && vk <= 0x7B) return (SDL_Scancode)(SDL_SCANCODE_F1 + (vk - 0x70));
     switch (vk) {
     case 0x25: return SDL_SCANCODE_LEFT;
     case 0x26: return SDL_SCANCODE_UP;
@@ -78,6 +86,7 @@ SDL_Scancode keyboard_scancode_from_vk(unsigned vk)
     case 0x12: return SDL_SCANCODE_LALT;
     case 0x09: return SDL_SCANCODE_TAB;
     case 0x2E: return SDL_SCANCODE_DELETE;
+    case 0xBE: return SDL_SCANCODE_PERIOD;
     case 0x60: return SDL_SCANCODE_KP_0;
     case 0x61: return SDL_SCANCODE_KP_1;
     case 0x62: return SDL_SCANCODE_KP_2;

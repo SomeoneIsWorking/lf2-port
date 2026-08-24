@@ -25,6 +25,7 @@
 extern "C" {
 #include "config.h"
 #include "bindings.h"
+#include "cheats.h"
 #include "hd2d.h"
 #include "hostwin.h"
 #include "keyboard.h"
@@ -148,6 +149,9 @@ static const char SETTINGS_RML[] = R"RML(
   input[type=range] sliderarrowdec, input[type=range] sliderarrowinc { width: 0; height: 0; }
   .range-value { display: block; width: 58dp; text-align: right; }
   .key { flex: 0 0 128dp; }
+  .cheat { display: flex; flex-flow: column; text-align: left; gap: 3dp; }
+  .cheat-title { display: block; color: #e0dbc8; }
+  .cheat-detail { display: block; color: rgba(224, 219, 200, 60%); font-size: 13dp; }
   .device-heads .device { display: block; flex: 0 0 128dp; text-align: center; }
   .device-icon { width: 30dp; height: 30dp; }
   scrollbarvertical { width: 8dp; margin-left: 4dp; }
@@ -165,6 +169,7 @@ static const char SETTINGS_RML[] = R"RML(
       <button id="game-tab" data-event-click="show_page('game')">GAME</button>
       <button data-event-click="show_page('graphics')">GRAPHICS</button>
       <button data-event-click="show_page('controls')">CONTROLS</button>
+      <button data-event-click="show_page('cheats')">CHEATS</button>
     </tab-bar>
     <content>
       <pane data-if="page == 'game'">
@@ -193,6 +198,10 @@ static const char SETTINGS_RML[] = R"RML(
         <div class="binding-row"><span class="label">Jump</span><button class="key" data-event-click="capture_key('jump')">{{key_jump}}</button><button class="key" data-event-click="capture_pad('jump')">{{pad_jump}}</button></div>
         <div class="binding-row"><span class="label">Defend</span><button class="key" data-event-click="capture_key('defend')">{{key_defend}}</button><button class="key" data-event-click="capture_pad('defend')">{{pad_defend}}</button></div>
       </pane>
+      <pane data-if="page == 'cheats'">
+        <span class="section-heading">CHEATS</span>
+        <!-- CHEAT_BUTTONS -->
+      </pane>
     </content>
   </window>
 </body>
@@ -212,6 +221,31 @@ static bool g_dispatching_pad;
 static long g_open_count;
 static long g_render_frames;
 static int g_metrics_reported;
+
+static std::string settings_document()
+{
+    std::string document = SETTINGS_RML;
+    const std::string marker = "<!-- CHEAT_BUTTONS -->";
+    std::string buttons;
+    size_t count = 0;
+    const CheatDescriptor *descriptors = cheats_descriptors(&count);
+    for (size_t i = 0; i < count; ++i) {
+        const CheatDescriptor &entry = descriptors[i];
+        buttons += "<button class=\"cheat\"";
+        if (entry.match_only) buttons += " data-if=\"in_match\"";
+        buttons += " data-event-click=\"activate_cheat('";
+        buttons += entry.id;
+        buttons += "')\"><span class=\"cheat-title\">";
+        buttons += entry.key;
+        buttons += " · ";
+        buttons += entry.label;
+        buttons += "</span><span class=\"cheat-detail\">";
+        buttons += entry.detail;
+        buttons += "</span></button>";
+    }
+    document.replace(document.find(marker), marker.size(), buttons);
+    return document;
+}
 
 static SystemInterface_SDL &system_interface()
 {
@@ -398,6 +432,17 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
         M.lighting = !M.lighting;
         data_model().DirtyVariable("lighting");
     });
+    ctor.BindEventCallback("activate_cheat", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &args) {
+        if (args.empty()) return;
+        CheatAction action;
+        if (!cheats_action_from_id(args[0].Get<Rml::String>().c_str(), &action)) return;
+        size_t count = 0;
+        const CheatDescriptor *descriptors = cheats_descriptors(&count);
+        for (size_t i = 0; i < count; ++i)
+            if (descriptors[i].action == action && descriptors[i].match_only && !M.in_match) return;
+        pause_menu_close();
+        if (!cheats_request(action)) fprintf(stderr, "cheat command: another function-key pulse is active\n");
+    });
     ctor.BindEventCallback("close",
                            [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) { pause_menu_close(); });
     ctor.BindEventCallback("drop_out",
@@ -407,7 +452,8 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     ctor.BindEventCallback(
         "quit", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) { hostwin_request_quit(); });
 
-    g_doc = g_ctx->LoadDocumentFromMemory(SETTINGS_RML, "settings");
+    const std::string document = settings_document();
+    g_doc = g_ctx->LoadDocumentFromMemory(document, "settings");
     if (!g_doc) {
         fprintf(stderr, "rmlui: LoadDocumentFromMemory failed\n");
         return 0;

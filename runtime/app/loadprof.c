@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include <time.h>
 
-int  lf2_loading_now(void);          /* imports.c */
-long lf2_load_active_ms(void);       /* imports.c */
-extern long decrypt_files, decrypt_bytes;   /* overrides.c: the ported decryptor */
+int lf2_loading_now(void);                /* imports.c */
+long lf2_load_active_ms(void);            /* imports.c */
+extern long decrypt_files, decrypt_bytes; /* assets.c: the ported decryptors */
 
 static const char *const NAMES[LP_N] = {
     "surf_Blt (sprite/layer composition)",
@@ -16,7 +16,7 @@ static const char *const NAMES[LP_N] = {
 };
 
 static unsigned long long total_ns[LP_N];
-static long              calls[LP_N];
+static long calls[LP_N];
 
 unsigned long long loadprof_now_ns(void)
 {
@@ -55,24 +55,23 @@ void loadprof_report(void)
     unsigned long long sum = 0;
     for (int i = 0; i < LP_N; i++) sum += total_ns[i];
 
-    fprintf(stderr, "load profile: %.3f s actively loading; the sections below account "
-                    "for %.3f s of it (%.0f%%)\n",
-            (double)active / 1000.0, (double)sum / 1e9,
-            active ? (double)sum / 1e6 / (double)active * 100.0 : 0.0);
+    fprintf(stderr,
+            "load profile: %.3f s actively loading; the sections below account "
+            "for %.3f s of it (%.0f%%)\n",
+            (double)active / 1000.0, (double)sum / 1e9, active ? (double)sum / 1e6 / (double)active * 100.0 : 0.0);
     for (int i = 0; i < LP_N; i++) {
         if (!calls[i]) {
             fprintf(stderr, "  %-38s NEVER ENTERED while loading\n", NAMES[i]);
             continue;
         }
-        fprintf(stderr, "  %-38s %8.3f s over %8ld calls (%.1f us each)\n",
-                NAMES[i], (double)total_ns[i] / 1e9, calls[i],
-                (double)total_ns[i] / 1000.0 / (double)calls[i]);
+        fprintf(stderr, "  %-38s %8.3f s over %8ld calls (%.1f us each)\n", NAMES[i], (double)total_ns[i] / 1e9,
+                calls[i], (double)total_ns[i] / 1000.0 / (double)calls[i]);
     }
     if (decrypt_files)
-        fprintf(stderr, "  decrypt: %ld files, %.2f MB, done natively (LF2_SLOW_DECRYPT=1 "
-                        "restores the game's own byte-at-a-time loop)\n",
+        fprintf(stderr,
+                "  decrypt: %ld files, %.2f MB, done natively (LF2_SLOW_DECRYPT=1 "
+                "restores the game's own byte-at-a-time loop)\n",
                 decrypt_files, (double)decrypt_bytes / 1048576.0);
-    else
-        fprintf(stderr, "  decrypt: the ported decryptor NEVER RAN in this run\n");
-    fprintf(stderr, "  the remainder is guest code: parsing and the recompiled main loop.\n");
+    else fprintf(stderr, "  decrypt: the ported decryptor NEVER RAN in this run\n");
+    fprintf(stderr, "  the remainder is guest resource construction and recompiled control flow.\n");
 }

@@ -23,21 +23,23 @@ uint8_t *g_mem;
  * every negative result carry an unstated blind spot. */
 uint32_t g_image_lo, g_image_hi;
 
-enum { GUEST_SPACE = 0x100000000ull };   /* full 32-bit space, lazily committed */
+enum { GUEST_SPACE = 0x100000000ull }; /* full 32-bit space, lazily committed */
 enum { STACK_TOP = 0x00300000, STACK_SIZE = 0x00100000 };
 
 void guest_init(void)
 {
     /* Reserving the whole 4 GiB means a guest address is just an index -- no bounds
      * check or translation on the hot path. Pages are only committed when touched. */
-    void *p = mmap(NULL, GUEST_SPACE, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-    if (p == MAP_FAILED) { perror("mmap guest space"); abort(); }
+    void *p = mmap(NULL, GUEST_SPACE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (p == MAP_FAILED) {
+        perror("mmap guest space");
+        abort();
+    }
     g_mem = p;
 
     memset(&cpu, 0, sizeof cpu);
     cpu.st_top = 0;
-    cpu.fcw = 0x027F;      /* MSVC default: exceptions masked, 53-bit precision */
+    cpu.fcw = 0x027F; /* MSVC default: exceptions masked, 53-bit precision */
     extern void (*rwatch_trace_hook)(void);
     rwatch_trace_hook = dump_fn_trace;
     rwatch_init();
@@ -46,23 +48,29 @@ void guest_init(void)
 
     /* Minimal TIB. The SEH chain head must terminate properly or the CRT prologues
      * build their frames from garbage. */
-    ST32(TIB_BASE + 0x00, 0xFFFFFFFFu);          /* ExceptionList: end of chain */
-    ST32(TIB_BASE + 0x04, STACK_TOP);            /* StackBase */
+    ST32(TIB_BASE + 0x00, 0xFFFFFFFFu);            /* ExceptionList: end of chain */
+    ST32(TIB_BASE + 0x04, STACK_TOP);              /* StackBase */
     ST32(TIB_BASE + 0x08, STACK_TOP - STACK_SIZE); /* StackLimit */
-    ST32(TIB_BASE + 0x18, TIB_BASE);             /* Self */
-    ST32(TIB_BASE + 0x24, 0x5678);               /* thread id */
-    ST32(TIB_BASE + 0x30, TIB_BASE + 0x1000);    /* PEB */
+    ST32(TIB_BASE + 0x18, TIB_BASE);               /* Self */
+    ST32(TIB_BASE + 0x24, 0x5678);                 /* thread id */
+    ST32(TIB_BASE + 0x30, TIB_BASE + 0x1000);      /* PEB */
 }
 
 void guest_load_image(const char *exe_path)
 {
     FILE *fh = fopen(exe_path, "rb");
-    if (!fh) { perror(exe_path); abort(); }
+    if (!fh) {
+        perror(exe_path);
+        abort();
+    }
     fseek(fh, 0, SEEK_END);
     long n = ftell(fh);
     rewind(fh);
     uint8_t *file = malloc((size_t)n);
-    if (fread(file, 1, (size_t)n, fh) != (size_t)n) { fprintf(stderr, "short read\n"); abort(); }
+    if (fread(file, 1, (size_t)n, fh) != (size_t)n) {
+        fprintf(stderr, "short read\n");
+        abort();
+    }
     fclose(fh);
 
     const uint32_t pe = *(uint32_t *)(file + 0x3C);
@@ -83,9 +91,9 @@ void guest_load_image(const char *exe_path)
     for (int i = 0; i < nsec; i++) {
         const uint8_t *s = sec + i * 40;
         const uint32_t vsize = *(uint32_t *)(s + 8);
-        const uint32_t rva   = *(uint32_t *)(s + 12);
+        const uint32_t rva = *(uint32_t *)(s + 12);
         const uint32_t rsize = *(uint32_t *)(s + 16);
-        const uint32_t roff  = *(uint32_t *)(s + 20);
+        const uint32_t roff = *(uint32_t *)(s + 20);
         memset(g_mem + base + rva, 0, vsize);
         memcpy(g_mem + base + rva, file + roff, rsize < vsize ? rsize : vsize);
         if (base + rva + vsize > g_image_hi) g_image_hi = base + rva + vsize;
@@ -99,7 +107,10 @@ void guest_load_image(const char *exe_path)
  * in dispatch() identifiable. Unimplemented ones name themselves instead of jumping
  * into unmapped memory. */
 #define MAX_IMPORTS 512
-static struct { char dll[32]; char name[64]; } imports[MAX_IMPORTS];
+static struct {
+    char dll[32];
+    char name[64];
+} imports[MAX_IMPORTS];
 static int nimports;
 
 static void bind_imports(uint8_t *file, uint32_t base, uint32_t pe)
@@ -113,7 +124,7 @@ static void bind_imports(uint8_t *file, uint32_t base, uint32_t pe)
         if (!name_rva) break;
         const char *dll = (const char *)(g_mem + base + name_rva);
         uint32_t *thunk = (uint32_t *)(g_mem + base + (oft ? oft : fta));
-        uint32_t *iat   = (uint32_t *)(g_mem + base + fta);
+        uint32_t *iat = (uint32_t *)(g_mem + base + fta);
         for (int i = 0; thunk[i]; i++) {
             if (nimports >= MAX_IMPORTS) break;
             snprintf(imports[nimports].dll, sizeof imports[0].dll, "%s", dll);
@@ -147,23 +158,25 @@ static Handler import_handler[MAX_IMPORTS];
  * clock_gettime calls (tens of ns against ~7M calls) are not paid on a normal run. */
 static double import_ns;
 static double import_ns_each[MAX_IMPORTS];
-static int import_timing = -1;   /* resolved once; -1 = not yet checked */
+static int import_timing = -1; /* resolved once; -1 = not yet checked */
 
 void import_stats_report(void)
 {
     if (!getenv("LF2_IMPORT_STATS")) return;
     int idx[MAX_IMPORTS], n = nimports;
     for (int k = 0; k < n; k++) idx[k] = k;
-    for (int a = 0; a < n; a++)                    /* selection sort; n is ~130 */
+    for (int a = 0; a < n; a++) /* selection sort; n is ~130 */
         for (int b = a + 1; b < n; b++)
             if (import_calls[idx[b]] > import_calls[idx[a]]) {
-                const int t = idx[a]; idx[a] = idx[b]; idx[b] = t;
+                const int t = idx[a];
+                idx[a] = idx[b];
+                idx[b] = t;
             }
     long total = 0;
     for (int k = 0; k < n; k++) total += import_calls[k];
     fprintf(stderr, "import calls: %ld total across %d imports\n", total, n);
-    fprintf(stderr, "import time:  %.3f s inside handlers, %.0f ns/call (timer overhead included)\n",
-            import_ns / 1e9, total ? import_ns / (double)total : 0.0);
+    fprintf(stderr, "import time:  %.3f s inside handlers, %.0f ns/call (timer overhead included)\n", import_ns / 1e9,
+            total ? import_ns / (double)total : 0.0);
     for (int k = 0; k < n && k < 12; k++) {
         if (!import_calls[idx[k]]) break;
         fprintf(stderr, "  %-34s %8ld\n", imports[idx[k]].name, import_calls[idx[k]]);
@@ -176,13 +189,15 @@ void import_stats_report(void)
     for (int a = 0; a < n; a++)
         for (int b = a + 1; b < n; b++)
             if (import_ns_each[idx[b]] > import_ns_each[idx[a]]) {
-                const int t = idx[a]; idx[a] = idx[b]; idx[b] = t;
+                const int t = idx[a];
+                idx[a] = idx[b];
+                idx[b] = t;
             }
     fprintf(stderr, "import time by handler:\n");
     for (int k = 0; k < n && k < 12; k++) {
         if (import_ns_each[idx[k]] <= 0) break;
-        fprintf(stderr, "  %-34s %8.3f s  %8ld calls  %8.0f ns/call\n",
-                imports[idx[k]].name, import_ns_each[idx[k]] / 1e9, import_calls[idx[k]],
+        fprintf(stderr, "  %-34s %8.3f s  %8ld calls  %8.0f ns/call\n", imports[idx[k]].name,
+                import_ns_each[idx[k]] / 1e9, import_calls[idx[k]],
                 import_ns_each[idx[k]] / (double)import_calls[idx[k]]);
     }
 }
@@ -216,7 +231,10 @@ void host_import(uint32_t sentinel)
         }
         import_handler[i] = h;
     }
-    if (!import_timing) { h(); return; }
+    if (!import_timing) {
+        h();
+        return;
+    }
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     h();
@@ -269,7 +287,8 @@ void dump_mem_once(void)
 
 void probe(uint32_t addr)
 {
-    fprintf(stderr, "PROBE %08x eax=%08x ecx=%08x edx=%08x esi=%08x edi=%08x\n", addr, R(EAX), R(ECX), R(EDX), R(ESI), R(EDI));
+    fprintf(stderr, "PROBE %08x eax=%08x ecx=%08x edx=%08x esi=%08x edi=%08x\n", addr, R(EAX), R(ECX), R(EDX), R(ESI),
+            R(EDI));
 }
 
 void fn_enter(uint32_t addr)
@@ -327,7 +346,7 @@ void dump_fn_trace(void)
 
 void dump_trace(void)
 {
-    static const char *RN[8] = { "eax","ecx","edx","ebx","esp","ebp","esi","edi" };
+    static const char *RN[8] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
     fprintf(stderr, "regs:");
     for (int i = 0; i < 8; i++) fprintf(stderr, " %s=%08x", RN[i], R(i));
     fprintf(stderr, "\n");
@@ -347,7 +366,10 @@ void dump_trace(void)
         fprintf(stderr, "occurrences of %08x on the stack:", bad);
         int hits = 0;
         for (uint32_t a = STACK_TOP - STACK_SIZE; a < STACK_TOP && hits < 12; a += 4)
-            if (LD32(a) == bad) { fprintf(stderr, " %08x", a); hits++; }
+            if (LD32(a) == bad) {
+                fprintf(stderr, " %08x", a);
+                hits++;
+            }
         fprintf(stderr, "%s\n", hits ? "" : " none");
     }
     /* Which of the game's variables still hold valid COM object pointers? The correct
@@ -382,10 +404,10 @@ void stack_check(uint32_t esp_at_entry, uint32_t fn)
     enum { SEEN_MAX = 64 };
     static uint32_t seen[SEEN_MAX];
     static int nseen;
-    for (int i = 0; i < nseen; i++) if (seen[i] == fn) return;
+    for (int i = 0; i < nseen; i++)
+        if (seen[i] == fn) return;
     if (nseen < SEEN_MAX) seen[nseen++] = fn;
-    fprintf(stderr, "STACK IMBALANCE fn_%08x: %+d bytes\n",
-            fn, (int)(R(ESP) - esp_at_entry));
+    fprintf(stderr, "STACK IMBALANCE fn_%08x: %+d bytes\n", fn, (int)(R(ESP) - esp_at_entry));
 }
 
 static uint32_t w_addr, w_val;
@@ -406,8 +428,7 @@ void watch_sample(const char *where, uint32_t ctx)
     if (w_armed) {
         const uint32_t now = LD32(w_addr);
         if (now != w_val) {
-            fprintf(stderr, "SLOT %08x: %08x -> %08x at %s %08x\n",
-                    w_addr, w_val, now, where, ctx);
+            fprintf(stderr, "SLOT %08x: %08x -> %08x at %s %08x\n", w_addr, w_val, now, where, ctx);
             w_val = now;
         }
         return;
@@ -424,8 +445,7 @@ void watch_sample(const char *where, uint32_t ctx)
     const uint32_t now = LD32(addr);
     if (now == val) return;
     if (!target || now == target) {
-        fprintf(stderr, "WATCH %08x: %08x -> %08x at %s %08x (esp=%08x)\n",
-                addr, val, now, where, ctx, R(ESP));
+        fprintf(stderr, "WATCH %08x: %08x -> %08x at %s %08x (esp=%08x)\n", addr, val, now, where, ctx, R(ESP));
         dump_fn_trace();
     }
     val = now;
@@ -443,8 +463,7 @@ void dispatch(uint32_t target)
         const uint32_t before = R(ESP);
         if (target >= 0xF1000000u && target < 0xF2000000u) com_call(target);
         else host_import(target);
-        fprintf(stderr, "ESP %08x -> %08x (%+d) %08x\n",
-                before, R(ESP), (int)(R(ESP) - before), target);
+        fprintf(stderr, "ESP %08x -> %08x (%+d) %08x\n", before, R(ESP), (int)(R(ESP) - before), target);
         return;
     }
 
@@ -455,14 +474,16 @@ void dispatch(uint32_t target)
      * return address of the call we are in -- that localises the writer. */
     {
         static uint32_t watch_addr, watch_val;
-        static int watch_armed;
-        const char *w = getenv("LF2_WATCH");
-        if (w && !watch_armed) {
+        static int watch_configured;
+        if (!watch_configured) {
+            const char *w = getenv("LF2_WATCH");
+            watch_configured = 1;
+            if (!w) goto watch_ready;
             watch_addr = (uint32_t)strtoul(w, NULL, 16);
             watch_val = LD32(watch_addr);
-            watch_armed = 1;
             fprintf(stderr, "watching %08x = %08x\n", watch_addr, watch_val);
         }
+    watch_ready:;
         static uint32_t watch_target;
         static int target_set;
         if (!target_set) {
@@ -470,18 +491,16 @@ void dispatch(uint32_t target)
             watch_target = t ? (uint32_t)strtoul(t, NULL, 16) : 0;
             target_set = 1;
         }
-        if (watch_armed && LD32(watch_addr) != watch_val &&
-            (!watch_target || LD32(watch_addr) == watch_target)) {
-            fprintf(stderr, "WATCH %08x changed %08x -> %08x; now calling %08x, ret %08x\n",
-                    watch_addr, watch_val, LD32(watch_addr), target, LD32(R(ESP)));
+        if (watch_addr && LD32(watch_addr) != watch_val && (!watch_target || LD32(watch_addr) == watch_target)) {
+            fprintf(stderr, "WATCH %08x changed %08x -> %08x; now calling %08x, ret %08x\n", watch_addr, watch_val,
+                    LD32(watch_addr), target, LD32(R(ESP)));
             watch_val = LD32(watch_addr);
             dump_trace();
         }
     }
 
     if (R(ESP) < STACK_TOP - STACK_SIZE || R(ESP) > STACK_TOP) {
-        fprintf(stderr, "ESP out of range: %08x calling %08x from guest %08x\n",
-                R(ESP), target, LD32(R(ESP)));
+        fprintf(stderr, "ESP out of range: %08x calling %08x from guest %08x\n", R(ESP), target, LD32(R(ESP)));
         dump_trace();
         abort();
     }
@@ -489,12 +508,17 @@ void dispatch(uint32_t target)
     trace_esp[trace_pos % TRACE_N] = R(ESP);
     trace_pos++;
 
-    if (target >= 0xF1000000u && target < 0xF2000000u) { com_call(target); return; }
-    if (target >= IMPORT_SENTINEL) { host_import(target); return; }
+    if (target >= 0xF1000000u && target < 0xF2000000u) {
+        com_call(target);
+        return;
+    }
+    if (target >= IMPORT_SENTINEL) {
+        host_import(target);
+        return;
+    }
     const GuestFunc *f = bsearch(&target, g_funcs, (size_t)g_nfuncs, sizeof g_funcs[0], cmp_addr);
     if (!f) {
-        fprintf(stderr, "indirect call to unknown address %08x from guest %08x\n",
-                target, LD32(R(ESP)));
+        fprintf(stderr, "indirect call to unknown address %08x from guest %08x\n", target, LD32(R(ESP)));
         dump_trace();
         abort();
     }
