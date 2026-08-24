@@ -23,14 +23,21 @@ grepping these — nearly all of them are already recorded with the measurement 
 ## Build, run, test
 
 ```sh
-# One-time: the game tree is NOT in the repo and the build needs game/lf2.exe.
+# One command from a fresh clone: provisions shared/port-assets, the RmlUi
+# submodule, the uv environment, extracts the game tree (downloading the
+# installer if absent) and builds, then runs.
+./run.sh                                     # a one-line shim over bootstrap.py
+
+# Manual equivalent of what bootstrap.py does:
 curl -O https://lf2.net/LF2_v2.0a.exe
 python3 tools/extract_game.py LF2_v2.0a.exe game/
-
-python3 tools/build/build.py
+uv run python tools/build/build.py
 cd game && ../scratch/build-clang/lf2 lf2.exe      # cwd MUST be the game tree — data is opened by relative path
-./run.sh                                     # extract-if-needed + build + run, from anywhere
 ```
+
+`bootstrap.py` is stdlib-only Python; setup logic lives there, never in
+run.sh, so it can refuse by name and be read like any other code. Python
+dependencies are managed by uv (`pyproject.toml` + committed `uv.lock`).
 
 Build artefacts go in the gitignored `scratch/`, never `/tmp`.
 
