@@ -352,11 +352,10 @@ THREE THINGS THAT WENT WRONG IN THE BUILDING, all worth not repeating:
 
 INFRASTRUCTURE THIS NEEDED. SDL's default renderer order picks the OpenGL backend, which has
 no SDL_GPUDevice and therefore no SDL_GPURenderState -- no shaders at all. The renderer is now
-created as SDL_GPU_RENDERER by name, with a checked fallback. Shaders are committed SPIR-V
-(tools/build/build_shaders.sh; ctest shaders recompiles and compares wherever glslc exists, proven
-to fail on a stale blob), so the build still needs only a C compiler and SDL. A backend that
-cannot take SPIR-V is told about on stderr and gets the plain composition -- deliberately no
-approximation to fall back on, since that is exactly how the fake bloom survived.
+created as SDL_GPU_RENDERER by name, with a checked fallback. GLSL is authoritative and
+`tools/build/build_shaders.py` commits both SPIR-V and MSL payloads; ctest recompiles and compares
+every format for which the official tools are present, and was proven to fail on a stale blob.
+The runtime build therefore still needs only a C compiler and SDL.
 
 VERIFIED, tools/e2e.sh render, four arms: the GPU frame matches the software compositor to max 1-2
 levels of 255 on antialiased glyph edges only; dropping every 7th draw changes 134928 px, so

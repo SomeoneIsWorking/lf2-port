@@ -7,13 +7,19 @@
 #include <string.h>
 
 #include "hd2d.h"
+#include "gpu_depth_format.h"
+#include "gpu_shader_source.h"
 
 #include "../shaders/gen/mesh_vert_spv.h"
 #include "../shaders/gen/mesh_spv.h"
+#include "../shaders/gen/mesh_vert_msl.h"
+#include "../shaders/gen/mesh_msl.h"
 
 static SDL_Renderer  *R;
 static SDL_GPUDevice *DEV;
 static SDL_GPUGraphicsPipeline *PIPE;
+static SDL_GPUShaderFormat SHADER_FORMATS;
+static SDL_GPUTextureFormat DEPTH_FORMAT;
 
 /* The offscreen pair, rebuilt when the size changes -- which is every resize, exactly as
  * hd2d.c's lighting chain is. */
@@ -94,15 +100,22 @@ static void selftest_texture(void);
 
 int mesh_ready(void) { return init_ok; }
 
-static SDL_GPUShader *shader_make(const unsigned char *spv, size_t len,
+static SDL_GPUShader *shader_make(const unsigned char *spv, size_t spv_len,
+                                  const unsigned char *msl, size_t msl_len,
                                   SDL_GPUShaderStage stage, const char *name)
 {
+    GPUShaderSource source;
+    if (!gpu_shader_source_select(SHADER_FORMATS, spv, spv_len, msl, msl_len, &source)) {
+        fprintf(stderr, "mesh: no shader payload matches the %s backend for %s\n",
+                SDL_GetGPUDeviceDriver(DEV), name);
+        return NULL;
+    }
     SDL_GPUShaderCreateInfo info;
     SDL_zero(info);
-    info.format = SDL_GPU_SHADERFORMAT_SPIRV;
-    info.code = spv;
-    info.code_size = len;
-    info.entrypoint = "main";
+    info.format = source.format;
+    info.code = source.code;
+    info.code_size = source.code_size;
+    info.entrypoint = source.entrypoint;
     info.stage = stage;
     info.num_uniform_buffers = 1;
     /* The fragment stage takes the source texture. Declared even when a draw binds none: the
@@ -132,18 +145,18 @@ int mesh_init(SDL_Renderer *r)
                         "their painted layers.\n", SDL_GetRendererName(r));
         return 0;
     }
-    if (!(SDL_GetGPUShaderFormats(DEV) & SDL_GPU_SHADERFORMAT_SPIRV)) {
-        init_why = "the GPU backend does not take SPIR-V";
-        fprintf(stderr, "mesh: the %s backend does not accept SPIR-V, which is the only format "
-                        "this port ships -- stage geometry cannot be drawn here.\n",
-                SDL_GetGPUDeviceDriver(DEV));
+    SHADER_FORMATS = SDL_GetGPUShaderFormats(DEV);
+    if (!(SHADER_FORMATS & (SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL))) {
+        init_why = "the GPU backend has no matching shader payload";
+        fprintf(stderr, "mesh: the %s backend accepts shader formats 0x%x, but this port ships "
+                        "SPIR-V and MSL -- stage geometry cannot be drawn here.\n",
+                SDL_GetGPUDeviceDriver(DEV), (unsigned)SHADER_FORMATS);
         return 0;
     }
-    if (!SDL_GPUTextureSupportsFormat(DEV, SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
-                                      SDL_GPU_TEXTURETYPE_2D,
-                                      SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)) {
-        init_why = "no D32_FLOAT depth target";
-        fprintf(stderr, "mesh: the %s backend has no D32_FLOAT depth-stencil target, so this "
+    DEPTH_FORMAT = gpu_depth_format_select(DEV);
+    if (DEPTH_FORMAT == SDL_GPU_TEXTUREFORMAT_INVALID) {
+        init_why = "no supported depth target";
+        fprintf(stderr, "mesh: the %s backend has no supported depth-stencil target, so this "
                         "pass has no depth test and is NOT run -- drawing it without one would "
                         "put the far side of a solid in front of its near side.\n",
                 SDL_GetGPUDeviceDriver(DEV));
@@ -151,8 +164,10 @@ int mesh_init(SDL_Renderer *r)
     }
 
     SDL_GPUShader *vs = shader_make(mesh_vert_spv, sizeof mesh_vert_spv,
+                                    mesh_vert_msl, sizeof mesh_vert_msl,
                                     SDL_GPU_SHADERSTAGE_VERTEX, "vertex");
     SDL_GPUShader *fs = shader_make(mesh_spv, sizeof mesh_spv,
+                                    mesh_msl, sizeof mesh_msl,
                                     SDL_GPU_SHADERSTAGE_FRAGMENT, "fragment");
     if (!vs || !fs) {
         init_why = "a shader failed to compile";
@@ -200,7 +215,7 @@ int mesh_init(SDL_Renderer *r)
     pi.target_info.num_color_targets = 1;
     pi.target_info.color_target_descriptions = &ctd;
     pi.target_info.has_depth_stencil_target = true;
-    pi.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+    pi.target_info.depth_stencil_format = DEPTH_FORMAT;
     /* LESS, and the clear below is 1.0, so smaller z is nearer. That is the whole point of the
      * pass; a pipeline that reached here with the test disabled would draw a mesh that looks
      * plausible from one angle and inside out from another. */
@@ -243,9 +258,13 @@ int mesh_init(SDL_Renderer *r)
 
     init_ok = 1;
     init_why = "ready";
-    fprintf(stderr, "mesh: depth-tested geometry pass ready on the %s backend "
-                    "(D32_FLOAT depth, sharing the renderer's device)\n",
-            SDL_GetGPUDeviceDriver(DEV));
+    GPUShaderSource selected;
+    (void)gpu_shader_source_select(SHADER_FORMATS, mesh_vert_spv, sizeof mesh_vert_spv,
+                                   mesh_vert_msl, sizeof mesh_vert_msl, &selected);
+    fprintf(stderr, "mesh: depth-tested geometry pass ready on the %s backend with %s shaders "
+                    "(%s depth, sharing the renderer's device)\n",
+            SDL_GetGPUDeviceDriver(DEV), gpu_shader_format_name(selected.format),
+            gpu_depth_format_name(DEPTH_FORMAT));
 
     /* RUN AT INIT, not from the periodic report. render_report is behind LF2_RENDER_DEBUG and
      * fires every 900 frames, so a self-test called from there needs two switches and a long
@@ -282,7 +301,7 @@ static int targets_make(MeshTarget *t, int w, int h)
     ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
     t->color = SDL_CreateGPUTexture(DEV, &ci);
 
-    ci.format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+    ci.format = DEPTH_FORMAT;
     ci.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
     t->depth = SDL_CreateGPUTexture(DEV, &ci);
 

@@ -238,8 +238,8 @@ The self-test runs at INIT rather than from render_report, which is behind LF2_R
 fires every 900 frames -- a self-test needing two switches and a long run is the same as not
 having one. tools/e2e.sh mesh is what runs it.
 
-tools/build/build_shaders.sh now compiles *.vert as well as *.frag, taking the stage from the
-extension; ctest shaders covers all five blobs.
+`tools/build/build_shaders.py` compiles `*.vert` as well as `*.frag`, taking the stage from the
+extension; its current two-stage pipeline covers committed SPIR-V and MSL for every source.
 
 WHAT IS NOT DONE, so the pass is not overread: nothing submits any geometry yet. mesh_report
 says so out loud rather than printing a clean zero. The next pieces are the stage-space camera

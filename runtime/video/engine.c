@@ -15,6 +15,8 @@
 #include "options.h"
 #include "engine_textures.h"
 #include "engine_visibility_probe.h"
+#include "gpu_depth_format.h"
+#include "gpu_shader_source.h"
 #include "painter_depth.h"
 
 #include "../shaders/gen/quad_vert_spv.h"
@@ -26,11 +28,22 @@
 #include "../shaders/gen/hd2d_shadow_spv.h"
 #include "../shaders/gen/hd2d_light_spv.h"
 
+#include "../shaders/gen/quad_vert_msl.h"
+#include "../shaders/gen/quad_msl.h"
+#include "../shaders/gen/mesh_vert_msl.h"
+#include "../shaders/gen/mesh_msl.h"
+#include "../shaders/gen/hd2d_quad_vert_msl.h"
+#include "../shaders/gen/hd2d_character_msl.h"
+#include "../shaders/gen/hd2d_shadow_msl.h"
+#include "../shaders/gen/hd2d_light_msl.h"
+
 /* ---- state ------------------------------------------------------------------------------ */
 
 static SDL_Renderer  *R;
 static SDL_GPUDevice *DEV;
 static SDL_GPUSampler *SMP;
+static SDL_GPUShaderFormat SHADER_FORMATS;
+static SDL_GPUTextureFormat DEPTH_FORMAT;
 
 /* THREE PIPELINES, one per blend mode, because SDL_GPU fixes the blend state at pipeline
  * creation. The alternative -- premultiplying everything on upload so one blend serves all --
@@ -102,16 +115,23 @@ void engine_surface_dirty(uint32_t pixels)
 
 /* ---- setup ------------------------------------------------------------------------------- */
 
-static SDL_GPUShader *shader_make(const unsigned char *spv, size_t len,
+static SDL_GPUShader *shader_make(const unsigned char *spv, size_t spv_len,
+                                  const unsigned char *msl, size_t msl_len,
                                   SDL_GPUShaderStage stage, int samplers, int uniforms,
                                   const char *what)
 {
+    GPUShaderSource source;
+    if (!gpu_shader_source_select(SHADER_FORMATS, spv, spv_len, msl, msl_len, &source)) {
+        fprintf(stderr, "engine: no shader payload matches the %s backend for %s\n",
+                SDL_GetGPUDeviceDriver(DEV), what);
+        return NULL;
+    }
     SDL_GPUShaderCreateInfo info;
     SDL_zero(info);
-    info.code = spv;
-    info.code_size = len;
-    info.entrypoint = "main";
-    info.format = SDL_GPU_SHADERFORMAT_SPIRV;
+    info.code = source.code;
+    info.code_size = source.code_size;
+    info.entrypoint = source.entrypoint;
+    info.format = source.format;
     info.stage = stage;
     info.num_samplers = (Uint32)samplers;
     info.num_uniform_buffers = (Uint32)uniforms;
@@ -147,20 +167,21 @@ int engine_init(SDL_Renderer *r)
                         "and the SDL_Render path draws instead.\n", SDL_GetRendererName(r));
         return 0;
     }
-    if (!(SDL_GetGPUShaderFormats(DEV) & SDL_GPU_SHADERFORMAT_SPIRV)) {
-        init_why = "the GPU backend does not take SPIR-V";
-        fprintf(stderr, "engine: the %s backend does not accept SPIR-V, the only format this "
-                        "port ships.\n", SDL_GetGPUDeviceDriver(DEV));
+    SHADER_FORMATS = SDL_GetGPUShaderFormats(DEV);
+    if (!(SHADER_FORMATS & (SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL))) {
+        init_why = "the GPU backend has no matching shader payload";
+        fprintf(stderr, "engine: the %s backend accepts shader formats 0x%x, but this port "
+                        "ships SPIR-V and MSL.\n", SDL_GetGPUDeviceDriver(DEV),
+                (unsigned)SHADER_FORMATS);
         return 0;
     }
-    if (!SDL_GPUTextureSupportsFormat(DEV, SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
-                                      SDL_GPU_TEXTURETYPE_2D,
-                                      SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)) {
+    DEPTH_FORMAT = gpu_depth_format_select(DEV);
+    if (DEPTH_FORMAT == SDL_GPU_TEXTUREFORMAT_INVALID) {
         /* Not fatal the way it is for the geometry pass -- sprites arrive painter-ordered and
          * would still draw correctly without a depth buffer. It IS fatal to the reason this
          * engine exists, so it refuses rather than becoming a slower copy of what it replaces. */
-        init_why = "no D32_FLOAT depth target";
-        fprintf(stderr, "engine: the %s backend has no D32_FLOAT depth-stencil target. Sprites "
+        init_why = "no supported depth target";
+        fprintf(stderr, "engine: the %s backend has no supported depth-stencil target. Sprites "
                         "would still draw, but a depth buffer shared with the stage geometry is "
                         "the whole reason for this engine, so it does NOT run here.\n",
                 SDL_GetGPUDeviceDriver(DEV));
@@ -168,8 +189,10 @@ int engine_init(SDL_Renderer *r)
     }
 
     SDL_GPUShader *vs = shader_make(quad_vert_spv, sizeof quad_vert_spv,
+                                    quad_vert_msl, sizeof quad_vert_msl,
                                     SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, "quad vertex");
     SDL_GPUShader *fs = shader_make(quad_spv, sizeof quad_spv,
+                                    quad_msl, sizeof quad_msl,
                                     SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1, "quad fragment");
     if (!vs || !fs) {
         init_why = "a shader failed to compile";
@@ -214,7 +237,7 @@ int engine_init(SDL_Renderer *r)
         pi.target_info.num_color_targets = 1;
         pi.target_info.color_target_descriptions = &ctd;
         pi.target_info.has_depth_stencil_target = true;
-        pi.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+        pi.target_info.depth_stencil_format = DEPTH_FORMAT;
         /* THE DEPTH IS WRITTEN AND TESTED, but the picture is still the painter order's --
          * see engine_draw for why those are not in conflict. LESS_OR_EQUAL rather than LESS:
          * two quads at the same list position (a batch) share a depth, and LESS would drop
@@ -238,8 +261,10 @@ int engine_init(SDL_Renderer *r)
     /* ---- the geometry pipeline, sharing everything ---- */
     {
         SDL_GPUShader *gvs = shader_make(mesh_vert_spv, sizeof mesh_vert_spv,
+                                         mesh_vert_msl, sizeof mesh_vert_msl,
                                          SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, "geometry vertex");
         SDL_GPUShader *gfs = shader_make(mesh_spv, sizeof mesh_spv,
+                                         mesh_msl, sizeof mesh_msl,
                                          SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1, "geometry fragment");
         if (gvs && gfs) {
             SDL_GPUVertexBufferDescription gvbd;
@@ -276,7 +301,7 @@ int engine_init(SDL_Renderer *r)
             gp.target_info.num_color_targets = 1;
             gp.target_info.color_target_descriptions = &gct;
             gp.target_info.has_depth_stencil_target = true;
-            gp.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+            gp.target_info.depth_stencil_format = DEPTH_FORMAT;
             /* LESS here, not LESS_OR_EQUAL: within a set the depth is REAL and a genuine tie is
              * coplanar geometry, where either answer is as good. The quads use OR_EQUAL only
              * because a batch shares one ordinal by construction. */
@@ -301,6 +326,7 @@ int engine_init(SDL_Renderer *r)
          * sprite pipeline's -- hd2d_quad.vert explains. Character visibility and projected
          * shadow reception both depth-test against the completed scene. */
         sh_light_vert = shader_make(hd2d_quad_vert_spv, sizeof hd2d_quad_vert_spv,
+                                    hd2d_quad_vert_msl, sizeof hd2d_quad_vert_msl,
                                     SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, "lighting vertex");
 
         SDL_GPUVertexBufferDescription lvbd;
@@ -342,10 +368,11 @@ int engine_init(SDL_Renderer *r)
             lp.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
 
             lp.fragment_shader = shader_make(hd2d_character_spv, sizeof hd2d_character_spv,
+                                             hd2d_character_msl, sizeof hd2d_character_msl,
                                              SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1,
                                              "character mask");
             lp.target_info.has_depth_stencil_target = true;
-            lp.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+            lp.target_info.depth_stencil_format = DEPTH_FORMAT;
             lp.depth_stencil_state.enable_depth_test = true;
             lp.depth_stencil_state.enable_depth_write = false;
             lp.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
@@ -367,8 +394,10 @@ int engine_init(SDL_Renderer *r)
             lp.depth_stencil_state.compare_op = visibility_probe && strcmp(visibility_probe, "shadow-self-lequal") == 0
                                                     ? SDL_GPU_COMPAREOP_LESS_OR_EQUAL
                                                     : SDL_GPU_COMPAREOP_LESS;
-            lp.fragment_shader = shader_make(hd2d_shadow_spv, sizeof hd2d_shadow_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 1,
-                                             1, "cast-shadow mask");
+            lp.fragment_shader = shader_make(hd2d_shadow_spv, sizeof hd2d_shadow_spv,
+                                             hd2d_shadow_msl, sizeof hd2d_shadow_msl,
+                                             SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1,
+                                             "cast-shadow mask");
             p_shadow = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
             if (!p_shadow) {
                 fprintf(stderr,
@@ -381,6 +410,7 @@ int engine_init(SDL_Renderer *r)
             lp.target_info.has_depth_stencil_target = false;
             SDL_zero(lp.depth_stencil_state);
             lp.fragment_shader = shader_make(hd2d_light_spv, sizeof hd2d_light_spv,
+                                             hd2d_light_msl, sizeof hd2d_light_msl,
                                              SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, "light");
             p_light = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
             if (!p_light) {
@@ -428,8 +458,13 @@ int engine_init(SDL_Renderer *r)
     engine_textures_init(DEV);
     init_ok = 1;
     init_why = "ready";
-    fprintf(stderr, "engine: up on the %s backend, sharing the renderer's device "
-                    "(D32_FLOAT depth, one texture pool)\n", SDL_GetGPUDeviceDriver(DEV));
+    GPUShaderSource selected;
+    (void)gpu_shader_source_select(SHADER_FORMATS, quad_vert_spv, sizeof quad_vert_spv,
+                                   quad_vert_msl, sizeof quad_vert_msl, &selected);
+    fprintf(stderr, "engine: up on the %s backend with %s shaders, sharing the renderer's "
+                    "device (%s depth, one texture pool)\n",
+            SDL_GetGPUDeviceDriver(DEV), gpu_shader_format_name(selected.format),
+            gpu_depth_format_name(DEPTH_FORMAT));
     engine_visibility_probe_run(R);
     return 1;
 }
@@ -478,7 +513,7 @@ static int targets_make(int w, int h)
     ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
     tex_color = SDL_CreateGPUTexture(DEV, &ci);
 
-    ci.format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+    ci.format = DEPTH_FORMAT;
     ci.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
     tex_depth = SDL_CreateGPUTexture(DEV, &ci);
 
@@ -513,10 +548,12 @@ static int targets_make(int w, int h)
     /* The masks and lit frame are wrapped for the SHOW diagnostics. The light pass samples
      * the masks directly; they otherwise never leave the engine. */
     {
-        struct { SDL_GPUTexture *gpu; SDL_Texture **wrap; const char *what; } w3[3] = {
-            { tex_chars,  &wrapped_chars,  "character mask" },
-            { tex_shadow, &wrapped_shadow, "cast-shadow mask" },
-            { tex_lit,    &wrapped_lit,    "lit frame" },
+        struct { SDL_GPUTexture *gpu; SDL_Texture **wrap; const char *what; int required; } w3[3] = {
+            { tex_chars,  &wrapped_chars,  "character mask", 0 },
+            { tex_shadow, &wrapped_shadow, "cast-shadow mask", 0 },
+            /* Unlike the two diagnostic masks, this is the shipping engine's presentation.
+             * Returning success with no wrapper makes a working light pass draw nothing. */
+            { tex_lit,    &wrapped_lit,    "lit frame", 1 },
         };
         for (int i = 0; i < 3; i++) {
             SDL_PropertiesID p = SDL_CreateProperties();
@@ -527,9 +564,14 @@ static int targets_make(int w, int h)
             *w3[i].wrap = SDL_CreateTextureWithProperties(R, p);
             SDL_DestroyProperties(p);
             if (!*w3[i].wrap) {
-                fprintf(stderr, "engine: the %s could not be wrapped as a texture (%s) -- it "
-                                "cannot be shown\n",
-                        w3[i].what, SDL_GetError());
+                fprintf(stderr, "engine: the %s could not be wrapped as a renderer texture "
+                                "(%s) -- it cannot be shown%s\n",
+                        w3[i].what, SDL_GetError(),
+                        w3[i].required ? ", so the engine target is refused" : "");
+                if (w3[i].required) {
+                    targets_release();
+                    return 0;
+                }
             } else {
                 SDL_SetTextureScaleMode(*w3[i].wrap, SDL_SCALEMODE_NEAREST);
             }

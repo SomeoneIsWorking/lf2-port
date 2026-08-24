@@ -30,7 +30,7 @@ CLAUDE.md already uses to explain the project):
     tests/        test_blit.c test_flags.c test_geom.c test_insn.c test_mixer.c
     tools/
       routes/     the eleven *_test.sh that boot the game, plus e2e.sh
-      build/      build_shaders.sh build_matrix.sh scratch_clean.sh
+      build/      build_shaders.py build_matrix.sh scratch_clean.sh
       re/         ghidra/ ghidra_scripts/ decrypt_dat.py derive_entries.py check_arity.py
                   diff_data.py diff_trace.py find_path.py x87_profile.py bg_table_check.py
                   click_bands.py
@@ -83,9 +83,11 @@ byte-identity arm at 794x550 is the one that matters here: it compares real fram
 recorded native run, so a reorganization that silently dropped a source file or picked up a
 stale object could not have passed it. codemap.py check is green on the new layout.
 
-ONE REAL BREAK was found by running the scripts rather than by reading them: the moved
-tools/build/*.sh used `dirname "$0"/..` to find the repo root, which resolved to tools/ once
-they were a directory deeper. build_shaders.sh reported "no shaders in runtime/shaders" and the
-shaders test failed. Both are `../..` now. That is exactly the failure this issue predicted --
+ONE REAL BREAK was found by running the scripts rather than by reading them: the then-shell build
+tools used `dirname "$0"/..` to find the repo root, which resolved to tools/ once they were a
+directory deeper. The shader generator reported "no shaders in runtime/shaders" and the shaders
+test failed. The generator is now `tools/build/build_shaders.py`, whose root derives from its
+resolved module path and whose empty-source behavior has a focused Python test. That is exactly the
+failure this issue predicted --
 "builds fine and breaks a script nobody ran" -- and it is the argument for the full e2e sweep
 being part of the move rather than a follow-up.

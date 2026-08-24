@@ -272,6 +272,10 @@ add_test(NAME clang_tidy COMMAND ${Python3_EXECUTABLE}
          --build-dir ${CMAKE_BINARY_DIR})
 add_test(NAME gallery_capture_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_gallery_capture.py)
+add_test(NAME bootstrap COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_bootstrap.py)
+add_test(NAME build_shaders_tool COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_build_shaders.py)
 
 # ---- RmlUi (issue #70) ----
 #
@@ -343,13 +347,20 @@ target_sources(lf2 PRIVATE ${LF2_FONT_SOURCES})
 
 # Device art is shared by every port rather than copied into each tree. Consumers embed the
 # SVG source at build time, so the installed game has no machine-specific runtime asset path.
-set(PORT_ASSETS_DIR "$ENV{PORT_ASSETS_DIR}" CACHE PATH "shared port-assets checkout")
-if(NOT PORT_ASSETS_DIR AND DEFINED ENV{SHARED_DIR})
-    set(PORT_ASSETS_DIR "$ENV{SHARED_DIR}/port-assets")
+if(NOT "$ENV{PORT_ASSETS_DIR}" STREQUAL "")
+    # bootstrap resolved and validated this exact checkout. It must replace a stale cache
+    # entry left by an earlier layout, or configure and build would consume different assets.
+    set(PORT_ASSETS_DIR "$ENV{PORT_ASSETS_DIR}" CACHE PATH "shared port-assets checkout" FORCE)
+elseif(NOT DEFINED PORT_ASSETS_DIR)
+    if(NOT "$ENV{SHARED_DIR}" STREQUAL "")
+        set(PORT_ASSETS_DIR "$ENV{SHARED_DIR}/port-assets")
+    else()
+        set(PORT_ASSETS_DIR "${CMAKE_SOURCE_DIR}/../../shared/port-assets")
+    endif()
+    set(PORT_ASSETS_DIR "${PORT_ASSETS_DIR}" CACHE PATH "shared port-assets checkout")
 endif()
-if(NOT PORT_ASSETS_DIR)
-    get_filename_component(PORT_ASSETS_DIR "${CMAKE_SOURCE_DIR}/../../shared/port-assets" ABSOLUTE)
-endif()
+get_filename_component(PORT_ASSETS_DIR "${PORT_ASSETS_DIR}" ABSOLUTE
+                       BASE_DIR "${CMAKE_SOURCE_DIR}")
 set(LF2_DEVICE_ASSET_SOURCES "")
 lf2_embed_bytes(lf2_device_keyboard_svg "${PORT_ASSETS_DIR}/sets/devices/keyboard.svg" LF2_DEVICE_ASSET_SOURCES)
 lf2_embed_bytes(lf2_device_gamepad_svg "${PORT_ASSETS_DIR}/sets/devices/gamepad.svg" LF2_DEVICE_ASSET_SOURCES)
@@ -389,6 +400,12 @@ target_include_directories(test_stagelight PRIVATE runtime)
 target_compile_options(test_stagelight PRIVATE -Wall -Wextra)
 target_link_libraries(test_stagelight PRIVATE m)
 add_test(NAME stagelight COMMAND test_stagelight)
+
+add_executable(test_gpu_shader_source tests/test_gpu_shader_source.c)
+target_include_directories(test_gpu_shader_source PRIVATE runtime)
+target_link_libraries(test_gpu_shader_source PRIVATE SDL3::SDL3)
+target_compile_options(test_gpu_shader_source PRIVATE -Wall -Wextra)
+add_test(NAME gpu_shader_source COMMAND test_gpu_shader_source)
 
 add_executable(test_stagegeom tests/test_stagegeom.c runtime/video/stagegeom.c)
 target_include_directories(test_stagegeom PRIVATE runtime runtime/overrides runtime/video)
@@ -510,11 +527,11 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/re/insn_vectors.bin)
     set_tests_properties(instructions_replay PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
-# The SPIR-V in runtime/shaders/gen/ is committed, so the build needs no shader compiler --
-# which also means an edited shader that was never recompiled would ship the old lighting and
-# nothing would say so. This recompiles and compares wherever glslc exists, and SKIPS (77)
-# where it does not, saying which.
+# The SPIR-V and MSL in runtime/shaders/gen/ are committed, so the build needs no shader
+# compiler. The gate recompiles authoritative GLSL with glslc and translates that exact SPIR-V
+# with SDL_shadercross. Missing shadercross preserves the SPIR-V comparison before reporting the
+# MSL half skipped; stale evidence still fails.
 add_test(NAME shaders
-         COMMAND sh ${CMAKE_SOURCE_DIR}/tools/build/build_shaders.sh --check
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/build/build_shaders.py --check
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(shaders PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
