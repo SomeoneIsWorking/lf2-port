@@ -69,7 +69,7 @@ FUN_004148a0 is fscanf(in,"%c",&c) / fprintf(out,"%c",c-key[i]) in a loop, which
 natively and is not fine through a recompiled CPU where each is a guest->host import call.
 2,546,141 fscanf calls per load; after the port 466,509.
 
-It is now a native override (fn_004148a0 in runtime/overrides.c):
+It is now a native override (`fn_004148a0` in `runtime/overrides/assets.c`):
   key    "SiuHungIsAGoodBearBecauseHeIsVeryGood", 37 bytes
   header the first 0x7b = 123 bytes are discarded and the key index advances with them, so
          the payload starts at key index 123 % 37 = 12
@@ -77,9 +77,11 @@ It is now a native override (fn_004148a0 in runtime/overrides.c):
 Text-mode CRLF collapsing on input and raw output are both reproduced, because the CRT does
 them and the game's parser depends on the result.
 
-Proved rather than eyeballed: LF2_DECRYPT_DUMP=<dir> copies each decrypted file out, and it
-lives in the OVERRIDE so the control run dumps too. Run once with LF2_SLOW_DECRYPT=1 (the
-game's own loop) and once without: 77 files, 2.2 MB, all byte-identical.
+Proved rather than eyeballed: `LF2_DECRYPT_DUMP=<dir>` copies each decrypted file out, and it
+lives in the override so the control run dumps too. The original 77-file control covered this
+entry point. Issue #107 found `stage.dat` using a second copy of the cipher at `fn_00414a30`;
+both now share the native implementation, and a new slow/native control gives 78 files,
+2.06 MB, all byte-identical.
 
 SECOND FIX: a skipped Sleep now credits the guest clock. Skipping the sleep without moving
 the clock does not end the caller's deadline loop, it turns the wait into a spin -- 142,721
@@ -97,10 +99,11 @@ open data files, with a count and the first path each. 13 sites, and the shape g
 -- every object file is opened, decrypted to data/temporary.txt, and reopened, so the sites
 come in pairs with matching counts (77/77, 65/65, 12/12).
 
-REMAINING: 1.2 s, of which 74% is now genuinely drawing (0.9 s: 2782 surf_Blt, 363
-StretchBlt, 394 colour fills, 342 presents over the load). Cutting it further means fewer
-loading-screen repaints, and note that presented frames are what tools/*_test.sh schedule
-input against, so anything that changes the frame count shifts every scripted route.
+CURRENT (issue #107): the native entry no longer draws a loading screen, and the native frame
+parser reduces scanner calls from 466,462 to 17,661. Active data loading remains 1.22 s, but only
+9 ms is scanning; the remainder is actual image/resource construction and recompiled control
+flow. The old 74% drawing breakdown described the retired guest loading sequence, not the current
+entry path.
 
 ### Note (2026-08-24)
 2026-08-24 correction: the failed repeated-drive experiments do not prove the actual data initializer is time-gated. fn_004246b0 mode 1 only presents the loading picture and changes top mode to 2; fn_0043e9a0 does not establish the one-shot load gate. The real synchronous initializer is fn_0041bc90's 0x0041be98..0x0041c57b branch when 0x0044d05c == 1. Repeatedly calling the two wrong functions loaded zero files because neither owned that branch.

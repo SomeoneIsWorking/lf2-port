@@ -4,18 +4,25 @@
  * PCM straight into it, which is what it does. Mixing is a simple additive S16 mix of
  * every playing buffer, driven from an SDL audio stream callback. */
 #include "com.h"
+#include "dsound.h"
 #include "guest_map.h"
 #include "guest_ops.h"
 
 #include <SDL3/SDL.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <fcntl.h>
+#include <poll.h>
+#include <spawn.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char **environ;
 
 #define ARG(n) LD32(R(ESP) + 4 + 4 * (n))
 
@@ -45,6 +52,7 @@ enum { MIX_SLICE = 4096 }; /* frames mixed per pass; a pull may need several */
 
 static SDL_AudioStream *stream;
 static SDL_Mutex *mix_lock;
+static int audio_initializing;
 
 /* LF2_AUDIO_DEBUG. Four counters rather than one, because they fail independently: the
  * game may never create a buffer, never start one, never have the device pull from us, or
@@ -154,9 +162,20 @@ long au_music_frames;
 /* IBasicAudio volume is hundredths of a dB, -10000 (silence) to 0 (unattenuated), the
  * same scale DirectSound uses for effects. */
 void music_set_volume(int32_t centibels)
-{ mus_gain = (centibels <= -10000) ? 0.0f : SDL_powf(10.0f, (float)centibels / 2000.0f); }
+{
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
+    mus_gain = (centibels <= -10000) ? 0.0f : SDL_powf(10.0f, (float)centibels / 2000.0f);
+    SDL_UnlockMutex(mix_lock);
+}
 
-void music_stop(void) { mus_playing = 0; }
+void music_stop(void)
+{
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
+    mus_playing = 0;
+    SDL_UnlockMutex(mix_lock);
+}
 
 /* Opens the device itself. It was previously only opened when a sound *effect* first
  * played, so music alone -- which is all that happens on the menus -- produced a decoded
@@ -179,37 +198,53 @@ void music_start(void)
  * shell command string around it would make an attacker-supplied filename a shell
  * injection. Quoting it would be a patch over the wrong mechanism -- there is no reason
  * for a shell to be involved at all. */
-static FILE *ffmpeg_open(const char *path, pid_t *out_pid)
+static int ffmpeg_open(const char *path, pid_t *out_pid)
 {
     int fd[2];
-    if (pipe(fd) != 0) return NULL;
+    if (pipe(fd) != 0) return -1;
 
     char rate[16], chans[8];
     snprintf(rate, sizeof rate, "%d", MIX_RATE);
     snprintf(chans, sizeof chans, "%d", MIX_CHANNELS);
 
-    const pid_t pid = fork();
-    if (pid < 0) {
+    posix_spawn_file_actions_t actions;
+    if (posix_spawn_file_actions_init(&actions) != 0) {
         close(fd[0]);
         close(fd[1]);
-        return NULL;
+        return -1;
     }
-    if (pid == 0) {
+
+    const int action_error = posix_spawn_file_actions_addclose(&actions, fd[0]) ||
+                             posix_spawn_file_actions_adddup2(&actions, fd[1], STDOUT_FILENO) ||
+                             posix_spawn_file_actions_addclose(&actions, fd[1]) ||
+                             posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    if (action_error) {
+        posix_spawn_file_actions_destroy(&actions);
         close(fd[0]);
-        dup2(fd[1], STDOUT_FILENO);
         close(fd[1]);
-        const int devnull = open("/dev/null", O_WRONLY);
-        if (devnull >= 0) {
-            dup2(devnull, STDERR_FILENO);
-            close(devnull);
-        }
-        execlp("ffmpeg", "ffmpeg", "-v", "quiet", "-nostdin", "-i", path, "-f", "s16le", "-acodec", "pcm_s16le", "-ar",
-               rate, "-ac", chans, "-", (char *)NULL);
-        _exit(127); /* exec failed: no ffmpeg on PATH */
+        return -1;
     }
+
+    char *const args[] = {"ffmpeg",  "-v",        "quiet", "-nostdin", "-i",  (char *)path, "-f", "s16le",
+                          "-acodec", "pcm_s16le", "-ar",   rate,       "-ac", chans,        "-",  NULL};
+    pid_t pid = -1;
+    const int spawn_error = posix_spawnp(&pid, "ffmpeg", &actions, NULL, args, environ);
+    posix_spawn_file_actions_destroy(&actions);
     close(fd[1]);
+    if (spawn_error) {
+        close(fd[0]);
+        errno = spawn_error;
+        return -1;
+    }
     *out_pid = pid;
-    return fdopen(fd[0], "r");
+    return fd[0];
+}
+
+static void ffmpeg_terminate(pid_t pid)
+{
+    if (pid <= 0) return;
+    kill(pid, SIGKILL);
+    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
 }
 
 int music_load(const char *path)
@@ -224,38 +259,89 @@ int music_load(const char *path)
      * full-amplitude garbage immediately after the music changes, which is what a
      * recording of a real session actually shows. */
     pid_t pid = -1;
-    FILE *pipe = ffmpeg_open(path, &pid);
-    if (!pipe) {
-        fprintf(stderr, "music: could not start ffmpeg\n");
+    const int pipe_fd = ffmpeg_open(path, &pid);
+    if (pipe_fd < 0) {
+        fprintf(stderr, "music: could not start ffmpeg: %s\n", strerror(errno));
         return 0;
     }
 
+    enum { FFMPEG_DECODE_TIMEOUT_MS = 30000 };
+    const Uint64 deadline = SDL_GetTicks() + FFMPEG_DECODE_TIMEOUT_MS;
     size_t cap = 1u << 20, len = 0;
     int16_t *buf = malloc(cap);
     if (!buf) {
-        fclose(pipe);
-        waitpid(pid, NULL, 0);
+        close(pipe_fd);
+        ffmpeg_terminate(pid);
         return 0;
     }
+
+    int decode_failed = 0;
     for (;;) {
         if (len == cap) {
             int16_t *bigger = realloc(buf, cap * 2);
             if (!bigger) {
-                free(buf);
-                fclose(pipe);
-                waitpid(pid, NULL, 0);
-                return 0;
+                decode_failed = 1;
+                break;
             }
             buf = bigger;
             cap *= 2;
         }
-        const size_t got = fread((char *)buf + len, 1, cap - len, pipe);
+
+        const Uint64 now = SDL_GetTicks();
+        if (now >= deadline) {
+            fprintf(stderr, "music: ffmpeg did not finish within %d ms for %s\n", FFMPEG_DECODE_TIMEOUT_MS, path);
+            decode_failed = 1;
+            break;
+        }
+        struct pollfd ready = {pipe_fd, POLLIN | POLLHUP, 0};
+        const int wait_ms = (int)((deadline - now) < 250 ? deadline - now : 250);
+        const int polled = poll(&ready, 1, wait_ms);
+        if (polled < 0) {
+            if (errno == EINTR) continue;
+            decode_failed = 1;
+            break;
+        }
+        if (polled == 0) continue;
+
+        const ssize_t got = read(pipe_fd, (char *)buf + len, cap - len);
+        if (got > 0) {
+            len += (size_t)got;
+            continue;
+        }
         if (got == 0) break;
-        len += got;
+        if (errno != EINTR && errno != EAGAIN) {
+            decode_failed = 1;
+            break;
+        }
     }
-    fclose(pipe);
+    close(pipe_fd);
+
     int status = 0;
-    waitpid(pid, &status, 0);
+    if (decode_failed) {
+        ffmpeg_terminate(pid);
+        free(buf);
+        return 0;
+    }
+    for (;;) {
+        const pid_t waited = waitpid(pid, &status, WNOHANG);
+        if (waited == pid) break;
+        if (waited < 0 && errno != EINTR) {
+            decode_failed = 1;
+            pid = -1;
+            break;
+        }
+        if (SDL_GetTicks() >= deadline) {
+            fprintf(stderr, "music: ffmpeg closed output but did not exit for %s\n", path);
+            decode_failed = 1;
+            break;
+        }
+        SDL_Delay(5);
+    }
+    if (decode_failed) {
+        ffmpeg_terminate(pid);
+        free(buf);
+        return 0;
+    }
 
     if (len == 0) {
         free(buf);
@@ -425,6 +511,23 @@ static void audio_start(void)
     mix_dump_open();
     SDL_AudioSpec spec = {SDL_AUDIO_S16, MIX_CHANNELS, MIX_RATE};
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, NULL);
+    if (stream && !audio_initializing) SDL_ResumeAudioStreamDevice(stream);
+}
+
+void audio_initialization_begin(void)
+{
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
+    audio_initializing = 1;
+    SDL_UnlockMutex(mix_lock);
+    if (stream) SDL_PauseAudioStreamDevice(stream);
+}
+
+void audio_initialization_end(void)
+{
+    SDL_LockMutex(mix_lock);
+    audio_initializing = 0;
+    SDL_UnlockMutex(mix_lock);
     if (stream) SDL_ResumeAudioStreamDevice(stream);
 }
 
@@ -564,7 +667,10 @@ static void sb_Play(uint32_t self)
 static void sb_Stop(uint32_t self)
 {
     SBuf *b = com_host(self);
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
     b->playing = 0;
+    SDL_UnlockMutex(mix_lock);
     com_ret(1, DD_OK);
 }
 
@@ -586,18 +692,25 @@ static void sb_GetCurrentPosition(uint32_t self)
     uint32_t lead = bps ? bps * 40u / 1000u : 0u; /* 40 ms of write-ahead */
     if (b->bytes && lead >= b->bytes) lead = b->bytes / 4;
 
-    if (ARG(1)) ST32(ARG(1), b->pos);
-    if (ARG(2)) ST32(ARG(2), b->bytes ? (b->pos + lead) % b->bytes : b->pos + lead);
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
+    const uint32_t pos = b->pos;
+    SDL_UnlockMutex(mix_lock);
+    if (ARG(1)) ST32(ARG(1), pos);
+    if (ARG(2)) ST32(ARG(2), b->bytes ? (pos + lead) % b->bytes : pos + lead);
     com_ret(3, DD_OK);
 }
 
 static void sb_SetCurrentPosition(uint32_t self)
 {
     SBuf *b = com_host(self);
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
     b->pos = ARG(1);
     /* The guest owns `pos`; the mixer runs off `cur`. Resync or the seek is ignored. */
     const int bps = (b->bits / 8) * b->channels;
     b->cur = bps > 0 ? (double)b->pos / (double)bps : 0.0;
+    SDL_UnlockMutex(mix_lock);
     com_ret(2, DD_OK);
 }
 
@@ -605,8 +718,11 @@ static void sb_GetStatus(uint32_t self)
 {
     SBuf *b = com_host(self);
     uint32_t st = 0;
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
     if (b->playing) st |= 1; /* DSBSTATUS_PLAYING */
     if (b->looping) st |= 4; /* DSBSTATUS_LOOPING */
+    SDL_UnlockMutex(mix_lock);
     if (ARG(1)) ST32(ARG(1), st);
     com_ret(2, DD_OK);
 }
@@ -614,7 +730,10 @@ static void sb_GetStatus(uint32_t self)
 static void sb_SetVolume(uint32_t self)
 {
     SBuf *b = com_host(self);
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
     b->volume = (int)ARG(1);
+    SDL_UnlockMutex(mix_lock);
     com_ret(2, DD_OK);
 }
 
@@ -689,10 +808,13 @@ static void ds_CreateSoundBuffer(uint32_t self)
         if (b->rate < 4000 || b->rate > 192000) b->rate = 22050;
         if (b->bits != 8 && b->bits != 16) b->bits = 8;
     }
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
     if (nbufs < MAX_BUFS) {
         bufs[nbufs++] = b;
         au_bufs++;
     } else au_unregistered++; /* created but never mixed: it plays as silence */
+    SDL_UnlockMutex(mix_lock);
     if (getenv("LF2_AUDIO_DEBUG"))
         fprintf(stderr, "buffer created: %u bytes, %d Hz %dch %dbit\n", b->bytes, b->rate, b->channels, b->bits);
     ST32(out, com_create(IF_DSBUFFER, b));
@@ -713,6 +835,8 @@ static void ds_DuplicateSoundBuffer(uint32_t self)
     }
 
     SBuf *b = SDL_calloc(1, sizeof *b);
+    ensure_mix_lock();
+    SDL_LockMutex(mix_lock);
     *b = *o; /* shares the PCM; its own play cursor */
     b->playing = 0;
     b->pos = 0;
@@ -721,6 +845,7 @@ static void ds_DuplicateSoundBuffer(uint32_t self)
         bufs[nbufs++] = b;
         au_bufs++;
     } else au_unregistered++; /* created but never mixed: it plays as silence */
+    SDL_UnlockMutex(mix_lock);
     if (getenv("LF2_AUDIO_DEBUG"))
         fprintf(stderr, "buffer created: %u bytes, %d Hz %dch %dbit\n", b->bytes, b->rate, b->channels, b->bits);
     ST32(out, com_create(IF_DSBUFFER, b));

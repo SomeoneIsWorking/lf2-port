@@ -8,7 +8,8 @@
  * replace -- one screen's behaviour is usually spread over several overrides, and one
  * override (fn_0043f010 draws everything) serves several screens:
  *
- *   boot_guest.c  construction-time ownership of the port's direct data load
+ *   boot_guest.c  the narrow host scope around the native startup data load
+ *   startup_*.c   RE-ported frontend and world initialization phases
  *   menu.c        the retired front end's draw filtering and shared widescreen geometry
  *   screens.c     the post-load screens' mouse -- mode menu, character select, overlay
  *   input.c       the per-frame gather: devices to the seven buttons a fighter acts on
@@ -19,7 +20,9 @@
  *                 stage may not, which is how a drop-in chooses a character without
  *                 standing in the fight
  *   text.c        the clip and glyph draw hooks
- *   assets.c      the data-file decrypt
+ *   assets.c      both data-file decrypt entry points
+ *   object_*.c    the object constructor's native frame-data parser
+ *   cheats.c      the game's hidden roster and F6-F9 actions without their lock gates
  *   background.c  the stage's background layers: their parallax, tiling and animation
  *   audio_pan.c   how loud a sound is in each ear, from where it is on screen
  *
@@ -32,8 +35,8 @@
 /* Which recompiled function each file provides, so a reader looking for one address does
  * not have to open seven files:
  *
- *   fn_00419e40  boot_guest.c  world construction -- initial loader state before first update
- *   fn_0043e940  boot_guest.c  guest present -- declined only inside the direct startup load
+ *   fn_00419e40  boot_guest.c  world construction
+ *   fn_0043e940  boot_guest.c  guest present -- declined only inside native startup initialization
  *   fn_004246b0  menu.c     retired front-end draw boundary and widescreen geometry
  *   fn_00423b00  menu.c     element draw -- declines the advertising panel by descriptor
  *   fn_00419a60  input.c    per-frame player input -- devices into the game's buttons
@@ -42,7 +45,14 @@
  *   fn_00423940  text.c     font sheet selection
  *   fn_0043c4a0  text.c     text draw
  *   fn_0041b130  text.c     the mode caption -- right-anchored to the VIEW (issue #60)
- *   fn_004148a0  assets.c   the data-file decrypt
+ *   fn_0040ef70  object_parser.c/object_frames.c  object metadata super-call + native frames
+ *   fn_004148a0  assets.c   object/background data-file decrypt
+ *   fn_00414a30  assets.c   stage.dat decrypt
+ *   fn_00416e10  cheats.c   F3 event without the permanent function-key lock
+ *   fn_00416e60  cheats.c   F6 unlimited MP
+ *   fn_00416eb0  cheats.c   F7 restore fighters
+ *   fn_00416f10  cheats.c   F8 drop items
+ *   fn_00416f60  cheats.c   F9 destroy items
  *   fn_0041a250  background.c  the stage's background layer draw -- parallax, tiling, cc/c1/c2
  *   fn_00416fb0  audio_pan.c   stereo pan for one sound source, category A
  *   fn_00417090  audio_pan.c   the same, category B -- identical but for its tables

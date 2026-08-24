@@ -23,9 +23,12 @@ KEY_SCRIPT = (
     "0x5A@charselect+738,0x5A@overlay+219,0x26@overlay+319,"
     "0x26@overlay+379,0x5A@overlay+439,0x27@match+108,0x5A@match+158"
 )
-LOAD_BEGIN = "startup: loading game data synchronously"
-LOAD_COMPLETE = "startup: data loaded; entering the mode menu"
+NATIVE_ENTRY = "startup: entering native port entry (guest PE entry and WinMain bypassed)"
+LOAD_BEGIN = "startup: native data initialization begin"
+LOAD_COMPLETE = "startup: native data initialization complete"
 RETIRED_STARTUP_MESSAGES = (
+    "entering at 00445560",
+    "startup: loading game data synchronously",
     "startup: world constructed in local-loader state",
     "startup: data loaded; presenting the mode menu",
     "startup: first menu frame presented; window revealed",
@@ -145,16 +148,16 @@ def check_results(
     first_screen = screen_match.group(1) if screen_match else ""
     startup_ok = (
         first_screen == "modemenu"
-        and messages_appear_in_order(log, LOAD_BEGIN, LOAD_COMPLETE)
+        and messages_appear_in_order(log, NATIVE_ENTRY, LOAD_BEGIN, LOAD_COMPLETE)
     )
     if startup_ok:
-        print("  ok    startup: synchronous loading enters the mode menu first")
+        print("  ok    startup: native entry initializes data before the mode menu")
     else:
         print(
             f"  FAIL  startup: first visible screen is '{first_screen or 'none'}', "
             "expected modemenu"
         )
-        print("        (synchronous load begin/complete markers are both required)")
+        print("        (native-entry and data-init begin/complete markers are required)")
         failed = True
 
     match_reached = "scripted input: screen match first up at frame " in log

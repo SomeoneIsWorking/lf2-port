@@ -6,6 +6,7 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "guest_map.h"
+#include "paths.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -13,7 +14,6 @@
 #include <sched.h>
 #include <time.h>
 #include <unistd.h>
-#include <dirent.h>
 #include <strings.h>
 
 #define ARG(n) LD32(R(ESP) + 4 + 4 * (n))
@@ -65,16 +65,15 @@ static void h_GetSystemTimeAsFileTime(void)
     /* Windows epoch is 1601-01-01, in 100 ns ticks. */
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
-    uint64_t ft = (uint64_t)ts.tv_sec * 10000000ull + (uint64_t)ts.tv_nsec / 100ull
-                + 116444736000000000ull;
+    uint64_t ft = (uint64_t)ts.tv_sec * 10000000ull + (uint64_t)ts.tv_nsec / 100ull + 116444736000000000ull;
     uint32_t out = ARG(0);
     ST32(out, (uint32_t)ft);
     ST32(out + 4, (uint32_t)(ft >> 32));
     ret_stdcall(1, 0);
 }
 
-int  lf2_loading_now(void);          /* defined with the file handlers below */
-long hostwin_frames(void);           /* runtime/video/ddraw.c */
+int lf2_loading_now(void); /* defined with the file handlers below */
+long hostwin_frames(void); /* runtime/video/ddraw.c */
 
 /* See "the guest clock" below: the offset the port owes the guest for waits it
  * decided not to take. Declared here because h_Sleep is what pays into it. */
@@ -85,12 +84,12 @@ extern long load_skipped_sleeps;
  * "working". Ranking imports by CALL COUNT hid this completely: Sleep is 0.07% of the
  * calls and the overwhelming majority of the time. */
 static double sleep_ns_total;
-static long   sleep_calls_total;
+static long sleep_calls_total;
 enum { SLEEP_SITES = 16 };
 static uint32_t sleep_site[SLEEP_SITES];
-static long     sleep_site_n[SLEEP_SITES];
-static long     sleep_site_at_first[SLEEP_SITES], sleep_site_at_last[SLEEP_SITES];
-static int      sleep_nsites;
+static long sleep_site_n[SLEEP_SITES];
+static long sleep_site_at_first[SLEEP_SITES], sleep_site_at_last[SLEEP_SITES];
+static int sleep_nsites;
 
 /* ---- LF2_CLOCK_SITES -- who looks at the clock, and who looks at it WITHOUT SLEEPING ----
  *
@@ -112,15 +111,15 @@ static int      sleep_nsites;
  * is no spin". */
 enum { CLOCK_SITES = 24 };
 static uint32_t clk_site[CLOCK_SITES];
-static long     clk_site_n[CLOCK_SITES];      /* total reads from this site */
-static long     clk_site_max_run[CLOCK_SITES];/* longest burst with no Sleep in it */
-static long     clk_site_max_at[CLOCK_SITES]; /* and the presented frame it happened on --
+static long clk_site_n[CLOCK_SITES];          /* total reads from this site */
+static long clk_site_max_run[CLOCK_SITES];    /* longest burst with no Sleep in it */
+static long clk_site_max_at[CLOCK_SITES];     /* and the presented frame it happened on --
                                                * "during the load" and "during play" are
                                                * different diagnoses and this is what tells
                                                * them apart */
 static const char *clk_site_api[CLOCK_SITES]; /* which of the three it came through */
-static int      clk_nsites;
-static long     clk_reads_total, clk_run, clk_dropped;
+static int clk_nsites;
+static long clk_reads_total, clk_run, clk_dropped;
 
 static void clock_read_note(const char *api)
 {
@@ -132,9 +131,13 @@ static void clock_read_note(const char *api)
     clk_run++;
     const uint32_t ra = LD32(R(ESP));
     int k = 0;
-    for (; k < clk_nsites; k++) if (clk_site[k] == ra) break;
+    for (; k < clk_nsites; k++)
+        if (clk_site[k] == ra) break;
     if (k == clk_nsites) {
-        if (clk_nsites >= CLOCK_SITES) { clk_dropped++; return; }
+        if (clk_nsites >= CLOCK_SITES) {
+            clk_dropped++;
+            return;
+        }
         clk_site[clk_nsites] = ra;
         clk_site_api[clk_nsites] = api;
         clk_nsites++;
@@ -154,18 +157,20 @@ void clock_sites_report(void)
                         "nothing here is evidence about spinning\n");
         return;
     }
-    fprintf(stderr, "clock sites: %ld reads from %d call site(s)%s. `run` is reads since the "
-                    "last Sleep -- a large one is a loop watching the clock without "
-                    "sleeping\n",
+    fprintf(stderr,
+            "clock sites: %ld reads from %d call site(s)%s. `run` is reads since the "
+            "last Sleep -- a large one is a loop watching the clock without "
+            "sleeping\n",
             clk_reads_total, clk_nsites,
             clk_dropped ? " (and more sites than this build can hold; some were DROPPED)" : "");
     for (int k = 0; k < clk_nsites; k++)
-        fprintf(stderr, "  from=%08x  %-24s reads=%-9ld longest run=%-7ld at frame %ld\n",
-                clk_site[k], clk_site_api[k], clk_site_n[k], clk_site_max_run[k],
-                clk_site_max_at[k]);
+        fprintf(stderr, "  from=%08x  %-24s reads=%-9ld longest run=%-7ld at frame %ld\n", clk_site[k], clk_site_api[k],
+                clk_site_n[k], clk_site_max_run[k], clk_site_max_at[k]);
     if (clk_dropped)
-        fprintf(stderr, "  ... and %ld reads from call sites past the %d this build records, "
-                        "which are NOT in the list above\n", clk_dropped, CLOCK_SITES);
+        fprintf(stderr,
+                "  ... and %ld reads from call sites past the %d this build records, "
+                "which are NOT in the list above\n",
+                clk_dropped, CLOCK_SITES);
 }
 
 /* Sleep was a no-op returning immediately, so the game's frame pacing -- which is a
@@ -175,18 +180,23 @@ void clock_sites_report(void)
 static void h_Sleep(void)
 {
     const uint32_t ms = ARG(0);
-    clk_run = 0;                          /* a Sleep ends any run of clock reads */
+    clk_run = 0; /* a Sleep ends any run of clock reads */
     /* LF2_NO_SLEEP restores the old no-op, purely so the cost of honouring Sleep can be
      * A/B measured. Not a tuning knob: skipping it burns a whole core. */
-    if (getenv("LF2_NO_SLEEP")) { ret_stdcall(1, 0); return; }
+    if (getenv("LF2_NO_SLEEP")) {
+        ret_stdcall(1, 0);
+        return;
+    }
     if (getenv("LF2_SLEEP_DEBUG")) {
-        static long n, total_ms, hist[6];   /* 0, 1, 2-5, 6-15, 16-50, 50+ */
-        n++; total_ms += ms;
+        static long n, total_ms, hist[6]; /* 0, 1, 2-5, 6-15, 16-50, 50+ */
+        n++;
+        total_ms += ms;
         hist[ms == 0 ? 0 : ms == 1 ? 1 : ms <= 5 ? 2 : ms <= 15 ? 3 : ms <= 50 ? 4 : 5]++;
         if (n % 2000 == 0)
-            fprintf(stderr, "sleep: %ld calls, %ld ms requested; 0:%ld 1:%ld 2-5:%ld "
-                            "6-15:%ld 16-50:%ld 50+:%ld\n", n, total_ms,
-                    hist[0], hist[1], hist[2], hist[3], hist[4], hist[5]);
+            fprintf(stderr,
+                    "sleep: %ld calls, %ld ms requested; 0:%ld 1:%ld 2-5:%ld "
+                    "6-15:%ld 16-50:%ld 50+:%ld\n",
+                    n, total_ms, hist[0], hist[1], hist[2], hist[3], hist[4], hist[5]);
     }
     /* While the data load is running, do not sleep out the frame. The loop advances one
      * data file per tick and then waits ~33 ms for a deadline that exists to pace a 30 fps
@@ -232,7 +242,7 @@ static void h_Sleep(void)
 
     if (ms == 0) sched_yield();
     else {
-        struct timespec req = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
+        struct timespec req = {(time_t)(ms / 1000), (long)(ms % 1000) * 1000000L};
         nanosleep(&req, NULL);
     }
     sleep_ns_total += (double)ms * 1e6;
@@ -243,7 +253,8 @@ static void h_Sleep(void)
     {
         const uint32_t ra = LD32(R(ESP));
         int k = 0;
-        for (; k < sleep_nsites; k++) if (sleep_site[k] == ra) break;
+        for (; k < sleep_nsites; k++)
+            if (sleep_site[k] == ra) break;
         if (k == sleep_nsites && sleep_nsites < (int)(sizeof sleep_site / sizeof *sleep_site))
             sleep_site[sleep_nsites++] = ra;
         if (k < (int)(sizeof sleep_site / sizeof *sleep_site)) sleep_site_n[k]++;
@@ -287,10 +298,7 @@ static void h_Sleep(void)
  * 1x. A jumping clock makes the game do more catch-up work, not less. */
 /* The tick is GUEST_FRAME_NS in hostwin.h, shared with the host pacer that honours it. */
 
-static uint64_t guest_ns(void)
-{
-    return (uint64_t)hostwin_frames() * (uint64_t)GUEST_FRAME_NS + guest_clock_offset_ns;
-}
+static uint64_t guest_ns(void) { return (uint64_t)hostwin_frames() * (uint64_t)GUEST_FRAME_NS + guest_clock_offset_ns; }
 
 static void h_GetTickCount(void)
 {
@@ -311,10 +319,10 @@ static void h_GetVersionExA(void)
 {
     /* Report Windows XP SP3; the game only version-gates on >= 5.1. */
     uint32_t p = ARG(0);
-    ST32(p + 4, 5);       /* major */
-    ST32(p + 8, 1);       /* minor */
-    ST32(p + 12, 2600);   /* build */
-    ST32(p + 16, 2);      /* VER_PLATFORM_WIN32_NT */
+    ST32(p + 4, 5);     /* major */
+    ST32(p + 8, 1);     /* minor */
+    ST32(p + 12, 2600); /* build */
+    ST32(p + 16, 2);    /* VER_PLATFORM_WIN32_NT */
     ret_stdcall(1, 1);
 }
 
@@ -323,10 +331,10 @@ static void h_ret1_0(void) { ret_stdcall(0, 1); }
 static void h_ret0_1(void) { ret_stdcall(1, 0); }
 static void h_ret1_4(void) { ret_stdcall(4, 1); }
 
-static void h_GetCurrentProcess(void)   { ret_stdcall(0, 0xFFFFFFFFu); }
+static void h_GetCurrentProcess(void) { ret_stdcall(0, 0xFFFFFFFFu); }
 static void h_GetCurrentProcessId(void) { ret_stdcall(0, 0x1234); }
-static void h_GetCurrentThreadId(void)  { ret_stdcall(0, 0x5678); }
-static void h_GetModuleHandleA(void)    { ret_stdcall(1, 0x400000); }
+static void h_GetCurrentThreadId(void) { ret_stdcall(0, 0x5678); }
+static void h_GetModuleHandleA(void) { ret_stdcall(1, 0x400000); }
 
 static void h_GetStartupInfoA(void)
 {
@@ -366,16 +374,24 @@ static void h_OutputDebugStringA(void)
 
 /* ---- CRT (cdecl: caller pops) ---- */
 
-static void h_malloc(void)  { ret_cdecl(guest_alloc(ARG(0))); }
+static void h_malloc(void) { ret_cdecl(guest_alloc(ARG(0))); }
 static void h_calloc(void)
 {
     uint32_t n = ARG(0) * ARG(1), p = guest_alloc(n);
     memset(g_mem + p, 0, n);
     ret_cdecl(p);
 }
-static void h_free(void)    { ret_cdecl(0); }
-static void h_memcpy(void)  { memmove(g_mem + ARG(0), g_mem + ARG(1), ARG(2)); ret_cdecl(ARG(0)); }
-static void h_memset(void)  { memset(g_mem + ARG(0), (int)ARG(1), ARG(2)); ret_cdecl(ARG(0)); }
+static void h_free(void) { ret_cdecl(0); }
+static void h_memcpy(void)
+{
+    memmove(g_mem + ARG(0), g_mem + ARG(1), ARG(2));
+    ret_cdecl(ARG(0));
+}
+static void h_memset(void)
+{
+    memset(g_mem + ARG(0), (int)ARG(1), ARG(2));
+    ret_cdecl(ARG(0));
+}
 
 static void h_getmainargs(void)
 {
@@ -416,18 +432,25 @@ static void h_initterm_e(void)
 }
 
 static uint32_t commode_slot, fmode_slot;
-static void h_p_commode(void) { if (!commode_slot) commode_slot = guest_alloc(4); ret_cdecl(commode_slot); }
-static void h_p_fmode(void)   { if (!fmode_slot)   fmode_slot   = guest_alloc(4); ret_cdecl(fmode_slot); }
+static void h_p_commode(void)
+{
+    if (!commode_slot) commode_slot = guest_alloc(4);
+    ret_cdecl(commode_slot);
+}
+static void h_p_fmode(void)
+{
+    if (!fmode_slot) fmode_slot = guest_alloc(4);
+    ret_cdecl(fmode_slot);
+}
 
-static void h_cdecl0(void)  { ret_cdecl(0); }
-static void h_identity(void) { ret_cdecl(ARG(0)); }   /* _encode_pointer / _decode_pointer */
+static void h_cdecl0(void) { ret_cdecl(0); }
+static void h_identity(void) { ret_cdecl(ARG(0)); } /* _encode_pointer / _decode_pointer */
 
 static void h_controlfp_s(void)
 {
     if (ARG(0)) ST32(ARG(0), 0x8001f);
     ret_cdecl(0);
 }
-
 
 /* ---- CRT file I/O ----
  * Guest FILE* is an opaque token; the host FILE* lives in a side table so guest code
@@ -438,7 +461,10 @@ static FILE *files[MAX_FILES];
 static uint32_t file_token(FILE *fh)
 {
     for (int i = 1; i < MAX_FILES; i++)
-        if (!files[i]) { files[i] = fh; return 0xFE000000u + (uint32_t)i; }
+        if (!files[i]) {
+            files[i] = fh;
+            return 0xFE000000u + (uint32_t)i;
+        }
     return 0;
 }
 
@@ -450,112 +476,6 @@ static FILE *file_of(uint32_t tok)
 
 static const char *gstr(uint32_t p) { return (const char *)(g_mem + p); }
 
-/* ---- path translation ----
- * The game stores Windows paths ("data\\m_ok.wav"). Backslashes become slashes, and if
- * that still misses we retry component-by-component case-insensitively, because the
- * original filesystem was case-insensitive and the data files are not consistent. */
-static const char *host_path(uint32_t guest_str);
-static const char *host_path_resolve(char *path, size_t cap);
-
-static int find_ci(const char *dir, const char *want, char *out, size_t cap)
-{
-    DIR *d = opendir(dir[0] ? dir : ".");
-    if (!d) return 0;
-    struct dirent *e;
-    int found = 0;
-    while ((e = readdir(d))) {
-        if (strcasecmp(e->d_name, want) == 0) {
-            snprintf(out, cap, "%s", e->d_name);
-            found = 1;
-            break;
-        }
-    }
-    closedir(d);
-    return found;
-}
-
-/* Same resolution for a path the PORT names, not the guest: overrides that do a guest
- * function's file work themselves have to find the file the same way, or they resolve
- * "data\\temporary.txt" against a tree whose directory is called "Data". */
-const char *lf2_host_path(const char *guest_style)
-{
-    static char path[1024];
-    size_t n = 0;
-    for (; guest_style[n] && n + 1 < sizeof path; n++)
-        path[n] = (guest_style[n] == '\\') ? '/' : guest_style[n];
-    path[n] = 0;
-    return host_path_resolve(path, sizeof path);
-}
-
-static const char *host_path(uint32_t guest_str)
-{
-    static char path[1024];
-    const char *src = (const char *)(g_mem + guest_str);
-    size_t n = 0;
-    for (; src[n] && n + 1 < sizeof path; n++) path[n] = (src[n] == '\\') ? '/' : src[n];
-    path[n] = 0;
-    return host_path_resolve(path, sizeof path);
-}
-
-/* `path` is already in host form; returns it unchanged if it exists, otherwise rebuilds it
- * component by component matching case-insensitively. */
-static const char *host_path_resolve(char *path, size_t cap)
-{
-    if (access(path, F_OK) == 0) return path;
-
-    /* Rebuild the path one component at a time, matching case-insensitively. */
-    char built[1024] = "";
-    char work[1024];
-    snprintf(work, sizeof work, "%s", path);
-    char *save = NULL;
-    for (char *tok = strtok_r(work, "/", &save); tok; tok = strtok_r(NULL, "/", &save)) {
-        char match[256];
-        char probe[1024];
-        snprintf(probe, sizeof probe, "%s%s", built, tok);
-        if (access(probe, F_OK) == 0) {
-            snprintf(built + strlen(built), sizeof built - strlen(built), "%s/", tok);
-            continue;
-        }
-        char dir[1024];
-        snprintf(dir, sizeof dir, "%s", built[0] ? built : ".");
-        if (!find_ci(dir, tok, match, sizeof match)) return path;   /* give up, report original */
-        snprintf(built + strlen(built), sizeof built - strlen(built), "%s/", match);
-    }
-    const size_t bn = strlen(built);
-    if (bn && built[bn - 1] == '/') built[bn - 1] = 0;
-    snprintf(path, cap, "%s", built);
-    return path;
-}
-
-
-const char *host_path_of(uint32_t g) { return host_path(g); }
-
-/* Slurp a file with the CRT's text-mode translation applied, for overrides that read a
- * file the guest would otherwise have read through fopen("r"). Same CRLF handling as
- * open_translated below, so a ported reader and the guest's own reader see identical
- * bytes. Returns NULL if the file cannot be read; the caller frees. */
-char *lf2_read_text(const char *path, size_t *len)
-{
-    FILE *raw = fopen(path, "rb");
-    if (!raw) return NULL;
-    fseek(raw, 0, SEEK_END);
-    const long n = ftell(raw);
-    rewind(raw);
-    if (n < 0) { fclose(raw); return NULL; }
-    char *buf = malloc((size_t)n + 1);
-    if (!buf) { fclose(raw); return NULL; }
-    const size_t got = fread(buf, 1, (size_t)n, raw);
-    fclose(raw);
-    size_t out = 0;
-    for (size_t i = 0; i < got; i++) {
-        if (buf[i] == '\r' && i + 1 < got && buf[i + 1] == '\n') continue;
-        buf[out++] = buf[i];
-    }
-    buf[out] = 0;
-    *len = out;
-    return buf;
-}
-
 /* Text-mode translation.
  *
  * MSVC's CRT opens files in TEXT mode unless the mode string says "b", and translates
@@ -564,31 +484,6 @@ char *lf2_read_text(const char *path, size_t *len)
  * real program never takes. The file is slurped, translated, and handed back as an
  * in-memory stream so fscanf/fgets see what they would see on Windows. */
 static char *text_buf[MAX_FILES];
-
-static FILE *open_translated(const char *path)
-{
-    FILE *raw = fopen(path, "rb");
-    if (!raw) return NULL;
-    fseek(raw, 0, SEEK_END);
-    long n = ftell(raw);
-    rewind(raw);
-    if (n < 0) { fclose(raw); return NULL; }
-
-    char *buf = malloc((size_t)n + 1);
-    const size_t got = fread(buf, 1, (size_t)n, raw);
-    fclose(raw);
-
-    size_t out = 0;
-    for (size_t i = 0; i < got; i++) {
-        if (buf[i] == '\r' && i + 1 < got && buf[i + 1] == '\n') continue;
-        buf[out++] = buf[i];
-    }
-    buf[out] = 0;
-
-    FILE *fh = fmemopen(buf, out, "r");
-    if (!fh) { free(buf); return NULL; }
-    return fh;
-}
 
 /* ---- "is the game loading right now?" ----
  *
@@ -601,13 +496,13 @@ static FILE *open_translated(const char *path)
  * Time-based rather than a frame counter, so a slow file cannot end the window early. */
 enum { LOAD_MAXSITES = 24 };
 static uint32_t load_site[LOAD_MAXSITES];
-static long     load_site_n[LOAD_MAXSITES];
-static char     load_site_path[LOAD_MAXSITES][80];
-static int      load_nsites;
+static long load_site_n[LOAD_MAXSITES];
+static char load_site_path[LOAD_MAXSITES][80];
+static int load_nsites;
 
 static uint32_t load_last_open_ms;
 static uint32_t load_first_open_ms;
-static long     load_files;
+static long load_files;
 static uint32_t load_active_ms;
 long load_skipped_sleeps;
 
@@ -618,13 +513,10 @@ long load_skipped_sleeps;
 void load_span_report(void)
 {
     if (getenv("LF2_LOAD_SITES")) {
-        fprintf(stderr, "load sites: %d distinct guest callers of fopen on data files\n",
-                load_nsites);
+        fprintf(stderr, "load sites: %d distinct guest callers of fopen on data files\n", load_nsites);
         for (int i = 0; i < load_nsites; i++)
-            fprintf(stderr, "  %08x  %8ld files  first: %s\n",
-                    load_site[i], load_site_n[i], load_site_path[i]);
-        if (!load_nsites)
-            fprintf(stderr, "  none -- no data file was opened in this run at all\n");
+            fprintf(stderr, "  %08x  %8ld files  first: %s\n", load_site[i], load_site_n[i], load_site_path[i]);
+        if (!load_nsites) fprintf(stderr, "  none -- no data file was opened in this run at all\n");
     }
     if (!getenv("LF2_SCAN_PROF")) return;
     if (!load_files) {
@@ -635,13 +527,12 @@ void load_span_report(void)
      * boot for the menu, so a first-to-last span silently includes however long the player
      * sat on the menu -- which is why the earlier figure looked barely improved. Only gaps
      * shorter than the loading window are counted, so idle time between bursts is not. */
-    fprintf(stderr, "data load: %ld files, %.3f s actively loading (span %.3f s incl. idle), "
-                    "%ld frame-pacing sleeps skipped\n",
-            load_files, (double)load_active_ms / 1000.0,
-            (double)(load_last_open_ms - load_first_open_ms) / 1000.0,
+    fprintf(stderr,
+            "data load: %ld files, %.3f s actively loading (span %.3f s incl. idle), "
+            "%ld frame-pacing sleeps skipped\n",
+            load_files, (double)load_active_ms / 1000.0, (double)(load_last_open_ms - load_first_open_ms) / 1000.0,
             load_skipped_sleeps);
 }
-
 
 static uint32_t now_ms(void)
 {
@@ -652,22 +543,17 @@ static uint32_t now_ms(void)
 
 long lf2_load_active_ms(void) { return (long)load_active_ms; }
 
-int lf2_loading_now(void)
-{
-    return load_last_open_ms && (now_ms() - load_last_open_ms) < 300u;
-}
+int lf2_loading_now(void) { return load_last_open_ms && (now_ms() - load_last_open_ms) < 300u; }
 
 static void note_data_open(const char *path)
 {
     if (!path) return;
     const size_t n = strlen(path);
     /* the game's own data: data\*.dat, *.txt indexes, and the sprite sheets it pulls in */
-    if (n > 4 && (strcasecmp(path + n - 4, ".dat") == 0 ||
-                  strcasecmp(path + n - 4, ".txt") == 0 ||
+    if (n > 4 && (strcasecmp(path + n - 4, ".dat") == 0 || strcasecmp(path + n - 4, ".txt") == 0 ||
                   strcasecmp(path + n - 4, ".bmp") == 0)) {
         const uint32_t t = now_ms();
-        if (load_last_open_ms && (t - load_last_open_ms) < 300u)
-            load_active_ms += t - load_last_open_ms;
+        if (load_last_open_ms && (t - load_last_open_ms) < 300u) load_active_ms += t - load_last_open_ms;
         load_last_open_ms = t;
         if (!load_first_open_ms) load_first_open_ms = t;
         load_files++;
@@ -678,7 +564,8 @@ static void note_data_open(const char *path)
         if (getenv("LF2_LOAD_SITES")) {
             const uint32_t ra = LD32(R(ESP));
             int k = 0;
-            for (; k < load_nsites; k++) if (load_site[k] == ra) break;
+            for (; k < load_nsites; k++)
+                if (load_site[k] == ra) break;
             if (k == load_nsites && load_nsites < LOAD_MAXSITES) {
                 load_site[load_nsites] = ra;
                 snprintf(load_site_path[load_nsites], sizeof load_site_path[0], "%s", path);
@@ -694,17 +581,25 @@ static void h_fopen(void)
     const char *mode = gstr(ARG(1));
     const int text = !strchr(mode, 'b');
     const int reading = !strchr(mode, 'w') && !strchr(mode, 'a');
-
-    FILE *fh = (text && reading) ? open_translated(host_path(ARG(0)))
-                                 : fopen(host_path(ARG(0)), mode);
-    if (!fh) { ret_cdecl(0); return; }
+    char *backing = NULL;
+    FILE *fh =
+        (text && reading) ? lf2_open_translated(host_path_of(ARG(0)), &backing) : fopen(host_path_of(ARG(0)), mode);
+    if (!fh) {
+        ret_cdecl(0);
+        return;
+    }
     const uint32_t tok = file_token(fh);
-    note_data_open(host_path(ARG(0)));
-    if (getenv("LF2_STR_DEBUG"))
-        fprintf(stderr, "fopen[%08x] %s (%s)\n", tok, host_path(ARG(0)), mode);
+    if (!tok) {
+        fclose(fh);
+        free(backing);
+        ret_cdecl(0);
+        return;
+    }
+    text_buf[tok - 0xFE000000u] = backing;
+    note_data_open(host_path_of(ARG(0)));
+    if (getenv("LF2_STR_DEBUG")) fprintf(stderr, "fopen[%08x] %s (%s)\n", tok, host_path_of(ARG(0)), mode);
     ret_cdecl(tok);
 }
-
 static void h_fclose(void)
 {
     FILE *fh = file_of(ARG(0));
@@ -739,8 +634,12 @@ static int gformat(char *out, size_t cap, const char *fmt, uint32_t argp)
 {
     size_t o = 0;
     for (const char *f = fmt; *f && o + 1 < cap; f++) {
-        if (*f != '%') { out[o++] = *f; continue; }
-        char spec[32]; int n = 0;
+        if (*f != '%') {
+            out[o++] = *f;
+            continue;
+        }
+        char spec[32];
+        int n = 0;
         spec[n++] = *f++;
         while (*f && !strchr("diouxXcsfgeEp%", *f) && n < 30) spec[n++] = *f++;
         if (!*f) break;
@@ -749,19 +648,39 @@ static int gformat(char *out, size_t cap, const char *fmt, uint32_t argp)
 
         char tmp[512];
         switch (*f) {
-        case '%': tmp[0] = '%'; tmp[1] = 0; break;
-        case 'd': case 'i': case 'u': case 'o': case 'x': case 'X': case 'c':
-            snprintf(tmp, sizeof tmp, spec, (int)LD32(argp)); argp += 4; break;
+        case '%':
+            tmp[0] = '%';
+            tmp[1] = 0;
+            break;
+        case 'd':
+        case 'i':
+        case 'u':
+        case 'o':
+        case 'x':
+        case 'X':
+        case 'c':
+            snprintf(tmp, sizeof tmp, spec, (int)LD32(argp));
+            argp += 4;
+            break;
         case 's':
-            snprintf(tmp, sizeof tmp, spec, gstr(LD32(argp))); argp += 4; break;
-        case 'f': case 'g': case 'e': case 'E': {
-            double d; __builtin_memcpy(&d, g_mem + argp, 8);
-            snprintf(tmp, sizeof tmp, spec, d); argp += 8; break;
+            snprintf(tmp, sizeof tmp, spec, gstr(LD32(argp)));
+            argp += 4;
+            break;
+        case 'f':
+        case 'g':
+        case 'e':
+        case 'E': {
+            double d;
+            __builtin_memcpy(&d, g_mem + argp, 8);
+            snprintf(tmp, sizeof tmp, spec, d);
+            argp += 8;
+            break;
         }
         case 'p':
-            snprintf(tmp, sizeof tmp, "%08x", LD32(argp)); argp += 4; break;
-        default:
-            fprintf(stderr, "unsupported printf conversion '%s'\n", spec); abort();
+            snprintf(tmp, sizeof tmp, "%08x", LD32(argp));
+            argp += 4;
+            break;
+        default: fprintf(stderr, "unsupported printf conversion '%s'\n", spec); abort();
         }
         for (const char *t = tmp; *t && o + 1 < cap; t++) out[o++] = *t;
     }
@@ -774,8 +693,7 @@ static void h_sprintf(void)
     char buf[4096];
     int n = gformat(buf, sizeof buf, gstr(ARG(1)), R(ESP) + 4 + 8);
     if (getenv("LF2_STR_DEBUG"))
-        fprintf(stderr, "sprintf -> %08x (%d bytes) fmt=\"%s\" out=\"%.60s\"\n",
-                ARG(0), n, gstr(ARG(1)), buf);
+        fprintf(stderr, "sprintf -> %08x (%d bytes) fmt=\"%s\" out=\"%.60s\"\n", ARG(0), n, gstr(ARG(1)), buf);
     memcpy(g_mem + ARG(0), buf, (size_t)n + 1);
     ret_cdecl((uint32_t)n);
 }
@@ -789,7 +707,6 @@ static void h_fprintf(void)
     ret_cdecl((uint32_t)n);
 }
 
-
 /* ---- scanf family ----
  * Splitting the format into directives and calling the host once per directive does NOT
  * have the same semantics as one atomic scanf: matching failures, pushback and the
@@ -801,9 +718,9 @@ enum { SCAN_MAX = 12, SCAN_SLOT = 512 };
 
 typedef struct {
     char conv;
-    int  suppressed;
-    int  is_long;                 /* %lf stores a DOUBLE -- 8 bytes, not 4 */
-    uint32_t out;                 /* guest destination */
+    int suppressed;
+    int is_long;  /* %lf stores a DOUBLE -- 8 bytes, not 4 */
+    uint32_t out; /* guest destination */
 } ScanArg;
 
 /* Walk the format, recording each conversion. Returns the count, or -1 if unsupported. */
@@ -815,10 +732,16 @@ static int scan_parse(const char *fmt, uint32_t argp, ScanArg *args)
         f++;
         if (*f == '%') continue;
         int suppressed = 0, is_long = 0;
-        if (*f == '*') { suppressed = 1; f++; }
-        while (*f && !strchr("diouxXcsfgeEnp[", *f)) { if (*f == 'l') is_long = 1; f++; }
+        if (*f == '*') {
+            suppressed = 1;
+            f++;
+        }
+        while (*f && !strchr("diouxXcsfgeEnp[", *f)) {
+            if (*f == 'l') is_long = 1;
+            f++;
+        }
         if (!*f) break;
-        if (*f == '[' || *f == 'n' || *f == 'p') return -1;   /* not used by this game */
+        if (*f == '[' || *f == 'n' || *f == 'p') return -1; /* not used by this game */
         if (n >= SCAN_MAX) return -1;
         args[n].conv = *f;
         args[n].suppressed = suppressed;
@@ -834,10 +757,16 @@ static int scan_parse(const char *fmt, uint32_t argp, ScanArg *args)
 static void scan_store(const ScanArg *a, const void *slot)
 {
     switch (a->conv) {
-    case 'd': case 'i': case 'u': case 'o': case 'x': case 'X':
-        ST32(a->out, (uint32_t)*(const int *)slot);
-        break;
-    case 'f': case 'g': case 'e': case 'E': {
+    case 'd':
+    case 'i':
+    case 'u':
+    case 'o':
+    case 'x':
+    case 'X': ST32(a->out, (uint32_t)*(const int *)slot); break;
+    case 'f':
+    case 'g':
+    case 'e':
+    case 'E': {
         /* %lf is a DOUBLE: the host wrote 8 bytes, and MSVC's scanf stores 8 into the
          * caller's variable. Storing only the low half left the value's entire magnitude
          * in whatever guest memory previously held -- every %lf in the game is a
@@ -850,17 +779,14 @@ static void scan_store(const ScanArg *a, const void *slot)
         if (a->is_long) ST32(a->out + 4, (uint32_t)(bits >> 32));
         break;
     }
-    case 'c':
-        ST8(a->out, *(const uint8_t *)slot);
-        break;
+    case 'c': ST8(a->out, *(const uint8_t *)slot); break;
     case 's': {
         const char *str = slot;
         const size_t len = strlen(str);
         memcpy(g_mem + a->out, str, len + 1);
         break;
     }
-    default:
-        break;
+    default: break;
     }
 }
 
@@ -871,36 +797,35 @@ static void scan_store(const ScanArg *a, const void *slot)
  * that never ran, and this path is easy to route around by accident. The two
  * clock_gettime calls cost tens of ns each, which is itself a few percent at this call
  * count, so read the per-call figure as an upper bound. */
-static long   scan_calls;
+static long scan_calls;
 static double scan_ns;
-static struct timespec scan_first, scan_last;   /* the load SPAN, not just time in gscan */
+static struct timespec scan_first, scan_last; /* the load SPAN, not just time in gscan */
 static double sleep_ns_at_first, sleep_ns_at_last;
-static long   sleep_calls_at_first, sleep_calls_at_last;
+static long sleep_calls_at_first, sleep_calls_at_last;
 
 void scan_prof_report(void)
 {
     if (!getenv("LF2_SCAN_PROF")) return;
-    fprintf(stderr, "gscan: %ld calls, %.3f s inside gscan, %.0f ns/call (timer overhead included)\n",
-            scan_calls, scan_ns / 1e9,
-            scan_calls ? scan_ns / (double)scan_calls : 0.0);
+    fprintf(stderr, "gscan: %ld calls, %.3f s inside gscan, %.0f ns/call (timer overhead included)\n", scan_calls,
+            scan_ns / 1e9, scan_calls ? scan_ns / (double)scan_calls : 0.0);
     if (!scan_calls) {
         fprintf(stderr, "gscan: no parse span -- the data load never ran in this route\n");
         return;
     }
-    const double span = (double)(scan_last.tv_sec - scan_first.tv_sec)
-                      + (double)(scan_last.tv_nsec - scan_first.tv_nsec) / 1e9;
+    const double span =
+        (double)(scan_last.tv_sec - scan_first.tv_sec) + (double)(scan_last.tv_nsec - scan_first.tv_nsec) / 1e9;
     const double slept = (sleep_ns_at_last - sleep_ns_at_first) / 1e9;
-    fprintf(stderr, "gscan: parse span %.3f s (first to last call), %.1f%% of it inside gscan\n",
-            span, span > 0 ? 100.0 * (scan_ns / 1e9) / span : 0.0);
-    fprintf(stderr, "load:  %.3f s span = %.3f s slept (%ld Sleep calls) + %.3f s not sleeping"
-                    " -- %.1f%% of the load is Sleep\n",
+    fprintf(stderr, "gscan: parse span %.3f s (first to last call), %.1f%% of it inside gscan\n", span,
+            span > 0 ? 100.0 * (scan_ns / 1e9) / span : 0.0);
+    fprintf(stderr,
+            "load:  %.3f s span = %.3f s slept (%ld Sleep calls) + %.3f s not sleeping"
+            " -- %.1f%% of the load is Sleep\n",
             span, slept, sleep_calls_at_last - sleep_calls_at_first, span - slept,
             span > 0 ? 100.0 * slept / span : 0.0);
     fprintf(stderr, "sleep call sites (guest return address), during the load:\n");
     for (int k = 0; k < sleep_nsites; k++) {
         const long during = sleep_site_at_last[k] - sleep_site_at_first[k];
-        fprintf(stderr, "  ra=%08x  %8ld during load  %8ld total\n",
-                sleep_site[k], during, sleep_site_n[k]);
+        fprintf(stderr, "  ra=%08x  %8ld during load  %8ld total\n", sleep_site[k], during, sleep_site_n[k]);
     }
     if (!sleep_nsites) fprintf(stderr, "  (none -- Sleep was never called)\n");
 }
@@ -921,11 +846,8 @@ static int gscan_inner(FILE *fh, const char *input, const char *fmt, uint32_t ar
     void *p[SCAN_MAX];
     for (int i = 0; i < SCAN_MAX; i++) p[i] = slots[i];
 
-    const int got = fh
-        ? fscanf(fh, fmt, p[0], p[1], p[2], p[3], p[4], p[5],
-                 p[6], p[7], p[8], p[9], p[10], p[11])
-        : sscanf(input, fmt, p[0], p[1], p[2], p[3], p[4], p[5],
-                 p[6], p[7], p[8], p[9], p[10], p[11]);
+    const int got = fh ? fscanf(fh, fmt, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11])
+                       : sscanf(input, fmt, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]);
 
     if (got <= 0) return got;
 
@@ -982,13 +904,21 @@ static void h_sscanf(void)
     ret_cdecl((uint32_t)n);
 }
 
-static void h_rand(void)  { ret_cdecl((uint32_t)(rand() & 0x7fff)); }
-static void h_srand(void) { srand(ARG(0)); ret_cdecl(0); }
+static void h_rand(void) { ret_cdecl((uint32_t)(rand() & 0x7fff)); }
+static void h_srand(void)
+{
+    srand(ARG(0));
+    ret_cdecl(0);
+}
 static void h_time64(void)
 {
     int64_t t = (int64_t)time(NULL);
-    if (ARG(0)) { ST32(ARG(0), (uint32_t)t); ST32(ARG(0) + 4, (uint32_t)(t >> 32)); }
-    R(EAX) = (uint32_t)t; R(EDX) = (uint32_t)(t >> 32);
+    if (ARG(0)) {
+        ST32(ARG(0), (uint32_t)t);
+        ST32(ARG(0) + 4, (uint32_t)(t >> 32));
+    }
+    R(EAX) = (uint32_t)t;
+    R(EDX) = (uint32_t)(t >> 32);
     R(ESP) += 4;
 }
 static void h_exit(void) { exit((int)ARG(0)); }
@@ -1003,14 +933,21 @@ static void h_MultiByteToWideChar(void)
     const uint32_t cch = ARG(5);
 
     uint32_t n = 0;
-    if (cb < 0) { while (LD8(src + n)) n++; n++; }    /* -1: NUL-terminated, NUL included */
-    else n = (uint32_t)cb;
+    if (cb < 0) {
+        while (LD8(src + n)) n++;
+        n++;
+    } /* -1: NUL-terminated, NUL included */
+    else
+        n = (uint32_t)cb;
 
-    if (cch == 0) { ret_stdcall(6, n); return; }      /* size query */
+    if (cch == 0) {
+        ret_stdcall(6, n);
+        return;
+    } /* size query */
 
     uint32_t written = 0;
     for (; written < n && written < cch; written++)
-        ST16(dst + written * 2, LD8(src + written));  /* the game's text is 8-bit */
+        ST16(dst + written * 2, LD8(src + written)); /* the game's text is 8-bit */
     ret_stdcall(6, written);
 }
 
@@ -1022,8 +959,8 @@ static void h_localtime64(void)
     int64_t t = (int64_t)LD32(ARG(0)) | ((int64_t)LD32(ARG(0) + 4) << 32);
     time_t tt = (time_t)t;
     struct tm *g = localtime(&tt);
-    const int v[9] = { g->tm_sec, g->tm_min, g->tm_hour, g->tm_mday,
-                       g->tm_mon, g->tm_year, g->tm_wday, g->tm_yday, g->tm_isdst };
+    const int v[9] = {g->tm_sec,  g->tm_min,  g->tm_hour, g->tm_mday, g->tm_mon,
+                      g->tm_year, g->tm_wday, g->tm_yday, g->tm_isdst};
     for (int i = 0; i < 9; i++) ST32(buf + (uint32_t)i * 4, (uint32_t)v[i]);
     ret_cdecl(buf);
 }
@@ -1034,7 +971,6 @@ static void h_getcwd(void)
 }
 static void h_chdir(void) { ret_cdecl((uint32_t)chdir(gstr(ARG(0)))); }
 
-
 /* ---- MMIO ----
  * The game reads its WAVs through the RIFF chunk API rather than plain fread.
  * MMCKINFO is { ckid, cksize, fccType, dwDataOffset, dwFlags }. */
@@ -1043,14 +979,17 @@ enum { MMSYSERR_NOERROR = 0, MMIOERR_CHUNKNOTFOUND = 261 };
 
 static void h_mmioOpenA(void)
 {
-    FILE *fh = fopen(host_path(ARG(0)), "rb");
+    FILE *fh = fopen(host_path_of(ARG(0)), "rb");
     ret_stdcall(3, fh ? file_token(fh) : 0);
 }
 
 static void h_mmioClose(void)
 {
     FILE *fh = file_of(ARG(0));
-    if (fh) { fclose(fh); files[ARG(0) - 0xFE000000u] = NULL; }
+    if (fh) {
+        fclose(fh);
+        files[ARG(0) - 0xFE000000u] = NULL;
+    }
     ret_stdcall(2, 0);
 }
 
@@ -1065,26 +1004,34 @@ static void h_mmioDescend(void)
 {
     FILE *fh = file_of(ARG(0));
     const uint32_t ck = ARG(1), flags = ARG(3);
-    if (!fh) { ret_stdcall(4, MMIOERR_CHUNKNOTFOUND); return; }
+    if (!fh) {
+        ret_stdcall(4, MMIOERR_CHUNKNOTFOUND);
+        return;
+    }
 
-    const uint32_t want = (flags & (MMIO_FINDRIFF | MMIO_FINDLIST | MMIO_FINDCHUNK))
-                        ? LD32(ck + ((flags & MMIO_FINDCHUNK) ? 0 : 8)) : 0;
+    const uint32_t want =
+        (flags & (MMIO_FINDRIFF | MMIO_FINDLIST | MMIO_FINDCHUNK)) ? LD32(ck + ((flags & MMIO_FINDCHUNK) ? 0 : 8)) : 0;
 
     for (;;) {
         uint8_t hdr[8];
-        if (fread(hdr, 1, 8, fh) != 8) { ret_stdcall(4, MMIOERR_CHUNKNOTFOUND); return; }
-        const uint32_t id = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8)
-                          | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
-        const uint32_t size = (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8)
-                            | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
+        if (fread(hdr, 1, 8, fh) != 8) {
+            ret_stdcall(4, MMIOERR_CHUNKNOTFOUND);
+            return;
+        }
+        const uint32_t id =
+            (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8) | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
+        const uint32_t size =
+            (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
 
         uint32_t type = 0;
         const int is_container = (flags & (MMIO_FINDRIFF | MMIO_FINDLIST)) != 0;
         if (is_container) {
             uint8_t t[4];
-            if (fread(t, 1, 4, fh) != 4) { ret_stdcall(4, MMIOERR_CHUNKNOTFOUND); return; }
-            type = (uint32_t)t[0] | ((uint32_t)t[1] << 8)
-                 | ((uint32_t)t[2] << 16) | ((uint32_t)t[3] << 24);
+            if (fread(t, 1, 4, fh) != 4) {
+                ret_stdcall(4, MMIOERR_CHUNKNOTFOUND);
+                return;
+            }
+            type = (uint32_t)t[0] | ((uint32_t)t[1] << 8) | ((uint32_t)t[2] << 16) | ((uint32_t)t[3] << 24);
         }
 
         const uint32_t data_off = (uint32_t)ftell(fh);
@@ -1118,18 +1065,16 @@ static void h_mmioAscend(void)
     ret_stdcall(3, MMSYSERR_NOERROR);
 }
 
-
 /* ---- Win32 file API ----
  * The import table has CreateFileA/WriteFile/CloseHandle but no ReadFile, so this path
  * is write-only: settings and recorded matches. */
 static void h_CreateFileA(void)
 {
     const uint32_t access = ARG(1), disp = ARG(4);
-    const char *mode = (access & 0x40000000u) ? ((disp == 2 /*CREATE_ALWAYS*/) ? "wb" : "r+b")
-                                              : "rb";
-    FILE *fh = fopen(host_path(ARG(0)), mode);
-    if (!fh && (access & 0x40000000u)) fh = fopen(host_path(ARG(0)), "wb");
-    ret_stdcall(7, fh ? file_token(fh) : 0xFFFFFFFFu);   /* INVALID_HANDLE_VALUE */
+    const char *mode = (access & 0x40000000u) ? ((disp == 2 /*CREATE_ALWAYS*/) ? "wb" : "r+b") : "rb";
+    FILE *fh = fopen(host_path_of(ARG(0)), mode);
+    if (!fh && (access & 0x40000000u)) fh = fopen(host_path_of(ARG(0)), "wb");
+    ret_stdcall(7, fh ? file_token(fh) : 0xFFFFFFFFu); /* INVALID_HANDLE_VALUE */
 }
 
 static void h_WriteFile(void)
@@ -1143,7 +1088,10 @@ static void h_WriteFile(void)
 static void h_CloseHandle(void)
 {
     FILE *fh = file_of(ARG(0));
-    if (fh) { fclose(fh); files[ARG(0) - 0xFE000000u] = NULL; }
+    if (fh) {
+        fclose(fh);
+        files[ARG(0) - 0xFE000000u] = NULL;
+    }
     ret_stdcall(1, 1);
 }
 
@@ -1161,10 +1109,9 @@ static void h_GetLocalTime(void)
     time_t t = time(NULL);
     struct tm *g = localtime(&t);
     const uint32_t p = ARG(0);
-    const uint16_t v[8] = { (uint16_t)(g->tm_year + 1900), (uint16_t)(g->tm_mon + 1),
-                            (uint16_t)g->tm_wday, (uint16_t)g->tm_mday,
-                            (uint16_t)g->tm_hour, (uint16_t)g->tm_min,
-                            (uint16_t)g->tm_sec, 0 };
+    const uint16_t v[8] = {
+        (uint16_t)(g->tm_year + 1900), (uint16_t)(g->tm_mon + 1), (uint16_t)g->tm_wday, (uint16_t)g->tm_mday,
+        (uint16_t)g->tm_hour,          (uint16_t)g->tm_min,       (uint16_t)g->tm_sec,  0};
     for (int i = 0; i < 8; i++) ST16(p + (uint32_t)i * 2, v[i]);
     ret_stdcall(1, 0);
 }
@@ -1191,103 +1138,105 @@ static void h_timeGetTime(void)
 
 /* ---- table ---- */
 
-static const struct { const char *dll, *name; Handler fn; } TABLE[] = {
-    { "KERNEL32.dll", "GetSystemTimeAsFileTime", h_GetSystemTimeAsFileTime },
-    { "KERNEL32.dll", "GetTickCount",            h_GetTickCount },
-    { "KERNEL32.dll", "QueryPerformanceCounter", h_QueryPerformanceCounter },
-    { "KERNEL32.dll", "GetVersionExA",           h_GetVersionExA },
-    { "KERNEL32.dll", "GetCurrentProcess",       h_GetCurrentProcess },
-    { "KERNEL32.dll", "GetCurrentProcessId",     h_GetCurrentProcessId },
-    { "KERNEL32.dll", "GetCurrentThreadId",      h_GetCurrentThreadId },
-    { "KERNEL32.dll", "GetModuleHandleA",        h_GetModuleHandleA },
-    { "KERNEL32.dll", "GetStartupInfoA",         h_GetStartupInfoA },
-    { "KERNEL32.dll", "InitializeCriticalSection", h_ret0_1 },
-    { "KERNEL32.dll", "EnterCriticalSection",    h_ret0_1 },
-    { "KERNEL32.dll", "LeaveCriticalSection",    h_ret0_1 },
-    { "KERNEL32.dll", "SetUnhandledExceptionFilter", h_ret0_1 },
-    { "KERNEL32.dll", "UnhandledExceptionFilter",    h_ret0_1 },
-    { "KERNEL32.dll", "IsDebuggerPresent",       h_ret0_0 },
-    { "KERNEL32.dll", "GetLastError",            h_ret0_0 },
-    { "KERNEL32.dll", "GetACP",                  h_ret1_0 },
-    { "KERNEL32.dll", "GetThreadLocale",         h_ret1_0 },
-    { "KERNEL32.dll", "GetLocaleInfoA",          h_ret1_4 },
-    { "KERNEL32.dll", "InterlockedExchange",     h_InterlockedExchange },
-    { "KERNEL32.dll", "InterlockedCompareExchange", h_InterlockedCompareExchange },
-    { "KERNEL32.dll", "lstrlenA",                h_lstrlenA },
-    { "KERNEL32.dll", "OutputDebugStringA",      h_OutputDebugStringA },
-    { "KERNEL32.dll", "Sleep",                   h_Sleep },
-    { "KERNEL32.dll", "MultiByteToWideChar",     h_MultiByteToWideChar },
-    { "KERNEL32.dll", "CreateFileA",             h_CreateFileA },
-    { "KERNEL32.dll", "WriteFile",               h_WriteFile },
-    { "KERNEL32.dll", "CloseHandle",             h_CloseHandle },
-    { "KERNEL32.dll", "GetLocalTime",            h_GetLocalTime },
-    { "KERNEL32.dll", "CreateThread",            h_CreateThread },
-    { "KERNEL32.dll", "TerminateProcess",        h_TerminateProcess },
+static const struct {
+    const char *dll, *name;
+    Handler fn;
+} TABLE[] = {
+    {"KERNEL32.dll", "GetSystemTimeAsFileTime", h_GetSystemTimeAsFileTime},
+    {"KERNEL32.dll", "GetTickCount", h_GetTickCount},
+    {"KERNEL32.dll", "QueryPerformanceCounter", h_QueryPerformanceCounter},
+    {"KERNEL32.dll", "GetVersionExA", h_GetVersionExA},
+    {"KERNEL32.dll", "GetCurrentProcess", h_GetCurrentProcess},
+    {"KERNEL32.dll", "GetCurrentProcessId", h_GetCurrentProcessId},
+    {"KERNEL32.dll", "GetCurrentThreadId", h_GetCurrentThreadId},
+    {"KERNEL32.dll", "GetModuleHandleA", h_GetModuleHandleA},
+    {"KERNEL32.dll", "GetStartupInfoA", h_GetStartupInfoA},
+    {"KERNEL32.dll", "InitializeCriticalSection", h_ret0_1},
+    {"KERNEL32.dll", "EnterCriticalSection", h_ret0_1},
+    {"KERNEL32.dll", "LeaveCriticalSection", h_ret0_1},
+    {"KERNEL32.dll", "SetUnhandledExceptionFilter", h_ret0_1},
+    {"KERNEL32.dll", "UnhandledExceptionFilter", h_ret0_1},
+    {"KERNEL32.dll", "IsDebuggerPresent", h_ret0_0},
+    {"KERNEL32.dll", "GetLastError", h_ret0_0},
+    {"KERNEL32.dll", "GetACP", h_ret1_0},
+    {"KERNEL32.dll", "GetThreadLocale", h_ret1_0},
+    {"KERNEL32.dll", "GetLocaleInfoA", h_ret1_4},
+    {"KERNEL32.dll", "InterlockedExchange", h_InterlockedExchange},
+    {"KERNEL32.dll", "InterlockedCompareExchange", h_InterlockedCompareExchange},
+    {"KERNEL32.dll", "lstrlenA", h_lstrlenA},
+    {"KERNEL32.dll", "OutputDebugStringA", h_OutputDebugStringA},
+    {"KERNEL32.dll", "Sleep", h_Sleep},
+    {"KERNEL32.dll", "MultiByteToWideChar", h_MultiByteToWideChar},
+    {"KERNEL32.dll", "CreateFileA", h_CreateFileA},
+    {"KERNEL32.dll", "WriteFile", h_WriteFile},
+    {"KERNEL32.dll", "CloseHandle", h_CloseHandle},
+    {"KERNEL32.dll", "GetLocalTime", h_GetLocalTime},
+    {"KERNEL32.dll", "CreateThread", h_CreateThread},
+    {"KERNEL32.dll", "TerminateProcess", h_TerminateProcess},
 
-    { "MSVCR80.dll", "__getmainargs",       h_getmainargs },
-    { "MSVCR80.dll", "_initterm",           h_initterm },
-    { "MSVCR80.dll", "_initterm_e",         h_initterm_e },
-    { "MSVCR80.dll", "__set_app_type",      h_cdecl0 },
-    { "MSVCR80.dll", "__p__commode",        h_p_commode },
-    { "MSVCR80.dll", "__p__fmode",          h_p_fmode },
-    { "MSVCR80.dll", "_controlfp_s",        h_controlfp_s },
-    { "MSVCR80.dll", "_configthreadlocale", h_cdecl0 },
-    { "MSVCR80.dll", "_encode_pointer",     h_identity },
-    { "MSVCR80.dll", "_decode_pointer",     h_identity },
-    { "MSVCR80.dll", "_lock",               h_cdecl0 },
-    { "MSVCR80.dll", "_unlock",             h_cdecl0 },
-    { "MSVCR80.dll", "__dllonexit",         h_identity },
-    { "MSVCR80.dll", "_onexit",             h_identity },
-    { "MSVCR80.dll", "_crt_debugger_hook",  h_cdecl0 },
-    { "MSVCR80.dll", "__setusermatherr",    h_cdecl0 },
-    { "MSVCR80.dll", "_setusermatherr",     h_cdecl0 },
-    { "MSVCR80.dll", "_adjust_fdiv",        h_cdecl0 },
-    { "MSVCR80.dll", "malloc",              h_malloc },
-    { "MSVCR80.dll", "calloc",              h_calloc },
-    { "MSVCR80.dll", "free",                h_free },
-    { "MSVCR80.dll", "memcpy",              h_memcpy },
-    { "MSVCR80.dll", "memset",              h_memset },
-    { "MSVCR80.dll", "??2@YAPAXI@Z",        h_malloc },   /* operator new */
-    { "MSVCR80.dll", "??_U@YAPAXI@Z",       h_malloc },   /* operator new[] */
-    { "MSVCR80.dll", "??3@YAXPAX@Z",        h_free },     /* operator delete */
-    { "MSVCR80.dll", "_ismbblead",          h_cdecl0 },
-    { "MSVCR80.dll", "_XcptFilter",         h_cdecl0 },
-    { "MSVCR80.dll", "__CxxFrameHandler3",  h_cdecl0 },
-    { "MSVCR80.dll", "_except_handler4_common", h_cdecl0 },
-    { "MSVCR80.dll", "_invoke_watson",      h_cdecl0 },
-    { "MSVCR80.dll", "?terminate@@YAXXZ",   h_cdecl0 },
-    { "MSVCR80.dll", "_amsg_exit",          h_exit },
-    { "MSVCR80.dll", "exit",                h_exit },
-    { "MSVCR80.dll", "_exit",               h_exit },
-    { "MSVCR80.dll", "_cexit",              h_cdecl0 },
-    { "MSVCR80.dll", "fopen",               h_fopen },
-    { "MSVCR80.dll", "fclose",              h_fclose },
-    { "MSVCR80.dll", "fgets",               h_fgets },
-    { "MSVCR80.dll", "feof",                h_feof },
-    { "MSVCR80.dll", "fprintf",             h_fprintf },
-    { "MSVCR80.dll", "sprintf",             h_sprintf },
-    { "MSVCR80.dll", "fscanf",              h_fscanf },
-    { "MSVCR80.dll", "sscanf",              h_sscanf },
-    { "MSVCR80.dll", "rand",                h_rand },
-    { "MSVCR80.dll", "srand",               h_srand },
-    { "MSVCR80.dll", "_time64",             h_time64 },
-    { "MSVCR80.dll", "_localtime64",        h_localtime64 },
-    { "MSVCR80.dll", "_getcwd",             h_getcwd },
-    { "MSVCR80.dll", "_chdir",              h_chdir },
+    {"MSVCR80.dll", "__getmainargs", h_getmainargs},
+    {"MSVCR80.dll", "_initterm", h_initterm},
+    {"MSVCR80.dll", "_initterm_e", h_initterm_e},
+    {"MSVCR80.dll", "__set_app_type", h_cdecl0},
+    {"MSVCR80.dll", "__p__commode", h_p_commode},
+    {"MSVCR80.dll", "__p__fmode", h_p_fmode},
+    {"MSVCR80.dll", "_controlfp_s", h_controlfp_s},
+    {"MSVCR80.dll", "_configthreadlocale", h_cdecl0},
+    {"MSVCR80.dll", "_encode_pointer", h_identity},
+    {"MSVCR80.dll", "_decode_pointer", h_identity},
+    {"MSVCR80.dll", "_lock", h_cdecl0},
+    {"MSVCR80.dll", "_unlock", h_cdecl0},
+    {"MSVCR80.dll", "__dllonexit", h_identity},
+    {"MSVCR80.dll", "_onexit", h_identity},
+    {"MSVCR80.dll", "_crt_debugger_hook", h_cdecl0},
+    {"MSVCR80.dll", "__setusermatherr", h_cdecl0},
+    {"MSVCR80.dll", "_setusermatherr", h_cdecl0},
+    {"MSVCR80.dll", "_adjust_fdiv", h_cdecl0},
+    {"MSVCR80.dll", "malloc", h_malloc},
+    {"MSVCR80.dll", "calloc", h_calloc},
+    {"MSVCR80.dll", "free", h_free},
+    {"MSVCR80.dll", "memcpy", h_memcpy},
+    {"MSVCR80.dll", "memset", h_memset},
+    {"MSVCR80.dll", "??2@YAPAXI@Z", h_malloc},  /* operator new */
+    {"MSVCR80.dll", "??_U@YAPAXI@Z", h_malloc}, /* operator new[] */
+    {"MSVCR80.dll", "??3@YAXPAX@Z", h_free},    /* operator delete */
+    {"MSVCR80.dll", "_ismbblead", h_cdecl0},
+    {"MSVCR80.dll", "_XcptFilter", h_cdecl0},
+    {"MSVCR80.dll", "__CxxFrameHandler3", h_cdecl0},
+    {"MSVCR80.dll", "_except_handler4_common", h_cdecl0},
+    {"MSVCR80.dll", "_invoke_watson", h_cdecl0},
+    {"MSVCR80.dll", "?terminate@@YAXXZ", h_cdecl0},
+    {"MSVCR80.dll", "_amsg_exit", h_exit},
+    {"MSVCR80.dll", "exit", h_exit},
+    {"MSVCR80.dll", "_exit", h_exit},
+    {"MSVCR80.dll", "_cexit", h_cdecl0},
+    {"MSVCR80.dll", "fopen", h_fopen},
+    {"MSVCR80.dll", "fclose", h_fclose},
+    {"MSVCR80.dll", "fgets", h_fgets},
+    {"MSVCR80.dll", "feof", h_feof},
+    {"MSVCR80.dll", "fprintf", h_fprintf},
+    {"MSVCR80.dll", "sprintf", h_sprintf},
+    {"MSVCR80.dll", "fscanf", h_fscanf},
+    {"MSVCR80.dll", "sscanf", h_sscanf},
+    {"MSVCR80.dll", "rand", h_rand},
+    {"MSVCR80.dll", "srand", h_srand},
+    {"MSVCR80.dll", "_time64", h_time64},
+    {"MSVCR80.dll", "_localtime64", h_localtime64},
+    {"MSVCR80.dll", "_getcwd", h_getcwd},
+    {"MSVCR80.dll", "_chdir", h_chdir},
 
-    { "WINMM.dll", "timeGetTime",      h_timeGetTime },
-    { "WINMM.dll", "mmioOpenA",        h_mmioOpenA },
-    { "WINMM.dll", "mmioClose",        h_mmioClose },
-    { "WINMM.dll", "mmioRead",         h_mmioRead },
-    { "WINMM.dll", "mmioDescend",      h_mmioDescend },
-    { "WINMM.dll", "mmioAscend",       h_mmioAscend },
+    {"WINMM.dll", "timeGetTime", h_timeGetTime},
+    {"WINMM.dll", "mmioOpenA", h_mmioOpenA},
+    {"WINMM.dll", "mmioClose", h_mmioClose},
+    {"WINMM.dll", "mmioRead", h_mmioRead},
+    {"WINMM.dll", "mmioDescend", h_mmioDescend},
+    {"WINMM.dll", "mmioAscend", h_mmioAscend},
 };
 
 Handler host_lookup(const char *dll, const char *name)
 {
     for (size_t i = 0; i < sizeof TABLE / sizeof TABLE[0]; i++) {
-        if (strcmp(TABLE[i].dll, dll) == 0 && strcmp(TABLE[i].name, name) == 0)
-            return TABLE[i].fn;
+        if (strcmp(TABLE[i].dll, dll) == 0 && strcmp(TABLE[i].name, name) == 0) return TABLE[i].fn;
     }
     return NULL;
 }

@@ -7,7 +7,6 @@
 #include "ddraw_diag.h"
 #include "device_icons.h"
 #include "guest.h"
-#include "overlay_panel.h"
 #include "render.h"
 #include "rmlui.h"
 #include "script.h"
@@ -48,7 +47,6 @@ void hostwin_shutdown(void)
     window_resize_report();
     if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
     render_shutdown();
-    overlay_panel_shutdown();
     device_icons_shutdown();
     if (hw.texture) {
         SDL_DestroyTexture(hw.texture);

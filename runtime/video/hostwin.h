@@ -115,6 +115,7 @@ uint32_t bg_shadow_stage(void);
  * or the record does not give an ordered pair inside 550 rows. */
 int bg_z_bounds(int *zmin, int *zmax);
 void hostwin_request_quit(void);
+int hostwin_quit_requested(void);
 int hostwin_width(void);
 int hostwin_height(void);
 

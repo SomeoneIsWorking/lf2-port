@@ -1,4 +1,4 @@
-/* fn_004148a0 -- the data-file decrypt the game did one byte at a time.
+/* LF2's data-file decryptors, which the game ran one byte at a time.
  *
  * One of the hand-written native replacements for recompiled functions; see
  * runtime/overrides/overrides.h for how the set is divided and why.
@@ -10,6 +10,7 @@
 #include "guest_ops.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "paths.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +41,7 @@
  *
  * Byte-exactness matters more than speed here, so the two things the CRT does that a naive
  * port would not are both reproduced: the input is opened in TEXT mode, so CRLF collapses
- * to LF before decryption (lf2_open_text), and the output is written raw, which is what the
+ * to LF before decryption (lf2_read_text), and the output is written raw, which is what the
  * port's own "w" fopen does. Anything that cannot be done -- a missing input, an unwritable
  * output -- falls through to the original body rather than silently producing a short file,
  * because a truncated decrypt would show up as the game quietly missing objects.
@@ -48,12 +49,10 @@
  * Calling convention: cdecl. The generated body ends in `R(ESP) += 4`, so the argument is
  * the caller's to pop and only the return address comes off here.
  * ------------------------------------------------------------------------ */
-const char *lf2_host_path(const char *guest_style);      /* imports.c */
-char       *lf2_read_text(const char *host_path, size_t *len);   /* imports.c */
-
 long decrypt_files, decrypt_bytes;
 
 void fn_004148a0__orig(void);
+void fn_00414a30__orig(void);
 
 /* LF2_DECRYPT_DUMP=<dir> copies each decrypted file out as NNN.txt, in order. Run once with
  * LF2_SLOW_DECRYPT=1 and once without, diff the two directories, and the native decrypt is
@@ -69,47 +68,102 @@ static void decrypt_dump(void)
     char dst[512];
     snprintf(dst, sizeof dst, "%s/%04d.txt", dir, n++);
     FILE *in = fopen(lf2_host_path("data\\temporary.txt"), "rb");
-    if (!in) { fprintf(stderr, "decrypt dump: cannot read the output for %s\n", dst); return; }
+    if (!in) {
+        fprintf(stderr, "decrypt dump: cannot read the output for %s\n", dst);
+        return;
+    }
     FILE *out = fopen(dst, "wb");
-    if (!out) { fclose(in); fprintf(stderr, "decrypt dump: cannot write %s\n", dst); return; }
-    char b[65536]; size_t got;
+    if (!out) {
+        fclose(in);
+        fprintf(stderr, "decrypt dump: cannot write %s\n", dst);
+        return;
+    }
+    char b[65536];
+    size_t got;
     while ((got = fread(b, 1, sizeof b, in)) > 0) fwrite(b, 1, got, out);
-    fclose(in); fclose(out);
+    fclose(in);
+    fclose(out);
+}
+
+static int decrypt_file(const char *source, const char *destination)
+{
+    static const char KEY[] = "SiuHungIsAGoodBearBecauseHeIsVeryGood";
+    enum { KEYLEN = 37, HEADER = 0x7b };
+    _Static_assert(sizeof KEY - 1 == KEYLEN, "the key length is part of the cipher");
+
+    size_t size = 0;
+    char *buffer = lf2_read_text(source, &size);
+    if (!buffer) return 0;
+
+    FILE *output = fopen(destination, "w");
+    if (!output) {
+        free(buffer);
+        return 0;
+    }
+
+    unsigned key_index = HEADER % KEYLEN;
+    int ok = 1;
+    for (size_t i = HEADER; i < size; ++i) {
+        const int value = ((int)(unsigned char)buffer[i] - (int)(unsigned char)KEY[key_index]) & 0xff;
+        key_index = (key_index + 1u) % KEYLEN;
+        if (fputc(value, output) == EOF) {
+            ok = 0;
+            break;
+        }
+    }
+    ok = fclose(output) == 0 && ok;
+    free(buffer);
+    if (!ok) return 0;
+
+    ++decrypt_files;
+    decrypt_bytes += (long)(size > HEADER ? size - HEADER : 0);
+    return 1;
 }
 
 void fn_004148a0(void)
 {
     static int native = -1;
     if (native < 0) native = getenv("LF2_SLOW_DECRYPT") == NULL;
-    if (!native) { fn_004148a0__orig(); decrypt_dump(); return; }
-
-    static const char KEY[] = "SiuHungIsAGoodBearBecauseHeIsVeryGood";
-    enum { KEYLEN = 37, HEADER = 0x7b };
-    _Static_assert(sizeof KEY - 1 == KEYLEN, "the key length is part of the cipher");
+    if (!native) {
+        fn_004148a0__orig();
+        decrypt_dump();
+        return;
+    }
 
     const uint32_t arg = LD32(R(ESP) + 4);
-    const char *src = lf2_host_path((const char *)(g_mem + arg));
-
-    size_t n = 0;
-    char *buf = lf2_read_text(src, &n);
-    if (!buf) { fn_004148a0__orig(); return; }
-
-    FILE *out = fopen(lf2_host_path("data\\temporary.txt"), "w");
-    if (!out) { free(buf); fn_004148a0__orig(); return; }
-
-    unsigned ki = HEADER % KEYLEN;
-    for (size_t i = HEADER; i < n; i++) {
-        const int v = ((int)(unsigned char)buf[i] - (int)(unsigned char)KEY[ki]) & 0xff;
-        ki = (ki + 1u) % KEYLEN;
-        fputc(v, out);
+    char source[1024];
+    snprintf(source, sizeof source, "%s", lf2_host_path((const char *)(g_mem + arg)));
+    const char *destination = lf2_host_path("data\\temporary.txt");
+    if (!decrypt_file(source, destination)) {
+        fn_004148a0__orig();
+        return;
     }
-    decrypt_files++;
-    decrypt_bytes += (long)(n > HEADER ? n - HEADER : 0);
-
-    fclose(out);
-    free(buf);
     decrypt_dump();
-    R(ESP) += 4;                 /* cdecl: the return address only */
+    R(ESP) += 4; /* cdecl: the return address only */
+}
+
+/* fn_00414a30 is the same cipher with explicit source and destination arguments. LF2 uses
+ * this second body only for data/stage.dat, so overriding fn_004148a0 alone left another
+ * 91,396 byte-at-a-time fscanf calls in every boot. */
+void fn_00414a30(void)
+{
+    static int native = -1;
+    if (native < 0) native = getenv("LF2_SLOW_DECRYPT") == NULL;
+    if (!native) {
+        fn_00414a30__orig();
+        decrypt_dump();
+        return;
+    }
+
+    char source[1024];
+    snprintf(source, sizeof source, "%s", lf2_host_path((const char *)g_mem + LD32(R(ESP) + 4)));
+    const char *destination = lf2_host_path((const char *)g_mem + LD32(R(ESP) + 8));
+    if (!decrypt_file(source, destination)) {
+        fn_00414a30__orig();
+        return;
+    }
+    decrypt_dump();
+    R(ESP) += 4;
 }
 
 /* ---- the stage's background layer table ----
@@ -123,7 +177,7 @@ uint32_t bg_layer_field(uint32_t field_const, int layer)
 {
     if (layer < 0 || layer >= BG_MAX_LAYERS) return 0;
     const uint32_t registry = LD32(BG_REGISTRY);
-    if (!registry) return 0;                      /* no stage loaded yet */
+    if (!registry) return 0; /* no stage loaded yet */
     const uint32_t bg = LD32(BG_INDEX);
     return LD32(registry + (bg * BG_STRIDE_DW + (uint32_t)layer) * 4u + field_const);
 }
@@ -175,14 +229,14 @@ static const char *bg_string(uint32_t at, char *out, size_t n)
 const char *bg_stage_name(void)
 {
     const uint32_t registry = LD32(BG_REGISTRY);
-    if (!registry) return NULL;                   /* no stage loaded: not the same as "" */
+    if (!registry) return NULL; /* no stage loaded: not the same as "" */
     static char name[BG_NAME_LEN + 1];
-    bg_string(registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u + BG_STAGE_NAME,
-              name, sizeof name);
+    bg_string(registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u + BG_STAGE_NAME, name, sizeof name);
     /* fn_0040c160 turns every '_' into ' ' as it reads the file, so the record says "The Great
      * Wall" where bg.dat says "The_Great_Wall". Put them back, because the FILE's spelling is
      * what a hand-woven stage is named after and a name with spaces in it is a poor file name. */
-    for (char *p = name; *p; p++) if (*p == ' ') *p = '_';
+    for (char *p = name; *p; p++)
+        if (*p == ' ') *p = '_';
     return name;
 }
 
@@ -201,7 +255,8 @@ int bg_stage_index(const char *want)
         if ((int32_t)LD32(base + BG_LAYER_COUNT) <= 0 && !LD32(base + BG_STAGE_WIDTH)) continue;
         char name[BG_NAME_LEN + 1];
         bg_string(base + BG_STAGE_NAME, name, sizeof name);
-        for (char *p = name; *p; p++) if (*p == ' ') *p = '_';
+        for (char *p = name; *p; p++)
+            if (*p == ' ') *p = '_';
         if (strcmp(name, want) == 0) return (int)i;
     }
     return -1;
@@ -213,14 +268,14 @@ const char *bg_layer_name(int layer)
     const uint32_t registry = LD32(BG_REGISTRY);
     if (!registry) return NULL;
     static char path[BG_NAME_LEN + 1];
-    bg_string(registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u
-                       + BG_LAYER_NAME + (uint32_t)layer * BG_NAME_LEN,
-              path, sizeof path);
+    bg_string(registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u + BG_LAYER_NAME + (uint32_t)layer * BG_NAME_LEN, path,
+              sizeof path);
     /* The record holds the path as bg.dat writes it -- `bg\sys\gw\hill1.bmp`, with the game's
      * backslashes. The leaf is what identifies the layer to an author, and it is unique within
      * a stage because it is a file in one directory. */
     char *leaf = path;
-    for (char *p = path; *p; p++) if (*p == '\\' || *p == '/') leaf = p + 1;
+    for (char *p = path; *p; p++)
+        if (*p == '\\' || *p == '/') leaf = p + 1;
     return leaf;
 }
 
@@ -248,7 +303,8 @@ int bg_z_bounds(int *zmin, int *zmax)
     const int lo = (int)(int32_t)bg_stage_field(BG_Z_MIN);
     const int hi = (int)(int32_t)bg_stage_field(BG_Z_MAX);
     if (lo <= 0 || hi <= lo || hi > 550) return 0;
-    *zmin = lo; *zmax = hi;
+    *zmin = lo;
+    *zmax = hi;
     return 1;
 }
 
@@ -271,18 +327,18 @@ static void bg_z_report(void)
         const uint32_t base = registry + bg * BG_STRIDE_DW * 4u;
         const int32_t count = (int32_t)LD32(base + BG_LAYER_COUNT);
         const int32_t width = (int32_t)LD32(base + BG_STAGE_WIDTH);
-        if (count <= 0 && width <= 0) continue;      /* past the end of the table */
+        if (count <= 0 && width <= 0) continue; /* past the end of the table */
         seen++;
         const int lo = (int)(int32_t)LD32(base + BG_Z_MIN);
         const int hi = (int)(int32_t)LD32(base + BG_Z_MAX);
         const int ok = (lo > 0 && hi > lo && hi <= 550);
         if (ok) sane++;
-        fprintf(stderr, "bg zboundary:  %2u %s  z %d..%d  (stage width %d, %d layer(s))%s\n",
-                bg, bg == here ? "<-loaded" : "        ", lo, hi, width, count,
+        fprintf(stderr, "bg zboundary:  %2u %s  z %d..%d  (stage width %d, %d layer(s))%s\n", bg,
+                bg == here ? "<-loaded" : "        ", lo, hi, width, count,
                 ok ? "" : "   REFUSED: not an ordered pair inside 550 rows");
     }
-    fprintf(stderr, "bg zboundary: %d of %d backgrounds give a sane floor band%s\n",
-            sane, seen, seen == 0 ? " -- the table was EMPTY, so this says nothing" : "");
+    fprintf(stderr, "bg zboundary: %d of %d backgrounds give a sane floor band%s\n", sane, seen,
+            seen == 0 ? " -- the table was EMPTY, so this says nothing" : "");
 }
 
 /* The game's own count, which is what fn_0041a250 iterates on -- not a scan for the first
@@ -303,7 +359,7 @@ static void bg_record_report(uint32_t which)
 {
     const uint32_t registry = LD32(BG_REGISTRY);
     const uint32_t base = registry + which * BG_STRIDE_DW * 4u;
-    const int32_t  cnt = (int32_t)LD32(base + BG_LAYER_COUNT);
+    const int32_t cnt = (int32_t)LD32(base + BG_LAYER_COUNT);
     const int n = cnt <= 0 ? 0 : (cnt < BG_MAX_LAYERS ? (int)cnt : BG_MAX_LAYERS);
     /* The NAME, and it is the check on the whole string half of the record: `decrypt_dat.py`
      * prints bg.dat's own `name:` and its own layer paths, and this prints what the game
@@ -313,9 +369,8 @@ static void bg_record_report(uint32_t which)
      * "the report did not get that far". */
     char nm[BG_NAME_LEN + 1];
     bg_string(base + BG_STAGE_NAME, nm, sizeof nm);
-    fprintf(stderr, "bg table: background %u  \"%s\"  stage width %u  %d layer(s)%s\n",
-            which, nm[0] ? nm : "(empty)", LD32(base + BG_STAGE_WIDTH), n,
-            which == LD32(BG_INDEX) ? "   <- loaded" : "");
+    fprintf(stderr, "bg table: background %u  \"%s\"  stage width %u  %d layer(s)%s\n", which, nm[0] ? nm : "(empty)",
+            LD32(base + BG_STAGE_WIDTH), n, which == LD32(BG_INDEX) ? "   <- loaded" : "");
     if (n == 0) {
         fprintf(stderr, "bg table:   NO LAYERS -- this record is empty; that is a fact about "
                         "this index, not about the address computation\n");
@@ -328,10 +383,8 @@ static void bg_record_report(uint32_t which)
          * others are indexed reads a quarter of the way into each name. */
         bg_string(base + BG_LAYER_NAME + (uint32_t)i * BG_NAME_LEN, lp, sizeof lp);
         fprintf(stderr, "bg table:   layer %-2d span=%-6u x=%-6d y=%-4d loop=%-4u %s\n", i,
-                LD32(base + BG_LAYER_SPAN + (uint32_t)i * 4u),
-                (int32_t)LD32(base + BG_LAYER_X + (uint32_t)i * 4u),
-                (int32_t)LD32(base + BG_LAYER_Y + (uint32_t)i * 4u),
-                LD32(base + BG_LAYER_LOOP + (uint32_t)i * 4u),
+                LD32(base + BG_LAYER_SPAN + (uint32_t)i * 4u), (int32_t)LD32(base + BG_LAYER_X + (uint32_t)i * 4u),
+                (int32_t)LD32(base + BG_LAYER_Y + (uint32_t)i * 4u), LD32(base + BG_LAYER_LOOP + (uint32_t)i * 4u),
                 lp[0] ? lp : "(no name -- the record's string field is empty here)");
     }
 }
@@ -360,11 +413,13 @@ static void bg_record_dump(void)
     const uint32_t registry = LD32(BG_REGISTRY);
     if (!registry) return;
     const uint32_t base = registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u;
-    fprintf(stderr, "bg record: background %u, every non-zero dword from base-2600 to "
-                    "base+2600, offset relative to BG_LAYER_SPAN\n", LD32(BG_INDEX));
+    fprintf(stderr,
+            "bg record: background %u, every non-zero dword from base-2600 to "
+            "base+2600, offset relative to BG_LAYER_SPAN\n",
+            LD32(BG_INDEX));
     for (int32_t off = -2600; off <= 2600; off += 4) {
         const uint32_t v = LD32((uint32_t)((int32_t)(base + BG_LAYER_SPAN) + off));
-        if (!v) continue;                       /* zeros are the bulk and say nothing */
+        if (!v) continue; /* zeros are the bulk and say nothing */
         fprintf(stderr, "bg record:  %+5d = %10u  0x%08x\n", off, v, v);
     }
 }
@@ -383,11 +438,13 @@ void bg_table_report(void)
     const uint32_t registry = LD32(BG_REGISTRY);
     if (!registry) return;
     done = 1;
-    fprintf(stderr, "bg table: registry %08x, loaded background %u\n",
-            registry, LD32(BG_INDEX));
+    fprintf(stderr, "bg table: registry %08x, loaded background %u\n", registry, LD32(BG_INDEX));
     bg_z_report();
     bg_record_dump();
-    if (strcmp(want, "all") != 0) { bg_record_report(LD32(BG_INDEX)); return; }
+    if (strcmp(want, "all") != 0) {
+        bg_record_report(LD32(BG_INDEX));
+        return;
+    }
     /* The count is not known from the table, so walk until a record has no layers AND no
      * stage width -- and say how far the walk got, so a run that found one background reads
      * differently from a run that found twelve. */
@@ -398,6 +455,5 @@ void bg_table_report(void)
         bg_record_report(i);
         found++;
     }
-    fprintf(stderr, "bg table: %d non-empty background record(s) in the first 64 slots\n",
-            found);
+    fprintf(stderr, "bg table: %d non-empty background record(s) in the first 64 slots\n", found);
 }

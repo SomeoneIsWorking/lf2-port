@@ -9,7 +9,6 @@
 #include "world.h"
 #include "guest_cursor.h"
 #include "geom.h"
-#include "overlay_panel.h"
 
 #include "guest_ops.h"
 #include "guest_map.h"
@@ -97,18 +96,6 @@ void fn_0043f010(void)
     clip_obj_note(R(ECX));
     const uint32_t shadow_obj = shadow_object();
     shadow_hint_set(shadow_obj && R(ECX) == shadow_obj);
-
-    /* FUN_00429730 draws the complete authored layer before its later dynamic TextOutA
-     * values. Mark its exact final static producer so DirectDraw can append the native panel
-     * there while retaining every original CHARMENU draw underneath as the fallback. */
-    const int panel_selected = (int)LD32(OVERLAY_SEL);
-    const int panel_stage = LD32(MENU_CURSOR) == 1;
-    if (overlay_panel_final(LD32(R(ESP)), panel_selected, panel_stage)) {
-        overlay_panel_hint_set(panel_selected, panel_stage);
-        fn_0043f010__orig();
-        overlay_panel_hint_clear();
-        return;
-    }
 
     const int sheet = font_sheet_index(R(ECX));
     if (sheet >= 0) {

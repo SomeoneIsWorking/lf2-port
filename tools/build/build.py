@@ -6,7 +6,9 @@ developed on, AppleClang included); when they are unset Clang is used if it
 exists and the platform default otherwise. A build directory is refused only
 when it was configured with a DIFFERENT compiler than this invocation would
 use -- reusing one cache across toolchains corrupts the build, which is a
-hygiene rule about the cache, not a ban on any compiler.
+hygiene rule about the cache, not a ban on any compiler. The project target is
+RelWithDebInfo: the generated guest code must be optimized, while retaining
+symbols for crash reports and reverse-engineering probes.
 """
 
 from __future__ import annotations
@@ -88,6 +90,7 @@ def main() -> int:
             str(build),
             f"-DCMAKE_C_COMPILER={cc}",
             f"-DCMAKE_CXX_COMPILER={cxx}",
+            "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
             "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         ],
         cwd=ROOT,

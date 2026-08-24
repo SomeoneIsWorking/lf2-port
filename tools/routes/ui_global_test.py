@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Open the global RmlUi shell everywhere and verify the match transition pixels."""
+"""Open RmlUi everywhere and prove that its match document freezes world simulation."""
 
 from __future__ import annotations
 
@@ -154,19 +154,24 @@ def main() -> int:
         modal_later = decoded[2][2]
         closed_frames = [decoded[index][2] for index in range(3, 6)]
         control_modal_times = [control[0][2], control[1][2]]
-        control_closed = [control[index][2] for index in range(2, 5)]
         checks.append((changed_fraction(modal, control_modal_times[0]) >= 0.05,
                        "the captured modal visibly differs from the no-modal control"))
-        checks.append((side_bands(modal, 1920, 1080) == side_bands(control_modal_times[0], 1920, 1080) and
-                       side_bands(modal_later, 1920, 1080) == side_bands(control_modal_times[1], 1920, 1080),
-                       "the ordinary game renderer exactly matches the control outside the modal"))
+        modal_sides = side_bands(modal, 1920, 1080)
+        modal_later_sides = side_bands(modal_later, 1920, 1080)
+        control_sides = side_bands(control_modal_times[0], 1920, 1080)
+        control_later_sides = side_bands(control_modal_times[1], 1920, 1080)
+        checks.append((modal_sides == modal_later_sides,
+                       "world pixels outside RmlUi stay byte-identical while the match is paused"))
+        control_motion = changed_fraction(control_sides, control_later_sides)
+        checks.append((control_motion >= 0.05,
+                       f"the no-modal control changes at the same interval ({control_motion:.6f})"))
         checks.append((changed_fraction(modal_later, closed_frames[0]) >= 0.05,
                        "mapped Cancel removed the modal in the first hidden frame (+362)"))
-        differences = [changed_fraction(modal_frame, control_frame)
-                       for modal_frame, control_frame in zip(closed_frames, control_closed)]
-        checks.append((all(value == 0.0 for value in differences),
-                       "the first hidden frame (+362) and its successors exactly match the "
-                       f"no-modal control ({', '.join(f'{value:.6f}' for value in differences)})"))
+        resumed_motion = [changed_fraction(closed_frames[i], closed_frames[i + 1])
+                          for i in range(len(closed_frames) - 1)]
+        checks.append((all(value >= 0.001 for value in resumed_motion),
+                       "world pixels resume changing immediately after close "
+                       f"({', '.join(f'{value:.6f}' for value in resumed_motion)})"))
 
     failed = False
     for passed, description in checks:

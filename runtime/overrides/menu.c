@@ -5,13 +5,11 @@
  */
 
 #include "overrides.h"
-#include "boot_guest.h"
 #include "world.h"
 
 #include "guest_ops.h"
 #include "guest_map.h"
 #include "hostwin.h"
-#include "startup.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -219,21 +217,7 @@ void fn_004246b0(void)
      * document remains modal because the host input boundary withholds input from LF2. */
     pause_tick();
     const uint32_t self = R(ECX);
-    uint32_t mode = self ? LD32(self) : 0xffffffffu;
-    const uint32_t target_mode = boot_guest_target_mode(mode);
-    if (self && target_mode != mode) {
-        ST32(self, target_mode);
-        mode = target_mode;
-        fprintf(stderr, "startup: retired front-end state was discarded; entering the "
-                        "project loader\n");
-    }
-    if (startup_load_data(self, mode, LD32(R(ESP) + 4))) {
-        /* fn_004246b0 is RET 4: consume its return address and one guest argument after the
-         * direct loader has completed. */
-        R(ESP) += 8;
-        return;
-    }
-    mode = self ? LD32(self) : 0xffffffffu;
+    const uint32_t mode = self ? LD32(self) : 0xffffffffu;
     const uint32_t screen = LD32(GX_SCREEN);
     top_mode = mode;
     controls_hint_enable(mode != MODE_IN_GAME);
