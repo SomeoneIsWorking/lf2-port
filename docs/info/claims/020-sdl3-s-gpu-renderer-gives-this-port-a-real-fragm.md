@@ -1,10 +1,11 @@
 ---
 id: C020
 kind: claim
-status: holds
+status: falsified
 created: 2026-08-06
 tags: rendering,sdl,shaders
 depends: runtime/video/hd2d.c, runtime/win32/win32.c
+falsified_on: 2026-08-24
 ---
 
 ## Claim
@@ -18,3 +19,9 @@ standalone probe ($CLAUDE_JOB_DIR/tmp/spike.c) against SDL 3.4.12: a fragment sh
 ## What would falsify it
 
 an SDL release that renumbers the descriptor sets, or a host whose only GPU backend is Metal/D3D12 -- there SDL_GetGPUShaderFormats will not contain SPIR-V and hd2d_init refuses rather than approximating
+
+## FALSIFIED 2026-08-24
+
+A real macOS run reached SDL GPU through Metal, whose shader formats exclude the only shipped SPIR-V payloads; runtime/video/engine.c therefore refused the native engine and its character shading/cast-shadow passes exactly as this claim named as its falsifier.
+
+> Anything that cited this claim as proof must be re-checked. Grep the repo for it.

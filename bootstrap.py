@@ -11,9 +11,11 @@ silently: every step prints what it did.
 
 Order matters and each step needs only the ones before it:
 
-  1. shared/port-assets   cloned into the standard layout (`shared/` beside
-                          `pc/`) when missing; an existing checkout is left
-                          exactly as it is.
+  1. port-assets          validates $PORT_ASSETS_DIR without touching it;
+                          otherwise reuses $SHARED_DIR/port-assets or the
+                          established ../../shared checkout when available,
+                          and clones a pinned copy into scratch/deps as the
+                          portable fallback.
   2. third_party/RmlUi    `git submodule update --init` when absent.
   3. Python environment   `uv sync`, from the committed lockfile. uv
                           provisions Python itself if the system one is old.
@@ -44,35 +46,88 @@ INSTALLER = "LF2_v2.0a.exe"
 GAME_EXE = "game/lf2.exe"
 BUILD_DIR = ROOT / "scratch" / "build-clang"
 BINARY = BUILD_DIR / "lf2"
+PORT_ASSET_FILES = (
+    Path("sets/devices/keyboard.svg"),
+    Path("sets/devices/gamepad.svg"),
+)
+PORT_ASSETS_REVISION = "330c1bf146bd97ecc6af49e637476a677f0e55a0"
 
 
 def refuse(message: str) -> None:
-    sys.exit("bootstrap: %s" % message)
+    sys.exit(f"bootstrap: {message}")
 
 
-def ensure_port_assets() -> None:
-    """Clone the shared device-art repo into the standard layout when missing.
+def configured_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else ROOT / path
 
-    CMake embeds SVGs from it at build time and resolves exactly this path
-    ($PORT_ASSETS_DIR / $SHARED_DIR / ../../shared/port-assets); provisioning
-    the standard location means no variable needs to be set. An existing
-    checkout is never pulled or touched.
+
+def missing_port_assets(target: Path) -> list[Path]:
+    return [
+        relative for relative in PORT_ASSET_FILES if not (target / relative).is_file()
+    ]
+
+
+def ensure_port_assets() -> Path:
+    """Resolve or provision shared device art without assuming checkout layout.
+
+    An explicit $PORT_ASSETS_DIR is user-owned and must already be complete.
+    A shared-root or bootstrap-owned checkout may be cloned when absent; no
+    existing checkout is pulled or otherwise changed.
     """
-    target = ROOT.parent.parent / "shared" / "port-assets"
-    if (target / "sets").exists():
-        return
+    explicit = os.environ.get("PORT_ASSETS_DIR")
+    if explicit:
+        target = configured_path(explicit)
+        missing = missing_port_assets(target)
+        if missing:
+            refuse(
+                "PORT_ASSETS_DIR={} is missing required file(s): {}.".format(
+                    target, ", ".join(str(path) for path in missing)
+                )
+            )
+        return target.resolve()
+
+    shared = os.environ.get("SHARED_DIR")
+    if shared:
+        target = configured_path(shared) / "port-assets"
+    else:
+        legacy = ROOT.parent.parent / "shared" / "port-assets"
+        if not missing_port_assets(legacy):
+            return legacy.resolve()
+        target = ROOT / "scratch" / "deps" / "port-assets"
+
+    missing = missing_port_assets(target)
+    if not missing:
+        return target.resolve()
     if target.exists():
         refuse(
-            "%s exists but has no sets/ directory, so it does not look like "
-            "a port-assets checkout. Fix or remove it and re-run." % target
+            "{} exists but is missing required port-assets file(s): {}. "
+            "Fix or remove it and re-run.".format(
+                target, ", ".join(str(path) for path in missing)
+            )
         )
+    git = shutil.which("git")
+    if not git:
+        refuse("git is required to fetch the shared port-assets checkout.")
     base = os.environ.get("SHARED_GIT_BASE") or "https://github.com/SomeoneIsWorking"
-    url = "%s/port-assets.git" % base
+    url = f"{base}/port-assets.git"
     target.parent.mkdir(parents=True, exist_ok=True)
-    print("bootstrap: cloning %s -> %s" % (url, target))
-    subprocess.run(["git", "clone", url, str(target)], check=True)
-    if not (target / "sets").exists():
-        refuse("%s was cloned from %s but has no sets/" % (target, url))
+    print(f"bootstrap: cloning {url} -> {target}")
+    result = subprocess.run([git, "clone", url, str(target)], check=False)
+    if result.returncode:
+        refuse(
+            f"the shared port-assets checkout did not initialize at {target}; see the output above."
+        )
+    print(f"bootstrap: pinning port-assets to {PORT_ASSETS_REVISION}")
+    result = subprocess.run(
+        [git, "-C", str(target), "checkout", "--detach", PORT_ASSETS_REVISION],
+        check=False,
+    )
+    if result.returncode or missing_port_assets(target):
+        refuse(
+            f"the shared port-assets checkout did not initialize at {target}; see the output above."
+        )
+    return target.resolve()
 
 
 def ensure_submodules() -> None:
@@ -82,8 +137,15 @@ def ensure_submodules() -> None:
     if not git:
         refuse("git is required to fetch the third_party/RmlUi submodule.")
     print("bootstrap: git submodule update --init --recursive")
-    result = subprocess.run([git, "submodule", "update", "--init", "--recursive"], cwd=ROOT)
-    if result.returncode or not (ROOT / "third_party" / "RmlUi" / "CMakeLists.txt").exists():
+    result = subprocess.run(
+        [git, "submodule", "update", "--init", "--recursive"],
+        cwd=ROOT,
+        check=False,
+    )
+    if (
+        result.returncode
+        or not (ROOT / "third_party" / "RmlUi" / "CMakeLists.txt").exists()
+    ):
         refuse("the RmlUi submodule did not initialize; see the output above.")
 
 
@@ -98,12 +160,12 @@ def ensure_venv() -> Path:
             "             brew install uv"
         )
     print("bootstrap: uv sync")
-    result = subprocess.run([uv, "sync"], cwd=ROOT)
+    result = subprocess.run([uv, "sync"], cwd=ROOT, check=False)
     if result.returncode:
-        refuse("uv sync failed with exit %d." % result.returncode)
+        refuse(f"uv sync failed with exit {result.returncode}.")
     venv_python = ROOT / ".venv" / "bin" / "python"
     if not venv_python.exists():
-        refuse("%s does not exist after uv sync." % venv_python)
+        refuse(f"{venv_python} does not exist after uv sync.")
     return venv_python
 
 
@@ -115,50 +177,76 @@ def ensure_installer() -> Path:
     if env_path:
         candidate = Path(env_path).expanduser()
         if not candidate.is_file():
-            refuse("LF2_INSTALLER=%s is not a file." % candidate)
+            refuse(f"LF2_INSTALLER={candidate} is not a file.")
         return candidate
     local = ROOT / INSTALLER
     if local.is_file():
         return local
-    print("bootstrap: downloading %s (%s)" % (INSTALLER, INSTALLER_URL))
+    print(f"bootstrap: downloading {INSTALLER} ({INSTALLER_URL})")
     try:
         urllib.request.urlretrieve(INSTALLER_URL, local)  # pinned URL, fixed filename
     except OSError as error:
         local.unlink(missing_ok=True)
         refuse(
-            "no installer at %s and the download failed (%s).\n"
-            "         Fetch %s yourself, place it at %s, and re-run."
-            % (local, error, INSTALLER_URL, local)
+            f"no installer at {local} and the download failed ({error}).\n"
+            f"         Fetch {INSTALLER_URL} yourself, place it at {local}, and re-run."
         )
     if not local.is_file() or local.stat().st_size == 0:
-        refuse("the download of %s produced nothing usable." % INSTALLER_URL)
+        refuse(f"the download of {INSTALLER_URL} produced nothing usable.")
     return local
 
 
-def ensure_game_tree(installer: Path) -> None:
+def ensure_game_tree() -> None:
     if (ROOT / GAME_EXE).is_file():
         return
-    print("bootstrap: extracting game tree from %s" % installer.name)
-    result = subprocess.run([sys.executable, str(ROOT / "tools" / "extract_game.py"),
-                             str(installer), str(ROOT / "game")], cwd=ROOT)
+    installer = ensure_installer()
+    print(f"bootstrap: extracting game tree from {installer.name}")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "extract_game.py"),
+            str(installer),
+            str(ROOT / "game"),
+        ],
+        cwd=ROOT,
+        check=False,
+    )
     if result.returncode or not (ROOT / GAME_EXE).is_file():
-        refuse("tools/extract_game.py did not produce %s; see its output above." % GAME_EXE)
+        refuse(
+            f"tools/extract_game.py did not produce {GAME_EXE}; see its output above."
+        )
 
 
-def build(venv_python: Path) -> None:
+def build(venv_python: Path, port_assets: Path) -> None:
     if BINARY.exists() and not os.environ.get("REBUILD"):
-        inputs_newest = newest_mtime(ROOT / "runtime", ROOT / "recompiler", ROOT / "CMakeLists.txt")
+        inputs_newest = newest_mtime(
+            ROOT / "runtime",
+            ROOT / "recompiler",
+            ROOT / "re",
+            ROOT / "assets",
+            ROOT / "stages",
+            ROOT / "third_party" / "RmlUi",
+            ROOT / "tools" / "build",
+            ROOT / GAME_EXE,
+            ROOT / "CMakeLists.txt",
+            port_assets,
+        )
         if inputs_newest <= BINARY.stat().st_mtime:
             return
         print("bootstrap: sources changed since the last build; rebuilding")
     env = dict(os.environ)
-    env["PATH"] = "%s%s%s" % (venv_python.parent, os.pathsep, env.get("PATH", ""))
-    result = subprocess.run([str(venv_python), str(ROOT / "tools" / "build" / "build.py")],
-                            cwd=ROOT, env=env)
+    env["PATH"] = "{}{}{}".format(venv_python.parent, os.pathsep, env.get("PATH", ""))
+    env["PORT_ASSETS_DIR"] = str(port_assets)
+    result = subprocess.run(
+        [str(venv_python), str(ROOT / "tools" / "build" / "build.py")],
+        cwd=ROOT,
+        env=env,
+        check=False,
+    )
     if result.returncode:
-        refuse("the build failed with exit %d." % result.returncode)
+        refuse(f"the build failed with exit {result.returncode}.")
     if not BINARY.exists():
-        refuse("the build reported success but %s does not exist." % BINARY)
+        refuse(f"the build reported success but {BINARY} does not exist.")
 
 
 def newest_mtime(*paths: Path) -> float:
@@ -167,25 +255,30 @@ def newest_mtime(*paths: Path) -> float:
         if path.is_file():
             newest = max(newest, path.stat().st_mtime)
         elif path.is_dir():
-            newest = max(newest, max((p.stat().st_mtime for p in path.rglob("*") if p.is_file()),
-                                     default=0.0))
+            newest = max(
+                newest,
+                max(
+                    (p.stat().st_mtime for p in path.rglob("*") if p.is_file()),
+                    default=0.0,
+                ),
+            )
     return newest
 
 
 def main(argv: list[str]) -> int:
     os.chdir(ROOT)
-    print("bootstrap: initializing %s" % ROOT)
-    ensure_port_assets()
+    print(f"bootstrap: initializing {ROOT}")
+    port_assets = ensure_port_assets()
     ensure_submodules()
     venv_python = ensure_venv()
-    ensure_game_tree(ensure_installer())
-    build(venv_python)
+    ensure_game_tree()
+    build(venv_python, port_assets)
 
     # Run from the game tree: the game opens its data by relative path.
     # The venv goes on PATH so helper scripts' bare `python3` lands on the
     # interpreter with this port's dependencies installed.
     env = dict(os.environ)
-    env["PATH"] = "%s%s%s" % (venv_python.parent, os.pathsep, env.get("PATH", ""))
+    env["PATH"] = "{}{}{}".format(venv_python.parent, os.pathsep, env.get("PATH", ""))
     env["VIRTUAL_ENV"] = str(ROOT / ".venv")
     print("bootstrap: starting the game (env switches: docs/running.md)")
     # execve discards this process image -- and its buffered stdout with it.

@@ -1,7 +1,15 @@
 # Running the port
 
 ```sh
-python3 tools/build/build.py
+./run.sh
+```
+
+That is the first-run interface: it provisions the two external checkouts, Python
+environment, extracted game tree, and build before starting the port. After it has run once,
+the direct build/run path is:
+
+```sh
+uv run python tools/build/build.py
 cd game && ../scratch/build-clang/lf2 lf2.exe
 ```
 
@@ -10,14 +18,23 @@ relative paths.
 
 ## macOS
 
-**Untested — no Mac was available.** What follows is what the code should need, and the
-portability blockers that have been removed, not a report of a successful build.
+The port has been built and run by a user on macOS. That run exposed the SPIR-V-only native
+renderer: the game ran, but Metal could not create its character-lighting and cast-shadow passes.
+The renderer now ships generated MSL as well; issue #100 remains open until a real Mac re-run
+proves the new Metal pipelines and visible shadows.
 
 ```sh
-brew install sdl3 cmake
-python3 tools/build/build.py
-cd game && ../scratch/build-clang/lf2 lf2.exe
+brew install cmake sdl3 sdl3_image sdl3_ttf uv
+./run.sh
 ```
+
+Use `./run.sh` for the first run. It validates a user-owned `PORT_ASSETS_DIR`, otherwise reuses or
+provisions `SHARED_DIR/port-assets`, reuses the established `../../shared/port-assets` checkout
+when present, or clones the pinned asset revision into gitignored `scratch/deps`. It then
+initializes the pinned RmlUi submodule, syncs the locked Python environment, downloads and extracts
+the game installer when needed, builds, and starts the port. `tools/build/build.py` deliberately
+does only the build; invoking it directly in a fresh checkout bypasses that provisioning and will
+refuse the missing RmlUi or device-art checkout.
 
 The runtime is POSIX plus SDL3 throughout; an audit found no `/proc`, no epoll, no
 Linux-only headers. Real blockers found and fixed:
@@ -120,16 +137,10 @@ Part of every frame is drawn through GDI, with what on Windows is the device con
 default proportional font. That was rendered here with SDL's 8x8 debug font — legible, but
 it looked like a debug overlay.
 
-With **SDL3_ttf** present the port uses a real system font instead, anti-aliased and
-blended against whatever the game already drew. It is an *optional* dependency: without it
-the debug-font path still runs, so a build with nothing but SDL3 keeps working. CMake says
-which it picked at configure time.
-
-No font is shipped — this repository carries no binary assets, and shipping one means
-shipping its licence. A system font is found at runtime from a short candidate list
-(DejaVu Sans, Liberation Sans, Noto Sans, and the usual macOS paths). `LF2_FONT=/path/to.ttf`
-overrides it. If nothing is found the runtime says so on stderr rather than quietly looking
-worse than it should.
+The port now uses **SDL3_ttf** with the licensed Liberation Sans outline face committed in
+`assets/fonts/` and embedded into the binary. SDL3_ttf is required: configure stops by name when
+it is absent. The old optional system-font search, `LF2_FONT` override, and 8x8 debug fallback were
+removed because they made the shipping picture depend on the host machine.
 
 **What this does and does not cover.** GDI text is the menu's copyright block and the whole
 character-select panel — player numbers, `Computer`, `Join?`, fighter names, team, music and
@@ -1890,12 +1901,14 @@ There is no floor tint, backdrop light, bloom, depth of field, haze, vignette, o
 The retired distance attachment, shader, runtime option, readback instrument, and route assertions
 were removed with those effects rather than left as a dormant second implementation.
 
-**The shaders are compiled SPIR-V, committed** in `runtime/shaders/gen/`, so the build still
-needs nothing but a C compiler and SDL. `tools/build/build_shaders.sh` regenerates them and
-`ctest shaders` recompiles and compares wherever `glslc` is present, so an edited shader that
-was never recompiled fails the build rather than shipping last week's lighting. On a GPU
-backend that does not take SPIR-V (Metal, D3D12) the port says so on stderr and presents the
-plain composition; there is deliberately no approximation to fall back to.
+**The shaders are authoritative GLSL with committed SPIR-V and MSL payloads** in
+`runtime/shaders/gen/`, so a normal build still needs nothing but a C compiler and SDL. Run
+`tools/build/build_shaders.py` after changing GLSL; it uses `glslc` for SPIR-V and the official
+[`SDL_shadercross`](https://github.com/libsdl-org/SDL_shadercross/actions) CLI artifact to translate that
+exact SPIR-V to Metal Shading Language. Set `GLSLC` and `SHADERCROSS` to the executable paths when
+they are not on `PATH`. `ctest shaders` checks both committed formats when both tools are present.
+With only `glslc`, it still fails stale SPIR-V before reporting MSL unchecked with skip status 77;
+regeneration refuses either missing tool rather than silently leaving one backend stale.
 
 ### The stage's own background layers
 

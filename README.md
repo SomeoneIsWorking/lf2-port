@@ -57,12 +57,13 @@ This is an unofficial project with no affiliation with or endorsement by the LF2
 ./run.sh
 ```
 
-That is the whole setup on a fresh machine. `run.sh` is a one-line shim over
-`bootstrap.py`, which provisions everything the repo does not contain and
+After installing the host build prerequisites listed below, that is the whole project setup.
+`run.sh` is a one-line shim over `bootstrap.py`, which provisions everything the repo can own and
 refuses by name — with the exact fix — when something is missing:
 
-1. `shared/port-assets` cloned beside this checkout when absent (device art
-   embedded at build time); an existing checkout is never touched.
+1. `port-assets` validated at `$PORT_ASSETS_DIR`, reused or provisioned below
+   `$SHARED_DIR`, reused from the standard shared-repo layout when present, or
+   cloned at a pinned revision into gitignored `scratch/deps`.
 2. the `third_party/RmlUi` submodule initialized when missing.
 3. the Python environment synced by **uv** from the committed lockfile
    (`pyproject.toml`; uv installs Python itself if the system one is old).
@@ -72,11 +73,10 @@ refuses by name — with the exact fix — when something is missing:
 5. the build via `tools/build/build.py` (skipped when the binary is current;
    `REBUILD=1 ./run.sh` forces it), then the game started from `game/`.
 
-The manual equivalent, if you want each step separately:
+After `./run.sh` has provisioned the external checkouts, Python environment,
+and game tree, the direct build/run path is:
 
 ```sh
-curl -O https://lf2.net/LF2_v2.0a.exe
-python3 tools/extract_game.py LF2_v2.0a.exe game/
 uv run python tools/build/build.py
 cd game && ../scratch/build-clang/lf2 lf2.exe
 ```
@@ -99,16 +99,16 @@ variables, are in [`docs/running.md`](docs/running.md).
 | Rendering — DirectDraw, GDI text, colour-keyed sprites | works |
 | Sound effects (DirectSound → SDL3) | works |
 | Background music (WMA) | works, needs `ffmpeg` on PATH |
-| Modern anti-aliased text | menu and character-select text, with `SDL3_ttf` (optional) |
+| Modern anti-aliased text | menu and character-select text, with required `SDL3_ttf` and embedded licensed fonts |
 | Controller auto-detect and hotswap, no configuration | implemented, **untested on real hardware** |
 | Two controllers, two players | works — second pad joins as Player 2, no configuration |
 | Borderless / windowed / fullscreen, Alt+Enter | works |
 | Linux | works |
-| macOS | portability blockers removed, builds and passes under clang, **never built on a Mac** |
+| macOS | user-built; Metal shader support added after the shadow report, **re-test pending (#100)** |
 | Netplay | **not ported** — stubbed as "no network available" |
 
-The untested rows are untested because no Mac and no gamepad were available, not because
-they are known-broken. Reports welcome.
+The controller row remains untested because no gamepad was available. The macOS row records a
+real user build; its new Metal renderer path still needs the acceptance run in issue #100.
 
 ## Extracting the game files
 
