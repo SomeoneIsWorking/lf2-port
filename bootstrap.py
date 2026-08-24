@@ -188,6 +188,9 @@ def main(argv: list[str]) -> int:
     env["PATH"] = "%s%s%s" % (venv_python.parent, os.pathsep, env.get("PATH", ""))
     env["VIRTUAL_ENV"] = str(ROOT / ".venv")
     print("bootstrap: starting the game (env switches: docs/running.md)")
+    # execve discards this process image -- and its buffered stdout with it.
+    sys.stdout.flush()
+    sys.stderr.flush()
     os.chdir(ROOT / "game")
     os.execve(str(BINARY), [str(BINARY), "lf2.exe", *argv], env)
 
