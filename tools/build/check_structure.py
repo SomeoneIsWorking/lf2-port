@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LIMIT = 1200
 DANGER_LIMIT = 2000
 LEGACY_LIMITS = {
-    "runtime/video/ddraw.c": 2610,
+    "runtime/video/ddraw.c": 2579,
     "runtime/win32/imports.c": 1293,
 }
 

@@ -36,6 +36,25 @@ def wait_for_count(path: Path, text: str, count: int, seconds: float) -> bool:
     return False
 
 
+def find_visible_window_before_text(
+    path: Path, text: str, seconds: float
+) -> tuple[str, bool]:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        log = path.read_text(errors="replace") if path.exists() else ""
+        if text in log:
+            return "", False
+        search = xdotool("search", "--onlyvisible", "--name", "Little Fighter 2")
+        windows = search.stdout.splitlines()
+        log = path.read_text(errors="replace") if path.exists() else ""
+        if text in log:
+            return "", False
+        if windows:
+            return windows[0], True
+        time.sleep(0.05)
+    return "", False
+
+
 def xdotool(*args: str) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         ["xdotool", *args], capture_output=True, text=True, check=False
@@ -62,11 +81,18 @@ def run_inside_xvfb(build: Path, game: Path) -> int:
             stderr=subprocess.STDOUT,
         )
         try:
-            wait_for_text(RUN_LOG, "startup: first menu frame presented", 10.0)
-            search = xdotool("search", "--onlyvisible", "--name", "Little Fighter 2")
-            window = search.stdout.splitlines()[0] if search.stdout.splitlines() else ""
-            TOOL_LOG.write_text(f"window={window}\n" + TOOL_LOG.read_text(errors="replace"))
-            if window:
+            window, visible_before_load_complete = find_visible_window_before_text(
+                RUN_LOG, "startup: data loaded; entering the mode menu", 10.0
+            )
+            TOOL_LOG.write_text(
+                f"window={window}\n"
+                f"visible_before_load_complete={int(visible_before_load_complete)}\n"
+                + TOOL_LOG.read_text(errors="replace")
+            )
+            loaded = wait_for_text(
+                RUN_LOG, "startup: data loaded; entering the mode menu", 10.0
+            )
+            if window and loaded:
                 xdotool("windowfocus", "--sync", window)
                 xdotool("key", "Escape")
                 wait_for_text(
@@ -107,6 +133,21 @@ def check_results() -> int:
             tool_log.splitlines() and tool_log.splitlines()[0].removeprefix("window=").isdigit(),
             "the X11 game window received XTEST keyboard input",
             "xdotool could not find the visible game window",
+        ),
+        (
+            "visible_before_load_complete=1\n" in tool_log,
+            "the X11 window was visible before synchronous loading completed",
+            "the X11 window was not observed until after synchronous loading completed",
+        ),
+        (
+            "startup: window created visible\n" in log
+            and "startup: loading game data synchronously\n" in log
+            and "startup: data loaded; entering the mode menu\n" in log
+            and log.index("startup: window created visible\n")
+            < log.index("startup: loading game data synchronously\n")
+            < log.index("startup: data loaded; entering the mode menu\n"),
+            "the startup lifecycle records visible creation before synchronous loading",
+            "the startup lifecycle did not put visible creation before synchronous loading",
         ),
         (
             log.count("rmlui physical key: vk=1b down\n") == 3,

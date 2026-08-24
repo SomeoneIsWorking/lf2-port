@@ -19,10 +19,11 @@ extern HostWin hw;
 void hostwin_pump(void);
 /* Surfaces are 32-bit XRGB; the palette parameter this used to take was dead from
  * the point the 8-bit assumption was dropped, and every caller passed NULL. */
-void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch, uint32_t source_pixels, int source_off);
+void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch);
 
 /* The surface the frame is composed into, discovered from the game's own copy to the
- * primary. 0 until that copy has happened. See ddraw.c. */
+ * primary. 0 until that copy has happened. */
+void frame_source_note(uint32_t pixels, int off);
 uint32_t frame_source_pixels(void);
 
 #endif

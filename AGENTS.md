@@ -92,7 +92,7 @@ game's four monolithic functions (28/20/18/15 KB — main loop, character state 
 |---|---|
 | `runtime/cpu/` | guest CPU state, lazy flags, the 4 GiB lazily-committed address space, PE loading and import binding — `guest.c/.h`, `guest_ops.h`, `flags.c`, `strops.c`, `rwatch.c`, and `guest_map.h`, where the arena layout is declared once with build-time overlap checks (a surface arena that overran the sound arena once made the game play bitmaps as audio) |
 | `runtime/win32/` | the Win32 shim — `win32.c` (window, message pump, input, window modes), `gdi.c` (text), `imports.c` (the CRT and the guest clock), `com.c` (the DirectDraw vtables), `dshow.c`, `wsock.c` (netplay, stubbed) |
-| `runtime/video/` | `ddraw.c` (DirectDraw → SDL3), `render.c`, `engine.c` + `engine_textures.c` (native rendering and its frame-safe texture cache), `hd2d.c` (lighting), `hostwin.h` |
+| `runtime/video/` | `ddraw.c` (DirectDraw → SDL3), `host_frame.c` (completed-frame presentation, diagnostics, pacing and SDL teardown), `render.c`, `engine.c` + `engine_textures.c` (native rendering and its frame-safe texture cache), `hd2d.c` (lighting), `hostwin.h` |
 | `runtime/audio/` | `dsound.c` + `mixer.c` |
 | `runtime/input/` | device state and persistent action bindings — `gamepad.c/.h`, `keyboard.c/.h`, `bindings.c/.h` |
 | `runtime/app/` | the port's own shell — `main.c`, `pause.c`, `script.c` (scripted input), `loadprof.c` |

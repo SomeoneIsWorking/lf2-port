@@ -5,6 +5,7 @@
  */
 
 #include "overrides.h"
+#include "boot_guest.h"
 #include "world.h"
 #include "guest_cursor.h"
 #include "geom.h"
@@ -71,6 +72,16 @@ static int font_sheet_index(uint32_t obj)
 
 void fn_0043f010(void)
 {
+    /* Startup owns data loading as one blocking operation, not as a rendered screen. The
+     * original one-time initializer mixes progress art into the work and reaches this draw
+     * before its loading-picture sheet exists when mode 1 is bypassed. Decline every such
+     * draw at the guest boundary; the data constructors and file loaders do not depend on
+     * pixels produced here. */
+    if (boot_guest_loading_data()) {
+        R(ESP) += 4 + 24;
+        return;
+    }
+
     /* A clip drawn from a font sheet is a text glyph, and the clip index IS the character
      * code. Tell the blit path, which is the only place that also knows the destination
      * surface, and clear it afterwards so an ordinary sprite is never mistaken for text. */
@@ -114,19 +125,16 @@ void fn_0043f010(void)
          * widescreen shift is actually biting. */
         if (getenv("LF2_GLYPH_POS"))
             fprintf(stderr, "glyph sheet=%d x=%d y=%d ch=%d ret=%08x cam=%d draw=%d\n", sheet,
-                    (int32_t)LD32(R(ESP) + 4), (int32_t)LD32(R(ESP) + 8),
-                    (int32_t)LD32(R(ESP) + 12), LD32(R(ESP)),
-                    (int32_t)LD32(BG_CAMERA_X),
-                    geom_draw_camera((int32_t)LD32(BG_CAMERA_X), bg_view_width()));
+                    (int32_t)LD32(R(ESP) + 4), (int32_t)LD32(R(ESP) + 8), (int32_t)LD32(R(ESP) + 12), LD32(R(ESP)),
+                    (int32_t)LD32(BG_CAMERA_X), geom_draw_camera((int32_t)LD32(BG_CAMERA_X), bg_view_width()));
         glyph_hint_set((int32_t)LD32(R(ESP) + 12));
         fn_0043f010__orig();
         glyph_hint_clear();
         return;
     }
 
-    if (R(ECX) == LD32(MENU_CLIP7) &&
-        LD32(R(ESP) + 4) == NOTICE_X && LD32(R(ESP) + 8) == NOTICE_Y) {
-        R(ESP) += 4 + 24;                    /* RET 0x18: return address and six args */
+    if (R(ECX) == LD32(MENU_CLIP7) && LD32(R(ESP) + 4) == NOTICE_X && LD32(R(ESP) + 8) == NOTICE_Y) {
+        R(ESP) += 4 + 24; /* RET 0x18: return address and six args */
         return;
     }
 
@@ -146,7 +154,7 @@ void fn_0043f010(void)
      * The exact three producer calls are stable and guest_cursor_draw tests both them and
      * the shared sheet, so the menu artwork on that sheet remains. */
     if (guest_cursor_draw(LD32(R(ESP)), R(ECX), LD32(CURSOR_SHEET))) {
-        R(ESP) += 4 + 24;                    /* RET 0x18: return address and six args */
+        R(ESP) += 4 + 24; /* RET 0x18: return address and six args */
         return;
     }
 
@@ -157,19 +165,25 @@ void fn_0043f010(void)
         const int ax = (int)LD32(R(ESP) + 4), ay = (int)LD32(R(ESP) + 8);
         const int mx = (int)LD32(GX_MOUSE_X), my = (int)LD32(GX_MOUSE_Y);
         if (ax >= mx - 4 && ax <= mx + 4 && ay >= my - 4 && ay <= my + 4) {
-            static uint32_t seen[8]; static int n;
+            static uint32_t seen[8];
+            static int n;
             const uint32_t ra = LD32(R(ESP));
             int known = 0;
-            for (int i = 0; i < n; i++) if (seen[i] == ra) { known = 1; break; }
+            for (int i = 0; i < n; i++)
+                if (seen[i] == ra) {
+                    known = 1;
+                    break;
+                }
             if (!known && n < 8) {
                 seen[n++] = ra;
-                fprintf(stderr, "cursor draw: caller=%08x args x=%d y=%d clip=%d sheet=%08x "
-                        "(pointer %d,%d)\n", ra, ax, ay, (int32_t)LD32(R(ESP) + 12), R(ECX), mx, my);
+                fprintf(stderr,
+                        "cursor draw: caller=%08x args x=%d y=%d clip=%d sheet=%08x "
+                        "(pointer %d,%d)\n",
+                        ra, ax, ay, (int32_t)LD32(R(ESP) + 12), R(ECX), mx, my);
                 /* The handle is a heap pointer with no stable identity across runs; the
                  * .data slot that HOLDS it does have one. Find it. */
                 for (uint32_t a = 0x0044d000; a < 0x00459724; a += 4)
-                    if (LD32(a) == R(ECX))
-                        fprintf(stderr, "    sheet handle also lives at .data %08x\n", a);
+                    if (LD32(a) == R(ECX)) fprintf(stderr, "    sheet handle also lives at .data %08x\n", a);
             }
         }
     }
@@ -216,9 +230,8 @@ void fn_00423940(void)
             buf[n] = (c >= 32 && c < 127) ? (char)c : '.';
         }
         buf[n] = 0;
-        fprintf(stderr, "gametext x=%d y=%d cols=%d rows=%d font=%d \"%s\"\n",
-                (int32_t)LD32(R(ESP) + 8), (int32_t)LD32(R(ESP) + 12),
-                (int32_t)LD32(R(ESP) + 16), (int32_t)LD32(R(ESP) + 20),
+        fprintf(stderr, "gametext x=%d y=%d cols=%d rows=%d font=%d \"%s\"\n", (int32_t)LD32(R(ESP) + 8),
+                (int32_t)LD32(R(ESP) + 12), (int32_t)LD32(R(ESP) + 16), (int32_t)LD32(R(ESP) + 20),
                 (int32_t)LD32(R(ESP) + 24), buf);
     }
     fn_00423940__orig();
@@ -249,9 +262,13 @@ void fn_00423940(void)
  * ------------------------------------------------------------------------ */
 void fn_0043c4a0(void)
 {
-    if (getenv("LF2_ADS_ON")) { void fn_0043c4a0__orig(void); fn_0043c4a0__orig(); return; }
+    if (getenv("LF2_ADS_ON")) {
+        void fn_0043c4a0__orig(void);
+        fn_0043c4a0__orig();
+        return;
+    }
     R(EAX) = 0;
-    R(ESP) += 4;                             /* pop the return address only */
+    R(ESP) += 4; /* pop the return address only */
 }
 
 /* ---------------------------------------------------------------------------
@@ -301,23 +318,23 @@ enum { CAPTION_MARGIN = GEOM_SCREEN_W - 0x316, CAPTION_Y = 0x213, CAPTION_Y_RAIS
 static uint32_t caption_mode_str(int32_t mode)
 {
     switch (mode) {
-    case 0:  return 0x004490cc;
-    case 1:  return ((int32_t)LD32(STAGE_KIND) / 10 == 5) ? 0x004490b0 : 0x004490c0;
-    case 2:  return 0x0044909c;
-    case 3:  return 0x00449094;
-    case 4:  return 0x00449084;
-    default: return 0;              /* the game leaves the buffer alone; so does this */
+    case 0: return 0x004490cc;
+    case 1: return ((int32_t)LD32(STAGE_KIND) / 10 == 5) ? 0x004490b0 : 0x004490c0;
+    case 2: return 0x0044909c;
+    case 3: return 0x00449094;
+    case 4: return 0x00449084;
+    default: return 0; /* the game leaves the buffer alone; so does this */
     }
 }
 
 static uint32_t caption_difficulty_str(void)
 {
     switch ((int32_t)LD32(DIFFICULTY)) {
-    case  0: return 0x004490a4;
-    case  1: return 0x00449078;
-    case  2: return 0x00449070;
+    case 0: return 0x004490a4;
+    case 1: return 0x00449078;
+    case 2: return 0x00449070;
     case -1: return 0x00449064;
-    default: return 0;              /* no suffix, exactly as the game's fall-through */
+    default: return 0; /* no suffix, exactly as the game's fall-through */
     }
 }
 
@@ -325,20 +342,30 @@ static uint32_t guest_append(uint32_t dst, uint32_t src)
 {
     if (!src) return dst;
     while (LD8(dst)) dst++;
-    for (;;) { const uint8_t c = LD8(src++); ST8(dst++, c); if (!c) break; }
-    return dst - 1;                 /* the new terminator */
+    for (;;) {
+        const uint8_t c = LD8(src++);
+        ST8(dst++, c);
+        if (!c) break;
+    }
+    return dst - 1; /* the new terminator */
 }
 
 void fn_0041b130(void)
 {
     /* LF2_CAPTION_ORIG=1 runs the recompiled body, which is the gate's control arm. */
-    if (getenv("LF2_CAPTION_ORIG")) { fn_0041b130__orig(); return; }
+    if (getenv("LF2_CAPTION_ORIG")) {
+        fn_0041b130__orig();
+        return;
+    }
 
-    const int32_t mode    = (int32_t)LD32(R(ESP) + 4);
-    const int32_t raised  = (int32_t)LD32(R(ESP) + 8);
+    const int32_t mode = (int32_t)LD32(R(ESP) + 4);
+    const int32_t raised = (int32_t)LD32(R(ESP) + 8);
 
     const uint32_t base = caption_mode_str(mode);
-    if (base) { ST8(CAPTION, 0); guest_append(CAPTION, base); }
+    if (base) {
+        ST8(CAPTION, 0);
+        guest_append(CAPTION, base);
+    }
     const uint32_t end = guest_append(CAPTION, caption_difficulty_str());
     const int len = (int)(end - CAPTION);
 
@@ -354,11 +381,16 @@ void fn_0041b130(void)
      * (guest 0x0041b349), so a trace through here reads as the original call rather than as a
      * synthetic one. */
     void fn_00423a70(void);
-    PUSH32(0u); PUSH32(0u); PUSH32(4u); PUSH32(0x40u);
-    PUSH32((uint32_t)y); PUSH32((uint32_t)x); PUSH32(CAPTION);
+    PUSH32(0u);
+    PUSH32(0u);
+    PUSH32(4u);
+    PUSH32(0x40u);
+    PUSH32((uint32_t)y);
+    PUSH32((uint32_t)x);
+    PUSH32(CAPTION);
     PUSH32(0x0041b349u);
     fn_00423a70();
     R(ESP) += 28;
 
-    R(ESP) += 4 + 8;                       /* RET 8 */
+    R(ESP) += 4 + 8; /* RET 8 */
 }

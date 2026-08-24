@@ -5,7 +5,7 @@ status: resolved
 symptom: loading takes ~10-15 s; optimising parsing and import dispatch changed nothing
 tags: load,performance,pacing,rendering,dead-end
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-24
 ---
 
 FIXED PART: the load advances one data file per main-loop tick and the tick period is 33 ms, so the load costs (files x 33 ms) -- 315 files. h_Sleep now returns immediately while the game is loading, restoring pacing the moment it stops. Active loading 8.4-10.5 s -> 4.3-6.3 s, ~110k sleeps skipped.
@@ -101,3 +101,6 @@ REMAINING: 1.2 s, of which 74% is now genuinely drawing (0.9 s: 2782 surf_Blt, 3
 StretchBlt, 394 colour fills, 342 presents over the load). Cutting it further means fewer
 loading-screen repaints, and note that presented frames are what tools/*_test.sh schedule
 input against, so anything that changes the frame count shifts every scripted route.
+
+### Note (2026-08-24)
+2026-08-24 correction: the failed repeated-drive experiments do not prove the actual data initializer is time-gated. fn_004246b0 mode 1 only presents the loading picture and changes top mode to 2; fn_0043e9a0 does not establish the one-shot load gate. The real synchronous initializer is fn_0041bc90's 0x0041be98..0x0041c57b branch when 0x0044d05c == 1. Repeatedly calling the two wrong functions loaded zero files because neither owned that branch.
