@@ -7,10 +7,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    message(FATAL_ERROR
-            "LF2 requires Clang for both C and C++. Configure a clean tree with "
-            "tools/build/build.py; GCC and G++ are not supported build evidence.")
+# Any C11/C17 toolchain builds this port; Clang remains the one the tree is
+# tested with, and AppleClang counts as Clang here. A compiler the tree has
+# never met is warned about, not banned -- a fresh machine must not have to
+# install a specific vendor to try the port.
+if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(WARNING
+            "LF2 is developed and tested with Clang; this tree is configured "
+            "with ${CMAKE_C_COMPILER_ID}, which has not been tested. Proceeding.")
 endif()
 
 add_library(x86_decode recompiler/x86_decode.c)

@@ -54,17 +54,38 @@ This is an unofficial project with no affiliation with or endorsement by the LF2
 ## Building and running
 
 ```sh
-curl -O https://lf2.net/LF2_v2.0a.exe
-python3 tools/extract_game.py LF2_v2.0a.exe game/
-
-cmake -S . -B scratch/build && cmake --build scratch/build -j
-cd game && ../scratch/build/lf2 lf2.exe
+./run.sh
 ```
 
-Needs SDL3 and a C compiler. `SDL3_ttf` is optional and used for the menu text — without it
-the text falls back to a built-in bitmap font. Extraction needs only Python 3 and its standard library — no
-Windows, no Wine. Background music additionally needs `ffmpeg` on PATH at runtime (see
-below); everything else works without it.
+That is the whole setup on a fresh machine. `run.sh` is a one-line shim over
+`bootstrap.py`, which provisions everything the repo does not contain and
+refuses by name — with the exact fix — when something is missing:
+
+1. `shared/port-assets` cloned beside this checkout when absent (device art
+   embedded at build time); an existing checkout is never touched.
+2. the `third_party/RmlUi` submodule initialized when missing.
+3. the Python environment synced by **uv** from the committed lockfile
+   (`pyproject.toml`; uv installs Python itself if the system one is old).
+4. the game tree extracted from the installer (`tools/extract_game.py`, no
+   Windows or Wine needed) — the installer is taken from `$LF2_INSTALLER`,
+   then a copy beside the port, then downloaded from lf2.net.
+5. the build via `tools/build/build.py` (skipped when the binary is current;
+   `REBUILD=1 ./run.sh` forces it), then the game started from `game/`.
+
+The manual equivalent, if you want each step separately:
+
+```sh
+curl -O https://lf2.net/LF2_v2.0a.exe
+python3 tools/extract_game.py LF2_v2.0a.exe game/
+uv run python tools/build/build.py
+cd game && ../scratch/build-clang/lf2 lf2.exe
+```
+
+Needs SDL3, `SDL3_ttf`, `SDL3_image` and cmake (plus a C11/C17 toolchain —
+Clang is what the tree is tested with, AppleClang included; other compilers
+configure with a warning). Extraction needs only Python 3 standard library —
+no Windows, no Wine. Background music additionally needs `ffmpeg` on PATH at
+runtime (see below); everything else works without it.
 
 The working directory must be the extracted game tree, since the game opens its data by
 relative path. Full details, including headless operation and the debugging environment

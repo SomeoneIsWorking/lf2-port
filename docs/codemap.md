@@ -9,6 +9,7 @@ Status legend: **done** (verified on real data) · **wip** · **planned** · **�
 
 | Subsystem | Where | Status | Notes |
 |---|---|---|---|
+| Fresh-machine provisioning | `bootstrap.py` (stdlib-only), thin `run.sh` shim, `pyproject.toml` + `uv.lock` | **done** | `./run.sh` execs `bootstrap.py`, which provisions shared/port-assets into the standard layout when missing (never pulls an existing checkout), initializes the RmlUi submodule, runs `uv sync`, extracts the game tree from `$LF2_INSTALLER`, a local installer copy, or a lf2.net download via `tools/extract_game.py`, builds through `tools/build/build.py` (skipped while the binary is current; `REBUILD=1` forces), then starts the game from `game/`. Every missing prerequisite refuses BY NAME with its fix; nothing is fetched silently |
 | Installer unpacking | `tools/unpack_installer.py`, `tools/extract_game.py` | **done** | 690 files reconstructed; verified by booting the game from the output |
 | Ghidra recon | `tools/re/ghidra/ListFunctions.java`, `re/functions.tsv` | **done** | 352 functions, 93.6% of `.text` |
 | Wine oracle | `scratch/wineprefix` | **done** | boots headless under Xvfb to the main menu |

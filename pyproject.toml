@@ -1,0 +1,13 @@
+[project]
+name = "lf2-port"
+version = "0.1.0"
+description = "Tooling for the Little Fighter 2 static-recompilation port"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+# The tooling is run through `uv run` (bootstrap.py does this); the lockfile
+# is committed so a fresh machine resolves identical packages. There are no
+# third-party Python packages today; the constraint exists so that when one
+# arrives it lands here rather than in an untracked side-install.
+package = false
