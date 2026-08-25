@@ -7,8 +7,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 from ppm import read_ppm
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_log import payload_text
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,7 +90,7 @@ def main() -> int:
     if failed:
         print(f"  FAIL  game exited with status {result.returncode}")
 
-    text = RUN_LOG.read_text(errors="replace")
+    text = payload_text(RUN_LOG.read_text(errors="replace"))
     geometry = re.search(r"^widescreen: window 3840x1975 .*?$", text, re.MULTILINE)
     geometry_ok = geometry is not None and all(
         part in geometry.group(0)

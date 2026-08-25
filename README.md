@@ -58,14 +58,14 @@ This is an unofficial project with no affiliation with or endorsement by the LF2
 ```
 
 After installing the host build prerequisites listed below, that is the whole project setup.
-`run.sh` is a one-line shim over `bootstrap.py`, which provisions everything the repo can own and
+`run.sh` is a slim `uv run --frozen` shim over `bootstrap.py`, which provisions everything the repo can own and
 refuses by name — with the exact fix — when something is missing:
 
 1. `port-assets` validated at `$PORT_ASSETS_DIR`, reused or provisioned below
    `$SHARED_DIR`, reused from the standard shared-repo layout when present, or
    cloned at a pinned revision into gitignored `scratch/deps`.
-2. the `third_party/RmlUi` submodule initialized when missing.
-3. the Python environment synced by **uv** from the committed lockfile
+2. the pinned `third_party/RmlUi` and `third_party/lucent` submodules initialized when missing.
+3. the Python environment synced by **uv** from the committed lockfile with `--frozen`
    (`pyproject.toml`; uv installs Python itself if the system one is old).
 4. the game tree extracted from the installer (`tools/extract_game.py`, no
    Windows or Wine needed) — the installer is taken from `$LF2_INSTALLER`,
@@ -77,13 +77,13 @@ After `./run.sh` has provisioned the external checkouts, Python environment,
 and game tree, the direct build/run path is:
 
 ```sh
-uv run python tools/build/build.py
+uv run --frozen python tools/build/build.py
 cd game && ../scratch/build-clang/lf2 lf2.exe
 ```
 
-Needs SDL3, `SDL3_ttf`, `SDL3_image` and cmake (plus a C11/C17 toolchain —
-Clang is what the tree is tested with, AppleClang included; other compilers
-configure with a warning). Extraction needs only Python 3 standard library —
+Needs SDL3, `SDL3_ttf`, `SDL3_image` and cmake (plus a C11 and C++20 toolchain).
+Agents verify with Clang; the project does not select or police the user's compiler.
+Extraction needs only Python 3 standard library —
 no Windows, no Wine. Background music additionally needs `ffmpeg` on PATH at
 runtime (see below); everything else works without it.
 

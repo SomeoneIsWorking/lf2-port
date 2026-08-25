@@ -6,6 +6,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_log import payload_text
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,7 +63,7 @@ def main() -> int:
             print("  FAIL  the game exceeded the route's 300-second wall clock")
             return 1
 
-    text = RUN_LOG.read_text(errors="replace")
+    text = payload_text(RUN_LOG.read_text(errors="replace"))
     report = next(
         (line for line in reversed(text.splitlines()) if line.startswith("rmlui: ")),
         "",

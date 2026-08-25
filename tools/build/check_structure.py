@@ -13,6 +13,15 @@ LEGACY_LIMITS = {
 }
 
 
+# The shader payloads under runtime/shaders/gen are byte arrays emitted by
+# tools/build/build_shaders.py, one row of sixteen bytes per line. The cap here exists to
+# force hand-written code to be split by responsibility, and a payload has no responsibility
+# to split -- its size is the compiler's answer about the shader, and the shader itself is
+# the thing to keep small. quad.frag's sampling chain (issue #112) is what first pushed one
+# of them past the limit.
+GENERATED = ("runtime/shaders/gen/",)
+
+
 def line_count(path: Path) -> int:
     with path.open("rb") as source:
         return sum(1 for _ in source)
@@ -25,6 +34,8 @@ def main() -> int:
         if path.suffix not in {".c", ".cpp", ".h", ".hpp"}:
             continue
         relative = path.relative_to(ROOT).as_posix()
+        if relative.startswith(GENERATED):
+            continue
         limit = LEGACY_LIMITS.get(relative, DEFAULT_LIMIT)
         measured = line_count(path)
         if measured > limit:

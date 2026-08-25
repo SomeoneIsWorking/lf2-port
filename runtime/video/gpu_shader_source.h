@@ -3,6 +3,7 @@
 
 #include <SDL3/SDL_gpu.h>
 #include <stddef.h>
+#include <stdio.h>
 
 /* SDL's GPU backends accept different shader languages. Vulkan consumes SPIR-V while Metal
  * consumes MSL; selecting only one at build time makes the whole native renderer disappear on
@@ -41,6 +42,34 @@ static inline const char *gpu_shader_format_name(SDL_GPUShaderFormat format)
     if (format == SDL_GPU_SHADERFORMAT_SPIRV) return "SPIR-V";
     if (format == SDL_GPU_SHADERFORMAT_MSL) return "MSL";
     return "unsupported";
+}
+
+/* Compile one shader from the committed payloads. Shared by the engine's pipelines and the
+ * lighting chain so the error text and the payload selection cannot drift apart. */
+static inline SDL_GPUShader *gpu_shader_make(SDL_GPUDevice *dev, SDL_GPUShaderFormat supported,
+                                             const unsigned char *spirv, size_t spirv_size,
+                                             const unsigned char *msl, size_t msl_size,
+                                             SDL_GPUShaderStage stage, int samplers, int uniforms,
+                                             const char *what)
+{
+    GPUShaderSource source;
+    if (!gpu_shader_source_select(supported, spirv, spirv_size, msl, msl_size, &source)) {
+        fprintf(stderr, "engine: no shader payload matches the %s backend for %s\n",
+                SDL_GetGPUDeviceDriver(dev), what);
+        return NULL;
+    }
+    SDL_GPUShaderCreateInfo info;
+    SDL_zero(info);
+    info.code = source.code;
+    info.code_size = source.code_size;
+    info.entrypoint = source.entrypoint;
+    info.format = source.format;
+    info.stage = stage;
+    info.num_samplers = (Uint32)samplers;
+    info.num_uniform_buffers = (Uint32)uniforms;
+    SDL_GPUShader *s = SDL_CreateGPUShader(dev, &info);
+    if (!s) fprintf(stderr, "engine: the %s shader failed: %s\n", what, SDL_GetError());
+    return s;
 }
 
 #endif

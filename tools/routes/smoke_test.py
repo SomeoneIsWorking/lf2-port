@@ -13,6 +13,10 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_log import is_record, payload_line, payload_text
 
 
 KEY_SCRIPT = (
@@ -127,7 +131,8 @@ def run_smoke(
 def check_results(
     log_path: Path, cpu_log: Path, returncode: int, timer_used: bool
 ) -> int:
-    log = log_path.read_text(errors="replace")
+    raw_log = log_path.read_text(errors="replace")
+    log = payload_text(raw_log)
     failed = False
     colour_key = last_line_starting_with(log, "colour-key:")
     audio = last_line_starting_with(log, "audio:")
@@ -158,6 +163,16 @@ def check_results(
             "expected modemenu"
         )
         print("        (native-entry and data-init begin/complete markers are required)")
+        failed = True
+
+    timestamped_entry = any(
+        is_record(line) and payload_line(line) == NATIVE_ENTRY
+        for line in raw_log.splitlines()
+    )
+    if timestamped_entry:
+        print("  ok    logs: native entry is a timestamped Lucent record")
+    else:
+        print("  FAIL  logs: native entry has no Lucent UTC timestamp")
         failed = True
 
     match_reached = "scripted input: screen match first up at frame " in log

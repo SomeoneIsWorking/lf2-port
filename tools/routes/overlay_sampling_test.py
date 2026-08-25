@@ -7,8 +7,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 from ppm import read_ppm
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_log import payload_text
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -142,6 +146,7 @@ def main() -> int:
     signatures: list[tuple[int, int, int, int, int, int, int]] = []
     for name, run in (("logical", fixed), ("raster-feedback negative", negative)):
         returncode, log, frame = run
+        log = payload_text(log)
         if returncode != 0:
             print(f"  FAIL  {name} exited with status {returncode}")
             failed = True

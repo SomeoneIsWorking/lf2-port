@@ -2,6 +2,7 @@
 #include "com.h"
 #include "hostwin.h"
 #include "config.h"
+#include "lf2_log.h"
 #include "port_entry.h"
 
 void import_stats_report(void);
@@ -32,6 +33,7 @@ int main(int argc, char **argv)
     /* The game exits through the CRT's exit(), not by returning from its entry point, so
      * teardown has to be an atexit hook -- calling it after dispatch() would never run.
      * Registered here at startup rather than lazily, so it is armed on every path. */
+    atexit(lf2_log_flush);
     atexit(hostwin_shutdown);
     atexit(import_stats_report);
     atexit(scan_prof_report);

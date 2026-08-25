@@ -11,6 +11,9 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 ADOPTED_C_SOURCES = (
+    ROOT / "runtime" / "log" / "lf2_log.h",
+    ROOT / "runtime" / "ui" / "rmlui_system.h",
+    ROOT / "tests" / "test_lf2_log.cpp",
     ROOT / "runtime" / "app" / "pause.c",
     ROOT / "runtime" / "app" / "function_keys.c",
     ROOT / "runtime" / "app" / "function_keys.h",

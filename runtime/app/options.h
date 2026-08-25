@@ -18,15 +18,38 @@
 #ifndef LF2_OPTIONS_H
 #define LF2_OPTIONS_H
 
+#include "spritefilter.h"
+
 /* Which renderer draws: the port's own engine (SDL_GPU, with character shading) or the classic
  * SDL_Render path, which stays as the plain-picture fallback and the byte-identity control
  * arm. Default ENGINE. LF2_ENGINE=0 pins classic at startup, any other non-empty value pins
  * the engine. */
-int  opt_renderer_engine(void);
+int opt_renderer_engine(void);
 void opt_set_renderer_engine(int on);
 
 /* The HD2D lighting and its cast shadows. Default ON. LF2_HD2D=off pins it off at startup. */
-int  opt_lighting(void);
+int opt_lighting(void);
 void opt_set_lighting(int on);
+
+/* THE KEY LIGHT'S STRENGTH (issue #111). This is u_sun_dir.w, the multiplier on the lit
+ * term of hd2d_light.frag -- 1.0 is a physically flat key, and the shipped look sits at
+ * 1.48. The RmlUi GRAPHICS tab owns it as a percentage; config key `light_intensity`.
+ * LF2_HD2D_KEY stays honoured once at first read as the route pin, exactly like LF2_HD2D. */
+float opt_light_intensity(void);
+void opt_set_light_intensity(float v);
+
+/* HOW MAGNIFIED OBJECT SPRITES ARE SAMPLED (issue #112). The frame is drawn at the window's
+ * resolution, so a fighter is magnified about twice and plain nearest sampling leaves every
+ * edge staircased. A player builds an ordered CHAIN of resampling passes over the art, plus
+ * an edge-smoothing step and an outline; runtime/video/spritefilter.h defines what a chain may
+ * hold and how it is spelled, and quad.frag evaluates it. Empty -- the default -- is the
+ * original picture.
+ *
+ * Config key `sprite_passes`, holding the same string the parser reads, e.g.
+ * `nearest:1/2,nearest:2,aa,outline:1`. LF2_SPRITE_PASSES pins it once at first read for
+ * route arms (the issue #69 pattern). A spec that does not parse is REFUSED, by name, on
+ * stderr -- the chain then stays empty rather than quietly becoming a different chain. */
+const SpriteChain *opt_sprite_chain(void);
+void opt_set_sprite_chain(const SpriteChain *chain);
 
 #endif

@@ -11,10 +11,7 @@
  * from then on. */
 static int renderer = -1, lighting = -1;
 
-static int pinned_off(const char *v)
-{
-    return v && (strcmp(v, "off") == 0 || strcmp(v, "0") == 0);
-}
+static int pinned_off(const char *v) { return v && (strcmp(v, "off") == 0 || strcmp(v, "0") == 0); }
 
 int opt_renderer_engine(void)
 {
@@ -26,9 +23,10 @@ int opt_renderer_engine(void)
         } else {
             const char *c = config_get("renderer");
             if (c) renderer = strcmp(c, "classic") != 0;
-            else renderer = 1;   /* the default moved to the engine when the effects became
-                                  * engine-only (issue #69): a classic default would have
-                                  * been a default with no shading. */
+            else
+                renderer = 1; /* the default moved to the engine when the effects became
+                               * engine-only (issue #69): a classic default would have
+                               * been a default with no shading. */
         }
     }
     return renderer;
@@ -50,3 +48,52 @@ int opt_lighting(void)
 }
 
 void opt_set_lighting(int on) { lighting = on != 0; }
+
+/* The light intensity is a plain float once its pin has been resolved, so it lives in one
+ * static rather than the -1-means-unread pattern of the ints above. */
+static float value_light_intensity = -1.0f;
+
+float opt_light_intensity(void)
+{
+    if (value_light_intensity < 0.0f) {
+        const char *v = getenv("LF2_HD2D_KEY");
+        const char *c = v && *v ? v : config_get("light_intensity");
+        value_light_intensity = c && *c ? (float)atof(c) : 1.48f;
+        if (value_light_intensity <= 0.0f || value_light_intensity > 8.0f) value_light_intensity = 1.48f;
+    }
+    return value_light_intensity;
+}
+
+void opt_set_light_intensity(float v)
+{
+    if (v < 0.05f) v = 0.05f;
+    if (v > 8.0f) v = 8.0f;
+    value_light_intensity = v;
+}
+
+/* The sampling chain follows the same shape as the renderer's pins: the environment wins once,
+ * then the config file, then the default -- which is the empty chain, the original picture. */
+static SpriteChain chain;
+static int chain_read;
+
+const SpriteChain *opt_sprite_chain(void)
+{
+    if (!chain_read) {
+        chain_read = 1;
+        spritechain_clear(&chain);
+        const char *v = getenv("LF2_SPRITE_PASSES");
+        const char *spec = v && *v ? v : config_get("sprite_passes");
+        char err[128];
+        if (spec && !spritechain_parse(spec, &chain, err, sizeof err)) {
+            fprintf(stderr, "sprite passes: %s in \"%s\"; no sampling chain is in effect\n", err, spec);
+            spritechain_clear(&chain);
+        }
+    }
+    return &chain;
+}
+
+void opt_set_sprite_chain(const SpriteChain *c)
+{
+    chain_read = 1;
+    chain = *c;
+}

@@ -62,6 +62,11 @@ void hd2d_light_angles(float *azimuth_deg, float *elevation_deg);
 void hd2d_light_vector(float out[3]);
 void hd2d_light_set_angles(float azimuth_deg, float elevation_deg);
 
+/* The key light's STRENGTH (issue #111), as read and written by the RmlUi GRAPHICS tab.
+ * Thin over options.c so a caller does not have to know where the value lives. */
+void hd2d_light_intensity(float *intensity);
+void hd2d_light_set_intensity(float intensity);
+
 /* ---- the look ----
  *
  * The uniform block hd2d_light.frag is fed as FIVE vec4s (20 floats), filled here so the

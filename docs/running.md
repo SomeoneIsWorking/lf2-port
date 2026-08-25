@@ -4,12 +4,12 @@
 ./run.sh
 ```
 
-That is the first-run interface: it provisions the two external checkouts, Python
+That is the first-run interface: it provisions the external checkouts, Python
 environment, extracted game tree, and build before starting the port. After it has run once,
 the direct build/run path is:
 
 ```sh
-uv run python tools/build/build.py
+uv run --frozen python tools/build/build.py
 cd game && ../scratch/build-clang/lf2 lf2.exe
 ```
 
@@ -31,10 +31,25 @@ brew install cmake sdl3 sdl3_image sdl3_ttf uv
 Use `./run.sh` for the first run. It validates a user-owned `PORT_ASSETS_DIR`, otherwise reuses or
 provisions `SHARED_DIR/port-assets`, reuses the established `../../shared/port-assets` checkout
 when present, or clones the pinned asset revision into gitignored `scratch/deps`. It then
-initializes the pinned RmlUi submodule, syncs the locked Python environment, downloads and extracts
+initializes the pinned RmlUi and Lucent submodules, syncs the locked Python environment with
+`uv --frozen`, downloads and extracts
 the game installer when needed, builds, and starts the port. `tools/build/build.py` deliberately
 does only the build; invoking it directly in a fresh checkout bypasses that provisioning and will
-refuse the missing RmlUi or device-art checkout.
+refuse the missing RmlUi, Lucent, or device-art checkout.
+
+## Logs
+
+All shipping runtime `stdout` and `stderr` diagnostics pass through the pinned Lucent logger. Each
+complete record is assembled before emission and begins with millisecond UTC ISO 8601 time plus the
+source module, for example:
+
+```text
+[2026-08-25T15:42:17.083Z] [port_entry] native startup: mode menu ready
+```
+
+Set `LF2_LOG_FILE` to append the same timestamped records to a file instead of stderr.
+`LF2_LOG_CHANNELS` enables any Lucent debug channels added by host subsystems; the existing
+feature-specific `LF2_*` diagnostic switches remain documented below.
 
 The runtime is POSIX plus SDL3 throughout; an audit found no `/proc`, no epoll, no
 Linux-only headers. Real blockers found and fixed:
@@ -1846,8 +1861,14 @@ Three hooks in `runtime/video/ddraw.c`:
   exists so a test can place it and check the shadows actually followed. "The shadow's shape
   responds to the light" is not something one screenshot can show; two are needed, and this is
   how they are taken.
-- **`LF2_HD2D_KEY`, `_AMBIENT`, `_BEVEL`, `_BEVEL_PX`, `_HEIGHT_GAIN`, `_SHADOW`,
-  `_FLOOR_FEATHER`** sweep the light rig while it is being tuned. They are not configuration.
+- **`LF2_HD2D_KEY`** is the exception among those: the key light's STRENGTH is now the
+  player's too (issue #111), a slider on the same GRAPHICS tab as its two angles and the
+  config key `light_intensity`. The variable stays honoured once at first read as a route
+  pin, exactly like `LF2_HD2D` — unset, the menu owns the value. 100% is a physically flat
+  key; the shipped look is 148%.
+- **`LF2_HD2D_AMBIENT`, `_BEVEL`, `_BEVEL_PX`, `_HEIGHT_GAIN`, `_SHADOW`,
+  `_FLOOR_FEATHER`** sweep the rest of the light rig while it is being tuned. They are not
+  configuration.
   The defaults are chosen so a flat, unshadowed, camera-facing pixel comes out at almost
   exactly the colour the game drew it: the light must be a *difference from flat*, not a
   brightness or a tint laid over the game.
@@ -2061,6 +2082,33 @@ regeneration refuses either missing tool rather than silently leaving one backen
   the same tolerance the old GPU path does — its first version is deliberately a reproduction
   — and `LF2_ENGINE=1 LF2_RENDER_SKIP=7` must differ, which is what proves the engine is what
   drew the matching frame rather than the old path having drawn both dumps.
+
+- **`LF2_SPRITE_PASSES="<chain>"`** pins the object-sprite SAMPLING CHAIN at first read
+  (issue #112) — the same string the GRAPHICS tab writes into the config key `sprite_passes`,
+  and the same one it reads back. It is a route pin exactly like `LF2_HD2D`: unset, the menu
+  and the config own the value. The chain is a comma-separated list:
+
+  | Token | What it does |
+  |---|---|
+  | `nearest:<factor>` | resample the art by that factor on its own pixel grid — `nearest:1/2` shows one texel of every two, `nearest:2` replaces each texel with a 2x2 block |
+  | `linear:<factor>` | the same, resampled bilinearly. At most ONE per chain |
+  | `nearest:auto` / `linear:auto` | factor = the quad's own round magnification, measured per draw |
+  | `aa` | sample the finished chain image bilinearly on the way to the screen: an edge becomes a ramp one chain pixel wide |
+  | `outline:<1..2>` | paint a black border that many chain pixels wide around the silhouette |
+
+  A chain does **not** change how big a sprite is on screen; it changes the resolution of the
+  picture sampled onto it. `nearest:1/2,nearest:2` is the chunky-pixel look; `nearest:auto,aa`
+  is integer supersampling; `outline:1` hides the staircase without softening anything.
+  Factors are rationals with numerator and denominator up to 8, and a spec that does not parse
+  is **refused by name on stderr** and leaves the chain empty rather than becoming a different
+  chain. `runtime/video/spritefilter.h` owns the rules, `runtime/shaders/quad.frag` evaluates
+  the chain analytically — no intermediate render targets, one draw per filtered sprite.
+
+  `tools/e2e.py sprite_passes` is the gate, and its first arm is the one that matters:
+  `nearest:2` must be **byte-identical** to no chain at all, because magnifying by an integer
+  and sampling on an integer grid picks the same texel. That arm was red — 2084 pixels on one
+  of the two fighters — while the shader addressed its taps from the frame's uv origin instead
+  of from a whole sheet texel, which is a drift a picture will not show you.
 
 - **`LF2_TEXRECT_EDGE=1`** is the sprite-sheet boundary defect injector for issues #67/#68.
   In the default renderer it restores the complete old `SDL_RenderTexture` call; in the
