@@ -1,4 +1,4 @@
-"""Fresh-checkout provisioning must own both external source checkouts."""
+"""Fresh-checkout provisioning must own every external source checkout."""
 
 from __future__ import annotations
 
@@ -162,10 +162,11 @@ class BootstrapCheckoutTest(unittest.TestCase):
             bootstrap.build(venv_python, port_assets)
 
     @mock.patch.object(bootstrap.shutil, "which", return_value="/usr/bin/git")
-    def test_missing_rmlui_is_initialized_as_a_submodule(
+    def test_missing_source_dependencies_are_initialized_as_submodules(
         self, _which: mock.Mock
     ) -> None:
         rmlui = self.root / "third_party" / "RmlUi"
+        lucent = self.root / "third_party" / "lucent"
 
         def update(
             command: list[str], **kwargs: object
@@ -177,11 +178,23 @@ class BootstrapCheckoutTest(unittest.TestCase):
             self.assertEqual(kwargs, {"cwd": self.root, "check": False})
             rmlui.mkdir(parents=True)
             (rmlui / "CMakeLists.txt").touch()
+            lucent.mkdir(parents=True)
+            (lucent / "CMakeLists.txt").touch()
             return subprocess.CompletedProcess(command, 0)
 
         with mock.patch.object(bootstrap.subprocess, "run", side_effect=update) as run:
             bootstrap.ensure_submodules()
         run.assert_called_once()
+
+    @mock.patch.object(bootstrap.shutil, "which", return_value=None)
+    def test_missing_lucent_is_named_when_git_is_unavailable(
+        self, _which: mock.Mock
+    ) -> None:
+        rmlui = self.root / "third_party" / "RmlUi"
+        rmlui.mkdir(parents=True)
+        (rmlui / "CMakeLists.txt").touch()
+        with self.assertRaisesRegex(SystemExit, "third_party/lucent"):
+            bootstrap.ensure_submodules()
 
     @mock.patch.object(bootstrap.shutil, "which", return_value=None)
     def test_missing_git_names_the_unprovisioned_checkout(

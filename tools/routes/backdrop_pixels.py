@@ -10,6 +10,9 @@ import sys
 
 from ppm import read_ppm
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_log import payload_text
+
 
 FAR_SPAN = 800
 BACKDROP_TOP = 128
@@ -152,6 +155,7 @@ _NATIVE_RE = re.compile(
 
 def measure_trace(log: str) -> TraceMetrics:
     """Prove the captures used distinct cameras and every backdrop rectangle stayed 1:1."""
+    log = payload_text(log)
     cameras: dict[int, tuple[int, int]] = {}
     offsets: dict[int, list[int]] = {}
     pending: tuple[int, int, int, int] | None = None

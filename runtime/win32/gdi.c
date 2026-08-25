@@ -15,6 +15,7 @@
 #include "loadprof.h"
 #include "paths.h"
 #include "result_panel.h"
+#include "stretchmap.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -60,36 +61,50 @@ static Bitmap *bitmap_of(uint32_t h)
  * Pairs of (count, value): a non-zero count repeats value. A zero count is an escape --
  * 0 ends the line, 1 ends the bitmap, 2 is a delta, and 3 or more introduces that many
  * literal bytes padded to a word boundary. Output is written top-down here; the caller
- * has already accounted for the bottom-up flip. */
+ * has already accounted for the bottom-up flip.
+ *
+ * Runs move through memset/memcpy with the destination row pointer kept across tokens,
+ * rather than through a bounds check and two multiplications per pixel. The token state
+ * machine -- including its quirks (a count run stops at the line's end, a literal run
+ * consumes and advances x past it, the pad follows an odd literal) -- is untouched. */
 static void rle8_decode(const uint8_t *src, size_t n, Bitmap *b, int flip)
 {
+    /* The decoded row `flip ? b->h - 1 - y : y`, refreshed whenever y moves. */
+    uint8_t *row = b->pixels + (size_t)(flip ? b->h - 1 : 0) * (size_t)b->pitch;
     size_t i = 0;
     int x = 0, y = 0;
     while (i + 1 < n && y < b->h) {
         const uint8_t count = src[i], value = src[i + 1];
         i += 2;
         if (count) {
-            for (int k = 0; k < count && x < b->w; k++, x++)
-                b->pixels[(size_t)(flip ? b->h - 1 - y : y) * (size_t)b->pitch + (size_t)x] = value;
+            int room = b->w - x;
+            if (room <= 0) continue; /* past the line's end the run is dropped, as before */
+            if (room > count) room = count;
+            memset(row + x, value, (size_t)room);
+            x += room;
             continue;
         }
         if (value == 0) {
             x = 0;
             y++;
+            row += flip ? -(ptrdiff_t)b->pitch : (ptrdiff_t)b->pitch;
             continue;
-        }                      /* end of line */
+        } /* end of line */
         if (value == 1) break; /* end of bitmap */
         if (value == 2) {      /* delta */
             if (i + 1 >= n) break;
             x += src[i];
             y += src[i + 1];
+            row = b->pixels + (size_t)(flip ? b->h - 1 - y : y) * (size_t)b->pitch;
             i += 2;
             continue;
         }
-        for (int k = 0; k < value && i < n; k++, i++, x++) { /* absolute run */
-            if (x < b->w && y < b->h)
-                b->pixels[(size_t)(flip ? b->h - 1 - y : y) * (size_t)b->pitch + (size_t)x] = src[i];
-        }
+        const size_t have = n - i < (size_t)value ? n - i : (size_t)value;
+        int room = b->w - x;
+        if (room > (int)have) room = (int)have;
+        if (room > 0) memcpy(row + x, src + i, (size_t)room);
+        i += have;
+        x += (int)have;
         if (value & 1) i++; /* pad to a word */
     }
 }
@@ -409,19 +424,51 @@ static void h_StretchBlt(void)
     }
 
     cursor_find_note(dx, dy, "StretchBlt");
-    for (int y = 0; y < dh; y++) {
-        const int ty = dy + y;
-        if (ty < 0 || ty >= dhei) continue;
-        const int by = sy + (int)((int64_t)y * sh / dh);
-        if (by < 0 || by >= b->h) continue;
-        uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)ty * (size_t)dpitch);
-        const uint8_t *src = b->pixels + (size_t)by * (size_t)b->pitch;
-        for (int x = 0; x < dw; x++) {
-            const int tx = dx + x;
-            if (tx < 0 || tx >= dwid) continue;
-            const int bx = sx + (int)((int64_t)x * sw / dw);
-            if (bx < 0 || bx >= b->w) continue;
-            dst[tx] = b->pal[src[bx]]; /* index -> XRGB via the bitmap's palette */
+    /* THE 1:1 PATH IS THE ONE THE LOAD USES (issue #50): the surface is created at the
+     * bitmap's own size and the blit copies it whole. A row of indices expands through the
+     * palette into a row of XRGB words, which memcpy-class work rather than per-pixel
+     * division; the general path below keeps the exact same mapping for a real scale. */
+    if (sw == dw && sh == dh) {
+        /* The same pixel predicate as the general loop, solved once per blit instead of once
+         * per pixel: x is kept while 0 <= x < dw, the destination column lands on the
+         * surface and the source column lands inside the bitmap. */
+        int lo = 0, hi = dw;
+        if (lo < -dx) lo = -dx;
+        if (lo < -sx) lo = -sx;
+        if (hi > dwid - dx) hi = dwid - dx;
+        if (hi > b->w - sx) hi = b->w - sx;
+        for (int y = 0; y < dh; y++) {
+            const int ty = dy + y;
+            if (ty < 0 || ty >= dhei) continue;
+            const int by = sy + y;
+            if (by < 0 || by >= b->h) continue;
+            uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)ty * (size_t)dpitch);
+            const uint8_t *row = b->pixels + (size_t)by * (size_t)b->pitch;
+            for (int x = lo; x < hi; x++)
+                dst[dx + x] = b->pal[row[sx + x]]; /* index -> XRGB via the bitmap's palette */
+        }
+    } else {
+        /* Exact incremental stepping instead of a 64-bit divide per pixel. The pick for
+         * column x is floor(x * sw / dw); stretchmap.h walks that sequence with an add and a
+         * compare, and ctest's stretchmap gate asserts the two agree over a sweep of sizes --
+         * the claim is checked by code, not by this comment. */
+        const StretchMap col = stretchmap_begin(sw, dw);
+        for (int y = 0; y < dh; y++) {
+            const int ty = dy + y;
+            if (ty < 0 || ty >= dhei) continue;
+            const int by = sy + (int)((int64_t)y * sh / dh);
+            if (by < 0 || by >= b->h) continue;
+            uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)ty * (size_t)dpitch);
+            const uint8_t *src = b->pixels + (size_t)by * (size_t)b->pitch;
+            StretchMapPos p = stretchmap_start(&col);
+            for (int x = 0; x < dw; x++) {
+                const int tx = dx + x;
+                if (tx >= 0 && tx < dwid) {
+                    const int bx = sx + p.at;
+                    if (bx >= 0 && bx < b->w) dst[tx] = b->pal[src[bx]];
+                }
+                stretchmap_next(&col, &p);
+            }
         }
     }
     render_surface_dirty(dpix);

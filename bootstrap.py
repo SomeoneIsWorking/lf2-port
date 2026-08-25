@@ -4,7 +4,7 @@
     ./bootstrap.py [ARGUMENTS FOR THE GAME...]
 
 A fresh clone plus the installer should be enough. What used to be setup
-paragraphs -- the shared port-assets checkout, the RmlUi submodule, the
+paragraphs -- the shared port-assets checkout, the RmlUi and Lucent submodules, the
 Python environment, the extracted game tree -- is provisioned here or refused
 BY NAME with the exact command that would fix it. Nothing is fetched
 silently: every step prints what it did.
@@ -16,8 +16,8 @@ Order matters and each step needs only the ones before it:
                           established ../../shared checkout when available,
                           and clones a pinned copy into scratch/deps as the
                           portable fallback.
-  2. third_party/RmlUi    `git submodule update --init` when absent.
-  3. Python environment   `uv sync`, from the committed lockfile. uv
+  2. source submodules    initializes pinned RmlUi and Lucent checkouts when absent.
+  3. Python environment   `uv sync --frozen`, from the committed lockfile. uv
                           provisions Python itself if the system one is old.
   4. game tree            extracted from the installer with
                           tools/extract_game.py (no Windows or Wine needed).
@@ -51,6 +51,10 @@ PORT_ASSET_FILES = (
     Path("sets/devices/gamepad.svg"),
 )
 PORT_ASSETS_REVISION = "330c1bf146bd97ecc6af49e637476a677f0e55a0"
+SUBMODULE_INPUTS = (
+    Path("third_party/RmlUi/CMakeLists.txt"),
+    Path("third_party/lucent/CMakeLists.txt"),
+)
 
 
 def refuse(message: str) -> None:
@@ -131,26 +135,33 @@ def ensure_port_assets() -> Path:
 
 
 def ensure_submodules() -> None:
-    if (ROOT / "third_party" / "RmlUi" / "CMakeLists.txt").exists():
+    missing = [path for path in SUBMODULE_INPUTS if not (ROOT / path).is_file()]
+    if not missing:
         return
     git = shutil.which("git")
     if not git:
-        refuse("git is required to fetch the third_party/RmlUi submodule.")
+        refuse(
+            "git is required to fetch missing submodule(s): {}.".format(
+                ", ".join(str(path.parent) for path in missing)
+            )
+        )
     print("bootstrap: git submodule update --init --recursive")
     result = subprocess.run(
         [git, "submodule", "update", "--init", "--recursive"],
         cwd=ROOT,
         check=False,
     )
-    if (
-        result.returncode
-        or not (ROOT / "third_party" / "RmlUi" / "CMakeLists.txt").exists()
-    ):
-        refuse("the RmlUi submodule did not initialize; see the output above.")
+    missing = [path for path in SUBMODULE_INPUTS if not (ROOT / path).is_file()]
+    if result.returncode or missing:
+        refuse(
+            "submodule initialization failed for: {}; see the output above.".format(
+                ", ".join(str(path.parent) for path in missing)
+            )
+        )
 
 
 def ensure_venv() -> Path:
-    """`uv sync` from the committed lockfile; return the venv interpreter."""
+    """`uv sync --frozen` from the committed lockfile; return the venv interpreter."""
     uv = shutil.which("uv")
     if not uv:
         refuse(
@@ -159,13 +170,13 @@ def ensure_venv() -> Path:
             "             curl -LsSf https://astral.sh/uv/install.sh | sh\n"
             "             brew install uv"
         )
-    print("bootstrap: uv sync")
-    result = subprocess.run([uv, "sync"], cwd=ROOT, check=False)
+    print("bootstrap: uv sync --frozen")
+    result = subprocess.run([uv, "sync", "--frozen"], cwd=ROOT, check=False)
     if result.returncode:
-        refuse(f"uv sync failed with exit {result.returncode}.")
+        refuse(f"uv sync --frozen failed with exit {result.returncode}.")
     venv_python = ROOT / ".venv" / "bin" / "python"
     if not venv_python.exists():
-        refuse(f"{venv_python} does not exist after uv sync.")
+        refuse(f"{venv_python} does not exist after uv sync --frozen.")
     return venv_python
 
 
@@ -225,7 +236,7 @@ def build(venv_python: Path, port_assets: Path) -> None:
             ROOT / "re",
             ROOT / "assets",
             ROOT / "stages",
-            ROOT / "third_party" / "RmlUi",
+            ROOT / "third_party",
             ROOT / "tools" / "build",
             ROOT / GAME_EXE,
             ROOT / "CMakeLists.txt",

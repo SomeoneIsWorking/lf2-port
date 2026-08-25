@@ -1,3 +1,6 @@
 [submodule "third_party/RmlUi"]
 	path = third_party/RmlUi
 	url = https://github.com/mikke89/RmlUi
+[submodule "third_party/lucent"]
+	path = third_party/lucent
+	url = https://github.com/SomeoneIsWorking/lucent.git

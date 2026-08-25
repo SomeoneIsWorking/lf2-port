@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Configure and build LF2.
 
-The toolchain is whatever CC/CXX say (Clang on every machine this port is
-developed on, AppleClang included); when they are unset Clang is used if it
-exists and the platform default otherwise. A build directory is refused only
+The toolchain is whatever CC/CXX say; when they are unset the platform's `cc`
+and `c++` are used. Maintainers select Clang in their invocation rather than
+encoding that policy into the project. A build directory is refused only
 when it was configured with a DIFFERENT compiler than this invocation would
 use -- reusing one cache across toolchains corrupts the build, which is a
 hygiene rule about the cache, not a ban on any compiler. The project target is
@@ -23,19 +23,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def pick_compilers() -> tuple[str, str]:
-    cc = os.environ.get("CC") or ("clang" if shutil.which("clang") else "cc")
-    cxx = os.environ.get("CXX") or ("clang++" if shutil.which("clang++") else "c++")
+def pick_compilers(cache: Path) -> tuple[str, str]:
+    # An existing cache already owns concrete compiler paths. With no explicit
+    # override, keep using them; asking CMake to replace them in-place mixes two
+    # toolchains' dependency state. A fresh tree remains platform-neutral.
+    cc = os.environ.get("CC") or cached_compiler(cache, "C") or "cc"
+    cxx = os.environ.get("CXX") or cached_compiler(cache, "CXX") or "c++"
     return cc, cxx
 
 
 def cached_compiler(cache: Path, language: str) -> str | None:
-    key = f"CMAKE_{language}_COMPILER:FILEPATH="
+    key = f"CMAKE_{language}_COMPILER:"
     if not cache.is_file():
         return None
     for line in cache.read_text(errors="replace").splitlines():
         if line.startswith(key):
-            return line.removeprefix(key)
+            _, separator, value = line.partition("=")
+            if separator:
+                return value
     return None
 
 
@@ -56,19 +61,19 @@ def main() -> int:
     args = parser.parse_args()
     build = args.build_dir.resolve()
 
+    cache = build / "CMakeCache.txt"
     missing = [tool for tool in ("cmake",) if shutil.which(tool) is None]
-    cc, cxx = pick_compilers()
+    cc, cxx = pick_compilers(cache)
     missing += [name for name in (cc, cxx)
                 if shutil.which(name) is None and "/" not in name]
     if missing:
         raise SystemExit(
             f"missing required build tool(s): {', '.join(missing)}. Install a C "
             "toolchain and cmake (macOS: brew install cmake; Fedora: sudo dnf "
-            "install clang cmake; Debian: sudo apt install build-essential cmake), "
+            "install gcc gcc-c++ cmake; Debian: sudo apt install build-essential cmake), "
             "or point CC/CXX at the ones you have."
         )
 
-    cache = build / "CMakeCache.txt"
     mismatched = []
     for language, wanted in (("C", cc), ("CXX", cxx)):
         cached = cached_compiler(cache, language)

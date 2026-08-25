@@ -102,16 +102,21 @@ static int decrypt_file(const char *source, const char *destination)
     }
 
     unsigned key_index = HEADER % KEYLEN;
+    /* Decrypt into memory and write once: the loop used to put a byte through fputc and its
+     * FILE locking each time, which measured as real seconds across a boot's ~150 files.
+     * The bytes are the same; only the buffering changed. */
+    char *out = malloc(size > HEADER ? size - HEADER : 0);
     int ok = 1;
+    if (!out && size > HEADER) return 0;
+    size_t produced = 0;
     for (size_t i = HEADER; i < size; ++i) {
         const int value = ((int)(unsigned char)buffer[i] - (int)(unsigned char)KEY[key_index]) & 0xff;
         key_index = (key_index + 1u) % KEYLEN;
-        if (fputc(value, output) == EOF) {
-            ok = 0;
-            break;
-        }
+        out[produced++] = (char)value;
     }
-    ok = fclose(output) == 0 && ok;
+    if (produced && fwrite(out, 1, produced, output) != produced) ok = 0;
+    free(out);
+    if (fclose(output) != 0) ok = 0;
     free(buffer);
     if (!ok) return 0;
 

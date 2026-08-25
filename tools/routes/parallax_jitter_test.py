@@ -10,6 +10,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_log import payload_text
+
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = ROOT / "scratch" / "parallax_jitter_test"
@@ -80,6 +83,7 @@ def case_environment(case: Path, integer_negative: bool) -> dict[str, str]:
 
 def authenticate_log(log: str) -> tuple[list[str], CameraSequence]:
     """Authenticate the stage, renderer, route, target, and moving camera in one arm."""
+    log = payload_text(log)
     errors: list[str] = []
     required = (
         ("LF2_VIRTUAL_PAD: 32 of 32 items fired", "all 32 route actions did not fire"),

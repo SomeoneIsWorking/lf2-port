@@ -12,19 +12,9 @@ endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# Any C11/C17 toolchain builds this port; Clang remains the one the tree is
-# tested with, and AppleClang counts as Clang here. A compiler the tree has
-# never met is warned about, not banned -- a fresh machine must not have to
-# install a specific vendor to try the port.
-if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(WARNING
-            "LF2 is developed and tested with Clang; this tree is configured "
-            "with ${CMAKE_C_COMPILER_ID}, which has not been tested. Proceeding.")
-endif()
 
 add_library(x86_decode recompiler/x86_decode.c)
 target_include_directories(x86_decode PUBLIC recompiler)
@@ -35,6 +25,17 @@ target_link_libraries(test_corpus PRIVATE x86_decode)
 target_compile_options(test_corpus PRIVATE -Wall -Wextra)
 
 enable_testing()
+
+# Lucent is the one process logger. It owns timestamping, channel formatting, sink/file routing,
+# and cross-thread serialization; LF2's narrow bridge below only assembles legacy printf fragments
+# into complete records. The variables remain in LF2's diagnostics namespace.
+if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/lucent/CMakeLists.txt")
+    set(LUCENT_CHANNEL_ENV "LF2_LOG_CHANNELS")
+    set(LUCENT_LOG_FILE_ENV "LF2_LOG_FILE")
+    add_subdirectory(third_party/lucent EXCLUDE_FROM_ALL)
+else()
+    message(FATAL_ERROR "third_party/lucent is missing -- run `git submodule update --init --recursive`")
+endif()
 
 # ---- THERE IS ONE SUITE AND IT IS FAST ----
 #
@@ -104,6 +105,7 @@ add_executable(lf2
     runtime/win32/dshow.c
     runtime/win32/gdi.c
     runtime/app/loadprof.c
+    runtime/log/lf2_log.cpp
     runtime/app/pause.c
     runtime/app/function_keys.c
     runtime/app/options.c
@@ -138,6 +140,7 @@ add_executable(lf2
     runtime/video/engine.c
     runtime/video/engine_visibility_probe.c
     runtime/video/engine_textures.c
+    runtime/video/engine_lighting.c
     runtime/video/stagegeom.c
     runtime/ui/device_assets.c
     runtime/ui/device_icons.c
@@ -145,6 +148,7 @@ add_executable(lf2
     runtime/ui/settings_ui.cpp
     runtime/ui/rmlui_input.cpp
     runtime/ui/rmlui_backend.cpp
+    runtime/ui/rmlui_system.cpp
     third_party/RmlUi/Backends/RmlUi_Platform_SDL.cpp
     runtime/app/main.c)
 # EVERY subsystem directory is on the include path, which is what lets a file say
@@ -152,11 +156,12 @@ add_executable(lf2
 # includes -- ties each file to its position in the tree and turns any future regrouping into
 # an edit of every header line (issue #46).
 target_include_directories(lf2 PRIVATE
-    runtime runtime/cpu runtime/win32 runtime/video runtime/audio runtime/input runtime/app runtime/ui
+    runtime runtime/cpu runtime/win32 runtime/video runtime/audio runtime/input runtime/app runtime/log runtime/ui
     runtime/overrides
     ${CMAKE_SOURCE_DIR}/third_party/RmlUi/Backends)
 # RmlUi's SDL backends pick SDL2 vs SDL3 by this macro (Backends/RmlUi_Platform_SDL.h).
 target_compile_definitions(lf2 PRIVATE RMLUI_SDL_VERSION_MAJOR=3)
+target_compile_options(lf2 PRIVATE -include "${CMAKE_SOURCE_DIR}/runtime/log/lf2_log.h")
 
 # The hand-woven stage geometry (issue #62) travels BESIDE THE BINARY.
 #
@@ -192,6 +197,7 @@ set_source_files_properties(
     runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/host_frame.c runtime/video/result_panel.c runtime/video/stage_banner.c
     runtime/audio/dsound.c runtime/win32/dshow.c
     runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/app/function_keys.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/app/script.c
+    runtime/log/lf2_log.cpp runtime/ui/rmlui_system.cpp
     runtime/app/options.c
     runtime/app/config.c
     runtime/app/port_entry.c
@@ -220,6 +226,7 @@ set_source_files_properties(
     runtime/video/engine.c
     runtime/video/engine_visibility_probe.c
     runtime/video/engine_textures.c
+    runtime/video/engine_lighting.c
     runtime/video/stagegeom.c
     runtime/ui/ui_rgba.c
     runtime/app/main.c
@@ -238,7 +245,7 @@ find_package(SDL3 REQUIRED CONFIG)
 # gcc folds most of <math.h> inline and then does not, so this is linked explicitly rather
 # than relied on to keep being unnecessary.
 find_library(LF2_M m)
-target_link_libraries(lf2 PRIVATE SDL3::SDL3 $<$<BOOL:${LF2_M}>:${LF2_M}>)
+target_link_libraries(lf2 PRIVATE SDL3::SDL3 lucent::lucent $<$<BOOL:${LF2_M}>:${LF2_M}>)
 
 add_executable(test_bindings tests/test_bindings.c runtime/input/bindings.c runtime/app/config.c)
 target_include_directories(test_bindings PRIVATE runtime/input runtime/app)
@@ -259,6 +266,12 @@ add_executable(test_function_keys tests/test_function_keys.c runtime/app/functio
 target_include_directories(test_function_keys PRIVATE runtime/app runtime/video)
 target_compile_options(test_function_keys PRIVATE -Wall -Wextra)
 add_test(NAME function_keys COMMAND test_function_keys)
+
+add_executable(test_lf2_log tests/test_lf2_log.cpp runtime/log/lf2_log.cpp)
+target_include_directories(test_lf2_log PRIVATE runtime/log)
+target_link_libraries(test_lf2_log PRIVATE lucent::lucent)
+target_compile_options(test_lf2_log PRIVATE -Wall -Wextra)
+add_test(NAME lf2_log COMMAND test_lf2_log)
 
 add_executable(test_cheats tests/test_cheats.c runtime/overrides/cheats.c)
 target_include_directories(test_cheats PRIVATE runtime/cpu runtime/video runtime/app runtime/overrides)
@@ -292,6 +305,10 @@ add_test(NAME gallery_capture_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_gallery_capture.py)
 add_test(NAME bootstrap COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_bootstrap.py)
+add_test(NAME build_toolchain COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_build_toolchain.py)
+add_test(NAME runtime_log_tool COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_runtime_log.py)
 add_test(NAME build_shaders_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_build_shaders.py)
 
@@ -423,6 +440,21 @@ target_include_directories(test_gpu_shader_source PRIVATE runtime)
 target_link_libraries(test_gpu_shader_source PRIVATE SDL3::SDL3)
 target_compile_options(test_gpu_shader_source PRIVATE -Wall -Wextra)
 add_test(NAME gpu_shader_source COMMAND test_gpu_shader_source)
+
+# StretchBlt's source-pick sequence is pure arithmetic in a header (see the file), and its
+# replacement of a per-pixel division is only trustworthy if the two are walked together.
+add_executable(test_stretchmap tests/test_stretchmap.c)
+target_include_directories(test_stretchmap PRIVATE runtime)
+target_compile_options(test_stretchmap PRIVATE -Wall -Wextra)
+add_test(NAME stretchmap COMMAND test_stretchmap)
+
+# The object-sprite sampling policy of issue #112, including the SSAA composite's exactness
+# at integer magnification, is arithmetic in a header mirrored from quad.frag.
+add_executable(test_spritefilter tests/test_spritefilter.c)
+target_include_directories(test_spritefilter PRIVATE runtime runtime/video runtime/app)
+target_link_libraries(test_spritefilter PRIVATE m)
+target_compile_options(test_spritefilter PRIVATE -Wall -Wextra)
+add_test(NAME spritefilter COMMAND test_spritefilter)
 
 add_executable(test_stagegeom tests/test_stagegeom.c runtime/video/stagegeom.c)
 target_include_directories(test_stagegeom PRIVATE runtime runtime/overrides runtime/video)

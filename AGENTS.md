@@ -23,14 +23,14 @@ grepping these — nearly all of them are already recorded with the measurement 
 ## Build, run, test
 
 ```sh
-# One command from a fresh clone: provisions shared/port-assets, the RmlUi
-# submodule, the uv environment, extracts the game tree (downloading the
+# One command from a fresh clone: provisions shared/port-assets, the RmlUi and
+# Lucent submodules, the uv environment, extracts the game tree (downloading the
 # installer if absent) and builds, then runs.
-./run.sh                                     # a one-line shim over bootstrap.py
+./run.sh                                     # a slim uv run --frozen shim over bootstrap.py
 
 # After ./run.sh has provisioned the external checkouts, Python environment,
 # and game tree, the direct build/run path is:
-uv run python tools/build/build.py
+uv run --frozen python tools/build/build.py
 cd game && ../scratch/build-clang/lf2 lf2.exe      # cwd MUST be the game tree — data is opened by relative path
 ```
 
@@ -74,7 +74,7 @@ tools/e2e.py mouse render                      # one or more of them by name
   scratch/build-clang/gen/lf2_recomp.c        the game's own logic, machine-generated, never edited
         |  calls fn_<addr>() and the imports below
         v
-  runtime/{cpu,win32,video,audio,input,app}/   the platform: guest CPU/memory +
+  runtime/{cpu,win32,video,audio,input,app,log}/ the platform: guest CPU/memory +
                                               Win32/DirectX on SDL3
   runtime/overrides/*.c                 hand-written fn_<addr>() replacing recompiled functions
 ```
@@ -96,6 +96,7 @@ game's four monolithic functions (28/20/18/15 KB — main loop, character state 
 | `runtime/audio/` | `dsound.c` + `mixer.c` |
 | `runtime/input/` | device state and persistent action bindings — `gamepad.c/.h`, `keyboard.c/.h`, `bindings.c/.h` |
 | `runtime/app/` | the port's own shell — `main.c`, `pause.c`, `script.c` (scripted input), `loadprof.c` |
+| `runtime/log/` | the narrow C/stdio-to-Lucent bridge; Lucent owns timestamps, channels, sinks, and serialization |
 | `runtime/overrides/` | see below |
 | `tests/` | the unit tests, which are programs rather than runtime code |
 
@@ -113,9 +114,11 @@ Dusklight is the architecture reference for host-side ownership. LF2 adapts that
 static recompilation rather than copying Dusklight's platform implementations:
 
 - `runtime/app/` composes lifecycle and startup policy.
-- `runtime/ui/` owns the RmlUi document, device-independent UI input translation, and SDL
-  render backend as separate modules (`settings_ui.cpp`, `rmlui_input.cpp`,
-  `rmlui_backend.cpp`). LF2's pre-fight CHARMENU remains the game's original bitmap-authored
+- `runtime/log/` assembles legacy C output into complete source-named records and delegates all
+  logging policy and timestamping to the pinned Lucent subsystem.
+- `runtime/ui/` owns the RmlUi document, device-independent UI input translation, SDL
+  render backend, and Lucent-backed system interface as separate modules (`settings_ui.cpp`,
+  `rmlui_input.cpp`, `rmlui_backend.cpp`, `rmlui_system.cpp`). LF2's pre-fight CHARMENU remains the game's original bitmap-authored
   panel; host UI does not replace its layout or lettering.
 - `runtime/input/` owns device discovery and persistent action bindings; config only stores values.
 - `runtime/video/`, `runtime/audio/`, and `runtime/win32/` remain cohesive peer subsystems.

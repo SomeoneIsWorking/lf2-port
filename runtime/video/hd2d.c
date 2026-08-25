@@ -2,6 +2,7 @@
 
 #include "hd2d.h"
 #include "stagelight.h"
+#include "options.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -26,7 +27,7 @@
  * second spelling of the same fact and the two had already drifted (see stagelight.h). Filled
  * lazily because mesh_init may ask for the light before hd2d has been initialised. */
 static float LIGHT[3];
-static int   light_ready;
+static int light_ready;
 
 /* The same direction as the two angles a player sets it with. Kept beside the vector rather
  * than derived back out of it, because going back is ambiguous at the poles and the menu
@@ -49,11 +50,14 @@ static void light_ensure(void)
             float az = light_az, el = light_el;
             if (sscanf(v, "%f,%f", &az, &el) == 2) {
                 hd2d_light_set_angles(az, el);
-                fprintf(stderr, "hd2d: LF2_HD2D_LIGHT put the key at azimuth %.0f, elevation "
-                                "%.0f\n", (double)light_az, (double)light_el);
+                fprintf(stderr,
+                        "hd2d: LF2_HD2D_LIGHT put the key at azimuth %.0f, elevation "
+                        "%.0f\n",
+                        (double)light_az, (double)light_el);
             } else {
-                fprintf(stderr, "hd2d: LF2_HD2D_LIGHT=%s is not <azimuth>,<elevation> -- the "
-                                "light is UNCHANGED at %.0f,%.0f\n",
+                fprintf(stderr,
+                        "hd2d: LF2_HD2D_LIGHT=%s is not <azimuth>,<elevation> -- the "
+                        "light is UNCHANGED at %.0f,%.0f\n",
                         v, (double)light_az, (double)light_el);
             }
         }
@@ -61,11 +65,17 @@ static void light_ensure(void)
     stagelight_vector(light_az, light_el, LIGHT);
 }
 
-void hd2d_light_angles(float *az, float *el) { *az = light_az; *el = light_el; }
+void hd2d_light_angles(float *az, float *el)
+{
+    *az = light_az;
+    *el = light_el;
+}
 void hd2d_light_vector(float out[3])
 {
     light_ensure();
-    out[0] = LIGHT[0]; out[1] = LIGHT[1]; out[2] = LIGHT[2];
+    out[0] = LIGHT[0];
+    out[1] = LIGHT[1];
+    out[2] = LIGHT[2];
 }
 
 void hd2d_light_set_angles(float az, float el)
@@ -99,12 +109,22 @@ void hd2d_shadow_project(float *across, float *up)
  * DIFFERENCE from flat -- the bevel round a fighter's silhouette, the sky catching them when
  * they jump, and the shadow they throw.
  *
- * LF2_HD2D_* are for sweeping these while tuning, not configuration. */
+ * LF2_HD2D_* are for sweeping these while tuning, not configuration -- with one exception:
+ * the key's STRENGTH is the player's light-intensity option (issue #111), which this reads
+ * from options.c every frame so a menu change is live. The env knob remains the route pin
+ * that options.c resolves first. */
 static float knob(const char *name, float dflt)
 {
     const char *v = getenv(name);
     return v ? (float)atof(v) : dflt;
 }
+
+void hd2d_light_intensity(float *intensity)
+{
+    if (intensity) *intensity = opt_light_intensity();
+}
+
+void hd2d_light_set_intensity(float intensity) { opt_set_light_intensity(intensity); }
 
 void hd2d_light_uniforms(float out[20], int w, int h)
 {
@@ -113,18 +133,32 @@ void hd2d_light_uniforms(float out[20], int w, int h)
      * get (0,0,0) and light every fighter from nowhere. Every reader goes through this. */
     light_ensure();
     float *u = out;
-    /* [0] u_sun_dir -- toward the key light, in stage axes. w: key intensity */
-    u[0] = LIGHT[0]; u[1] = LIGHT[1]; u[2] = LIGHT[2]; u[3] = knob("LF2_HD2D_KEY", 1.48f);
+    /* [0] u_sun_dir -- toward the key light, in stage axes. w: key intensity (the player's,
+     * issue #111; LF2_HD2D_KEY is only the pin options.c resolves once) */
+    u[0] = LIGHT[0];
+    u[1] = LIGHT[1];
+    u[2] = LIGHT[2];
+    u[3] = opt_light_intensity();
     /* [1] u_sun_color -- a warm key against a cool sky is what puts a temperature difference
      * between the lit side and the shaded side of a fighter, which is what makes flat art read
      * as having a form rather than just a brightness. */
-    u[4] = 1.10f; u[5] = 1.02f; u[6] = 0.90f; u[7] = knob("LF2_HD2D_AMBIENT", 0.66f);
+    u[4] = 1.10f;
+    u[5] = 1.02f;
+    u[6] = 0.90f;
+    u[7] = knob("LF2_HD2D_AMBIENT", 0.66f);
     /* [2] u_sky -- light from above. w: bevel strength */
-    u[8] = 0.62f; u[9] = 0.68f; u[10] = 0.80f; u[11] = knob("LF2_HD2D_BEVEL", 0.90f);
+    u[8] = 0.62f;
+    u[9] = 0.68f;
+    u[10] = 0.80f;
+    u[11] = knob("LF2_HD2D_BEVEL", 0.90f);
     /* [3] u_bounce -- light bounced off the floor. w: shadow strength */
-    u[12] = 0.55f; u[13] = 0.52f; u[14] = 0.50f; u[15] = knob("LF2_HD2D_SHADOW", 0.55f);
+    u[12] = 0.55f;
+    u[13] = 0.52f;
+    u[14] = 0.50f;
+    u[15] = knob("LF2_HD2D_SHADOW", 0.55f);
     /* [4] u_params -- xy: one texel. z: bevel radius in texels. w: height gain */
-    u[16] = 1.0f / (float)w; u[17] = 1.0f / (float)h;
+    u[16] = 1.0f / (float)w;
+    u[17] = 1.0f / (float)h;
     u[18] = knob("LF2_HD2D_BEVEL_PX", 5.0f);
     u[19] = knob("LF2_HD2D_HEIGHT_GAIN", 0.9f);
 }

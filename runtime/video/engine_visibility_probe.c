@@ -154,12 +154,12 @@ void engine_visibility_probe_run(SDL_Renderer *renderer)
     make_art();
     EngineQuad quads[3];
     int quad_count = 2;
-    int xy[8];
+    int xy[8] = {0};
     if (strcmp(arm, "shadow-carried") == 0 || strcmp(arm, "shadow-fighter-only") == 0) {
         quads[0] = textured_quad(character_art, 28, 28, 8, 20, 0, 1, 48);
         quads[1] = textured_quad(character_art, 16, 4, 32, 12, 0, strcmp(arm, "shadow-carried") == 0, 48);
         const int sample[6] = {46, 40, 65, 29, 110, 50};
-        memcpy(xy, sample, sizeof xy);
+        memcpy(xy, sample, sizeof sample);
     } else if (strcmp(arm, "shadow-occluded") == 0 || strcmp(arm, "shadow-occluded-reversed") == 0 ||
                strcmp(arm, "shadow-self-lequal") == 0) {
         /* An opaque ground receiver is painted first, then the caster, then the half-opaque
@@ -170,12 +170,12 @@ void engine_visibility_probe_run(SDL_Renderer *renderer)
         quads[2] = textured_quad(occluder_art, 30, 36, 12, 12, 0, 0, 0);
         quad_count = 3;
         const int sample[8] = {33, 40, 39, 40, 29, 40, 25, 44};
-        memcpy(xy, sample, sizeof xy);
+        memcpy(xy, sample, sizeof sample);
     } else {
         quads[0] = textured_quad(character_art, 0, 0, PROBE_W, PROBE_H, 1, 0, 0);
         quads[1] = textured_quad(occluder_art, 0, 0, PROBE_W, PROBE_H, 0, 0, 0);
         const int sample[6] = {PROBE_W / 4, PROBE_H / 2, PROBE_W * 3 / 4, PROBE_H / 2, 0, 0};
-        memcpy(xy, sample, sizeof xy);
+        memcpy(xy, sample, sizeof sample);
     }
     if (strcmp(arm, "chars-reversed") == 0) {
         EngineQuad swap = quads[0];

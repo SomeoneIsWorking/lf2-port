@@ -12,6 +12,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_log import payload_text
+
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / os.environ.get("LF2_SCRATCH", "scratch") / "hidpi_test"
@@ -88,7 +91,7 @@ def run_nested(build: Path, game: Path) -> None:
 
 
 def check_results() -> int:
-    text = RUN_LOG.read_text(errors="replace") if RUN_LOG.exists() else ""
+    text = payload_text(RUN_LOG.read_text(errors="replace")) if RUN_LOG.exists() else ""
     window = re.search(r"^window: .* points -> .* pixels.*$", text, re.MULTILINE)
     if window is None:
         print("  FAIL  the port never reported window geometry inside the nested session")

@@ -7,6 +7,10 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_log import payload_text
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,7 +63,7 @@ def run_arm(binary: Path, game: Path, arm: str) -> bool:
             print("    FAIL  exceeded 120 seconds")
             return False
 
-    text = log.read_text(errors="replace")
+    text = payload_text(log.read_text(errors="replace"))
     match = re.search(
         rf"^visibility probe: PASS arm={re.escape(arm)} left=#[0-9a-f]{{6}} "
         rf"right=#[0-9a-f]{{6}} third=#[0-9a-f]{{6}} fourth=#[0-9a-f]{{6}}$",

@@ -34,6 +34,10 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_log import payload_text
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DECRYPT = os.path.join(HERE, "decrypt_dat.py")
@@ -80,6 +84,7 @@ def parse_files(gamedir):
 
 def parse_runtime(text):
     """{index: {'name','width','layers','names'}} from LF2_BG_TABLE output."""
+    text = payload_text(text)
     out, cur = {}, None
     for line in text.splitlines():
         m = re.match(r'bg table: background (\d+)\s+"([^"]*)"\s+stage width (\d+)\s+'

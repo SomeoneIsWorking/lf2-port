@@ -21,6 +21,7 @@
 #include "rmlui_backend.h"
 #include "rmlui_input.h"
 #include "rmlui_lifecycle.h"
+#include "rmlui_system.h"
 
 extern "C" {
 #include "config.h"
@@ -149,6 +150,7 @@ static const char SETTINGS_RML[] = R"RML(
   input[type=range] sliderarrowdec, input[type=range] sliderarrowinc { width: 0; height: 0; }
   .range-value { display: block; width: 58dp; text-align: right; }
   .key { flex: 0 0 128dp; }
+  .pass-kind, .pass-factor, .pass-drop { flex: 0 0 96dp; margin-left: 4dp; }
   .cheat { display: flex; flex-flow: column; text-align: left; gap: 3dp; }
   .cheat-title { display: block; color: #e0dbc8; }
   .cheat-detail { display: block; color: rgba(224, 219, 200, 60%); font-size: 13dp; }
@@ -186,6 +188,12 @@ static const char SETTINGS_RML[] = R"RML(
         <span class="section-heading">LIGHT DIRECTION</span>
         <div class="setting-row"><span class="label">Angle</span><input class="setting-value" type="range" min="-180" max="180" step="5" data-value="light_angle"/><span class="range-value">{{light_angle}}°</span></div>
         <div class="setting-row"><span class="label">Height</span><input class="setting-value" type="range" min="5" max="85" step="5" data-value="light_height"/><span class="range-value">{{light_height}}°</span></div>
+        <div class="setting-row"><span class="label">Intensity</span><input class="setting-value" type="range" min="25" max="300" step="5" data-value="light_pct"/><span class="range-value">{{light_pct}}%</span></div>
+        <span class="section-heading">SPRITE PASSES</span>
+        <!-- PASS_ROWS -->
+        <div class="setting-row" data-if="pass_count < {{pass_max}}"><span class="label">Add a pass</span><button class="setting-value" data-event-click="add_pass">ADD</button></div>
+        <div class="setting-row"><span class="label">Edge smoothing</span><button class="setting-value" data-event-click="toggle_aa">{{aa ? 'ON' : 'OFF'}}</button></div>
+        <div class="setting-row"><span class="label">Outline</span><button class="setting-value" data-event-click="cycle_outline">{{outline_name}}</button></div>
       </pane>
       <pane data-if="page == 'controls'">
         <span class="section-heading">INPUT MAPPING</span>
@@ -244,13 +252,22 @@ static std::string settings_document()
         buttons += "</span></button>";
     }
     document.replace(document.find(marker), marker.size(), buttons);
-    return document;
-}
 
-static SystemInterface_SDL &system_interface()
-{
-    static SystemInterface_SDL value;
-    return value;
+    /* THE PASS ROWS ARE GENERATED, one per pass the chain may hold, because how many that is
+     * belongs to spritefilter.h -- writing them out in the markup would put the cap in two
+     * places and let the menu drift from what parses. */
+    const std::string pass_marker = "<!-- PASS_ROWS -->";
+    std::string rows;
+    for (int i = 0; i < SPRITE_PASS_MAX; ++i) {
+        const std::string n = std::to_string(i);
+        rows += "<div class=\"setting-row\" data-if=\"pass_count > " + n + "\"><span class=\"label\">Pass " +
+                std::to_string(i + 1) + "</span><button class=\"pass-kind\" data-event-click=\"cycle_pass_kind('" + n +
+                "')\">{{pass_kind" + n + "}}</button><button class=\"pass-factor\" data-event-click=\"" +
+                "cycle_pass_factor('" + n + "')\">{{pass_factor" + n + "}}</button><button class=\"pass-drop\" " +
+                "data-event-click=\"remove_pass('" + n + "')\">REMOVE</button></div>";
+    }
+    document.replace(document.find(pass_marker), pass_marker.size(), rows);
+    return document;
 }
 
 static Rml::DataModelHandle &data_model()
@@ -283,10 +300,40 @@ static struct {
     bool can_drop;
     int light_angle;
     int light_height;
+    int light_pct; /* key-light strength as a percentage of a flat key (#111) */
+    /* THE SAMPLING CHAIN BEING EDITED (#112). The menu owns a whole SpriteChain and hands it
+     * to options.c on every live update, so the rules about what a chain may hold stay in
+     * spritefilter.h -- the rows below only ask it to step a value and re-read the labels. */
+    SpriteChain chain;
+    int pass_count;
+    int pass_max;
+    bool aa;
     Rml::String page;
     Rml::String key_name[B_N];
     Rml::String pad_name[B_N];
+    Rml::String pass_kind[SPRITE_PASS_MAX];
+    Rml::String pass_factor[SPRITE_PASS_MAX];
+    Rml::String outline_name;
 } M;
+
+static void refresh_sprite_rows(void)
+{
+    M.pass_count = M.chain.count;
+    M.pass_max = SPRITE_PASS_MAX;
+    M.aa = M.chain.smooth != 0;
+    for (int i = 0; i < SPRITE_PASS_MAX; i++) {
+        char buf[16] = "";
+        if (i < M.chain.count) spritechain_factor_label(&M.chain.pass[i], buf, sizeof buf);
+        M.pass_kind[i] = i < M.chain.count ? spritechain_kind_label(&M.chain.pass[i]) : "";
+        M.pass_factor[i] = buf;
+        data_model().DirtyVariable("pass_kind" + std::to_string(i));
+        data_model().DirtyVariable("pass_factor" + std::to_string(i));
+    }
+    M.outline_name = M.chain.outline ? std::to_string(M.chain.outline) + " PX" : "OFF";
+    data_model().DirtyVariable("pass_count");
+    data_model().DirtyVariable("aa");
+    data_model().DirtyVariable("outline_name");
+}
 
 static int button_from_id(const Rml::String &s)
 {
@@ -317,6 +364,11 @@ static void model_load(void)
     hd2d_light_angles(&angle, &height);
     M.light_angle = (int)(angle + (angle < 0.0f ? -0.5f : 0.5f));
     M.light_height = (int)std::lround(height);
+    float intensity = 1.48f;
+    hd2d_light_intensity(&intensity);
+    M.light_pct = (int)std::lround(intensity * 100.0f);
+    M.chain = *opt_sprite_chain();
+    refresh_sprite_rows();
     M.page = "game";
     for (int b = 0; b < B_N; b++) {
         refresh_key_name(b);
@@ -331,8 +383,15 @@ static void model_store(void)
 {
     opt_set_renderer_engine(M.engine);
     opt_set_lighting(M.lighting);
+    opt_set_sprite_chain(&M.chain);
+    char passes[128];
+    spritechain_format(&M.chain, passes, sizeof passes);
+    config_set("sprite_passes", passes);
+    char buf[32];
     config_set("renderer", M.engine ? "engine" : "classic");
     config_set("lighting", M.lighting ? "on" : "off");
+    snprintf(buf, sizeof buf, "%.2f", (double)((float)M.light_pct / 100.0f));
+    config_set("light_intensity", buf);
     config_save();
 }
 
@@ -341,6 +400,9 @@ static void model_store_live(void)
     opt_set_renderer_engine(M.engine);
     opt_set_lighting(M.lighting);
     hd2d_light_set_angles((float)M.light_angle, (float)M.light_height);
+    opt_set_sprite_chain(&M.chain);
+    /* The slider edits a percentage; the light wants the multiplier itself. */
+    opt_set_light_intensity((float)M.light_pct / 100.0f);
 }
 
 static void activate_focused(bool controller)
@@ -360,9 +422,9 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     if (!r) return 0;
     g_R = r;
     g_W = w;
-    system_interface().SetWindow(w);
+    rmlui_system_interface().SetWindow(w);
     g_render = new RmlUiRenderBackend(r);
-    Rml::SetSystemInterface(&system_interface());
+    Rml::SetSystemInterface(&rmlui_system_interface());
     Rml::SetRenderInterface(g_render);
     if (!Rml::Initialise()) {
         fprintf(stderr, "rmlui: Rml::Initialise failed\n");
@@ -393,6 +455,15 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     ctor.Bind("can_drop", &M.can_drop);
     ctor.Bind("light_angle", &M.light_angle);
     ctor.Bind("light_height", &M.light_height);
+    ctor.Bind("light_pct", &M.light_pct);
+    ctor.Bind("pass_count", &M.pass_count);
+    ctor.Bind("pass_max", &M.pass_max);
+    ctor.Bind("aa", &M.aa);
+    ctor.Bind("outline_name", &M.outline_name);
+    for (int i = 0; i < SPRITE_PASS_MAX; i++) {
+        ctor.Bind("pass_kind" + std::to_string(i), &M.pass_kind[i]);
+        ctor.Bind("pass_factor" + std::to_string(i), &M.pass_factor[i]);
+    }
     ctor.Bind("page", &M.page);
     for (int b = 0; b < B_N; b++) {
         ctor.Bind(std::string("key_") + binding_action_id(b), &M.key_name[b]);
@@ -431,6 +502,38 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     ctor.BindEventCallback("toggle_lighting", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
         M.lighting = !M.lighting;
         data_model().DirtyVariable("lighting");
+    });
+    /* THE PASS ROWS. Every one of these steps a value and asks spritefilter.h to keep the
+     * chain legal -- the menu holds no rule of its own, so a cap or a spelling can change in
+     * one place and the menu follows. */
+    ctor.BindEventCallback("cycle_pass_kind", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &args) {
+        if (args.empty()) return;
+        spritechain_cycle_kind(&M.chain, std::atoi(args[0].Get<Rml::String>().c_str()));
+        refresh_sprite_rows();
+    });
+    ctor.BindEventCallback("cycle_pass_factor", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &args) {
+        if (args.empty()) return;
+        const int i = std::atoi(args[0].Get<Rml::String>().c_str());
+        if (i < 0 || i >= M.chain.count) return;
+        spritechain_cycle_factor(&M.chain.pass[i]);
+        refresh_sprite_rows();
+    });
+    ctor.BindEventCallback("remove_pass", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &args) {
+        if (args.empty()) return;
+        spritechain_remove_pass(&M.chain, std::atoi(args[0].Get<Rml::String>().c_str()));
+        refresh_sprite_rows();
+    });
+    ctor.BindEventCallback("add_pass", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        spritechain_add_pass(&M.chain);
+        refresh_sprite_rows();
+    });
+    ctor.BindEventCallback("toggle_aa", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        M.chain.smooth = !M.chain.smooth;
+        refresh_sprite_rows();
+    });
+    ctor.BindEventCallback("cycle_outline", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        M.chain.outline = M.chain.outline >= SPRITE_OUTLINE_MAX ? 0 : M.chain.outline + 1;
+        refresh_sprite_rows();
     });
     ctor.BindEventCallback("activate_cheat", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &args) {
         if (args.empty()) return;

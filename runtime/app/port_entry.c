@@ -4,7 +4,6 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "startup_init.h"
-
 #include <stdint.h>
 #include <stdio.h>
 
@@ -212,10 +211,17 @@ static int run_main_loop(uint32_t previous_tick)
         pump_guest_messages();
         if (hostwin_quit_requested()) break;
 
+        /* DUE MEANS >=, NOT >. On Windows this loop's clock is wall time and never rests
+         * exactly on the period, so the game's own `diff > interval` cannot jam. The guest
+         * clock here is quantised -- presented frames plus credited sleeps -- and CAN rest
+         * exactly on the period, where `>` neither runs the frame nor leaves a positive
+         * remainder to sleep away: measured, the loop span forever at elapsed == interval ==
+         * remaining == 0. The same trap in the game's own pacer is why h_Sleep credits a
+         * sleep as ms + 1; this loop needs the floor stated directly. */
         const uint32_t interval = LD32(FAST_PACING) ? 33 : 3;
         uint32_t now = guest_time_ms();
         uint32_t elapsed = now - previous_tick;
-        if (elapsed > interval) {
+        if (elapsed >= interval) {
             if (elapsed > 100) previous_tick = now - 100;
             run_game_frame();
             previous_tick += interval;
@@ -233,14 +239,22 @@ int port_entry_run(void)
 {
     fprintf(stderr, "startup: entering native port entry (guest PE entry and WinMain bypassed)\n");
     construct_guest_globals();
-    if (!initialise_window()) {
+    startup_init_step_begin(STARTUP_INIT_WINDOW, "window");
+    const int window_ok = initialise_window();
+    startup_init_step_done(STARTUP_INIT_WINDOW, "window");
+    if (!window_ok) {
         fprintf(stderr, "startup: DirectDraw/window initialization failed\n");
         return 1;
     }
 
+    startup_init_step_begin(STARTUP_INIT_AD_TABLES, "ad-tables");
     initialise_ad_tables();
     initialise_dates();
+    startup_init_step_done(STARTUP_INIT_AD_TABLES, "ad-tables");
+
+    startup_init_step_begin(STARTUP_INIT_INPUT_AND_SOUND, "input-and-sound");
     initialise_input_and_sound();
+    startup_init_step_done(STARTUP_INIT_INPUT_AND_SOUND, "input-and-sound");
 
     const uint32_t frame_surface = LD32(FRAME_SURFACE);
     if (!frame_surface) {

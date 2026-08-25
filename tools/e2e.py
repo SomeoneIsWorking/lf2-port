@@ -42,6 +42,7 @@ ROUTES = (
     ("objects", "the stage's OBJECT pass is deterministic, with a skewed camera as the negative (issue #55)"),
     ("texture_cache", "a long Stage run reuses old GPU sheets without dropping later enemies (issue #83)"),
     ("render", "the GPU renderer draws what the software compositor draws (issue #30)"),
+    ("sprite_passes", "the sprite sampling chain reproduces nearest exactly, then coarsens and outlines (issue #112)"),
     ("mesh", "the depth-tested geometry pass really tests depth (issues #49, #62)"),
     ("stage_geom", "a hand-woven .stage loads in the running game, at its layer's depth (issue #62)"),
 )

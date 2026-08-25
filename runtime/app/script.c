@@ -8,6 +8,10 @@
 #include "script.h"
 #include "hostwin.h"
 
+#include <SDL3/SDL.h>
+#include <guest.h>
+
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -114,7 +118,6 @@ void script_report(void)
     for (int s = 0; s < SCRIPT_STREAMS; s++)
         if (getenv(STREAM[s].env)) configured = 1;
     if (!configured) return;
-
     fprintf(stderr, "scripted input: screens reached --");
     int any = 0;
     for (int i = 0; i < SCREEN_N; i++) {
@@ -160,4 +163,275 @@ void script_report(void)
                                                    "what it should have done is about an input that did not happen");
         }
     }
+}
+
+/* ---- live keyboard/mouse script state ----
+ *
+ * One parsed copy of each environment string, refreshed never: the environment is fixed for
+ * a process's lifetime. Only @screen items stay dynamic, resolved per poll through
+ * script_when against the screens seen so far. */
+
+/* Scripted input is held SCRIPT_HOLD_FRAMES presented frames. */
+enum { KEY_SCRIPT_HOLD = SCRIPT_HOLD_FRAMES };
+
+/* One key-script item: the key and its when-spec kept verbatim, because an @screen frame
+ * is known only once the screen appears. */
+struct ScriptItem {
+    uint32_t key;
+    char when[64];
+};
+
+enum { PARSED_ITEMS = 128 };
+
+static int key_script_parse(const char *script, struct ScriptItem *items, int cap)
+{
+    int n = 0;
+    for (const char *c = script; *c;) {
+        const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
+        const char *when = c;
+        if (*c == ':') {
+            c++;
+            when = c;
+        }
+        size_t len = 0;
+        while (*c && *c != ',' && *c != ' ') {
+            if (len < sizeof items->when - 1) len++;
+            c++;
+        }
+        if (n < cap) {
+            items[n].key = key;
+            memcpy(items[n].when, when, len);
+            items[n].when[len] = 0;
+            n++;
+        }
+        while (*c == ',' || *c == ' ') c++;
+    }
+    return n;
+}
+
+int input_script_key_configured(void)
+{
+    static int configured = -1;
+    if (configured < 0) { configured = getenv("LF2_KEY_SCRIPT") != NULL || getenv("LF2_AUTOKEY") != NULL; }
+    return configured;
+}
+
+static struct ScriptItem key_items[PARSED_ITEMS];
+static int nkey_items;
+
+/* The autokey schedule and its point list, resolved once rather than on every pump. */
+static struct {
+    const char *script;
+    uint32_t keys[PARSED_ITEMS];
+    unsigned count;
+    uint64_t begin, every, hold;
+    int after_first_poll;
+    int once;
+} autokey;
+
+static void parse_key_scripts_once(void)
+{
+    static int done;
+    if (done) return;
+    done = 1;
+
+    const char *script = getenv("LF2_KEY_SCRIPT");
+    nkey_items = script ? key_script_parse(script, key_items, PARSED_ITEMS) : 0;
+    if (nkey_items < 0) nkey_items = 0;
+
+    autokey.script = getenv("LF2_AUTOKEY");
+    autokey.begin = 6000;
+    autokey.every = 1200;
+    autokey.hold = 150;
+    const char *s_env = getenv("LF2_AUTOKEY_START");
+    const char *e_env = getenv("LF2_AUTOKEY_EVERY");
+    const char *h_env = getenv("LF2_AUTOKEY_HOLD");
+    if (s_env) autokey.begin = strtoull(s_env, NULL, 10);
+    if (e_env) autokey.every = strtoull(e_env, NULL, 10);
+    if (h_env) autokey.hold = strtoull(h_env, NULL, 10);
+    if (!autokey.every) autokey.every = 1; /* a zero period would trap the modulo below */
+    autokey.after_first_poll = getenv("LF2_AUTOKEY_AFTER") != NULL;
+    autokey.once = getenv("LF2_AUTOKEY_ONCE") != NULL;
+    for (const char *c = autokey.script; c && *c && autokey.count < PARSED_ITEMS;) {
+        autokey.keys[autokey.count++] = (uint32_t)strtoul(c, (char **)&c, 16);
+        while (*c == ',' || *c == ' ') c++;
+    }
+}
+
+/* The keyboard script's down-state for one virtual key this frame. */
+static int key_script_pressed(uint32_t vk)
+{
+    if (!nkey_items) return 0;
+    const long frame = hostwin_frames();
+
+    for (int i = 0; i < nkey_items; i++) {
+        script_seen(SCRIPT_KEYS, i);
+        int un = 0;
+        const long at = script_when(key_items[i].when, &un);
+        if (un) continue; /* its screen has not appeared YET -- not never */
+        if (frame < at || frame >= at + KEY_SCRIPT_HOLD) continue;
+
+        /* Recorded for every item whose window this frame is in, not only the one being
+         * asked about: this is polled per-vk, and an item's own key being queried is a
+         * property of the caller's loop rather than of the script. */
+        script_fired(SCRIPT_KEYS, i);
+        if (key_items[i].key == vk) return 1;
+    }
+    return 0;
+}
+
+/* The autokey schedule's synthetic press for one virtual key. */
+static int autokey_pressed(uint32_t vk)
+{
+    if (!autokey.script || !autokey.count) return 0;
+
+    /* With LF2_AUTOKEY_AFTER the clock starts when the game is first seen polling that
+     * key, not at process start -- so the script tracks the game's state instead of
+     * drifting with however long the data load happened to take. */
+    static uint64_t base_ms;
+    if (autokey.after_first_poll) {
+        if (!rwatch_triggered()) return 0;
+        if (!base_ms) base_ms = SDL_GetTicks();
+    } else if (!base_ms) {
+        base_ms = SDL_GetTicks();
+    }
+
+    const uint64_t now = SDL_GetTicks() - base_ms;
+    if (now < autokey.begin) return 0;
+    const uint64_t elapsed = now - autokey.begin;
+    if (elapsed % autokey.every >= autokey.hold) return 0;
+
+    /* As with clicks, a menu path is one-way: cycling the list keeps navigating and
+     * overshoots the screen you were aiming for. LF2_AUTOKEY_ONCE plays it once. */
+    const unsigned step = (unsigned)(elapsed / autokey.every);
+    if (autokey.once && step >= autokey.count) return 0;
+    return autokey.keys[step % autokey.count] == vk;
+}
+
+int input_script_key_down(uint32_t vk)
+{
+    parse_key_scripts_once();
+    if (key_script_pressed(vk)) return 1;
+    return autokey_pressed(vk);
+}
+
+/* One click-script item: the point and its when-spec verbatim. */
+struct ClickItem {
+    int px, py;
+    char when[64];
+};
+static struct ClickItem click_items[PARSED_ITEMS];
+static int nclick_items;
+
+/* The periodic clicker's points and schedule, resolved once. */
+static struct {
+    int px[64], py[64];
+    unsigned points;
+    uint64_t begin, every;
+    int once, done;
+} autoclick;
+
+static void parse_click_scripts_once(void)
+{
+    static int done;
+    if (done) return;
+    done = 1;
+
+    const char *script = getenv("LF2_CLICK_SCRIPT");
+    if (script)
+        for (const char *c = script; *c && nclick_items < PARSED_ITEMS;) {
+            struct ClickItem *it = &click_items[nclick_items];
+            it->px = (int)strtol(c, (char **)&c, 10);
+            while (*c == ',' || *c == ' ') c++;
+            it->py = (int)strtol(c, (char **)&c, 10);
+            const char *when = c;
+            if (*c == ':') c++;
+            size_t len = 0;
+            while (*c && *c != ';' && *c != ' ') {
+                if (len < sizeof it->when - 1) len++;
+                c++;
+            }
+            memcpy(it->when, when, len);
+            it->when[len] = 0;
+            while (*c == ';' || *c == ' ') c++;
+            nclick_items++;
+        }
+
+    const char *spec = getenv("LF2_AUTOCLICK");
+    autoclick.begin = 6000;
+    autoclick.every = 2500;
+    autoclick.once = getenv("LF2_AUTOCLICK_ONCE") != NULL;
+    const char *s_env = getenv("LF2_AUTOCLICK_START");
+    const char *e_env = getenv("LF2_AUTOCLICK_EVERY");
+    /* Clicks default to the key schedule but can be given their own. They have to be
+     * separable: reaching the game means one click on "game start", then a ~25 s data
+     * load, then keys -- on a shared clock the keys are all consumed during the load. */
+    if (!s_env) s_env = getenv("LF2_AUTOKEY_START");
+    if (!e_env) e_env = getenv("LF2_AUTOKEY_EVERY");
+    if (s_env) autoclick.begin = strtoul(s_env, NULL, 10);
+    if (e_env) autoclick.every = strtoul(e_env, NULL, 10);
+    if (!autoclick.every) autoclick.every = 1; /* a zero period would trap the modulo below */
+    for (const char *c = spec; c && *c && autoclick.points < sizeof autoclick.px / sizeof autoclick.px[0];) {
+        autoclick.px[autoclick.points] = (int)strtol(c, (char **)&c, 10);
+        while (*c == ',' || *c == ' ') c++;
+        autoclick.py[autoclick.points] = (int)strtol(c, (char **)&c, 10);
+        autoclick.points++;
+        while (*c == ';' || *c == ' ') c++;
+    }
+}
+
+int input_script_click_configured(void)
+{
+    static int configured = -1;
+    if (configured < 0) configured = getenv("LF2_CLICK_SCRIPT") != NULL || getenv("LF2_AUTOCLICK") != NULL;
+    return configured;
+}
+
+int input_script_click_state(int *x, int *y)
+{
+    parse_click_scripts_once();
+
+    /* The frame-scheduled click script takes priority, exactly as before. */
+    if (nclick_items > 0) {
+        const long frame = hostwin_frames();
+        for (int i = 0; i < nclick_items; i++) {
+            script_seen(SCRIPT_CLICKS, i);
+            int un = 0;
+            const long at = script_when(click_items[i].when, &un);
+            if (un) continue; /* its screen has not appeared YET -- not never */
+
+            /* The pointer is placed a few frames early and the button pressed after,
+             * because the menu hit-tests where the pointer IS when the click arrives --
+             * moving and clicking on the same frame races the game's own read. */
+            if (frame >= at - 4 && frame < at + KEY_SCRIPT_HOLD) {
+                *x = click_items[i].px;
+                *y = click_items[i].py;
+                if (frame >= at) {
+                    script_fired(SCRIPT_CLICKS, i);
+                    return 1;
+                }
+                return 0;
+            }
+        }
+        return 0;
+    }
+
+    if (!autoclick.points) return 0;
+
+    static uint64_t start_ms;
+    if (!start_ms) start_ms = SDL_GetTicks();
+    const uint64_t now = SDL_GetTicks() - start_ms;
+    if (now < autoclick.begin) return 0;
+    const uint64_t elapsed = now - autoclick.begin;
+
+    /* Cycling suits probing one screen, but a menu path is one-way: re-clicking the list
+     * from the top walks back out again, which reads as the game oscillating between two
+     * screens rather than as the script looping. LF2_AUTOCLICK_ONCE walks the list once
+     * and then stops clicking. */
+    const unsigned step = (unsigned)(elapsed / autoclick.every);
+    if (autoclick.once && step >= autoclick.points) return 0;
+    const unsigned want = step % autoclick.points;
+    *x = autoclick.px[want];
+    *y = autoclick.py[want];
+    return (elapsed % autoclick.every) < 150; /* button held briefly */
 }

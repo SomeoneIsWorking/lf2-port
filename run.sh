@@ -5,10 +5,10 @@
 # docs/running.md.
 #
 # This shim stays one line on purpose: provisioning -- shared port-assets,
-# the RmlUi submodule, the uv environment, installer extraction, the build --
+# the RmlUi and Lucent submodules, the uv environment, installer extraction, the build --
 # lives in bootstrap.py, where it can refuse by name and be tested.
 #
 #   ./run.sh                 extract + build + run
 #   REBUILD=1 ./run.sh       force a rebuild
 cd "$(dirname "$0")" || exit 2
-exec python3 bootstrap.py "$@"
+exec uv run --frozen python bootstrap.py "$@"

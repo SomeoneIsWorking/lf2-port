@@ -263,118 +263,6 @@ static void h_GetSystemMetrics(void)
  * input path. */
 static int quit_posted;
 
-static int autokey_pressed(uint32_t vk);
-
-/* Scripted keys must also arrive as messages, or they only exercise the polling path and
- * tell us nothing about code that reacts to WM_KEYDOWN. */
-/* Scripted pointer, the mouse counterpart of LF2_AUTOKEY:
- *   LF2_AUTOCLICK=<x>,<y>   move there and click on the same schedule as LF2_AUTOKEY. */
-/* LF2_AUTOCLICK takes one or more points, separated by semicolons, and steps through
- * them on the same schedule as the keys: "400,220;155,29". A single fixed point cannot
- * drive a sequence of screens whose buttons are in different places. */
-/* Scripted input is held this many presented frames: long enough for the game to see a
- * discrete press, short enough not to auto-repeat. Shared by the key and click scripts. */
-enum { KEY_SCRIPT_HOLD = 8 };
-
-/* LF2_CLICK_SCRIPT="<x>,<y>:<frame>[;...]" -- the frame-scheduled counterpart, matching
- * LF2_KEY_SCRIPT and LF2_VIRTUAL_PAD. Same reason: a wall-clock schedule drifts with the
- * data load, so a click aimed at one screen can land on another. */
-static int click_script_state(int *x, int *y)
-{
-    const char *spec = getenv("LF2_CLICK_SCRIPT");
-    if (!spec) return 0;
-    const long frame = hostwin_frames();
-
-    int idx = 0;
-    for (const char *c = spec; *c;) {
-        const int px = (int)strtol(c, (char **)&c, 10);
-        while (*c == ',' || *c == ' ') c++;
-        const int py = (int)strtol(c, (char **)&c, 10);
-        const char *when = c;
-        if (*c == ':') {
-            c++;
-            when = c;
-        }
-        char buf[64];
-        while (*c && *c != ';' && *c != ' ') c++;
-        size_t n = (size_t)(c - when);
-        if (n >= sizeof buf) n = sizeof buf - 1;
-        memcpy(buf, when, n);
-        buf[n] = 0;
-        while (*c == ';' || *c == ' ') c++;
-
-        const int i = idx++;
-        script_seen(SCRIPT_CLICKS, i);
-        int un = 0;
-        const long at = script_when(buf, &un);
-        if (un) continue; /* its screen has not appeared YET -- not never */
-
-        /* The pointer is placed a few frames early and the button pressed after, because
-         * the menu hit-tests where the pointer IS when the click arrives -- moving and
-         * clicking on the same frame races the game's own read. */
-        if (frame >= at - 4 && frame < at + KEY_SCRIPT_HOLD) {
-            *x = px;
-            *y = py;
-            if (frame >= at) {
-                script_fired(SCRIPT_CLICKS, i);
-                return 1;
-            }
-            return 0;
-        }
-    }
-    return 0;
-}
-
-static int autoclick_state(int *x, int *y)
-{
-    if (getenv("LF2_CLICK_SCRIPT")) return click_script_state(x, y);
-
-    const char *spec = getenv("LF2_AUTOCLICK");
-    if (!spec) return 0;
-
-    unsigned points = 1;
-    for (const char *c = spec; *c; c++)
-        if (*c == ';') points++;
-
-    static uint64_t start_ms;
-    if (!start_ms) start_ms = SDL_GetTicks();
-    /* Clicks default to the key schedule but can be given their own. They have to be
-     * separable: reaching the game means one click on "game start", then a ~25 s data
-     * load, then keys -- on a shared clock the keys are all consumed during the load. */
-    const char *s_env = getenv("LF2_AUTOCLICK_START");
-    const char *e_env = getenv("LF2_AUTOCLICK_EVERY");
-    if (!s_env) s_env = getenv("LF2_AUTOKEY_START");
-    if (!e_env) e_env = getenv("LF2_AUTOKEY_EVERY");
-    const uint64_t begin = s_env ? (uint64_t)strtoul(s_env, NULL, 10) : 6000;
-    const uint64_t every = e_env ? (uint64_t)strtoul(e_env, NULL, 10) : 2500;
-
-    const uint64_t now = SDL_GetTicks() - start_ms;
-    if (now < begin) return 0;
-    const uint64_t elapsed = now - begin;
-
-    /* Cycling suits probing one screen, but a menu path is one-way: re-clicking the list
-     * from the top walks back out again, which reads as the game oscillating between two
-     * screens rather than as the script looping. LF2_AUTOCLICK_ONCE walks the list once
-     * and then stops clicking. */
-    const unsigned step = (unsigned)(elapsed / every);
-    if (getenv("LF2_AUTOCLICK_ONCE") && step >= points) return 0;
-    const unsigned want = step % points;
-    unsigned i = 0;
-    for (const char *c = spec; *c;) {
-        const int px = (int)strtol(c, (char **)&c, 10);
-        while (*c == ',' || *c == ' ') c++;
-        const int py = (int)strtol(c, (char **)&c, 10);
-        if (i == want) {
-            *x = px;
-            *y = py;
-            break;
-        }
-        i++;
-        while (*c == ';' || *c == ' ') c++;
-    }
-    return (elapsed % every) < 150; /* button held briefly */
-}
-
 /* LF2_WINDOW_RESIZE=<frame>:<w>x<h>[,...] -- resize the window part-way through a run.
  *
  * A DIAGNOSTIC, and it exists because the headline of issue #20 is that the field of view
@@ -459,8 +347,8 @@ static void pump_autoclick(void)
     static int last_x = -1, last_y = -1;
     int x = last_x, y = last_y;
     static int was_down, announced;
-    if (!getenv("LF2_AUTOCLICK") && !getenv("LF2_CLICK_SCRIPT")) return;
-    const int down = autoclick_state(&x, &y);
+    if (!input_script_click_configured()) return;
+    const int down = input_script_click_state(&x, &y);
     last_x = x;
     last_y = y;
     if (x < 0) return; /* no scripted point yet: nothing to report */
@@ -497,13 +385,14 @@ static void pump_autoclick(void)
 
 static void pump_autokey_messages(void)
 {
-    if (!getenv("LF2_AUTOKEY") && !getenv("LF2_KEY_SCRIPT")) return;
+    if (!input_script_key_configured()) return;
     static uint8_t was_down[256];
+    static int msg_debug = -1;
     for (uint32_t vk = 0; vk < 256; vk++) {
-        const uint8_t now = autokey_pressed(vk) ? 1 : 0;
+        const uint8_t now = input_script_key_down(vk) ? 1 : 0;
         if (now == was_down[vk]) continue;
         was_down[vk] = now;
-        if (getenv("LF2_MSG_DEBUG"))
+        if (env_flag("LF2_MSG_DEBUG", &msg_debug))
             fprintf(stderr, "autokey vk=%02x %s (pump %u)\n", vk, now ? "down" : "up", autokey_pumps);
         push_message(now ? WM_KEYDOWN_FWD : WM_KEYUP_FWD, vk, 1);
     }
@@ -580,11 +469,12 @@ void hostwin_pump(void)
          * too, or a key released under RmlUi remains held after the document closes. */
         uint32_t key_msg = 0;
         uint32_t key_vk = 0;
+        static int rmlui_debug = -1;
         if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) {
             key_msg = e.type == SDL_EVENT_KEY_DOWN ? WM_KEYDOWN_FWD : WM_KEYUP_FWD;
             key_vk = keyboard_vk_from_scancode(e.key.scancode);
             if (key_vk) keyboard_note(key_vk, key_msg == WM_KEYDOWN_FWD);
-            if (getenv("LF2_RMLUI_DEBUG"))
+            if (env_flag("LF2_RMLUI_DEBUG", &rmlui_debug))
                 fprintf(stderr, "rmlui physical key: vk=%02x %s\n", key_vk,
                         e.type == SDL_EVENT_KEY_DOWN ? "down" : "up");
         }
@@ -736,7 +626,8 @@ static int next_queued_message(uint32_t p, int remove)
 static void h_PeekMessageA(void)
 {
     hostwin_pump();
-    if (getenv("LF2_MSG_DEBUG")) {
+    static int msg_debug = -1;
+    if (env_flag("LF2_MSG_DEBUG", &msg_debug)) {
         static uint8_t seen[8];
         const uint32_t f = ARG(4) & 7;
         if (!seen[f]) {
@@ -759,7 +650,8 @@ static void h_PeekMessageA(void)
 static void h_GetMessageA(void)
 {
     hostwin_pump();
-    if (getenv("LF2_MSG_DEBUG")) {
+    static int msg_debug = -1;
+    if (env_flag("LF2_MSG_DEBUG", &msg_debug)) {
         static long n;
         if (++n % 500 == 1) fprintf(stderr, "GetMessage call #%ld\n", n);
     }
@@ -783,7 +675,8 @@ static void h_DispatchMessageA(void)
     dump_mem_once();
     const uint32_t p = ARG(0);
     const uint32_t msg = LD32(p + 4);
-    if (getenv("LF2_MSG_DEBUG"))
+    static int msg_debug = -1;
+    if (env_flag("LF2_MSG_DEBUG", &msg_debug))
         fprintf(stderr, "dispatch msg=%04x wparam=%08x lparam=%08x wndproc=%08x\n", msg, LD32(p + 8), LD32(p + 12),
                 hw.wndproc);
     if (msg && hw.wndproc) {
@@ -815,96 +708,8 @@ static void h_DispatchMessageA(void)
  * Keys are held for 8 frames, matching the virtual pad, which is long enough for the game
  * to see a discrete press and short enough not to auto-repeat.
  */
-static int key_script_pressed(uint32_t vk)
-{
-    const char *script = getenv("LF2_KEY_SCRIPT");
-    if (!script) return 0;
-    const long frame = hostwin_frames();
-
-    int idx = 0;
-    for (const char *c = script; *c;) {
-        const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
-        const char *when = c;
-        if (*c == ':') {
-            c++;
-            when = c;
-        }
-        char buf[64];
-        while (*c && *c != ',' && *c != ' ') c++;
-        size_t n = (size_t)(c - when);
-        if (n >= sizeof buf) n = sizeof buf - 1;
-        memcpy(buf, when, n);
-        buf[n] = 0;
-        while (*c == ',' || *c == ' ') c++;
-
-        const int i = idx++;
-        script_seen(SCRIPT_KEYS, i);
-        int un = 0;
-        const long at = script_when(buf, &un);
-        if (un) continue; /* its screen has not appeared YET -- not never */
-        if (frame < at || frame >= at + KEY_SCRIPT_HOLD) continue;
-
-        /* Recorded for every item whose window this frame is in, not only the one being
-         * asked about: this is polled per-vk, and an item's own key being queried is a
-         * property of the caller's loop rather than of the script. */
-        script_fired(SCRIPT_KEYS, i);
-        if (key == vk) return 1;
-    }
-    return 0;
-}
-
-static int autokey_pressed(uint32_t vk)
-{
-    if (key_script_pressed(vk)) return 1;
-
-    const char *script = getenv("LF2_AUTOKEY");
-    if (!script) return 0;
-
-    /* With LF2_AUTOKEY_AFTER the clock starts when the game is first seen polling that
-     * key, not at process start -- so the script tracks the game's state instead of
-     * drifting with however long the data load happened to take. */
-    static uint64_t base_ms;
-    if (getenv("LF2_AUTOKEY_AFTER")) {
-        if (!rwatch_triggered()) return 0;
-        if (!base_ms) base_ms = SDL_GetTicks();
-    } else if (!base_ms) {
-        base_ms = SDL_GetTicks();
-    }
-    const char *s_env = getenv("LF2_AUTOKEY_START");
-    const char *e_env = getenv("LF2_AUTOKEY_EVERY");
-    const char *h_env = getenv("LF2_AUTOKEY_HOLD");
-    const uint64_t begin = s_env ? strtoull(s_env, NULL, 10) : 6000;
-    const uint64_t every = e_env ? strtoull(e_env, NULL, 10) : 1200;
-    const uint64_t hold = h_env ? strtoull(h_env, NULL, 10) : 150;
-
-    const uint64_t now = SDL_GetTicks() - base_ms;
-    if (now < begin) return 0;
-    const uint64_t elapsed = now - begin;
-    if (elapsed % every >= hold) return 0;
-
-    unsigned count = 0;
-    for (const char *c = script; *c;) {
-        (void)strtoul(c, (char **)&c, 16);
-        count++;
-        while (*c == ',' || *c == ' ') c++;
-    }
-    if (!count) return 0;
-
-    /* As with clicks, a menu path is one-way: cycling the list keeps navigating and
-     * overshoots the screen you were aiming for. LF2_AUTOKEY_ONCE plays it once. */
-    const unsigned step = (unsigned)(elapsed / every);
-    if (getenv("LF2_AUTOKEY_ONCE") && step >= count) return 0;
-    const unsigned want = step % count;
-    unsigned i = 0;
-    for (const char *c = script; *c;) {
-        const uint32_t key = (uint32_t)strtoul(c, (char **)&c, 16);
-        if (i == want) return key == vk;
-        i++;
-        while (*c == ',' || *c == ' ') c++;
-    }
-    return 0;
-}
-
+/* The parsers and per-poll state for this script live beside the timing model they share,
+ * in runtime/app/script.c (input_script_*); win32.c only polls them. */
 static uint32_t mouse_lparam(float wx, float wy)
 {
     /* Two steps, and they are in two different spaces.
@@ -994,7 +799,8 @@ static int port_owns_key(uint32_t vk) { return vk == 0x1B || rmlui_active(); }
 static void h_GetKeyState(void)
 {
     hostwin_pump();
-    if (getenv("LF2_KEY_DEBUG")) keydebug_note(ARG(0) & 0xff);
+    static int key_debug = -1;
+    if (env_flag("LF2_KEY_DEBUG", &key_debug)) keydebug_note(ARG(0) & 0xff);
     if (port_owns_key(ARG(0))) {
         ret_stdcall(1, 0);
         return;
@@ -1007,7 +813,7 @@ static void h_GetKeyState(void)
         ret_stdcall(1, mouse_right_down ? 0xFF80u : 0u);
         return;
     }
-    if (autokey_pressed(ARG(0)) || hostwin_injected_key(ARG(0))) {
+    if (input_script_key_down(ARG(0)) || hostwin_injected_key(ARG(0))) {
         ret_stdcall(1, 0xFF80u);
         return;
     }
