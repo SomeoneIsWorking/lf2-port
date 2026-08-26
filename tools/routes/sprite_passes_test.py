@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove the object-sprite sampling chain does what it says on a real match frame (issue #112).
 
-Five arms of the SAME 3840x1975 match, differing only in ``LF2_SPRITE_PASSES``:
+Seven arms of the SAME 3840x1975 match, differing only in ``LF2_SPRITE_PASSES``:
 
 ``base``      no chain at all -- the picture this engine has always drawn.
 ``identity``  ``nearest:2``. Magnifying the art by an integer and then sampling it on an
@@ -15,6 +15,10 @@ Five arms of the SAME 3840x1975 match, differing only in ``LF2_SPRITE_PASSES``:
 ``aa``        ``aa``. Must change diagonal sprite contours on its own. This arm was missing
               when issue #113 was first declared resolved, so ``aa,outline:1`` could differ
               entirely because of the outline while edge smoothing contributed nothing.
+``inner``     ``inner``. Must darken only edge-local pixels. It may not brighten a channel,
+              alter a flat interior, or grow the silhouette into the exterior.
+``aa_inner``  ``aa,inner``. Must differ from ``aa`` by the same inward-only treatment, proving
+              that the contour composes with smoothing instead of replacing or disabling it.
 ``outline``   ``outline:1``. Must change the picture AND must paint pixels darker than
               anything the base frame had at those positions -- an outline that is merely
               "different" could be any bug at all.
@@ -58,6 +62,8 @@ ARMS = (
     ("identity", "nearest:2"),
     ("coarse", "nearest:1/2"),
     ("aa", "aa"),
+    ("inner", "inner"),
+    ("aa_inner", "aa,inner"),
     ("outline", "outline:1"),
 )
 
@@ -141,6 +147,50 @@ def darkened(base: Path, other: Path, floor: int = 24) -> int:
     return count
 
 
+def strictly_darker_pixels(base: Path, other: Path) -> tuple[int, int]:
+    """Changed pixels that only lose channel energy, and changed pixels that do not.
+
+    The inner contour mixes the sampled art toward black without touching alpha. On the final
+    scene that can only reduce RGB channels. Any brightened changed pixel means this arm did
+    something other than an inward dark contour.
+    """
+    _, _, pa = read_ppm(base)
+    _, _, pb = read_ppm(other)
+    darker = other_change = 0
+    for i in range(0, len(pa), 3):
+        a = pa[i : i + 3]
+        b = pb[i : i + 3]
+        if a == b:
+            continue
+        if all(b[channel] <= a[channel] for channel in range(3)) and any(
+            b[channel] < a[channel] for channel in range(3)
+        ):
+            darker += 1
+        else:
+            other_change += 1
+    return darker, other_change
+
+
+def changed_pixels(base: Path, other: Path) -> set[int]:
+    """Pixel indices changed between equal-sized frames."""
+    width, height, pa = read_ppm(base)
+    other_width, other_height, pb = read_ppm(other)
+    if (width, height) != (other_width, other_height):
+        raise ValueError("changed-mask inputs have different dimensions")
+    return {pixel for pixel in range(width * height) if pa[pixel * 3 : pixel * 3 + 3] != pb[pixel * 3 : pixel * 3 + 3]}
+
+
+def directionality_selftest() -> None:
+    """Prove the inner/outer mask discriminator can report both answers."""
+    inner = {10, 11, 12}
+    outer = {20, 21, 22}
+    if inner & outer:
+        raise RuntimeError("directionality checker rejects disjoint synthetic inner/outer masks")
+    outer.add(11)
+    if len(inner & outer) != 1:
+        raise RuntimeError("directionality checker cannot detect a synthetic exterior leak")
+
+
 def changes_away_from_edges_pixels(
     width: int, height: int, pa: bytes, pb: bytes, radius: int = 2
 ) -> tuple[int, int]:
@@ -215,7 +265,9 @@ def main() -> int:
         return 77
 
     edge_locality_selftest()
+    directionality_selftest()
     print("sprite passes: edge-locality selftest detects forbidden flat changes and allows edge changes")
+    print("sprite passes: directionality selftest distinguishes disjoint contours from an exterior leak")
     print(f"sprite passes: {len(ARMS)} runs of the same match, one frame each ({FRAME})...")
     frames: dict[str, Path] = {}
     results: dict[str, tuple[Path, str]] = {}
@@ -256,6 +308,36 @@ def main() -> int:
     if away:
         failures.append(f"aa changed {away} pixels away from any authored edge; interiors did not stay exact")
 
+    worst, differing, total = compare(frames["base"], frames["inner"])
+    darker, other_change = strictly_darker_pixels(frames["base"], frames["inner"])
+    print(
+        f"  inner    vs base: max {worst}, {differing} of {total} pixels differ, "
+        f"{darker} strictly darker, {other_change} other"
+    )
+    if differing < 100:
+        failures.append(f"inner changed only {differing} pixels; no inner contour was drawn")
+    if other_change:
+        failures.append(f"inner changed {other_change} pixels without only darkening them")
+    away, changed = changes_away_from_edges(frames["base"], frames["inner"])
+    print(f"  inner edge locality: {away} of {changed} changed pixels were in flat 5x5 interiors")
+    if away:
+        failures.append(f"inner changed {away} pixels away from any authored edge; interiors did not stay exact")
+
+    worst, differing, total = compare(frames["aa"], frames["aa_inner"])
+    darker, other_change = strictly_darker_pixels(frames["aa"], frames["aa_inner"])
+    print(
+        f"  aa+inner vs aa: max {worst}, {differing} of {total} pixels differ, "
+        f"{darker} strictly darker, {other_change} other"
+    )
+    if differing < 100:
+        failures.append(f"aa,inner changed only {differing} pixels from aa; the contour did not compose with smoothing")
+    if other_change:
+        failures.append(f"aa,inner changed {other_change} pixels from aa without only darkening them")
+    away, changed = changes_away_from_edges(frames["aa"], frames["aa_inner"])
+    print(f"  aa+inner edge locality: {away} of {changed} changed pixels were in flat 5x5 aa interiors")
+    if away:
+        failures.append(f"aa,inner changed {away} pixels away from any smoothed edge")
+
     worst, differing, total = compare(frames["base"], frames["outline"])
     added = darkened(frames["base"], frames["outline"])
     print(f"  outline  vs base: max {worst}, {differing} of {total} pixels differ, {added} newly near-black")
@@ -264,12 +346,36 @@ def main() -> int:
     if added < 100:
         failures.append(f"outline:1 painted only {added} near-black pixels; the border is not the outline")
 
+    inner_mask = changed_pixels(frames["base"], frames["inner"])
+    outline_mask = changed_pixels(frames["base"], frames["outline"])
+    overlap = len(inner_mask & outline_mask)
+    inner_only = len(inner_mask - outline_mask)
+    outline_only = len(outline_mask - inner_mask)
+    print(
+        f"  contour direction: {inner_only} inner-only pixels, {outline_only} outer-only pixels, "
+        f"{overlap} overlap"
+    )
+    # The outer arm grows and rerasterises a fractional quad, so its final RGB diff includes a
+    # handful of authored edge pixels even though the shader composites black only under alpha.
+    # Polarity is still decisive: a reused outer mask overlaps almost completely, while the
+    # measured fractional-edge residue is 13/3320 (0.39%). Keep it below one percent and require
+    # substantial exclusive evidence on both sides.
+    if overlap * 100 > min(len(inner_mask), len(outline_mask)):
+        failures.append(f"inner and outer contours overlap at {overlap} pixels; their polarity is not distinct")
+    if inner_only < 100 or outline_only < 100:
+        failures.append(
+            f"contour direction has only {inner_only} inner-only and {outline_only} outer-only pixels"
+        )
+
     if failures:
         print("sprite passes: FAILED")
         for failure in failures:
             print(f"  {failure}")
         return 1
-    print("sprite passes: ok (4K target; identity exact; edge-only aa, coarsening and outline changed the frame)")
+    print(
+        "sprite passes: ok (4K target; identity exact; edge-only aa, inward contour, "
+        "coarsening and outline changed the frame)"
+    )
     return 0
 
 

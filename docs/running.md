@@ -2093,12 +2093,14 @@ regeneration refuses either missing tool rather than silently leaving one backen
   | `nearest:<factor>` | resample the art by that factor on its own pixel grid — `nearest:1/2` shows one texel of every two, `nearest:2` replaces each texel with a 2x2 block |
   | `linear:<factor>` | the same, resampled bilinearly. At most ONE per chain |
   | `nearest:auto` / `linear:auto` | factor = the quad's own round magnification, measured per draw |
-  | `aa` | sample the finished chain image bilinearly on the way to the screen: an edge becomes a ramp one chain pixel wide |
+  | `aa` | reconstruct diagonal, shallow and steep contours from an alpha-aware perceptual 3x3 neighbourhood, blending only across the inferred edge wedge |
+  | `inner` | paint a one-output-pixel black contour on the art side of the silhouette without changing alpha or growing the sprite |
   | `outline:<1..2>` | paint a black border that many chain pixels wide around the silhouette |
 
   A chain does **not** change how big a sprite is on screen; it changes the resolution of the
   picture sampled onto it. `nearest:1/2,nearest:2` is the chunky-pixel look; `nearest:auto,aa`
-  is integer supersampling; `outline:1` hides the staircase without softening anything.
+  is integer supersampling; `inner` masks the authored boundary texel from inside while
+  `outline:1` adds a separate exterior border.
   Factors are rationals with numerator and denominator up to 8, and a spec that does not parse
   is **refused by name on stderr** and leaves the chain empty rather than becoming a different
   chain. `runtime/video/spritefilter.h` owns the rules, `runtime/shaders/quad.frag` evaluates

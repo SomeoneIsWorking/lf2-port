@@ -193,6 +193,7 @@ static const char SETTINGS_RML[] = R"RML(
         <!-- PASS_ROWS -->
         <div class="setting-row" data-if="pass_count < {{pass_max}}"><span class="label">Add a pass</span><button class="setting-value" data-event-click="add_pass">ADD</button></div>
         <div class="setting-row"><span class="label">Edge smoothing</span><button class="setting-value" data-event-click="toggle_aa">{{aa ? 'ON' : 'OFF'}}</button></div>
+        <div class="setting-row"><span class="label">Inner contour</span><button class="setting-value" data-event-click="toggle_inner">{{inner ? 'ON' : 'OFF'}}</button></div>
         <div class="setting-row"><span class="label">Outline</span><button class="setting-value" data-event-click="cycle_outline">{{outline_name}}</button></div>
       </pane>
       <pane data-if="page == 'controls'">
@@ -308,6 +309,7 @@ static struct {
     int pass_count;
     int pass_max;
     bool aa;
+    bool inner;
     Rml::String page;
     Rml::String key_name[B_N];
     Rml::String pad_name[B_N];
@@ -321,6 +323,7 @@ static void refresh_sprite_rows(void)
     M.pass_count = M.chain.count;
     M.pass_max = SPRITE_PASS_MAX;
     M.aa = M.chain.smooth != 0;
+    M.inner = M.chain.inner != 0;
     for (int i = 0; i < SPRITE_PASS_MAX; i++) {
         char buf[16] = "";
         if (i < M.chain.count) spritechain_factor_label(&M.chain.pass[i], buf, sizeof buf);
@@ -332,6 +335,7 @@ static void refresh_sprite_rows(void)
     M.outline_name = M.chain.outline ? std::to_string(M.chain.outline) + " PX" : "OFF";
     data_model().DirtyVariable("pass_count");
     data_model().DirtyVariable("aa");
+    data_model().DirtyVariable("inner");
     data_model().DirtyVariable("outline_name");
 }
 
@@ -459,6 +463,7 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     ctor.Bind("pass_count", &M.pass_count);
     ctor.Bind("pass_max", &M.pass_max);
     ctor.Bind("aa", &M.aa);
+    ctor.Bind("inner", &M.inner);
     ctor.Bind("outline_name", &M.outline_name);
     for (int i = 0; i < SPRITE_PASS_MAX; i++) {
         ctor.Bind("pass_kind" + std::to_string(i), &M.pass_kind[i]);
@@ -529,6 +534,10 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     });
     ctor.BindEventCallback("toggle_aa", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
         M.chain.smooth = !M.chain.smooth;
+        refresh_sprite_rows();
+    });
+    ctor.BindEventCallback("toggle_inner", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        M.chain.inner = !M.chain.inner;
         refresh_sprite_rows();
     });
     ctor.BindEventCallback("cycle_outline", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {

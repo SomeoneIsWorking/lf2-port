@@ -70,12 +70,12 @@ int main(void)
 {
     /* ---- what parses, and what is refused BY NAME ---- */
     {
-        const SpriteChain c = parsed("nearest:1/2,nearest:2,aa,outline:1");
+        const SpriteChain c = parsed("nearest:1/2,nearest:2,aa,inner,outline:1");
         ok("chain keeps its passes in order", c.count == 2 && c.pass[0].den == 2 && c.pass[1].num == 2);
-        ok("chain reads the terminal steps", c.smooth == 1 && c.outline == 1);
+        ok("chain reads the terminal steps", c.smooth == 1 && c.inner == 1 && c.outline == 1);
         char buf[128] = "";
         spritechain_format(&c, buf, sizeof buf);
-        ok("chain round-trips through the config string", strcmp(buf, "nearest:1/2,nearest:2,aa,outline:1") == 0);
+        ok("chain round-trips through the config string", strcmp(buf, "nearest:1/2,nearest:2,aa,inner,outline:1") == 0);
     }
     {
         const SpriteChain c = parsed("linear:auto,aa");
@@ -110,7 +110,11 @@ int main(void)
         ok("exactly the cap is allowed", !refuses(fits));
     }
     ok("a second linear pass is refused", refuses("linear:2,linear:1/2"));
+    ok("inner refuses an argument", refuses("inner:2"));
     ok("an outline past the cap is refused", refuses("outline:9"));
+    ok("an empty outline thickness is refused", refuses("outline:"));
+    ok("junk after an outline thickness is refused", refuses("outline:1junk"));
+    ok("outline zero is refused instead of silently disabling itself", refuses("outline:0"));
     ok("one linear pass is allowed", !refuses("linear:2,nearest:1/2"));
 
     /* ---- when a quad carries the chain ---- */
@@ -126,6 +130,8 @@ int main(void)
         ok("a terminal step alone is enough to split", spritechain_needs_own_draw(&aa_only, 1, 0));
         const SpriteChain outline_only = parsed("outline:1");
         ok("an outline alone is enough to split", spritechain_needs_own_draw(&outline_only, 1, 0));
+        const SpriteChain inner_only = parsed("inner");
+        ok("an inner contour alone is enough to split", spritechain_needs_own_draw(&inner_only, 1, 0));
     }
 
     /* ---- the AUTO factor ---- */
@@ -139,6 +145,8 @@ int main(void)
     {
         const SpriteChain none = parsed("nearest:2");
         ok("no outline moves no geometry", near_eq(spritechain_margin_texels(&none, 2.0f), 0.0f));
+        const SpriteChain inner = parsed("inner");
+        ok("an inner contour does not grow the geometry", near_eq(spritechain_margin_texels(&inner, 2.0f), 0.0f));
         const SpriteChain up = parsed("nearest:2,outline:1");
         ok("a chain pixel is 1/F source texels", near_eq(spritechain_margin_texels(&up, 2.0f), 0.5f));
         const SpriteChain down = parsed("nearest:1/2,outline:2");
