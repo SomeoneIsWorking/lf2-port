@@ -2,7 +2,7 @@
  *
  * WHAT THIS IS. A fighter is magnified about twice at the window's resolution, and sampling
  * the art with NEAREST leaves every silhouette and interior colour edge staircased. The port
- * lets a player build an ordered CHAIN of resampling passes over the sprite art, plus two
+ * lets a player build an ordered CHAIN of resampling passes over the sprite art, plus three
  * terminal steps, and the engine evaluates the whole chain analytically in quad.frag:
  *
  *   scale passes   0..SPRITE_PASS_MAX of them, each a factor and a filter. `nearest:1/2`
@@ -14,6 +14,9 @@
  *   aa             edge smoothing: the staircase a diagonal was drawn as is recovered as the
  *                  line it implies and antialiased along it. Flat runs, straight edges and
  *                  single-pixel detail are untouched. See the rule below.
+ *   inner          a narrow translucent contour on the ART side of the silhouette. It masks
+ *                  the high-contrast boundary texel without changing alpha, growing the
+ *                  sprite, or darkening the rest of the picture.
  *   outline        a coloured border of N chain pixels drawn where the chain image is
  *                  transparent but a neighbour within N is not -- the silhouette itself,
  *                  which hides the staircase without softening the interior.
@@ -69,6 +72,7 @@ typedef struct {
     SpritePass pass[SPRITE_PASS_MAX];
     int count;
     int smooth;  /* terminal edge-only contour reconstruction */
+    int inner;   /* terminal narrow contour inside the authored silhouette */
     int outline; /* 0 = off, else thickness in chain pixels */
     float outline_rgb[3];
 } SpriteChain;
@@ -81,7 +85,8 @@ static inline void spritechain_clear(SpriteChain *c)
     c->outline_rgb[0] = c->outline_rgb[1] = c->outline_rgb[2] = 0.0f;
 }
 
-static inline int spritechain_active(const SpriteChain *c) { return c->count > 0 || c->smooth || c->outline; }
+static inline int spritechain_active(const SpriteChain *c)
+{ return c->count > 0 || c->smooth || c->inner || c->outline; }
 
 /* True when this quad must carry the per-draw sampling uniform (and so draw alone). Host tiles
  * are outline-font and SVG coverage, already rasterised at output scale and sampled linearly;
@@ -174,7 +179,7 @@ static inline float spritechain_margin_texels(const SpriteChain *c, float auto_f
 
 /* ---- the config string ------------------------------------------------------------------
  *
- * `nearest:1/2,nearest:2,aa,outline:1` -- passes in order, then the terminal steps. Empty (or
+ * `nearest:1/2,nearest:2,aa,inner,outline:1` -- passes in order, then the terminal steps. Empty (or
  * absent) is the original picture. A token that does not parse REFUSES the whole spec: a
  * sampling chain silently missing the pass a player asked for is worse than one that says so. */
 
@@ -232,9 +237,20 @@ static inline int spritechain_parse(const char *spec, SpriteChain *out, char *er
             c.smooth = 1;
             continue;
         }
+        if (strcmp(tok, "inner") == 0) {
+            if (arg) return spritechain_fail(err, errsz, "inner takes no argument", arg);
+            c.inner = 1;
+            continue;
+        }
         if (strcmp(tok, "outline") == 0) {
-            const long t = arg ? strtol(arg, NULL, 10) : 1;
-            if (t < 0 || t > SPRITE_OUTLINE_MAX) return spritechain_fail(err, errsz, "outline thickness", arg);
+            long t = 1;
+            if (arg) {
+                char *end = NULL;
+                t = strtol(arg, &end, 10);
+                if (end == arg || *end != '\0') return spritechain_fail(err, errsz, "outline thickness", arg);
+            }
+            if (t < 1 || t > SPRITE_OUTLINE_MAX)
+                return spritechain_fail(err, errsz, "outline thickness", arg ? arg : tok);
             c.outline = (int)t;
             continue;
         }
@@ -267,6 +283,7 @@ static inline void spritechain_format(const SpriteChain *c, char *buf, size_t n)
         used += (size_t)snprintf(buf + used, used < n ? n - used : 0, "%s%s", used ? "," : "", one);
     }
     if (c->smooth) used += (size_t)snprintf(buf + used, used < n ? n - used : 0, "%saa", used ? "," : "");
+    if (c->inner) used += (size_t)snprintf(buf + used, used < n ? n - used : 0, "%sinner", used ? "," : "");
     if (c->outline) (void)snprintf(buf + used, used < n ? n - used : 0, "%soutline:%d", used ? "," : "", c->outline);
 }
 

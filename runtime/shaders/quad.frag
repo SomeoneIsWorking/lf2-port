@@ -35,10 +35,12 @@
  * later magnification. And the recursion is why a LINEAR pass costs four taps of everything
  * before it -- the cap on how many a chain may hold lives in spritefilter.h with that sum.
  *
- * THE TWO TERMINAL STEPS. `aa` RECONSTRUCTS edges rather than resampling them: a perceptual
+ * THE THREE TERMINAL STEPS. `aa` RECONSTRUCTS edges rather than resampling them: a perceptual
  * 3x3 classifier follows shaded contours, infers diagonal/shallow/steep continuation, and
  * blends only inside the resulting edge wedge. Issue #113 is why no filter of the whole chain
- * image -- bilinear, or a box narrowed to a screen pixel -- can do this. `outline`
+ * image -- bilinear, or a box narrowed to a screen pixel -- can do this. `inner` darkens a
+ * sub-texel band on the art side of the authored silhouette without changing its alpha.
+ * `outline`
  * paints the fragments that are transparent but within N chain pixels of something opaque --
  * the silhouette the game itself drew, at whatever resolution the chain left it.
  *
@@ -66,7 +68,7 @@ layout(set = 3, binding = 0) uniform Flags
     vec4 f_rect;    /* authoritative source rect in sheet texels: xy origin, zw extent. */
     vec4 f_pass[8]; /* per pass: x scale factor (AUTO already resolved), y 0 nearest / 1 linear. */
     vec4 f_outline; /* the outline's colour and alpha. */
-    vec4 f_cut;     /* x: the index of the chain's LINEAR pass, or the pass count when it has none. */
+    vec4 f_cut;     /* x: LINEAR pass index (or count). y: inner contour enabled. */
 }
 f;
 
@@ -271,16 +273,64 @@ vec4 sample_chain(vec2 q, vec2 ramp)
  * that silhouette is not part of it, and tracing the blur would put the outline outside the
  * shape by however wide the blur happened to be. It also keeps the neighbourhood at one tap
  * per probe instead of sixteen. */
+bool authored_covered(vec2 q)
+{
+    return tap_source(nearest_run(q, 0, int(f.f_data.y))).a > 0.0;
+}
+
 bool outline_here(vec2 q, float width)
 {
     const int r = int(width);
-    const int passes = int(f.f_data.y);
     for (int dy = -r; dy <= r; dy++)
         for (int dx = -r; dx <= r; dx++) {
             if (dx == 0 && dy == 0) continue;
-            if (tap_source(nearest_run(q + vec2(float(dx), float(dy)), 0, passes)).a > 0.0) return true;
+            if (authored_covered(q + vec2(float(dx), float(dy)))) return true;
         }
     return false;
+}
+
+/* A soft morphological INNER boundary, issue #114. The authored alpha mask answers only
+ * whether each chain cell is art or empty. Within an art cell, distance to every empty
+ * neighbour's shared edge/corner gives a continuous band: unlike painting the whole boundary
+ * texel, this remains narrow at 4K and does not reproduce that texel's chunky silhouette.
+ *
+ * The width is exactly one output fragment: `footprint` is that fragment in chain pixels, so
+ * this stays little at 1080p and 4K instead of becoming a whole enlarged source texel. The
+ * INNER edge of the contour is antialiased over that same footprint. Alpha is never touched,
+ * so this operation cannot grow the sprite into the transparent exterior. */
+float inner_band(float distance, float footprint)
+{
+    const float width = max(footprint, 1e-6);
+    const float half_ramp = 0.5 * width;
+    return 1.0 - smoothstep(width - half_ramp, width + half_ramp, distance);
+}
+
+float inner_contour_coverage(vec2 q, vec2 ramp)
+{
+    const vec2 cell = floor(q) + 0.5;
+    if (!authored_covered(cell)) return 0.0;
+
+    const vec2 uv = q - floor(q);
+    float coverage = 0.0;
+    if (!authored_covered(cell + vec2(-1.0, 0.0)))
+        coverage = max(coverage, inner_band(uv.x, ramp.x));
+    if (!authored_covered(cell + vec2(1.0, 0.0)))
+        coverage = max(coverage, inner_band(1.0 - uv.x, ramp.x));
+    if (!authored_covered(cell + vec2(0.0, -1.0)))
+        coverage = max(coverage, inner_band(uv.y, ramp.y));
+    if (!authored_covered(cell + vec2(0.0, 1.0)))
+        coverage = max(coverage, inner_band(1.0 - uv.y, ramp.y));
+
+    const float diagonal_ramp = length(ramp);
+    if (!authored_covered(cell + vec2(-1.0, -1.0)))
+        coverage = max(coverage, inner_band(length(uv), diagonal_ramp));
+    if (!authored_covered(cell + vec2(1.0, -1.0)))
+        coverage = max(coverage, inner_band(length(vec2(1.0 - uv.x, uv.y)), diagonal_ramp));
+    if (!authored_covered(cell + vec2(-1.0, 1.0)))
+        coverage = max(coverage, inner_band(length(vec2(uv.x, 1.0 - uv.y)), diagonal_ramp));
+    if (!authored_covered(cell + vec2(1.0, 1.0)))
+        coverage = max(coverage, inner_band(length(vec2(1.0) - uv), diagonal_ramp));
+    return coverage;
 }
 
 void main()
@@ -292,7 +342,7 @@ void main()
 
     vec4 tex = vec4(1.0);
     if (f.f_data.x >= 0.5) {
-        if (f.f_data.y < 0.5 && f.f_data.z < 0.5 && f.f_data.w < 0.5) {
+        if (f.f_data.y < 0.5 && f.f_data.z < 0.5 && f.f_data.w < 0.5 && f.f_cut.y < 0.5) {
             tex = texture(u_src, v_uv); /* no chain: the one-tap path this engine always drew */
         } else {
             float factor = 1.0;
@@ -300,6 +350,10 @@ void main()
                 if (float(i) < f.f_data.y) factor *= f.f_pass[i].x;
             const vec2 q = (v_uv * sheet_size() - rect_origin()) * factor;
             tex = sample_chain(q, texel_step * factor);
+            if (f.f_cut.y > 0.5 && tex.a > 0.0) {
+                const float contour = inner_contour_coverage(q, texel_step * factor);
+                tex.rgb = mix(tex.rgb, f.f_outline.rgb, contour);
+            }
             /* THE OUTLINE GOES UNDER THE SPRITE, not only where the sprite is absent. On a
              * hard-edged chain the two are the same thing -- guest alpha is binary, so every
              * fragment is either opaque art or empty. But `aa` and a linear pass leave a band

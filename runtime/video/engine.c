@@ -646,6 +646,7 @@ static void sprite_uniform(const EngineQuad *q, float *flags)
     flags[outline_at + 2] = sprite_chain.outline_rgb[2];
     flags[outline_at + 3] = 1.0f;
     flags[outline_at + 4] = (float)spritechain_linear_cut(&sprite_chain);
+    flags[outline_at + 5] = (float)sprite_chain.inner;
 }
 
 static void emit(QuadVertex *v, const EngineQuad *q, float depth)
