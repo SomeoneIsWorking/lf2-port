@@ -898,6 +898,10 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
         q->keyed = e->keyed;
         q->key_lo = e->key_lo;
         q->key_hi = e->key_hi;
+        q->source_x = e->src.x;
+        q->source_y = e->src.y;
+        q->source_w = e->src.w;
+        q->source_h = e->src.h;
         /* LF2_TEXRECT_EDGE restores the old shared-boundary coordinates as a defect
          * injector. At 1x they often happen to select the right texel; magnification is the
          * discriminator, where it produces issue #67's green line and issue #68's adjacent

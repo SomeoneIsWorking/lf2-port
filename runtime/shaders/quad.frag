@@ -35,10 +35,10 @@
  * later magnification. And the recursion is why a LINEAR pass costs four taps of everything
  * before it -- the cap on how many a chain may hold lives in spritefilter.h with that sum.
  *
- * THE TWO TERMINAL STEPS. `aa` samples the chain image bilinearly on the way to the screen
- * instead of with floor(), so an edge becomes a ramp one chain pixel wide; with an empty chain
- * that is plain edge smoothing, and `nearest:auto` + `aa` is exactly integer supersampling
- * (magnify by N with nearest, sample back down bilinear) evaluated in closed form. `outline`
+ * THE TWO TERMINAL STEPS. `aa` RECONSTRUCTS edges rather than resampling them: a perceptual
+ * 3x3 classifier follows shaded contours, infers diagonal/shallow/steep continuation, and
+ * blends only inside the resulting edge wedge. Issue #113 is why no filter of the whole chain
+ * image -- bilinear, or a box narrowed to a screen pixel -- can do this. `outline`
  * paints the fragments that are transparent but within N chain pixels of something opaque --
  * the silhouette the game itself drew, at whatever resolution the chain left it.
  *
@@ -63,7 +63,7 @@ layout(set = 2, binding = 0) uniform sampler2D u_src;
 layout(set = 3, binding = 0) uniform Flags
 {
     vec4 f_data;    /* x: 1 with a texture. y: pass count. z: aa. w: outline width, chain px. */
-    vec4 f_rect;    /* the quad's own uv rect, xy min .. zw max. */
+    vec4 f_rect;    /* authoritative source rect in sheet texels: xy origin, zw extent. */
     vec4 f_pass[8]; /* per pass: x scale factor (AUTO already resolved), y 0 nearest / 1 linear. */
     vec4 f_outline; /* the outline's colour and alpha. */
     vec4 f_cut;     /* x: the index of the chain's LINEAR pass, or the pass count when it has none. */
@@ -72,15 +72,12 @@ f;
 
 layout(location = 0) out vec4 o_color;
 
-/* THE CHAIN WORKS IN WHOLE TEXELS OF THE SHEET, not in the rect's own fractions. The frame's
- * origin is rounded to a texel ONCE (`rect_origin`), and a coordinate is that origin plus an
- * index -- so with an identity chain the texel this picks is bit-for-bit the one the NEAREST
- * sampler picks on the one-tap path. Deriving the index from (v_uv - rect.xy) instead loses
- * that: the subtraction rounds, and a sprite whose frame does not start on a friendly
- * fraction of the sheet came out resampled by a texel here and there rather than untouched. */
+/* THE CHAIN WORKS IN WHOLE TEXELS OF THE SHEET, not in fractions reconstructed from UVs.
+ * Texel-centre endpoints span extent-1 and cannot recover the source bounds (issue #113), so
+ * the draw supplies the authoritative origin and extent directly. */
 vec2 sheet_size(void) { return vec2(textureSize(u_src, 0)); }
-vec2 rect_origin(void) { return floor(f.f_rect.xy * sheet_size() + 0.5); }
-vec2 rect_extent(void) { return floor((f.f_rect.zw - f.f_rect.xy) * sheet_size() + 0.5); }
+vec2 rect_origin(void) { return f.f_rect.xy; }
+vec2 rect_extent(void) { return f.f_rect.zw; }
 
 /* Level 0: the art itself, addressed in source texels from the quad's own frame. */
 vec4 tap_source(vec2 c)
@@ -141,13 +138,128 @@ vec4 eval_chain(vec2 c)
     return eval_linear0(nearest_run(c, min(cut + 1, passes), passes));
 }
 
-/* The chain image sampled onto the screen: floor() by default, bilinear under `aa`. */
-vec4 sample_chain(vec2 q)
+/* Alpha-aware perceptual distance. RGB is compared premultiplied so transparent colour-key
+ * residue cannot invent an edge. Luma is weighted more strongly than chroma; alpha is weighted
+ * like luma because the silhouette is a first-class contour. This is an original compact
+ * edge metric, not copied xBRZ code (xBRZ itself is GPL). */
+float colour_distance2(vec4 a, vec4 b)
+{
+    const vec4 d = vec4(a.rgb * a.a, a.a) - vec4(b.rgb * b.a, b.a);
+    const float y = dot(d.rgb, vec3(0.2627, 0.6780, 0.0593));
+    const float cb = 0.5 * (d.b - y);
+    const float cr = 0.5 * (d.r - y);
+    return 4.0 * y * y + cb * cb + cr * cr + 4.0 * d.a * d.a;
+}
+
+/* 1 for the same edge region, 0 for a clearly different one, with room for LF2's shaded
+ * outlines. Exact byte equality was issue #113's inert classifier: real contours change
+ * colour from texel to texel even when they continue in the same direction. */
+float alike(vec4 a, vec4 b)
+{
+    return 1.0 - smoothstep(0.0025, 0.0500, colour_distance2(a, b));
+}
+
+float alpha_alike(vec4 a, vec4 b)
+{
+    return 1.0 - smoothstep(0.05, 0.30, abs(a.a - b.a));
+}
+
+float silhouette_corner(vec4 E, vec4 side0, vec4 side1)
+{
+    return smoothstep(0.30, 0.70, abs(E.a - 0.5 * (side0.a + side1.a)));
+}
+
+float region_alike(vec4 a, vec4 b, float silhouette)
+{
+    return mix(alike(a, b), alpha_alike(a, b), silhouette);
+}
+
+vec4 premul_mix(vec4 a, vec4 b, float w)
+{
+    const vec4 pa = vec4(a.rgb * a.a, a.a), pb = vec4(b.rgb * b.a, b.a);
+    const vec4 m = mix(pa, pb, w);
+    return vec4(m.a > 0.0 ? m.rgb / m.a : vec3(0.0), m.a);
+}
+
+/* Strength of a reconstructed corner. The two outside neighbours must belong together and
+ * differ from E; E must continue on at least one inside axis, which preserves isolated
+ * one-pixel details. The diagonal support rejects coincidental colour pairs in noisy art. */
+float edge_strength(vec4 E, vec4 side0, vec4 side1, vec4 diagonal, vec4 inside0, vec4 inside1,
+                    float silhouette)
+{
+    const float outside_pair = region_alike(side0, side1, silhouette);
+    const float separation = 1.0 - max(region_alike(E, side0, silhouette), region_alike(E, side1, silhouette));
+    const float outside_run = max(region_alike(diagonal, side0, silhouette),
+                                  region_alike(diagonal, side1, silhouette));
+    const float inside_run = max(region_alike(E, inside0, silhouette), region_alike(E, inside1, silhouette));
+    return smoothstep(0.18, 0.62, outside_pair * separation * outside_run * inside_run);
+}
+
+/* Coverage of an edge wedge whose two intercepts are measured from one source-pixel corner.
+ * Continuation along an adjacent source texel extends an intercept from one half-cell toward
+ * a full cell, reconstructing shallow and steep runs instead of forcing every edge to 45°.
+ * `ramp` is one output fragment's footprint in chain pixels, so only the reconstructed line
+ * is antialiased; outside the wedge E is returned exactly. */
+float edge_coverage(vec2 uv, vec2 extent, vec2 ramp)
+{
+    const float signed_distance = 1.0 - uv.x / extent.x - uv.y / extent.y;
+    const float footprint = ramp.x / extent.x + ramp.y / extent.y;
+    return clamp(signed_distance / max(footprint, 1e-6) + 0.5, 0.0, 1.0);
+}
+
+/* Edge-only reconstruction over a 3x3 chain neighbourhood. It follows the xBRZ design goal
+ * (infer contour direction, preserve interiors) but not its GPL implementation: this rule and
+ * its perceptual thresholds are local to LF2. Every non-edge fragment returns E byte-exact. */
+vec4 sample_chain(vec2 q, vec2 ramp)
 {
     if (f.f_data.z < 0.5) return eval_chain(q);
-    const vec2 b = floor(q - 0.5), w = q - 0.5 - b;
-    return mix_four(eval_chain(b + 0.5), eval_chain(b + vec2(1.5, 0.5)), eval_chain(b + vec2(0.5, 1.5)),
-                    eval_chain(b + vec2(1.5, 1.5)), w);
+
+    const vec2 c = floor(q), uv = q - c;
+    const vec4 A = eval_chain(c + vec2(-0.5, -0.5));
+    const vec4 B = eval_chain(c + vec2(0.5, -0.5));
+    const vec4 C = eval_chain(c + vec2(1.5, -0.5));
+    const vec4 D = eval_chain(c + vec2(-0.5, 0.5));
+    const vec4 E = eval_chain(c + 0.5);
+    const vec4 F = eval_chain(c + vec2(1.5, 0.5));
+    const vec4 G = eval_chain(c + vec2(-0.5, 1.5));
+    const vec4 H = eval_chain(c + vec2(0.5, 1.5));
+    const vec4 I = eval_chain(c + vec2(1.5, 1.5));
+
+    const vec4 tl = premul_mix(B, D, 0.5);
+    const vec4 tr = premul_mix(B, F, 0.5);
+    const vec4 bl = premul_mix(D, H, 0.5);
+    const vec4 br = premul_mix(F, H, 0.5);
+
+    const float a_tl = silhouette_corner(E, B, D);
+    const float a_tr = silhouette_corner(E, B, F);
+    const float a_bl = silhouette_corner(E, D, H);
+    const float a_br = silhouette_corner(E, F, H);
+    const float s_tl = edge_strength(E, B, D, A, F, H, a_tl);
+    const float s_tr = edge_strength(E, B, F, C, D, H, a_tr);
+    const float s_bl = edge_strength(E, D, H, G, B, F, a_bl);
+    const float s_br = edge_strength(E, F, H, I, B, D, a_br);
+
+    const vec2 e_tl = vec2(mix(0.5, 0.9, region_alike(C, tl, a_tl)),
+                           mix(0.5, 0.9, region_alike(G, tl, a_tl)));
+    const vec2 e_tr = vec2(mix(0.5, 0.9, region_alike(A, tr, a_tr)),
+                           mix(0.5, 0.9, region_alike(I, tr, a_tr)));
+    const vec2 e_bl = vec2(mix(0.5, 0.9, region_alike(I, bl, a_bl)),
+                           mix(0.5, 0.9, region_alike(A, bl, a_bl)));
+    const vec2 e_br = vec2(mix(0.5, 0.9, region_alike(G, br, a_br)),
+                           mix(0.5, 0.9, region_alike(C, br, a_br)));
+
+    const float w_tl = s_tl * edge_coverage(uv, e_tl, ramp);
+    const float w_tr = s_tr * edge_coverage(vec2(1.0 - uv.x, uv.y), e_tr, ramp);
+    const float w_bl = s_bl * edge_coverage(vec2(uv.x, 1.0 - uv.y), e_bl, ramp);
+    const float w_br = s_br * edge_coverage(vec2(1.0) - uv, e_br, ramp);
+
+    const float w_sum = w_tl + w_tr + w_bl + w_br;
+    const float w_e = max(1.0 - w_sum, 0.0);
+    vec4 m = vec4(E.rgb * E.a, E.a) * w_e;
+    m += vec4(tl.rgb * tl.a, tl.a) * w_tl + vec4(tr.rgb * tr.a, tr.a) * w_tr;
+    m += vec4(bl.rgb * bl.a, bl.a) * w_bl + vec4(br.rgb * br.a, br.a) * w_br;
+    m /= max(w_e + w_sum, 1e-6);
+    return vec4(m.a > 0.0 ? m.rgb / m.a : vec3(0.0), m.a);
 }
 
 /* Is any chain pixel within `width` of q covered by ART? The square neighbourhood, not a ring:
@@ -173,6 +285,11 @@ bool outline_here(vec2 q, float width)
 
 void main()
 {
+    /* Unconditionally, before any branch: a screen pixel's footprint in source texels. The
+     * chain scales it by `factor` below. Derivatives are only defined in uniform control flow,
+     * and every fragment of the quad needs the same answer here. */
+    const vec2 texel_step = fwidth(v_uv) * sheet_size();
+
     vec4 tex = vec4(1.0);
     if (f.f_data.x >= 0.5) {
         if (f.f_data.y < 0.5 && f.f_data.z < 0.5 && f.f_data.w < 0.5) {
@@ -182,7 +299,7 @@ void main()
             for (int i = 0; i < 8; i++)
                 if (float(i) < f.f_data.y) factor *= f.f_pass[i].x;
             const vec2 q = (v_uv * sheet_size() - rect_origin()) * factor;
-            tex = sample_chain(q);
+            tex = sample_chain(q, texel_step * factor);
             /* THE OUTLINE GOES UNDER THE SPRITE, not only where the sprite is absent. On a
              * hard-edged chain the two are the same thing -- guest alpha is binary, so every
              * fragment is either opaque art or empty. But `aa` and a linear pass leave a band

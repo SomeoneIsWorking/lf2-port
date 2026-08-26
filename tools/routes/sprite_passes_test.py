@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove the object-sprite sampling chain does what it says on a real match frame (issue #112).
 
-Four arms of the SAME match, differing only in ``LF2_SPRITE_PASSES``:
+Five arms of the SAME 3840x1975 match, differing only in ``LF2_SPRITE_PASSES``:
 
 ``base``      no chain at all -- the picture this engine has always drawn.
 ``identity``  ``nearest:2``. Magnifying the art by an integer and then sampling it on an
@@ -12,6 +12,9 @@ Four arms of the SAME match, differing only in ``LF2_SPRITE_PASSES``:
               resampled one sprite of the two while leaving the other alone.
 ``coarse``    ``nearest:1/2``. Half the resolution must CHANGE the picture; a chain that
               silently did nothing would pass the identity arm and fail here.
+``aa``        ``aa``. Must change diagonal sprite contours on its own. This arm was missing
+              when issue #113 was first declared resolved, so ``aa,outline:1`` could differ
+              entirely because of the outline while edge smoothing contributed nothing.
 ``outline``   ``outline:1``. Must change the picture AND must paint pixels darker than
               anything the base frame had at those positions -- an outline that is merely
               "different" could be any bug at all.
@@ -54,6 +57,7 @@ ARMS = (
     ("base", ""),
     ("identity", "nearest:2"),
     ("coarse", "nearest:1/2"),
+    ("aa", "aa"),
     ("outline", "outline:1"),
 )
 
@@ -66,6 +70,9 @@ def arm_environment(case: Path, passes: str) -> dict[str, str]:
         LF2_CONFIG="",
         LF2_UNPACED="1",
         LF2_ENGINE="1",
+        LF2_WINDOW_SIZE="3840x1975",
+        LF2_ENGINE_DEBUG="1",
+        LF2_RENDER_DEBUG="1",
         # The lighting is off in every arm: this route is about SAMPLING, and shading the
         # frame as well would leave two reasons for a difference and no way to tell them apart.
         LF2_HD2D="off",
@@ -134,6 +141,69 @@ def darkened(base: Path, other: Path, floor: int = 24) -> int:
     return count
 
 
+def changes_away_from_edges_pixels(
+    width: int, height: int, pa: bytes, pb: bytes, radius: int = 2
+) -> tuple[int, int]:
+    changed = away = 0
+    for pixel in range(width * height):
+        offset = pixel * 3
+        colour = pa[offset : offset + 3]
+        if colour == pb[offset : offset + 3]:
+            continue
+        changed += 1
+        x, y = pixel % width, pixel // width
+        on_edge = False
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                if (dx == 0 and dy == 0) or not (0 <= x + dx < width and 0 <= y + dy < height):
+                    continue
+                neighbour = ((y + dy) * width + x + dx) * 3
+                if pa[neighbour : neighbour + 3] != colour:
+                    on_edge = True
+                    break
+            if on_edge:
+                break
+        if not on_edge:
+            away += 1
+    return away, changed
+
+
+def changes_away_from_edges(base: Path, other: Path, radius: int = 2) -> tuple[int, int]:
+    """Changed pixels whose local neighbourhood was flat in the unfiltered frame.
+
+    Edge reconstruction may touch silhouette or interior-colour contours, but it must not
+    alter a pixel farther than half one magnified source cell from an authored output colour
+    boundary. At the 3.591x route scale that bound is two output pixels. This persistent
+    negative is what the former whole-sprite bilinear implementation failed.
+    """
+    width, height, pa = read_ppm(base)
+    other_width, other_height, pb = read_ppm(other)
+    if (width, height) != (other_width, other_height):
+        raise ValueError("edge-locality inputs have different dimensions")
+    return changes_away_from_edges_pixels(width, height, pa, pb, radius)
+
+
+def edge_locality_selftest() -> None:
+    """Prove the locality instrument can report both the allowed and forbidden answers."""
+    width = height = 7
+    flat = bytes((40, 50, 60)) * (width * height)
+    changed_flat = bytearray(flat)
+    centre = (3 * width + 3) * 3
+    changed_flat[centre : centre + 3] = bytes((80, 90, 100))
+    if changes_away_from_edges_pixels(width, height, flat, bytes(changed_flat)) != (1, 1):
+        raise RuntimeError("edge-locality checker cannot detect a synthetic flat-interior change")
+
+    edged = bytearray(flat)
+    for y in range(height):
+        for x in range(4, width):
+            offset = (y * width + x) * 3
+            edged[offset : offset + 3] = bytes((140, 150, 160))
+    changed_edge = bytearray(edged)
+    changed_edge[centre : centre + 3] = bytes((80, 90, 100))
+    if changes_away_from_edges_pixels(width, height, bytes(edged), bytes(changed_edge)) != (0, 1):
+        raise RuntimeError("edge-locality checker rejects a synthetic change beside an authored edge")
+
+
 def main() -> int:
     build = (ROOT / os.environ.get("BUILD", "scratch/build-clang")).resolve()
     game = (ROOT / os.environ.get("GAME", "game")).resolve()
@@ -144,17 +214,28 @@ def main() -> int:
         print(f"SKIP: no game tree at {game}")
         return 77
 
+    edge_locality_selftest()
+    print("sprite passes: edge-locality selftest detects forbidden flat changes and allows edge changes")
     print(f"sprite passes: {len(ARMS)} runs of the same match, one frame each ({FRAME})...")
     frames: dict[str, Path] = {}
+    results: dict[str, tuple[Path, str]] = {}
     for name, passes in ARMS:
         result = run_arm(build, game, name, passes)
         if result is None:
             print(f"sprite passes: FAILED -- the {name} arm produced no frame to compare")
             return 1
+        results[name] = result
         frames[name] = result[0]
         print(f"  {name}: {frames[name].name}  chain={passes or '(none)'}")
 
     failures: list[str] = []
+
+    for name, (_, log_text) in results.items():
+        if "engine: render targets are 3840x1975 output pixels" not in log_text:
+            failures.append(f"{name}: the engine did not report a 3840x1975 render target")
+        width, height, _ = read_ppm(frames[name])
+        if (width, height) != (3840, 1975):
+            failures.append(f"{name}: capture is {width}x{height}, not 3840x1975")
 
     worst, differing, total = compare(frames["base"], frames["identity"])
     print(f"  identity vs base: max {worst}, {differing} of {total} pixels differ")
@@ -165,6 +246,15 @@ def main() -> int:
     print(f"  coarse   vs base: max {worst}, {differing} of {total} pixels differ")
     if differing < 200:
         failures.append(f"nearest:1/2 changed only {differing} pixels; halving the art did not happen")
+
+    worst, differing, total = compare(frames["base"], frames["aa"])
+    print(f"  aa       vs base: max {worst}, {differing} of {total} pixels differ")
+    if differing < 100:
+        failures.append(f"aa changed only {differing} pixels; diagonal edge reconstruction is inert")
+    away, changed = changes_away_from_edges(frames["base"], frames["aa"])
+    print(f"  aa edge locality: {away} of {changed} changed pixels were in flat 5x5 interiors")
+    if away:
+        failures.append(f"aa changed {away} pixels away from any authored edge; interiors did not stay exact")
 
     worst, differing, total = compare(frames["base"], frames["outline"])
     added = darkened(frames["base"], frames["outline"])
@@ -179,7 +269,7 @@ def main() -> int:
         for failure in failures:
             print(f"  {failure}")
         return 1
-    print("sprite passes: ok (identity byte-exact; coarsening and outline both changed the frame)")
+    print("sprite passes: ok (4K target; identity exact; edge-only aa, coarsening and outline changed the frame)")
     return 0
 
 

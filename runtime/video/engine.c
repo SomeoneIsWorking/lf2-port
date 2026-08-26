@@ -595,11 +595,7 @@ static void sprite_filter_begin_frame(void) { sprite_chain = *opt_sprite_chain()
 /* The AUTO factor of one quad: its magnification, which is the view's world scale measured
  * where it applies. Zero spans (a degenerate quad) fall back to 1 inside the helper. */
 static float quad_auto_factor(const EngineQuad *q)
-{
-    const float span_w = fabsf(q->u1 - q->u0) * (float)q->sw;
-    const float span_h = fabsf(q->v1 - q->v0) * (float)q->sh;
-    return spritechain_auto_factor(span_w, span_h, q->w, q->h);
-}
+{ return spritechain_auto_factor(q->source_w, q->source_h, q->w, q->h); }
 
 /* An outline lives OUTSIDE the art, so the quad that carries one has to be bigger than the
  * frame: the geometry and its uv both grow by the outline's width, converted from chain pixels
@@ -610,8 +606,8 @@ static void quad_grow_for_outline(EngineQuad *e)
 {
     const float m = spritechain_margin_texels(&sprite_chain, quad_auto_factor(e));
     if (m <= 0.0f || e->sw <= 0 || e->sh <= 0) return;
-    const float span_w = fabsf(e->u1 - e->u0) * (float)e->sw;
-    const float span_h = fabsf(e->v1 - e->v0) * (float)e->sh;
+    const float span_w = e->source_w;
+    const float span_h = e->source_h;
     if (span_w <= 0.0f || span_h <= 0.0f) return;
     const float ex = m * e->w / span_w, ey = m * e->h / span_h;
     const float du = m / (float)e->sw, dv = m / (float)e->sh;
@@ -624,6 +620,32 @@ static void quad_grow_for_outline(EngineQuad *e)
     e->u1 += su * du;
     e->v0 -= sv * dv;
     e->v1 += sv * dv;
+}
+
+/* The fragment uniform a filtered object sprite carries: the chain, the quad's authoritative
+ * source rectangle in sheet texels, and the outline. Integer source bounds are passed directly:
+ * texel-centre UV endpoints span extent-1 and cannot be inverted back into a rectangle. */
+static void sprite_uniform(const EngineQuad *q, float *flags)
+{
+    const float autof = quad_auto_factor(q);
+    flags[0] = 1.0f;
+    flags[1] = (float)sprite_chain.count;
+    flags[2] = (float)sprite_chain.smooth;
+    flags[3] = (float)sprite_chain.outline;
+    flags[4] = q->source_x;
+    flags[5] = q->source_y;
+    flags[6] = q->source_w;
+    flags[7] = q->source_h;
+    for (int p = 0; p < sprite_chain.count; p++) {
+        flags[QUAD_UNIFORM_PASS0 + p * 4] = spritechain_pass_factor(&sprite_chain.pass[p], autof);
+        flags[QUAD_UNIFORM_PASS0 + p * 4 + 1] = (float)sprite_chain.pass[p].kind;
+    }
+    const int outline_at = QUAD_UNIFORM_PASS0 + 4 * SPRITE_PASS_MAX;
+    flags[outline_at + 0] = sprite_chain.outline_rgb[0];
+    flags[outline_at + 1] = sprite_chain.outline_rgb[1];
+    flags[outline_at + 2] = sprite_chain.outline_rgb[2];
+    flags[outline_at + 3] = 1.0f;
+    flags[outline_at + 4] = (float)spritechain_linear_cut(&sprite_chain);
 }
 
 static void emit(QuadVertex *v, const EngineQuad *q, float depth)
@@ -674,7 +696,7 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
     QuadVertex *vp = (QuadVertex *)map;
     for (int i = 0; i < n; i++) {
         EngineQuad e = q[i];
-        if (spritechain_needs_own_draw(&sprite_chain, e.is_object, e.host_argb != NULL)) quad_grow_for_outline(&e);
+        if (spritechain_needs_own_draw(&sprite_chain, e.is_object, e.host_argb != NULL)) { quad_grow_for_outline(&e); }
         emit(vp + (size_t)i * 6, &e, painter_depth(i, n));
     }
     SDL_UnmapGPUTransferBuffer(DEV, vxfer);
@@ -833,32 +855,11 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
         if (bound_tex != tsb.texture) { bound_tex = tsb.texture; }
         SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
         /* The sampling uniform is per DRAW because the chain clamps its taps into the quad's
-         * own uv rect -- a sheet's frames butt edge to edge, so the rect cannot be batch-level
-         * state. Only object sprites carry a chain; everything else draws with an empty one and
-         * takes the shader's single-tap path, exactly as this engine has always sampled
-         * (issue #112). The rect is passed min-first: a mirrored fighter arrives with u0 > u1,
-         * and the shader addresses texels from the rect's origin. */
+         * authoritative source bounds -- a sheet's frames butt edge to edge, so those bounds
+         * cannot be batch-level state. Only object sprites carry a chain; everything else
+         * takes the shader's original single-tap path (issue #112). */
         float flags[QUAD_UNIFORM_FLOATS] = {t ? 1.0f : 0.0f};
-        if (own) {
-            const float autof = quad_auto_factor(&q[i]);
-            flags[1] = (float)sprite_chain.count;
-            flags[2] = (float)sprite_chain.smooth;
-            flags[3] = (float)sprite_chain.outline;
-            flags[4] = fminf(q[i].u0, q[i].u1);
-            flags[5] = fminf(q[i].v0, q[i].v1);
-            flags[6] = fmaxf(q[i].u0, q[i].u1);
-            flags[7] = fmaxf(q[i].v0, q[i].v1);
-            for (int p = 0; p < sprite_chain.count; p++) {
-                flags[QUAD_UNIFORM_PASS0 + p * 4] = spritechain_pass_factor(&sprite_chain.pass[p], autof);
-                flags[QUAD_UNIFORM_PASS0 + p * 4 + 1] = (float)sprite_chain.pass[p].kind;
-            }
-            const int outline_at = QUAD_UNIFORM_PASS0 + 4 * SPRITE_PASS_MAX;
-            flags[outline_at + 0] = sprite_chain.outline_rgb[0];
-            flags[outline_at + 1] = sprite_chain.outline_rgb[1];
-            flags[outline_at + 2] = sprite_chain.outline_rgb[2];
-            flags[outline_at + 3] = 1.0f;
-            flags[outline_at + 4] = (float)spritechain_linear_cut(&sprite_chain);
-        }
+        if (own) sprite_uniform(&q[i], flags);
         SDL_PushGPUVertexUniformData(cmd, 0, view, sizeof view);
         SDL_PushGPUFragmentUniformData(cmd, 0, flags, sizeof flags);
         SDL_DrawGPUPrimitives(pass, (Uint32)((j - i) * 6), 1, (Uint32)(i * 6), 0);

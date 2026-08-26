@@ -5,6 +5,8 @@ status: holds
 created: 2026-08-22
 tags:
 depends: runtime/video/render.c#engine_colour_pass, runtime/video/engine.c#engine_draw, runtime/video/engine.c#targets_make, runtime/overrides/geom.h#geom_compose_width, tools/routes/fullres_test.py#main
+reconfirmed: 2026-08-26
+verified_at: 2026-08-26 22:02:36
 ---
 
 ## Claim
@@ -18,3 +20,7 @@ runtime/video/render.c passes output placement/scale and drawable dimensions int
 ## What would falsify it
 
 an engine path submits scale 1/composition dimensions and enlarges the finished target, an uncapped wide drawable has an uncovered edge, the engine allocates a target other than the reported drawable size, or host font/SVG coverage is quantised to the composition grid
+
+## Re-confirmed 2026-08-26
+
+Reverified 2026-08-26 after sprite-AA/source-rectangle changes: tools/e2e.py fullres reported composition 1070x550 at scale 3.591 drawn into 3842x1975, engine target 3840x1975, exact 3840x1975 capture and zero black pixels in either outer column; tools/e2e.py sprite_passes independently required five 3840x1975 match captures; tools/e2e.py render kept engine/software within max channel diff 2.

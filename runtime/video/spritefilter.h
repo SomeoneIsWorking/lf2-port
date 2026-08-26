@@ -11,8 +11,9 @@
  *                  NOT change how big the sprite is on screen -- the quad is untouched -- it
  *                  changes the resolution of the picture that is sampled onto it, which is
  *                  what makes `nearest:1/2` read as chunky pixel art.
- *   aa             the final sample onto the screen is bilinear over the chain image rather
- *                  than nearest, so an edge becomes a ramp one chain pixel wide.
+ *   aa             edge smoothing: the staircase a diagonal was drawn as is recovered as the
+ *                  line it implies and antialiased along it. Flat runs, straight edges and
+ *                  single-pixel detail are untouched. See the rule below.
  *   outline        a coloured border of N chain pixels drawn where the chain image is
  *                  transparent but a neighbour within N is not -- the silhouette itself,
  *                  which hides the staircase without softening the interior.
@@ -24,8 +25,8 @@
  *
  * WHY THE CAPS ARE WHAT THEY ARE. quad.frag evaluates the chain per fragment with no
  * intermediate targets, so a LINEAR pass costs four taps of everything before it and `aa`
- * costs four of the whole chain: one linear pass is 4 taps, or 16 under aa; two would be 16
- * and 64. The cap is ONE, and the deciding cost is not the fragment but the artefact -- the
+ * reads a 3x3 neighbourhood of the whole chain: one linear pass is 4 taps, or 36 under aa;
+ * two would be 16 and 144. The cap is ONE, and the deciding cost is not only the fragment -- the
  * shader ships as committed SPIR-V and MSL, the optimiser inlines every tap site, and the
  * second linear pass was measured taking the SPIR-V from 39 KB to 174 KB. A chain still has
  * two places to smooth (one pass mid-chain, `aa` at the screen); it may not have three. A
@@ -67,7 +68,7 @@ typedef struct {
 typedef struct {
     SpritePass pass[SPRITE_PASS_MAX];
     int count;
-    int smooth;  /* the terminal bilinear sample onto the screen */
+    int smooth;  /* terminal edge-only contour reconstruction */
     int outline; /* 0 = off, else thickness in chain pixels */
     float outline_rgb[3];
 } SpriteChain;
@@ -86,9 +87,7 @@ static inline int spritechain_active(const SpriteChain *c) { return c->count > 0
  * are outline-font and SVG coverage, already rasterised at output scale and sampled linearly;
  * the chain is about guest pixel art. */
 static inline int spritechain_needs_own_draw(const SpriteChain *c, int is_object, int host_argb)
-{
-    return spritechain_active(c) && is_object && !host_argb;
-}
+{ return spritechain_active(c) && is_object && !host_argb; }
 
 /* What an AUTO factor resolves to for one quad: the round magnification of the quad's source
  * span onto its destination, which is the view's world scale measured where it applies. Never
@@ -126,6 +125,42 @@ static inline float spritechain_total_factor(const SpriteChain *c, float auto_fa
     float f = 1.0f;
     for (int i = 0; i < c->count; i++) f *= spritechain_pass_factor(&c->pass[i], auto_factor);
     return f > 0.0f ? f : 1.0f;
+}
+
+/* WHAT `aa` ACTUALLY DOES (issue #113): it RECONSTRUCTS edges, it does not resample.
+ *
+ * THE FIRST ATTEMPT AND WHY IT WAS WRONG. `aa` began as a plain bilinear of the chain image,
+ * which ramps from one chain pixel's centre to the next -- a whole cell wide, so at ~2x every
+ * pixel of a fighter sits in a gradient and the art is soft everywhere. Narrowing that ramp to
+ * one screen pixel fixed the softness and delivered NOTHING: a box filter of a step edge blends
+ * only when the step falls strictly inside a pixel, and at integer magnification texel
+ * boundaries land on pixel boundaries, so every weight came out 0 or 1 and `aa` was nearest.
+ *
+ * The reason no filter of the chain image can work: the staircase is not sampling error. It is
+ * in the ART, at the art's own resolution -- the pixel artist drew a diagonal as steps. Sampling
+ * it more cleverly reproduces the steps more cleanly. The staircase can only go away if the
+ * DIAGONAL THE STEPS IMPLY is recovered and drawn as a line.
+ *
+ * THE REPLACEMENT RULE. quad.frag reads a 3x3 neighbourhood. Its alpha-aware perceptual
+ * distance groups shaded pixels into one continuing edge region without requiring exact byte
+ * equality. For each corner, the two outside neighbours must agree and differ from E, the
+ * outside diagonal must continue them, and E must continue on an inside axis; that last guard
+ * preserves isolated one-pixel detail. Adjacent continuation extends one of the reconstructed
+ * line's intercepts, so shallow and steep runs are not forced into a 45-degree cut. Only the
+ * resulting wedge is blended; everywhere else returns E exactly.
+ *
+ * `spritechain_edge_coverage` is the pure geometry seam shared with the offline test. `u,v`
+ * are measured from the corner, `extent_u,v` are the reconstructed line's intercepts, and
+ * `ramp_u,v` are one output fragment's footprint in chain pixels. */
+static inline float spritechain_edge_coverage(float u, float v, float extent_u, float extent_v, float ramp_u,
+                                              float ramp_v)
+{
+    if (extent_u < 1e-6f) extent_u = 1e-6f;
+    if (extent_v < 1e-6f) extent_v = 1e-6f;
+    float footprint = ramp_u / extent_u + ramp_v / extent_v;
+    if (footprint < 1e-6f) footprint = 1e-6f;
+    const float t = (1.0f - u / extent_u - v / extent_v) / footprint + 0.5f;
+    return t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
 }
 
 /* How far a quad's geometry and uv must grow, in SOURCE TEXELS per side, for the outline to
@@ -203,7 +238,8 @@ static inline int spritechain_parse(const char *spec, SpriteChain *out, char *er
             c.outline = (int)t;
             continue;
         }
-        const int kind = strcmp(tok, "nearest") == 0 ? SPRITE_NEAREST : (strcmp(tok, "linear") == 0 ? SPRITE_LINEAR : -1);
+        const int kind =
+            strcmp(tok, "nearest") == 0 ? SPRITE_NEAREST : (strcmp(tok, "linear") == 0 ? SPRITE_LINEAR : -1);
         if (kind < 0) return spritechain_fail(err, errsz, "unknown sprite pass", tok);
         if (!arg) return spritechain_fail(err, errsz, "pass needs a factor", tok);
         if (c.count >= SPRITE_PASS_MAX) return spritechain_fail(err, errsz, "more passes than SPRITE_PASS_MAX", tok);
@@ -231,8 +267,7 @@ static inline void spritechain_format(const SpriteChain *c, char *buf, size_t n)
         used += (size_t)snprintf(buf + used, used < n ? n - used : 0, "%s%s", used ? "," : "", one);
     }
     if (c->smooth) used += (size_t)snprintf(buf + used, used < n ? n - used : 0, "%saa", used ? "," : "");
-    if (c->outline)
-        (void)snprintf(buf + used, used < n ? n - used : 0, "%soutline:%d", used ? "," : "", c->outline);
+    if (c->outline) (void)snprintf(buf + used, used < n ? n - used : 0, "%soutline:%d", used ? "," : "", c->outline);
 }
 
 /* ---- what the menu shows and how it edits -------------------------------------------------
@@ -241,9 +276,7 @@ static inline void spritechain_format(const SpriteChain *c, char *buf, size_t n)
  * coarsest reduction to the largest magnification with AUTO at the end, and it is here rather
  * than in settings_ui.cpp so the menu cannot drift from what parses. */
 static inline const char *spritechain_kind_label(const SpritePass *p)
-{
-    return p->kind == SPRITE_LINEAR ? "SMOOTH" : "PIXEL";
-}
+{ return p->kind == SPRITE_LINEAR ? "SMOOTH" : "PIXEL"; }
 
 static inline void spritechain_factor_label(const SpritePass *p, char *buf, size_t n)
 {

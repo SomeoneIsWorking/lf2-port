@@ -50,6 +50,9 @@ struct SDL_Texture;
 typedef struct {
     float x, y, w, h;     /* destination, output-target pixels */
     float u0, v0, u1, v1; /* source, 0..1; ignored when there is no texture */
+    /* The authoritative source rectangle in sheet texels. Filter taps use this instead of
+     * trying to reverse texel-centre UV endpoints, whose span is extent-1 by construction. */
+    float source_x, source_y, source_w, source_h;
     float depth;      /* 0 nearest .. 1 farthest -- the PAINTER ORDER, not a distance */
     float r, g, b, a; /* tint, or the colour when there is no texture */
     /* The source SHEET, as guest memory. The engine owns the upload and the cache, so both
