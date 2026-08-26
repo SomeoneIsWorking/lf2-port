@@ -184,27 +184,53 @@ int main(void)
         ok("magnifying after halving does not undo the halving", composed);
     }
 
-    /* ---- what `aa` degenerates to ----
-     * With `nearest:N` and aa, the four taps land on q-0.5 .. q+0.5 of the chain image. When
-     * the view's magnification IS N, consecutive fragments step q by exactly one, every tap
-     * falls inside one source cell, and the result is that cell's texel: supersampling at the
-     * matched factor must not blur. Walked over whole sprites' worth of dest pixels. */
-    for (int m = 2; m <= 4; m++) { /* from 2: `nearest:1` is not a pass, it is the empty chain */
-        char spec[32];
-        snprintf(spec, sizeof spec, "nearest:%d,aa", m);
-        const SpriteChain c = parsed(spec);
-        for (int k = 0; k < 24 * m; k++) {
-            const float p = ((float)k + 0.5f) / (float)m;
-            const float q = p * (float)m;
-            const int lo = chain_pick(&c, (q - 0.5f) / (float)m, 1.0f);
-            const int hi = chain_pick(&c, (q + 0.49f) / (float)m, 1.0f);
-            checks++;
-            if (lo != k / m || hi != k / m) {
-                printf("FAIL aa exactness m=%d dest-px=%d: taps %d..%d, want cell %d\n", m, k, lo, hi, k / m);
-                failures++;
-                if (failures > 8) return 1;
+    /* ---- the edge wedge `aa` reconstructs (issue #113) ---- */
+    {
+        ok("the 45-degree cut line is half covered",
+           near_eq(spritechain_edge_coverage(0.25f, 0.25f, 0.5f, 0.5f, 0.5f, 0.5f), 0.5f));
+        ok("the far side of the pixel is untouched",
+           near_eq(spritechain_edge_coverage(0.9f, 0.9f, 0.5f, 0.5f, 0.25f, 0.25f), 0.0f));
+        ok("the corner itself is fully covered",
+           near_eq(spritechain_edge_coverage(0.0f, 0.0f, 0.5f, 0.5f, 0.25f, 0.25f), 1.0f));
+        ok("a shallow continuation reaches farther along u",
+           spritechain_edge_coverage(0.6f, 0.1f, 0.9f, 0.5f, 0.25f, 0.25f) >
+               spritechain_edge_coverage(0.6f, 0.1f, 0.5f, 0.5f, 0.25f, 0.25f));
+        ok("a steep continuation reaches farther along v",
+           spritechain_edge_coverage(0.1f, 0.6f, 0.5f, 0.9f, 0.25f, 0.25f) >
+               spritechain_edge_coverage(0.1f, 0.6f, 0.5f, 0.5f, 0.25f, 0.25f));
+
+        const float corner = spritechain_edge_coverage(0.25f, 0.25f, 0.5f, 0.5f, 0.5f, 0.5f);
+        ok("at 2x the corner fragment is genuinely blended", corner > 0.2f && corner < 0.8f);
+        ok("at 2x the fragment across the cut is not",
+           near_eq(spritechain_edge_coverage(0.75f, 0.25f, 0.5f, 0.5f, 0.5f, 0.5f), 0.0f));
+
+        /* And at 4x, where a box filter degenerates just as badly, the cut still lands on real
+         * fragments. Measured: 2 of the 16 fragments in the pixel fall strictly inside the
+         * ramp band, the rest landing on its ends at exactly 0 or 1 -- which is what a one-
+         * pixel-wide line across a 4x4 grid of sample points looks like. */
+        int blended = 0;
+        for (int y = 0; y < 4; y++)
+            for (int x = 0; x < 4; x++) {
+                const float w = spritechain_edge_coverage(((float)x + 0.5f) / 4.0f, ((float)y + 0.5f) / 4.0f, 0.5f,
+                                                          0.5f, 0.25f, 0.25f);
+                if (w > 0.0f && w < 1.0f) blended++;
+            }
+        ok("at 4x the reconstructed line still crosses fragments", blended >= 2);
+
+        /* Monotone, bounded, and no NaN when a degenerate quad gives a zero footprint. */
+        int monotone = 1;
+        for (int r = 1; r <= 16; r++) {
+            float prev = 2.0f;
+            for (int k = 0; k <= 400; k++) {
+                const float w =
+                    spritechain_edge_coverage((float)k / 400.0f, 0.1f, 0.5f, 0.5f, (float)r / 16.0f, (float)r / 16.0f);
+                if (w > prev || w < 0.0f || w > 1.0f) monotone = 0;
+                prev = w;
             }
         }
+        ok("coverage falls monotonically away from the corner", monotone);
+        ok("a zero footprint is a hard cut, not a NaN",
+           near_eq(spritechain_edge_coverage(0.6f, 0.1f, 0.5f, 0.5f, 0.0f, 0.0f), 0.0f));
     }
 
     if (failures) {
