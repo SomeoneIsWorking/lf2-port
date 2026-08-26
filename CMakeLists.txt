@@ -264,6 +264,7 @@ add_test(NAME keyboard COMMAND test_keyboard)
 
 add_executable(test_function_keys tests/test_function_keys.c runtime/app/function_keys.c)
 target_include_directories(test_function_keys PRIVATE runtime/app runtime/video)
+target_link_libraries(test_function_keys PRIVATE SDL3::SDL3)
 target_compile_options(test_function_keys PRIVATE -Wall -Wextra)
 add_test(NAME function_keys COMMAND test_function_keys)
 
@@ -275,6 +276,7 @@ add_test(NAME lf2_log COMMAND test_lf2_log)
 
 add_executable(test_cheats tests/test_cheats.c runtime/overrides/cheats.c)
 target_include_directories(test_cheats PRIVATE runtime/cpu runtime/video runtime/app runtime/overrides)
+target_link_libraries(test_cheats PRIVATE SDL3::SDL3)
 target_compile_options(test_cheats PRIVATE -Wall -Wextra)
 add_test(NAME cheats COMMAND test_cheats)
 

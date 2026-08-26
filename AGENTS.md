@@ -157,6 +157,11 @@ memory/trace diff tools. The two a new user actually runs — `extract_game.py` 
 
 ## The active queue is `docs/issues/`, and it is the answer to "work on the active issues"
 
+The rules in this section apply only on systems where the issue-catalog tool exists and the
+commands below can run. If the tool is unavailable, do not imitate it by manually creating,
+editing, or resolving files in `docs/issues/`; continue with the user's requested work unless
+they explicitly ask to manage an issue file.
+
 ```sh
 python3 ~/.Codex/skills/issue-catalog/catalog.py list --tag reported --status open   # THE QUEUE
 python3 ~/.Codex/skills/issue-catalog/catalog.py list --status open                  # everything open
