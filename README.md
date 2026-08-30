@@ -12,6 +12,10 @@ auto-detect and hotswap, and borderless windowed mode.
 
 ## Screenshots
 
+![Android Stage Mode with on-screen touch controls](docs/screenshots/android-stage-mode-touch.png)
+
+*Stage Mode running natively on Android in widescreen with circular on-screen touch controls.*
+
 ![Native ultrawide Stage Mode PvE](docs/screenshots/stage-mode-pve-ultrawide.png)
 
 *Stage Mode PvE at 3440×1440: the ultrawide viewport exposes more of the stage while preserving

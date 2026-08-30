@@ -164,6 +164,7 @@ static void h_CreateWindowExA(void)
     if (hw.win_h <= 0 || hw.win_h > 8192) hw.win_h = 550;
     apply_initial_window_size();
 
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         abort();
@@ -501,9 +502,12 @@ void hostwin_pump(void)
          * surfaces, the presentation, the texture -- is in pixels. */
         if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) hostwin_window_geometry(e.window.data1, e.window.data2);
 
-        if (e.type == SDL_EVENT_MOUSE_MOTION)
+        if (e.type == SDL_EVENT_MOUSE_MOTION) {
+            if (e.motion.which == SDL_TOUCH_MOUSEID) continue;
             push_message(WM_MOUSEMOVE, (uint32_t)(mouse_left_down ? 1 : 0), mouse_lparam(e.motion.x, e.motion.y));
+        }
         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+            if (e.button.which == SDL_TOUCH_MOUSEID) continue;
             const int down = (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
             const uint32_t lp = mouse_lparam(e.button.x, e.button.y);
             if (e.button.button == SDL_BUTTON_LEFT) {

@@ -51,6 +51,44 @@ public final class Lf2Activity extends SDLActivity {
             Log.e(TAG, "Could not extract packaged stage geometry", exception);
         }
         super.onCreate(savedInstanceState);
+        hideSystemUI();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        hideSystemUI();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            hideSystemUI();
+        }
+    }
+
+    private void hideSystemUI() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            android.view.WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
+                controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+            );
+        }
+    }
+
+    public void finishApp(String unused) {
+        runOnUiThread(this::finishAndRemoveTask);
     }
 
     @Override
