@@ -27,4 +27,8 @@ using either location couples persistence to deployment and can fail without a v
 ## Resolution
 
 ### Resolution (2026-08-30)
-Moved lf2.cfg to the OS-owned per-user path through runtime/app/user_paths.c: XDG_CONFIG_HOME/lf2-port on Linux with HOME/.config fallback, SDL_GetPrefPath elsewhere, while preserving LF2_CONFIG as the explicit diagnostic override. Expanded config values to persist full paths including spaces and added cross-process XDG write/read tests.
+Moved `lf2.cfg` to the OS-owned per-user path: Lucent owns platform resolution (XDG on Linux,
+Application Support on macOS, AppData on Windows, and an Activity-supplied private root on Android),
+while `runtime/app/user_paths.c` composes the LF2 filename. `LF2_CONFIG` remains the explicit
+diagnostic override. Expanded config values to persist full paths including spaces and added
+cross-process XDG write/read tests.

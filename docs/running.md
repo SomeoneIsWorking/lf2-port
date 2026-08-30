@@ -489,10 +489,10 @@ modules. The context is drawable-sized and its `dp` scale comes from
 `SDL_GetWindowDisplayScale`, so FreeType rasterizes the 16dp body font at 32 pixels on a 2x
 display instead of enlarging a fixed 16px atlas. The settings — seven keyboard bindings, seven
 controller bindings, renderer, character lighting, and selected game tree — persist across runs in
-`lf2-port/lf2.cfg` below `$XDG_CONFIG_HOME` (or `~/.config` when XDG is unset). Other SDL platforms
-use the application preference directory. `LF2_CONFIG` remains the diagnostic override, and an
-empty value disables persistence for scripted runs (`runtime/app/config.c`,
-`runtime/app/user_paths.c`).
+`lf2-port/lf2.cfg` in Lucent's OS user-data directory: below `$XDG_CONFIG_HOME` (or `~/.config`) on
+Linux, Application Support on macOS, AppData on Windows, and an app-private directory supplied by a
+future Activity on Android. `LF2_CONFIG` remains the diagnostic override, and an empty value
+disables persistence for scripted runs (`runtime/app/config.c`, `runtime/app/user_paths.c`).
 
 The keyboard/gamepad headers and in-game device indicators are SVGs from the shared
 `port-assets` repository, embedded at build time rather than copied into this tree. The

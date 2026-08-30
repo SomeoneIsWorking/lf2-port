@@ -1,10 +1,8 @@
 #include "user_paths.h"
 
-#include <SDL3/SDL_filesystem.h>
-#include <SDL3/SDL_stdinc.h>
+#include <lucent/platform_c.h>
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 static int join_config_path(const char *directory, char *output, size_t capacity, char *error, size_t error_capacity)
@@ -25,38 +23,14 @@ int user_paths_config_file(char *output, size_t capacity, int create_directory, 
     output[0] = 0;
     error[0] = 0;
 
-#if defined(__linux__) && !defined(__ANDROID__)
-    char directory[4096];
-    const char *xdg = getenv("XDG_CONFIG_HOME");
-    if (xdg && xdg[0] == '/') {
-        if (snprintf(directory, sizeof directory, "%s/lf2-port", xdg) >= (int)sizeof directory) {
-            snprintf(error, error_capacity, "XDG_CONFIG_HOME is too long");
-            return 0;
-        }
-    } else {
-        const char *home = getenv("HOME");
-        if (!home || home[0] != '/') {
-            snprintf(error, error_capacity, "neither an absolute XDG_CONFIG_HOME nor HOME is available");
-            return 0;
-        }
-        if (snprintf(directory, sizeof directory, "%s/.config/lf2-port", home) >= (int)sizeof directory) {
-            snprintf(error, error_capacity, "HOME is too long");
-            return 0;
-        }
+    const char *directory = lucent_platform_user_data_directory("lf2-port");
+    if (!directory) {
+        snprintf(error, error_capacity, "cannot resolve the OS user-data directory for lf2-port");
+        return 0;
     }
-    if (create_directory && !SDL_CreateDirectory(directory)) {
-        snprintf(error, error_capacity, "cannot create %s: %s", directory, SDL_GetError());
+    if (create_directory && !lucent_platform_ensure_user_data_directory("lf2-port")) {
+        snprintf(error, error_capacity, "cannot create the OS user-data directory: %s", directory);
         return 0;
     }
     return join_config_path(directory, output, capacity, error, error_capacity);
-#else
-    char *directory = SDL_GetPrefPath("SomeoneIsWorking", "LF2 Port");
-    if (!directory) {
-        snprintf(error, error_capacity, "cannot resolve the application settings directory: %s", SDL_GetError());
-        return 0;
-    }
-    const int result = join_config_path(directory, output, capacity, error, error_capacity);
-    SDL_free(directory);
-    return result;
-#endif
 }
