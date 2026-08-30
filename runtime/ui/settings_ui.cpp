@@ -416,7 +416,10 @@ static void activate_focused(bool controller)
     g_dispatching_pad = false;
 }
 
-static void cancel_document() { pause_menu_close(); }
+static void cancel_document()
+{
+    pause_menu_close();
+}
 
 /* ---- the C API ---- */
 
@@ -599,7 +602,10 @@ void rmlui_shutdown(void)
     g_open_count = g_render_frames = 0;
 }
 
-int rmlui_active(void) { return g_lifecycle.active; }
+int rmlui_active(void)
+{
+    return g_lifecycle.active;
+}
 
 void rmlui_open(void)
 {
@@ -709,7 +715,9 @@ int rmlui_event(SDL_Event *e)
     /* Escape's physical state is the one toggle owned by pause_tick. Consume the SDL event,
      * but do not close here: closing during the pump and then edge-polling the same held key
      * would immediately reopen the document in the game update that follows. */
-    if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_ESCAPE) { return 1; }
+    if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_ESCAPE) {
+        return 1;
+    }
 
     if (rmlui_input_note_event(*e)) return 1;
 

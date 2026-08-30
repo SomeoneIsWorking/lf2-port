@@ -37,6 +37,15 @@ def refuse(message: str) -> None:
     raise SystemExit(f"appimage: {message}")
 
 
+def require_host_tools() -> None:
+    if shutil.which("file") is None:
+        refuse(
+            "missing required host tool: file\n"
+            "  Ubuntu/Debian: sudo apt install file\n"
+            "  Fedora: sudo dnf install file"
+        )
+
+
 def scoped_clean(path: Path) -> None:
     resolved = path.resolve()
     scratch = (ROOT / "scratch").resolve()
@@ -171,7 +180,7 @@ def build_appimage(appdir: Path, linuxdeploy: Path, appimagetool: Path,
     if platform.system() != "Linux":
         refuse("AppImage packaging is supported only on Linux")
     if platform.machine() not in {"x86_64", "AMD64"}:
-        refuse(f"the release workflow currently supports x86_64, not {platform.machine()}")
+        refuse(f"the AppImage release builder currently supports x86_64, not {platform.machine()}")
     linuxdeploy = verified_tool(linuxdeploy, LINUXDEPLOY_SHA256, "linuxdeploy")
     appimagetool = verified_tool(appimagetool, APPIMAGETOOL_SHA256, "appimagetool")
     runtime = verified_tool(runtime, APPIMAGE_RUNTIME_SHA256, "AppImage runtime")
@@ -232,6 +241,7 @@ def main() -> int:
     parser.add_argument("--stage-only", action="store_true")
     args = parser.parse_args()
 
+    require_host_tools()
     appdir = args.work_dir.resolve() / "LF2.AppDir"
     stage(args.build_dir.resolve(), appdir)
     if not args.stage_only:

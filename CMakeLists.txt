@@ -618,6 +618,21 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/re/insn_vectors.bin)
     set_tests_properties(instructions_replay PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+# RelWithDebInfo defines NDEBUG, but these executables use assert() as their test contract.
+# Keep assertions live for every current and future test_ target without changing the product's
+# release semantics. The option spelling is compiler-specific; the policy and target selection
+# remain one CMake-owned rule.
+get_property(LF2_DIRECTORY_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(LF2_TEST_TARGET IN LISTS LF2_DIRECTORY_TARGETS)
+    if(LF2_TEST_TARGET MATCHES "^test_")
+        if(MSVC)
+            target_compile_options(${LF2_TEST_TARGET} PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(${LF2_TEST_TARGET} PRIVATE -UNDEBUG)
+        endif()
+    endif()
+endforeach()
+
 # The SPIR-V and MSL in runtime/shaders/gen/ are committed, so the build needs no shader
 # compiler. The gate recompiles authoritative GLSL with glslc and translates that exact SPIR-V
 # with SDL_shadercross. Missing shadercross preserves the SPIR-V comparison before reporting the

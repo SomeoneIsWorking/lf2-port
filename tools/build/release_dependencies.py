@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build the pinned SDL release stack into a project-local prefix.
 
-Linux release jobs use an older distribution for glibc compatibility, where SDL3 packages are
-not available. This tool owns the exact upstream revisions and CMake feature set instead of
-duplicating that policy in workflow YAML.
+Linux releases use an older distribution for glibc compatibility, where SDL3 packages are not
+available. This tool owns the exact upstream revisions and CMake feature set for the manually
+invoked local release build.
 """
 
 from __future__ import annotations

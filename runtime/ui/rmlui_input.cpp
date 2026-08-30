@@ -32,9 +32,15 @@ struct ActionState {
 std::array<ActionState, B_N> actions;
 bool block_until_release = true;
 
-double now_seconds() { return static_cast<double>(SDL_GetTicksNS()) / 1'000'000'000.0; }
+double now_seconds()
+{
+    return static_cast<double>(SDL_GetTicksNS()) / 1'000'000'000.0;
+}
 
-bool repeatable(int action) { return action == B_UP || action == B_DOWN || action == B_LEFT || action == B_RIGHT; }
+bool repeatable(int action)
+{
+    return action == B_UP || action == B_DOWN || action == B_LEFT || action == B_RIGHT;
+}
 
 double repeat_interval(double held_for)
 {
@@ -131,7 +137,10 @@ void rmlui_input_reset()
     block_until_release = true;
 }
 
-void rmlui_input_block_until_release() { block_until_release = true; }
+void rmlui_input_block_until_release()
+{
+    block_until_release = true;
+}
 
 bool rmlui_input_note_event(const SDL_Event &event)
 {

@@ -27,6 +27,19 @@ def expect_refused(appdir: Path, needle: str) -> None:
 
 
 def main() -> int:
+    real_which = APPIMAGE.shutil.which
+    APPIMAGE.shutil.which = lambda _name: None
+    try:
+        try:
+            APPIMAGE.require_host_tools()
+        except SystemExit as error:
+            assert "sudo apt install file" in str(error)
+            assert "sudo dnf install file" in str(error)
+        else:
+            raise AssertionError("missing file utility was accepted")
+    finally:
+        APPIMAGE.shutil.which = real_which
+
     scratch = ROOT / "scratch" / "test-appimage-tool"
     if scratch.exists():
         shutil.rmtree(scratch)

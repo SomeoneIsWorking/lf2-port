@@ -63,9 +63,15 @@ static const char *translate_path(const char *guest_style)
     return resolve_host_path(path, sizeof path);
 }
 
-const char *host_path_of(uint32_t guest_string) { return translate_path((const char *)g_mem + guest_string); }
+const char *host_path_of(uint32_t guest_string)
+{
+    return translate_path((const char *)g_mem + guest_string);
+}
 
-const char *lf2_host_path(const char *guest_style) { return translate_path(guest_style); }
+const char *lf2_host_path(const char *guest_style)
+{
+    return translate_path(guest_style);
+}
 
 char *lf2_read_text(const char *host_path, size_t *length)
 {

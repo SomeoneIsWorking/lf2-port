@@ -432,7 +432,10 @@ void hostwin_inject_pointer(int x, int y, int down)
     push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
 }
 
-int hostwin_injected_key(uint32_t vk) { return vk < 256 && injected_keys[vk]; }
+int hostwin_injected_key(uint32_t vk)
+{
+    return vk < 256 && injected_keys[vk];
+}
 
 void hostwin_pump(void)
 {
@@ -794,7 +797,10 @@ static void keydebug_report(void)
  * belongs to that document and must read as released to the guest; otherwise a front-end menu
  * moves behind the modal UI. This is Dusklight's input-block ownership applied at LF2's
  * Win32 boundary. */
-static int port_owns_key(uint32_t vk) { return vk == 0x1B || rmlui_active(); }
+static int port_owns_key(uint32_t vk)
+{
+    return vk == 0x1B || rmlui_active();
+}
 
 static void h_GetKeyState(void)
 {
@@ -842,11 +848,23 @@ static void h_PostQuitMessage(void)
 
 /* The port asking the game to shut down, through the same path the game's own quit takes --
  * so teardown, the atexit reports and a clean exit status all still happen. */
-void hostwin_request_quit(void) { quit_posted = 1; }
-int hostwin_quit_requested(void) { return quit_posted; }
+void hostwin_request_quit(void)
+{
+    quit_posted = 1;
+}
+int hostwin_quit_requested(void)
+{
+    return quit_posted;
+}
 
-int hostwin_width(void) { return hw.width; }
-int hostwin_height(void) { return hw.height; }
+int hostwin_width(void)
+{
+    return hw.width;
+}
+int hostwin_height(void)
+{
+    return hw.height;
+}
 static void h_SetRect(void)
 {
     uint32_t r = ARG(0);
@@ -863,18 +881,39 @@ static void h_ClientToScreen(void)
     ret_stdcall(2, 1);
 }
 
-static void h_u1_1(void) { ret_stdcall(1, 1); }
-static void h_u1_2(void) { ret_stdcall(2, 1); }
-static void h_u1_3(void) { ret_stdcall(3, 1); }
-static void h_u1_6(void) { ret_stdcall(6, 1); }
-static void h_u1_4_defwnd(void) { ret_stdcall(4, 0); }
+static void h_u1_1(void)
+{
+    ret_stdcall(1, 1);
+}
+static void h_u1_2(void)
+{
+    ret_stdcall(2, 1);
+}
+static void h_u1_3(void)
+{
+    ret_stdcall(3, 1);
+}
+static void h_u1_6(void)
+{
+    ret_stdcall(6, 1);
+}
+static void h_u1_4_defwnd(void)
+{
+    ret_stdcall(4, 0);
+}
 
 /* ole32: the game only uses COM to reach DirectSound. */
 /* No file dialog. Reporting a cancelled dialog is a state the game already handles,
  * whereas aborting here takes the whole process down. */
-static void h_GetOpenFileNameA(void) { ret_stdcall(1, 0); }
+static void h_GetOpenFileNameA(void)
+{
+    ret_stdcall(1, 0);
+}
 
-static void h_CoInitialize(void) { ret_stdcall(1, 0); }
+static void h_CoInitialize(void)
+{
+    ret_stdcall(1, 0);
+}
 /* DirectShow (background music) is not implemented, so this reports failure.
  * A generic COM stub is NOT viable here: stdcall methods pop their own arguments and
  * the count varies per method, so a one-size handler corrupts the guest stack. The
