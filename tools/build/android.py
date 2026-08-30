@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import zipfile
@@ -23,6 +24,8 @@ ANDROID_API = 24
 NDK_VERSION = "28.2.13676358"
 FFMPEG_REPOSITORY = "https://github.com/FFmpeg/FFmpeg.git"
 FFMPEG_REVISION = "db69d06eeeab4f46da15030a80d539efb4503ca8"  # n7.1.1
+BZIP2_REPOSITORY = "https://sourceware.org/git/bzip2.git"
+BZIP2_REVISION = "6a8690fc8d26c815e798c588f796eabe9d684cf0"  # bzip2-1.0.8
 
 
 def refuse(message: str) -> None:
@@ -117,6 +120,13 @@ def release_signing(environment: Mapping[str, str] = os.environ) -> dict[str, st
     return values
 
 
+def android_version_name(environment: Mapping[str, str] = os.environ) -> str:
+    version = environment.get("LF2_ANDROID_VERSION_NAME", "0.1.0")
+    if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}", version):
+        refuse("LF2_ANDROID_VERSION_NAME must be a short filename-safe Android version")
+    return version
+
+
 def apksigner(sdk: Path) -> Path:
     candidates = sorted((sdk / "build-tools").glob("*/apksigner"), reverse=True)
     if not candidates:
@@ -159,6 +169,7 @@ def prepare_sources(work: Path) -> dict[str, Path]:
     ttf = result["SDL_ttf"]
     run(["git", "submodule", "update", "--init", "--depth", "1", "external/freetype"], cwd=ttf)
     result["ffmpeg"] = checkout(FFMPEG_REPOSITORY, FFMPEG_REVISION, sources / "ffmpeg")
+    result["bzip2"] = checkout(BZIP2_REPOSITORY, BZIP2_REVISION, sources / "bzip2")
     return result
 
 
@@ -184,6 +195,7 @@ def dependency_fingerprint() -> dict[str, object]:
         "ndk": NDK_VERSION,
         "dependencies": {dependency.name: dependency.revision for dependency in DEPENDENCIES},
         "ffmpeg": FFMPEG_REVISION,
+        "bzip2": BZIP2_REVISION,
         "ffmpeg_pic": True,
     }
 
@@ -234,15 +246,39 @@ def build_dependencies(work: Path, sources: dict[str, Path], sdk: Path) -> Path:
          "-DSDLTTF_VENDORED=OFF", "-DSDLTTF_SAMPLES=OFF", "-DSDLTTF_HARFBUZZ=OFF",
          "-DSDLTTF_PLUTOSVG=OFF"],
     )
+    build_bzip2(sources["bzip2"], builds / "bzip2", prefix, sdk)
     build_ffmpeg(sources["ffmpeg"], builds / "ffmpeg", prefix, sdk)
     marker.write_text(json.dumps(fingerprint, indent=2, sort_keys=True) + "\n")
     return prefix
 
 
-def build_ffmpeg(source: Path, build: Path, prefix: Path, sdk: Path) -> None:
+def android_llvm_tools(sdk: Path) -> Path:
     ndk = sdk / "ndk" / NDK_VERSION
     host = "linux-x86_64" if platform.system() == "Linux" else "darwin-x86_64"
-    tools = ndk / "toolchains" / "llvm" / "prebuilt" / host / "bin"
+    return ndk / "toolchains" / "llvm" / "prebuilt" / host / "bin"
+
+
+def build_bzip2(source: Path, build: Path, prefix: Path, sdk: Path) -> None:
+    tools = android_llvm_tools(sdk)
+    compiler = tools / f"aarch64-linux-android{ANDROID_API}-clang"
+    if not compiler.exists():
+        refuse(f"NDK compiler is missing: {compiler}")
+    build.mkdir(parents=True)
+    objects: list[Path] = []
+    for name in ("blocksort", "huffman", "crctable", "randtable", "compress", "decompress", "bzlib"):
+        output = build / f"{name}.o"
+        run([
+            str(compiler), "-O2", "-fPIC", "-D_FILE_OFFSET_BITS=64", "-I", str(source),
+            "-c", str(source / f"{name}.c"), "-o", str(output),
+        ])
+        objects.append(output)
+    library = prefix / "lib" / "libbz2.a"
+    run([str(tools / "llvm-ar"), "rcs", str(library), *(str(path) for path in objects)])
+    shutil.copy2(source / "bzlib.h", prefix / "include" / "bzlib.h")
+
+
+def build_ffmpeg(source: Path, build: Path, prefix: Path, sdk: Path) -> None:
+    tools = android_llvm_tools(sdk)
     compiler = tools / f"aarch64-linux-android{ANDROID_API}-clang"
     if not compiler.exists():
         refuse(f"NDK compiler is missing: {compiler}")
@@ -290,6 +326,8 @@ def build_native(work: Path, prefix: Path, generated: Path, sdk: Path) -> Path:
         f"-DFREETYPE_LIBRARY={prefix / 'lib' / 'libfreetype.a'}",
         f"-DFREETYPE_INCLUDE_DIR_ft2build={prefix / 'include' / 'freetype2'}",
         f"-DFREETYPE_INCLUDE_DIR_freetype2={prefix / 'include' / 'freetype2'}",
+        f"-DBZIP2_INCLUDE_DIR={prefix / 'include'}",
+        f"-DBZIP2_LIBRARY_RELEASE={prefix / 'lib' / 'libbz2.a'}",
         f"-DLF2_RECOMP_SOURCE={generated}", f"-DLF2_FFMPEG_ROOT={prefix}",
     ])
     run(["cmake", "--build", str(build), "--target", "lf2", "--parallel", str(os.cpu_count() or 1)])
@@ -373,7 +411,8 @@ def build_apk(project: Path, sdk: Path, java: Path, signing: Mapping[str, str] |
     if len(candidates) != 1:
         refuse(f"expected one {kind} APK, found {len(candidates)}")
     inspect_apk(candidates[0])
-    output = ROOT / "scratch" / "releases" / f"LF2-Port-0.1.0-android-arm64-{kind}.apk"
+    version = android_version_name(environment)
+    output = ROOT / "scratch" / "releases" / f"LF2-Port-{version}-android-arm64-{kind}.apk"
     output.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(candidates[0], output)
     if release:

@@ -98,7 +98,7 @@ game's four monolithic functions (28/20/18/15 KB — main loop, character state 
 | `runtime/video/` | `ddraw.c` (DirectDraw → SDL3), `host_frame.c` (completed-frame presentation, diagnostics, pacing and SDL teardown), `render.c`, `engine.c` + `engine_textures.c` (native rendering and its frame-safe texture cache), `hd2d.c` (lighting), `hostwin.h` |
 | `runtime/audio/` | `dsound.c` + `mixer.c` |
 | `runtime/input/` | device state and persistent action bindings — `gamepad.c/.h`, `keyboard.c/.h`, `bindings.c/.h` |
-| `runtime/app/` | the port's own shell — `main.c` composes startup; `game_data.c` validates the player-owned game tree; `game_selection.cpp` resolves direct and nested-ZIP selections through Lucent; `port_resources.c` resolves packaged host assets; `user_paths.c` composes the LF2 settings filename below Lucent's platform user-data directory; `pause.c`, `script.c` (scripted input), `loadprof.c` |
+| `runtime/app/` | the port's own shell — `main.c` composes startup; `game_data.c` validates the player-owned game tree; `game_selection.cpp` coordinates direct, nested-ZIP, and original-installer selections; `installer_extract.cpp` owns the bounded title-specific installer decoder while Lucent owns ZIP extraction; `port_resources.c` resolves packaged host assets; `user_paths.c` composes the LF2 settings filename below Lucent's platform user-data directory; `pause.c`, `script.c` (scripted input), `loadprof.c` |
 | `runtime/log/` | the narrow C/stdio-to-Lucent bridge; Lucent owns timestamps, channels, sinks, and serialization |
 | `runtime/overrides/` | see below |
 | `tests/` | the unit tests, which are programs rather than runtime code |

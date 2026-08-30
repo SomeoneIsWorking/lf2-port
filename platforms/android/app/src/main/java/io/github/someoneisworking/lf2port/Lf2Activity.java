@@ -183,12 +183,22 @@ public final class Lf2Activity extends SDLActivity {
                     .show());
             return;
         }
-        if (!lowerName.endsWith(".zip")) {
-            finishSelection(null, "Choose lf2.exe or a ZIP containing one complete LF2 v2.0a tree.");
+        String privateName;
+        String description;
+        if (lowerName.endsWith(".zip")) {
+            privateName = "game.zip";
+            description = "ZIP";
+        } else if (lowerName.endsWith(".exe")) {
+            privateName = "installer.exe";
+            description = "LF2 installer";
+        } else {
+            finishSelection(null, "Choose the original LF2 v2.0a installer, lf2.exe, or a ZIP containing "
+                    + "one complete LF2 tree.");
             return;
         }
         Toast.makeText(this, R.string.importing_game_files, Toast.LENGTH_LONG).show();
-        Thread worker = new Thread(() -> importGameArchive(source), "lf2-archive-import");
+        Thread worker = new Thread(
+                () -> importGameFile(source, privateName, description), "lf2-file-import");
         worker.start();
     }
 
@@ -202,20 +212,20 @@ public final class Lf2Activity extends SDLActivity {
         return source.getLastPathSegment();
     }
 
-    private void importGameArchive(Uri source) {
+    private void importGameFile(Uri source, String privateName, String description) {
         File staging = new File(getFilesDir(), IMPORT_PREFIX + System.nanoTime());
         try {
             if (!staging.mkdir()) {
                 throw new IOException("Cannot create private import directory " + staging);
             }
-            File archive = new File(staging, "game.zip");
+            File selectedFile = new File(staging, privateName);
             ImportBudget budget = new ImportBudget();
             budget.addFile(-1);
-            copyFile(source, archive, budget);
-            finishSelection(archive.getAbsolutePath(), null);
+            copyFile(source, selectedFile, budget);
+            finishSelection(selectedFile.getAbsolutePath(), null);
         } catch (IOException | SecurityException | IllegalArgumentException exception) {
             deleteRecursively(staging);
-            finishSelection(null, "Could not copy that ZIP into private app storage: "
+            finishSelection(null, "Could not copy that " + description + " into private app storage: "
                     + exception.getMessage());
         }
     }
@@ -334,6 +344,7 @@ public final class Lf2Activity extends SDLActivity {
         if (movedPrevious && !deleteRecursively(previous)) {
             Log.w(TAG, "Validated import succeeded, but stale backup remains at " + previous);
         }
+        cleanStaleImports();
         return game.getAbsolutePath();
     }
 

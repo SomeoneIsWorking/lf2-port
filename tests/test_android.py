@@ -38,6 +38,12 @@ def main() -> int:
     assert ANDROID.supported_java_major(25)
     assert ANDROID.supported_java_major(26)
     assert not ANDROID.supported_java_major(27)
+    assert ANDROID.android_version_name({}) == "0.1.0"
+    assert ANDROID.android_version_name({"LF2_ANDROID_VERSION_NAME": "0.1.3"}) == "0.1.3"
+    expect_refused(
+        lambda: ANDROID.android_version_name({"LF2_ANDROID_VERSION_NAME": "../release"}),
+        "filename-safe",
+    )
 
     wrapper = ROOT / "platforms" / "android" / "gradle-wrapper.properties"
     wrapper_text = wrapper.read_text()

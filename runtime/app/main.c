@@ -53,7 +53,8 @@ static int prepare_game_data(int argc, char **argv, GameData *game)
 
     if (force_selection) {
         snprintf(game->error, sizeof game->error,
-                 "Choose lf2.exe inside the complete extracted Little Fighter 2 v2.0a tree.\n\n"
+                 "Choose the original LF2 v2.0a installer, lf2.exe inside its complete tree, or a ZIP of that "
+                 "tree.\n\n"
                  "The selected tree will replace the saved game-file location.");
     }
 
@@ -62,7 +63,11 @@ static int prepare_game_data(int argc, char **argv, GameData *game)
         char executable[GAME_DATA_PATH_CAPACITY];
         const SetupUiResult choice = setup_ui_choose_game(game->error, selection, sizeof selection);
         if (choice != SETUP_UI_SELECTED) return 0;
+#ifdef __ANDROID__
+        if (!game_selection_resolve_staged(selection, executable, sizeof executable, game->error, sizeof game->error))
+#else
         if (!game_selection_resolve(selection, executable, sizeof executable, game->error, sizeof game->error))
+#endif
             continue;
         if (!game_data_validate_executable(executable, game)) continue;
 #ifdef __ANDROID__

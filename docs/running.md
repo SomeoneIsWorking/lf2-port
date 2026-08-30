@@ -21,10 +21,12 @@ maintainer runs.
 
 The release artifact contains the native port and redistributable host resources, never the
 original installer, `lf2.exe`, or extracted assets. A desktop launch with no configured game tree
-shows an SDL setup dialog and native file picker. Select the exact `lf2.exe` in a complete extracted
-LF2 v2.0a tree, or a ZIP containing exactly one `lf2.exe` at any folder depth. The port validates its
-size and CRC32 plus every path named by `data/data.txt`, stores the accepted tree in the per-user
-configuration, and changes into that directory before loading the guest.
+shows an SDL setup dialog and native file picker. Select the original `LF2_v2.0a.exe` installer
+directly, the exact `lf2.exe` in a complete extracted LF2 v2.0a tree, or a ZIP containing exactly one
+`lf2.exe` at any folder depth. The port validates the executable size and CRC32 plus every path named
+by `data/data.txt`, stores the accepted tree in the per-user configuration, and changes into that
+directory before loading the guest. Installer and ZIP imports are bounded and prepared separately;
+a failed replacement preserves the previous valid import.
 
 A complete `game/` tree beside the outer AppImage is discovered automatically through `$APPIMAGE`;
 `SDL_GetBasePath()` is intentionally not used because it points inside the temporary AppImage
@@ -46,7 +48,7 @@ finished AppImage, and repeats the content gate against the artifact itself. The
 `scratch/release/LF2-Port-x86_64.AppImage` is gitignored; generated source and package output are
 never committed, and there is no GitHub Actions release workflow.
 
-Android is not a release target yet. The ARM64 SDL Activity, private folder/ZIP import, authored
+Android is not a verified release target yet. The ARM64 SDL Activity, private installer/folder/ZIP import, authored
 multi-touch layer, in-process WMA decoder, and signed-build refusal are implemented. Release still
 requires a supported JDK, a real signing identity, installed-device setup/touch/audio/lifecycle
 acceptance, and a named-device sustained performance matrix; the desktop AppImage and native-link
@@ -60,7 +62,7 @@ The renderer now ships generated MSL as well; issue #100 remains open until a re
 proves the new Metal pipelines and visible shadows.
 
 ```sh
-brew install cmake sdl3 sdl3_image sdl3_ttf uv
+brew install cmake sdl3 sdl3_image sdl3_ttf bzip2 uv
 ./run.sh
 ```
 

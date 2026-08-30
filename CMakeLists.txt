@@ -126,6 +126,7 @@ set(LF2_RUNTIME_SOURCES
     runtime/win32/gdi.c
     runtime/app/loadprof.c
     runtime/app/game_selection.cpp
+    runtime/app/installer_extract.cpp
     runtime/app/port_resources.c
     runtime/log/lf2_log.cpp
     runtime/app/pause.c
@@ -231,7 +232,7 @@ set_source_files_properties(
     runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c runtime/win32/paths.c
     runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/host_frame.c runtime/video/result_panel.c runtime/video/stage_banner.c
     runtime/audio/dsound.c ${LF2_MUSIC_DECODER} runtime/win32/dshow.c
-    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/game_selection.cpp runtime/app/port_resources.c runtime/app/pause.c runtime/app/function_keys.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/input/touch_input.cpp runtime/app/script.c
+    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/game_selection.cpp runtime/app/installer_extract.cpp runtime/app/port_resources.c runtime/app/pause.c runtime/app/function_keys.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/input/touch_input.cpp runtime/app/script.c
     runtime/log/lf2_log.cpp runtime/ui/rmlui_system.cpp
     runtime/app/options.c
     runtime/app/config.c
@@ -286,7 +287,10 @@ endif()
 # gcc folds most of <math.h> inline and then does not, so this is linked explicitly rather
 # than relied on to keep being unnecessary.
 find_library(LF2_M m)
-target_link_libraries(lf2 PRIVATE SDL3::SDL3 lucent::lucent lucent::zip $<$<BOOL:${LF2_M}>:${LF2_M}>)
+find_package(ZLIB REQUIRED)
+find_package(BZip2 REQUIRED)
+target_link_libraries(lf2 PRIVATE SDL3::SDL3 lucent::lucent lucent::zip ZLIB::ZLIB BZip2::BZip2
+                                  $<$<BOOL:${LF2_M}>:${LF2_M}>)
 
 if(ANDROID)
     if(NOT LF2_FFMPEG_ROOT)
@@ -536,9 +540,9 @@ target_compile_options(test_touch_layout PRIVATE -Wall -Wextra)
 add_test(NAME touch_layout COMMAND test_touch_layout)
 
 add_executable(test_game_selection tests/test_game_selection.cpp
-               runtime/app/game_selection.cpp runtime/app/game_data.c)
+               runtime/app/game_selection.cpp runtime/app/installer_extract.cpp runtime/app/game_data.c)
 target_include_directories(test_game_selection PRIVATE runtime/app)
-target_link_libraries(test_game_selection PRIVATE lucent::lucent lucent::zip)
+target_link_libraries(test_game_selection PRIVATE lucent::lucent lucent::zip ZLIB::ZLIB BZip2::BZip2)
 target_compile_definitions(test_game_selection PRIVATE
     LF2_EXPECTED_EXE_SIZE=7 LF2_EXPECTED_EXE_CRC32=0x05e540eeu)
 target_compile_options(test_game_selection PRIVATE -Wall -Wextra)
