@@ -3,6 +3,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum { GAME_DATA_PATH_CAPACITY = 4096, GAME_DATA_ERROR_CAPACITY = 1024 };
 
 typedef struct GameData {
@@ -23,5 +27,9 @@ int game_data_discover(const char *explicit_executable, const char *configured_r
 /* Enter the validated game root. Guest files are Windows-relative paths, so this
  * working-directory boundary remains part of the guest ABI. */
 int game_data_activate(GameData *data);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

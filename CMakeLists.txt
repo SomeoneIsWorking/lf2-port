@@ -535,9 +535,12 @@ target_include_directories(test_touch_layout PRIVATE runtime/input)
 target_compile_options(test_touch_layout PRIVATE -Wall -Wextra)
 add_test(NAME touch_layout COMMAND test_touch_layout)
 
-add_executable(test_game_selection tests/test_game_selection.cpp runtime/app/game_selection.cpp)
+add_executable(test_game_selection tests/test_game_selection.cpp
+               runtime/app/game_selection.cpp runtime/app/game_data.c)
 target_include_directories(test_game_selection PRIVATE runtime/app)
 target_link_libraries(test_game_selection PRIVATE lucent::lucent lucent::zip)
+target_compile_definitions(test_game_selection PRIVATE
+    LF2_EXPECTED_EXE_SIZE=7 LF2_EXPECTED_EXE_CRC32=0x05e540eeu)
 target_compile_options(test_game_selection PRIVATE -Wall -Wextra)
 add_test(NAME game_selection
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_game_selection.py"

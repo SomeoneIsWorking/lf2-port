@@ -46,5 +46,7 @@ manual local release build/upload tooling, exact LF2 v2.0a executable plus sibli
 outer-APPIMAGE `game/` discovery, an SDL Browse/Quit first-run picker, persisted selection, and
 `--select-game` reselection. Verified the extracted final artifact contains no original PE/game-data
 paths; sibling-data AppImage boot reached frame 1 and exited 0; the missing-data path exited 2 and
-named the exact sibling game directory. No hosted release workflow or generated package/source
-output is committed.
+named the exact sibling game directory. ZIP imports are now validated in a separate preparation
+tree before the one accepted import is atomically replaced; the discriminator mutates the same ZIP
+into an incomplete install and proves the previously accepted executable remains intact. No hosted
+release workflow or generated package/source output is committed.
