@@ -366,6 +366,9 @@ def assemble_project(work: Path, sources: dict[str, Path], prefix: Path, native:
         project / "gradle" / "wrapper" / "gradle-wrapper.properties",
     )
     shutil.copytree(ROOT / "platforms" / "android" / "app", project / "app", dirs_exist_ok=True)
+    lucent_java = ROOT / "third_party" / "lucent" / "platforms" / "android" / "java"
+    if lucent_java.is_dir():
+        shutil.copytree(lucent_java, project / "app" / "src" / "main" / "java", dirs_exist_ok=True)
     assets = project / "app" / "src" / "main" / "assets"
     shutil.copytree(ROOT / "stages", assets / "stages")
     libraries = project / "app" / "src" / "main" / "jniLibs" / ANDROID_ABI
