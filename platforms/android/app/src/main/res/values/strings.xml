@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">LF2 Port</string>
+    <string name="game_files_title">Little Fighter 2 game files required</string>
+    <string name="browse">Choose folder…</string>
+    <string name="browse_folder">Choose install folder…</string>
+    <string name="quit">Quit</string>
+    <string name="importing_game_files">Copying game files into private app storage…</string>
+    <string name="exe_needs_folder">Android can identify lf2.exe, but a document picker grants access to only that one file. Choose its complete LF2 v2.0a install folder next so the port can copy the required data.</string>
+</resources>

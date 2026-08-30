@@ -3,6 +3,7 @@
 #include "guest_ops.h"
 #include "hostwin.h"
 #include "keyboard.h"
+#include "touch_input.h"
 #include "render.h"
 #include "script.h"
 #include "config.h"
@@ -412,6 +413,7 @@ void hostwin_inject_key(uint32_t vk, int down)
 {
     if (vk > 255) return;
     injected_keys[vk] = down ? 1 : 0;
+    keyboard_note(vk, down);
     push_message(down ? WM_KEYDOWN_FWD : WM_KEYUP_FWD, vk, 1);
 }
 
@@ -486,6 +488,7 @@ void hostwin_pump(void)
          * -- a key rebind, an Escape that closed it -- must not also reach the game's message
          * pump or the pause menu's key ledger. */
         if (rmlui_event(&e)) continue;
+        if (touch_input_handle_event(&e, hw.renderer, hw.window, gamepad_any_connected(), hostwin_inject_key)) continue;
         if (e.type == SDL_EVENT_QUIT) quit_posted = 1;
         /* Alt+Enter is what players expect, and the game cannot ask for it itself. */
         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT)) {

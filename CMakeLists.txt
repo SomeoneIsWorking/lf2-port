@@ -34,6 +34,7 @@ enable_testing()
 if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/lucent/CMakeLists.txt")
     set(LUCENT_CHANNEL_ENV "LF2_LOG_CHANNELS")
     set(LUCENT_LOG_FILE_ENV "LF2_LOG_FILE")
+    set(LUCENT_BUILD_ZIP ON)
     add_subdirectory(third_party/lucent EXCLUDE_FROM_ALL)
 else()
     message(FATAL_ERROR "third_party/lucent is missing -- run `git submodule update --init --recursive`")
@@ -80,16 +81,32 @@ add_executable(lift recompiler/lift.c)
 target_link_libraries(lift PRIVATE x86_decode)
 target_compile_options(lift PRIVATE -Wall -Wextra)
 
-add_custom_command(
-    OUTPUT ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
-    COMMAND lift ${CMAKE_SOURCE_DIR}/game/lf2.exe ${CMAKE_SOURCE_DIR}/re/entries.tsv
-                 ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
-    DEPENDS lift ${CMAKE_SOURCE_DIR}/re/entries.tsv ${CMAKE_SOURCE_DIR}/re/overrides.txt
-    COMMENT "Recompiling lf2.exe -> C")
+option(LF2_HOST_TOOLS_ONLY "Build only host-side recompilation tools" OFF)
+if(LF2_HOST_TOOLS_ONLY)
+    return()
+endif()
 
-add_executable(lf2
-    ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c
+if(ANDROID)
+    if(NOT LF2_RECOMP_SOURCE OR NOT EXISTS "${LF2_RECOMP_SOURCE}")
+        message(FATAL_ERROR
+            "Android requires -DLF2_RECOMP_SOURCE=<host-generated lf2_recomp.c>. "
+            "Run tools/build/android.py; generated code remains under scratch/ and is never committed.")
+    endif()
+    set(LF2_MUSIC_DECODER runtime/audio/music_decode_libav.c)
+else()
+    set(LF2_RECOMP_SOURCE ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c)
+    set(LF2_MUSIC_DECODER runtime/audio/music_decode_process.c)
+    add_custom_command(
+        OUTPUT ${LF2_RECOMP_SOURCE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
+        COMMAND lift ${CMAKE_SOURCE_DIR}/game/lf2.exe ${CMAKE_SOURCE_DIR}/re/entries.tsv
+                     ${LF2_RECOMP_SOURCE}
+        DEPENDS lift ${CMAKE_SOURCE_DIR}/re/entries.tsv ${CMAKE_SOURCE_DIR}/re/overrides.txt
+        COMMENT "Recompiling lf2.exe -> C")
+endif()
+
+set(LF2_RUNTIME_SOURCES
+    ${LF2_RECOMP_SOURCE}
     runtime/cpu/guest.c
     runtime/cpu/flags.c
     runtime/cpu/strops.c
@@ -104,9 +121,12 @@ add_executable(lf2
     runtime/video/result_panel.c
     runtime/video/stage_banner.c
     runtime/audio/dsound.c
+    ${LF2_MUSIC_DECODER}
     runtime/win32/dshow.c
     runtime/win32/gdi.c
     runtime/app/loadprof.c
+    runtime/app/game_selection.cpp
+    runtime/app/port_resources.c
     runtime/log/lf2_log.cpp
     runtime/app/pause.c
     runtime/app/function_keys.c
@@ -118,6 +138,7 @@ add_executable(lf2
     runtime/input/gamepad.c
     runtime/input/bindings.c
     runtime/input/keyboard.c
+    runtime/input/touch_input.cpp
     runtime/app/script.c
     runtime/win32/wsock.c
     runtime/overrides/boot_guest.c
@@ -154,14 +175,23 @@ add_executable(lf2
     runtime/ui/rmlui_backend.cpp
     runtime/ui/rmlui_system.cpp
     runtime/ui/setup_ui.c
+    runtime/ui/touch_controls.c
     third_party/RmlUi/Backends/RmlUi_Platform_SDL.cpp
     runtime/app/main.c)
+if(ANDROID)
+    list(APPEND LF2_RUNTIME_SOURCES runtime/platform/android_bridge.c)
+    add_library(lf2 SHARED ${LF2_RUNTIME_SOURCES})
+    set_target_properties(lf2 PROPERTIES OUTPUT_NAME main)
+else()
+    add_executable(lf2 ${LF2_RUNTIME_SOURCES})
+endif()
 # EVERY subsystem directory is on the include path, which is what lets a file say
 # #include "guest_ops.h" wherever it happens to live. The alternative -- relative "../"
 # includes -- ties each file to its position in the tree and turns any future regrouping into
 # an edit of every header line (issue #46).
 target_include_directories(lf2 PRIVATE
     runtime runtime/cpu runtime/win32 runtime/video runtime/audio runtime/input runtime/app runtime/log runtime/ui
+    runtime/platform
     runtime/overrides
     ${CMAKE_SOURCE_DIR}/third_party/RmlUi/Backends)
 # RmlUi's SDL backends pick SDL2 vs SDL3 by this macro (Backends/RmlUi_Platform_SDL.h).
@@ -200,8 +230,8 @@ add_dependencies(lf2 stages)
 set_source_files_properties(
     runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c runtime/win32/paths.c
     runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/host_frame.c runtime/video/result_panel.c runtime/video/stage_banner.c
-    runtime/audio/dsound.c runtime/win32/dshow.c
-    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/pause.c runtime/app/function_keys.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/app/script.c
+    runtime/audio/dsound.c ${LF2_MUSIC_DECODER} runtime/win32/dshow.c
+    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/game_selection.cpp runtime/app/port_resources.c runtime/app/pause.c runtime/app/function_keys.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/input/touch_input.cpp runtime/app/script.c
     runtime/log/lf2_log.cpp runtime/ui/rmlui_system.cpp
     runtime/app/options.c
     runtime/app/config.c
@@ -236,7 +266,8 @@ set_source_files_properties(
     runtime/video/engine_lighting.c
     runtime/video/stagegeom.c
     runtime/ui/ui_rgba.c
-    runtime/ui/setup_ui.c
+    runtime/ui/setup_ui.c runtime/ui/touch_controls.c
+    runtime/platform/android_bridge.c
     runtime/app/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
@@ -248,25 +279,48 @@ if(LF2_STACK_CHECK)
     target_compile_definitions(lf2 PRIVATE LF2_STACK_CHECK LF2_FN_TRACE)
 endif()
 
-find_package(SDL3 REQUIRED CONFIG)
+if(NOT TARGET SDL3::SDL3)
+    find_package(SDL3 REQUIRED CONFIG)
+endif()
 # libm: the light rig turns the player's two angles into a direction vector (runtime/video/hd2d.c).
 # gcc folds most of <math.h> inline and then does not, so this is linked explicitly rather
 # than relied on to keep being unnecessary.
 find_library(LF2_M m)
-target_link_libraries(lf2 PRIVATE SDL3::SDL3 lucent::lucent $<$<BOOL:${LF2_M}>:${LF2_M}>)
+target_link_libraries(lf2 PRIVATE SDL3::SDL3 lucent::lucent lucent::zip $<$<BOOL:${LF2_M}>:${LF2_M}>)
+
+if(ANDROID)
+    if(NOT LF2_FFMPEG_ROOT)
+        message(FATAL_ERROR "Android requires LF2_FFMPEG_ROOT from tools/build/android.py")
+    endif()
+    find_path(LF2_LIBAV_INCLUDE libavformat/avformat.h PATHS "${LF2_FFMPEG_ROOT}/include"
+              NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    foreach(library avformat avcodec swresample avutil)
+        find_library(LF2_${library}_LIBRARY NAMES ${library} PATHS "${LF2_FFMPEG_ROOT}/lib"
+                     NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+        target_link_libraries(lf2 PRIVATE "${LF2_${library}_LIBRARY}")
+    endforeach()
+    target_include_directories(lf2 PRIVATE "${LF2_LIBAV_INCLUDE}")
+    # FFmpeg's supported contract for embedding its PIC static archives in a
+    # shared library. This binds the AArch64 assembly's exported helper symbols
+    # locally instead of leaving text relocations for Android's loader.
+    target_link_options(lf2 PRIVATE "-Wl,-Bsymbolic")
+    target_link_libraries(lf2 PRIVATE android log)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_target_properties(lf2 PROPERTIES INSTALL_RPATH "$ORIGIN")
 endif()
 
-install(TARGETS lf2 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY stages DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.desktop
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.svg
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
-install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.appdata.xml
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+if(NOT ANDROID)
+    install(TARGETS lf2 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(DIRECTORY stages DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.svg
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.appdata.xml
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+endif()
 
 add_executable(test_bindings tests/test_bindings.c runtime/input/bindings.c
     runtime/app/config.c runtime/app/user_paths.c)
@@ -353,6 +407,8 @@ add_test(NAME build_shaders_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_build_shaders.py)
 add_test(NAME appimage_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_appimage.py)
+add_test(NAME android_tool COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_android.py)
 
 # ---- RmlUi (issue #70) ----
 #
@@ -380,7 +436,11 @@ else()
     message(FATAL_ERROR "third_party/RmlUi is missing -- run `git submodule update --init --recursive`")
 endif()
 
-find_package(SDL3_image QUIET CONFIG)
+if(TARGET SDL3_image::SDL3_image)
+    set(SDL3_image_FOUND TRUE)
+else()
+    find_package(SDL3_image QUIET CONFIG)
+endif()
 if(SDL3_image_FOUND)
     target_link_libraries(lf2 PRIVATE SDL3_image::SDL3_image)
 else()
@@ -445,7 +505,11 @@ target_sources(lf2 PRIVATE ${LF2_DEVICE_ASSET_SOURCES})
 # SDL3_ttf rasterises them. It is REQUIRED, and that is a change: it used to be optional with
 # a debug-font fallback, which meant a build could silently produce a different game. A missing
 # dependency must stop the build, not degrade the product.
-find_package(SDL3_ttf QUIET CONFIG)
+if(TARGET SDL3_ttf::SDL3_ttf)
+    set(SDL3_ttf_FOUND TRUE)
+else()
+    find_package(SDL3_ttf QUIET CONFIG)
+endif()
 if(SDL3_ttf_FOUND)
     target_link_libraries(lf2 PRIVATE SDL3_ttf::SDL3_ttf)
     target_compile_definitions(lf2 PRIVATE LF2_HAVE_TTF)
@@ -465,6 +529,19 @@ add_executable(test_geom tests/test_geom.c)
 target_include_directories(test_geom PRIVATE runtime runtime/overrides runtime/cpu)
 target_compile_options(test_geom PRIVATE -Wall -Wextra)
 add_test(NAME geometry COMMAND test_geom)
+
+add_executable(test_touch_layout tests/test_touch_layout.cpp)
+target_include_directories(test_touch_layout PRIVATE runtime/input)
+target_compile_options(test_touch_layout PRIVATE -Wall -Wextra)
+add_test(NAME touch_layout COMMAND test_touch_layout)
+
+add_executable(test_game_selection tests/test_game_selection.cpp runtime/app/game_selection.cpp)
+target_include_directories(test_game_selection PRIVATE runtime/app)
+target_link_libraries(test_game_selection PRIVATE lucent::lucent lucent::zip)
+target_compile_options(test_game_selection PRIVATE -Wall -Wextra)
+add_test(NAME game_selection
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_game_selection.py"
+            "$<TARGET_FILE:test_game_selection>" "${CMAKE_BINARY_DIR}")
 
 # The hand-woven stage geometry loader (issue #62). It takes no game data -- the caller resolves
 # a layer name to a span -- so it needs no guest and no GPU, only SDL's headers for MeshVertex.

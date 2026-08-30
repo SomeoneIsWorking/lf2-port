@@ -15,9 +15,13 @@
         }                                                                                                              \
     } while (0)
 
-static int make_directory(const char *path) { return mkdir(path, 0700) == 0 || errno == EEXIST; }
+static int make_directory(const char *path)
+{
+    return mkdir(path, 0700) == 0 || errno == EEXIST;
+}
 
 static const char FIXTURE_EXE[] = "fixture-lf2-v2.0a";
+static const char FIXTURE_MANIFEST[] = "id: 0 file: data\\template.dat\n";
 
 static int write_file(const char *path, const void *data, size_t size)
 {
@@ -29,17 +33,22 @@ static int write_file(const char *path, const void *data, size_t size)
 
 static int make_tree(const char *root)
 {
-    char data_dir[4096], executable[4096], data_file[4096];
+    char data_dir[4096], executable[4096], data_file[4096], referenced[4096];
     snprintf(data_dir, sizeof data_dir, "%s/data", root);
     snprintf(executable, sizeof executable, "%s/lf2.exe", root);
     snprintf(data_file, sizeof data_file, "%s/data/data.txt", root);
+    snprintf(referenced, sizeof referenced, "%s/data/template.dat", root);
     return make_directory(root) && make_directory(data_dir) &&
-           write_file(executable, FIXTURE_EXE, sizeof FIXTURE_EXE - 1) && write_file(data_file, "fixture\n", 8);
+           write_file(executable, FIXTURE_EXE, sizeof FIXTURE_EXE - 1) &&
+           write_file(data_file, FIXTURE_MANIFEST, sizeof FIXTURE_MANIFEST - 1) &&
+           write_file(referenced, "fixture\n", 8);
 }
 
 static void clean_tree(const char *root)
 {
     char path[4096];
+    snprintf(path, sizeof path, "%s/data/template.dat", root);
+    (void)remove(path);
     snprintf(path, sizeof path, "%s/data/data.txt", root);
     (void)remove(path);
     snprintf(path, sizeof path, "%s/lf2.exe", root);
@@ -72,7 +81,14 @@ int main(int argc, char **argv)
     CHECK(remove(required_data) == 0);
     CHECK(!game_data_validate_executable(executable, &game));
     CHECK(strstr(game.error, "data/data.txt is missing") != NULL);
-    CHECK(write_file(required_data, "fixture\n", 8));
+    CHECK(write_file(required_data, FIXTURE_MANIFEST, sizeof FIXTURE_MANIFEST - 1));
+
+    char referenced_data[4096];
+    snprintf(referenced_data, sizeof referenced_data, "%s/data/template.dat", root);
+    CHECK(remove(referenced_data) == 0);
+    CHECK(!game_data_validate_executable(executable, &game));
+    CHECK(strstr(game.error, "references missing game data") != NULL);
+    CHECK(write_file(referenced_data, "fixture\n", 8));
 
     char wrong_name[4096];
     snprintf(wrong_name, sizeof wrong_name, "%s/not-lf2.exe", root);

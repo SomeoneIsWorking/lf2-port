@@ -15,5 +15,6 @@ int gamepad_all_player_buttons(unsigned char out[7]);
 
 int gamepad_start_held(void);
 int gamepad_start_index(void);
+int gamepad_any_connected(void);
 
 #endif

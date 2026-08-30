@@ -9,9 +9,12 @@
 
 /* -1 until first read, so the env pin is consulted exactly once and the menu owns the value
  * from then on. */
-static int renderer = -1, lighting = -1;
+static int renderer = -1, lighting = -1, touch_controls = -1;
 
-static int pinned_off(const char *v) { return v && (strcmp(v, "off") == 0 || strcmp(v, "0") == 0); }
+static int pinned_off(const char *v)
+{
+    return v && (strcmp(v, "off") == 0 || strcmp(v, "0") == 0);
+}
 
 int opt_renderer_engine(void)
 {
@@ -32,7 +35,10 @@ int opt_renderer_engine(void)
     return renderer;
 }
 
-void opt_set_renderer_engine(int on) { renderer = on != 0; }
+void opt_set_renderer_engine(int on)
+{
+    renderer = on != 0;
+}
 
 int opt_lighting(void)
 {
@@ -47,7 +53,24 @@ int opt_lighting(void)
     return lighting;
 }
 
-void opt_set_lighting(int on) { lighting = on != 0; }
+void opt_set_lighting(int on)
+{
+    lighting = on != 0;
+}
+
+int opt_touch_controls(void)
+{
+    if (touch_controls < 0) {
+        const char *configured = config_get("touch_controls");
+        touch_controls = !configured || strcmp(configured, "off") != 0;
+    }
+    return touch_controls;
+}
+
+void opt_set_touch_controls(int on)
+{
+    touch_controls = on != 0;
+}
 
 /* The light intensity is a plain float once its pin has been resolved, so it lives in one
  * static rather than the -1-means-unread pattern of the ints above. */

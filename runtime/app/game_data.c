@@ -31,6 +31,66 @@ static int path_join(char *output, size_t capacity, const char *directory, const
     return written >= 0 && (size_t)written < capacity;
 }
 
+static int safe_manifest_path(const char *path)
+{
+    if (!path || !*path || path[0] == '/' || strchr(path, ':')) return 0;
+    const char *part = path;
+    while (*part) {
+        const char *end = strchr(part, '/');
+        const size_t length = end ? (size_t)(end - part) : strlen(part);
+        if (length == 0 || (length == 1 && part[0] == '.') || (length == 2 && part[0] == '.' && part[1] == '.'))
+            return 0;
+        if (!end) break;
+        part = end + 1;
+    }
+    return 1;
+}
+
+static int validate_data_manifest(const char *root, const char *manifest, char *error, size_t error_capacity)
+{
+    FILE *file = fopen(manifest, "r");
+    if (!file) {
+        snprintf(error, error_capacity, "%s: %s", manifest, strerror(errno));
+        return 0;
+    }
+    char line[2048];
+    size_t references = 0;
+    while (fgets(line, sizeof line, file)) {
+        char *value = strstr(line, "file:");
+        if (!value) continue;
+        value += 5;
+        while (*value == ' ' || *value == '\t') ++value;
+        value[strcspn(value, "#\r\n")] = 0;
+        size_t length = strlen(value);
+        while (length && (value[length - 1] == ' ' || value[length - 1] == '\t')) value[--length] = 0;
+        for (char *cursor = value; *cursor; ++cursor)
+            if (*cursor == '\\') *cursor = '/';
+        if (!safe_manifest_path(value)) {
+            snprintf(error, error_capacity, "%s contains an unsafe game-data path: %s", manifest, value);
+            fclose(file);
+            return 0;
+        }
+        char resolved[GAME_DATA_PATH_CAPACITY];
+        if (!path_join(resolved, sizeof resolved, root, value) || !regular_file(resolved)) {
+            snprintf(error, error_capacity, "%s references missing game data: %s", manifest, value);
+            fclose(file);
+            return 0;
+        }
+        references++;
+    }
+    if (ferror(file)) {
+        snprintf(error, error_capacity, "%s: read failed", manifest);
+        fclose(file);
+        return 0;
+    }
+    fclose(file);
+    if (references == 0) {
+        snprintf(error, error_capacity, "%s contains no game-data file references", manifest);
+        return 0;
+    }
+    return 1;
+}
+
 static int file_crc32(const char *path, uint32_t *checksum, size_t *size, char *error, size_t error_capacity)
 {
     FILE *file = fopen(path, "rb");
@@ -108,13 +168,14 @@ int game_data_validate_executable(const char *executable, GameData *result)
                  canonical, root);
         return 0;
     }
+    if (!validate_data_manifest(root, data_file, result->error, sizeof result->error)) return 0;
 
     snprintf(result->root, sizeof result->root, "%s", root);
     snprintf(result->executable, sizeof result->executable, "%s", canonical);
     return 1;
 }
 
-static int validate_root(const char *root, GameData *result)
+int game_data_validate_root(const char *root, GameData *result)
 {
     char executable[GAME_DATA_PATH_CAPACITY];
     if (!path_join(executable, sizeof executable, root, "lf2.exe")) {
@@ -139,12 +200,12 @@ int game_data_discover(const char *explicit_executable, const char *configured_r
 
     char configured_error[GAME_DATA_ERROR_CAPACITY] = "";
     if (configured_root && *configured_root) {
-        if (validate_root(configured_root, result)) return 1;
+        if (game_data_validate_root(configured_root, result)) return 1;
         snprintf(configured_error, sizeof configured_error, "%s", result->error);
     }
 
     char sibling[GAME_DATA_PATH_CAPACITY];
-    if (appimage_game_path(appimage, sibling, sizeof sibling) && validate_root(sibling, result)) return 1;
+    if (appimage_game_path(appimage, sibling, sizeof sibling) && game_data_validate_root(sibling, result)) return 1;
 
     if (working_directory && *working_directory) {
         char direct[GAME_DATA_PATH_CAPACITY];
@@ -152,7 +213,8 @@ int game_data_discover(const char *explicit_executable, const char *configured_r
             game_data_validate_executable(direct, result))
             return 1;
         char nested[GAME_DATA_PATH_CAPACITY];
-        if (path_join(nested, sizeof nested, working_directory, "game") && validate_root(nested, result)) return 1;
+        if (path_join(nested, sizeof nested, working_directory, "game") && game_data_validate_root(nested, result))
+            return 1;
     }
 
     if (appimage_game_path(appimage, sibling, sizeof sibling)) {

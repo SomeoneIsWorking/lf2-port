@@ -11,6 +11,8 @@
 #include "guest.h"
 #include "hostwin.h"
 #include "rmlui.h"
+#include "gamepad.h"
+#include "touch_controls.h"
 
 #include <SDL3/SDL.h>
 
@@ -1047,8 +1049,9 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     /* The RmlUi settings screen, over the same frame (issue #70): the document composites
      * into the composed frame between the game's draw and the present, so it is a layer of
      * the picture rather than a separate window. */
+    SDL_SetRenderTarget(R, target);
+    touch_controls_render(R, hw.window, gamepad_any_connected());
     if (rmlui_active()) {
-        SDL_SetRenderTarget(R, target);
         rmlui_render();
     }
 

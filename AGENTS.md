@@ -98,7 +98,7 @@ game's four monolithic functions (28/20/18/15 KB — main loop, character state 
 | `runtime/video/` | `ddraw.c` (DirectDraw → SDL3), `host_frame.c` (completed-frame presentation, diagnostics, pacing and SDL teardown), `render.c`, `engine.c` + `engine_textures.c` (native rendering and its frame-safe texture cache), `hd2d.c` (lighting), `hostwin.h` |
 | `runtime/audio/` | `dsound.c` + `mixer.c` |
 | `runtime/input/` | device state and persistent action bindings — `gamepad.c/.h`, `keyboard.c/.h`, `bindings.c/.h` |
-| `runtime/app/` | the port's own shell — `main.c` composes startup; `game_data.c` validates/discovers the player-owned game tree; `user_paths.c` composes the LF2 settings filename below Lucent's platform user-data directory; `pause.c`, `script.c` (scripted input), `loadprof.c` |
+| `runtime/app/` | the port's own shell — `main.c` composes startup; `game_data.c` validates the player-owned game tree; `game_selection.cpp` resolves direct and nested-ZIP selections through Lucent; `port_resources.c` resolves packaged host assets; `user_paths.c` composes the LF2 settings filename below Lucent's platform user-data directory; `pause.c`, `script.c` (scripted input), `loadprof.c` |
 | `runtime/log/` | the narrow C/stdio-to-Lucent bridge; Lucent owns timestamps, channels, sinks, and serialization |
 | `runtime/overrides/` | see below |
 | `tests/` | the unit tests, which are programs rather than runtime code |
@@ -126,7 +126,8 @@ static recompilation rather than copying Dusklight's platform implementations:
   `rmlui_input.cpp`, `rmlui_backend.cpp`, `rmlui_system.cpp`), while `setup_ui.c` owns the small
   SDL-native no-terminal first-run picker. LF2's pre-fight CHARMENU remains the game's original bitmap-authored
   panel; host UI does not replace its layout or lettering.
-- `runtime/input/` owns device discovery and persistent action bindings; config only stores values.
+- `runtime/input/` owns device discovery, persistent action bindings, and the safe-area-aware LF2
+  touch layout/action state. Lucent owns only platform-neutral contact routing.
 - `runtime/video/`, `runtime/audio/`, and `runtime/win32/` remain cohesive peer subsystems.
 - `runtime/overrides/` changes game behavior and does not absorb host platform mechanisms.
 
@@ -139,9 +140,11 @@ The Linux release boundary is `CMakeLists.txt`'s install rules plus
 `tools/build/appimage.py`; maintainers build the pinned SDL stack in a controlled local environment,
 run the release gates, and upload the inspected ignored artifact manually. There is no hosted release
 workflow, and generated source or package output is never committed. The AppImage may include the
-translated port but must refuse original `lf2.exe`, installer, or extracted assets. Android is not a
-release target until its Activity/SAF selection, URI persistence, authored touch controls, and
-real-device performance matrix exist.
+translated port but must refuse original `lf2.exe`, installer, or extracted assets. `platforms/android/`
+owns the SDL Activity/SAF import and manifest; `runtime/platform/android_bridge.c` is the JNI boundary;
+and `tools/build/android.py` owns the one NDK build, signed Gradle assembly, content inspection, and
+device install. Android remains unreleased until the signed APK passes first-run import, touch, audio,
+lifecycle, and the named-device performance matrix on hardware.
 
 `tools/build/check_structure.py` enforces the boundary: new runtime source files are capped at 1,200
 lines and existing files above that limit may not grow. At 2,000 lines a file is critical extraction

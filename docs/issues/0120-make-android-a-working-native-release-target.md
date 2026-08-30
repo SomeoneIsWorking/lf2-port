@@ -1,0 +1,13 @@
+---
+id: 120
+title: Make Android a working native release target
+status: open
+symptom: There is no installable Android build with first-run game import, touch controls, or device verification
+tags: reported,android,release,input
+created: 2026-08-30
+updated: 2026-08-30
+---
+
+The Android ARM64 product path now builds one NDK 28 `libmain.so`, exports SDL's `main` entrypoint, and links the translated program with NEON-enabled PIC FFmpeg. Its SDL Activity uses SAF to copy a complete selected folder or ZIP into bounded app-private staging; the native Lucent-backed selection path finds one nested `lf2.exe`, validates the complete referenced tree, and commits only a validated import. Transient SAF access is sufficient because no external URI remains in use. Multi-touch routes through Lucent's contact router and LF2's existing action/key ledger, with safe-area layout, multi-touch reference counts, pause/lifecycle cancellation, a persistent visibility option, and controller suppression. Settings, imported game files, and package resources use app-private storage. The release tool refuses unsigned output, inspects package content, and verifies an assembled release signature.
+
+Publication is still blocked on external release evidence: this host needs a Gradle-supported JDK 17–24, release signing credentials are not configured, and no ADB device is connected. After those are supplied, the signed APK must pass first-run direct-folder and nested-ZIP import, touch and physical-controller switching, WMA/sound playback, suspend/resume and Activity recreation, renderer correctness, loading and memory checks, and sustained frame-time/thermal measurements on named devices. Generated recompilation and package output remain ignored and GitHub Actions is not permitted.

@@ -5,6 +5,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef __ANDROID__
+#include "android_bridge.h"
+#endif
+
+#ifndef __ANDROID__
 enum { BUTTON_QUIT = 0, BUTTON_BROWSE = 1 };
 
 typedef struct FileDialogState {
@@ -58,12 +63,17 @@ static int browse_button(const char *message)
     }
     return button;
 }
+#endif
 
 SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t capacity)
 {
     if (!selection || capacity == 0) return SETUP_UI_ERROR;
     selection[0] = 0;
     fprintf(stderr, "setup: %s\n", message);
+
+#ifdef __ANDROID__
+    return android_bridge_choose_game_tree(message, selection, capacity);
+#else
 
     SDL_SetAppMetadata("LF2 Port", NULL, "io.github.SomeoneIsWorking.lf2-port");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -82,8 +92,11 @@ SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t 
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         return SETUP_UI_ERROR;
     }
-    const SDL_DialogFileFilter filter = {"LF2 v2.0a executable", "exe"};
-    SDL_ShowOpenFileDialog(file_selected, &state, NULL, &filter, 1, SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS), false);
+    const SDL_DialogFileFilter filters[] = {
+        {"LF2 v2.0a executable", "exe"},
+        {"ZIP archive", "zip"},
+    };
+    SDL_ShowOpenFileDialog(file_selected, &state, NULL, filters, 2, SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS), false);
 
     for (;;) {
         SDL_LockMutex(state.mutex);
@@ -115,4 +128,5 @@ SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t 
         return SETUP_UI_ERROR;
     }
     return selected ? SETUP_UI_SELECTED : SETUP_UI_CANCELLED;
+#endif
 }

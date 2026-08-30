@@ -20,6 +20,10 @@
 
 #include "spritefilter.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Which renderer draws: the port's own engine (SDL_GPU, with character shading) or the classic
  * SDL_Render path, which stays as the plain-picture fallback and the byte-identity control
  * arm. Default ENGINE. LF2_ENGINE=0 pins classic at startup, any other non-empty value pins
@@ -30,6 +34,11 @@ void opt_set_renderer_engine(int on);
 /* The HD2D lighting and its cast shadows. Default ON. LF2_HD2D=off pins it off at startup. */
 int opt_lighting(void);
 void opt_set_lighting(int on);
+
+/* Authored on-screen controls are enabled by default on touch devices and disappear while
+ * a physical gamepad is connected. The persistent setting allows a player to hide them. */
+int opt_touch_controls(void);
+void opt_set_touch_controls(int on);
 
 /* THE KEY LIGHT'S STRENGTH (issue #111). This is u_sun_dir.w, the multiplier on the lit
  * term of hd2d_light.frag -- 1.0 is a physically flat key, and the shipped look sits at
@@ -51,5 +60,9 @@ void opt_set_light_intensity(float v);
  * stderr -- the chain then stays empty rather than quietly becoming a different chain. */
 const SpriteChain *opt_sprite_chain(void);
 void opt_set_sprite_chain(const SpriteChain *chain);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

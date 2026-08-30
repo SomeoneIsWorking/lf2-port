@@ -1,0 +1,10 @@
+<resources>
+    <style name="Lf2Theme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">#4FD1C5</item>
+        <item name="android:navigationBarColor">#101820</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

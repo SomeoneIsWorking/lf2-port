@@ -10,7 +10,8 @@ typedef enum SetupUiResult {
 } SetupUiResult;
 
 /* Present the terminal-free game-file setup boundary and return the selected
- * lf2.exe path. Validation and persistence remain with runtime/app. */
+ * lf2.exe, ZIP, or Android-staged install tree. Resolution, validation, and
+ * persistence remain with runtime/app. */
 SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t capacity);
 
 #endif

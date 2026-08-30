@@ -10,6 +10,8 @@
 #include "render.h"
 #include "rmlui.h"
 #include "script.h"
+#include "gamepad.h"
+#include "touch_controls.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +25,10 @@ static long frames;
 static uint32_t frame_src_pixels;
 static int frame_src_off;
 
-long hostwin_frames(void) { return frames; }
+long hostwin_frames(void)
+{
+    return frames;
+}
 
 void frame_source_note(uint32_t pixels, int off)
 {
@@ -33,7 +38,10 @@ void frame_source_note(uint32_t pixels, int off)
 
 /* The source is discovered from the game's copy to primary rather than from a fixed surface
  * address. It stays zero until that first copy names the composition. */
-uint32_t frame_source_pixels(void) { return frame_src_pixels; }
+uint32_t frame_source_pixels(void)
+{
+    return frame_src_pixels;
+}
 
 /* Release SDL explicitly at exit. Leaving it to process teardown is usually harmless, but
  * it means the audio device and window outlive the game's own shutdown, and a diagnostic
@@ -208,6 +216,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     SDL_SetRenderDrawColor(hw.renderer, 0, 0, 0, 255);
     SDL_RenderClear(hw.renderer);
     SDL_RenderTexture(hw.renderer, hw.texture, NULL, &place);
+    touch_controls_render(hw.renderer, hw.window, gamepad_any_connected());
     if (rmlui_active()) rmlui_render();
     SDL_RenderPresent(hw.renderer);
     frame_pace();

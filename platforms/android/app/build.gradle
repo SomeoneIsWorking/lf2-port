@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+}
+
+def releaseKeystore = System.getenv('LF2_ANDROID_KEYSTORE')
+def releaseKeyAlias = System.getenv('LF2_ANDROID_KEY_ALIAS')
+def releaseStorePassword = System.getenv('LF2_ANDROID_STORE_PASSWORD')
+def releaseKeyPassword = System.getenv('LF2_ANDROID_KEY_PASSWORD')
+def signingValues = [releaseKeystore, releaseKeyAlias, releaseStorePassword, releaseKeyPassword]
+if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+        && signingValues.any { !it }) {
+    throw new GradleException(
+            'Release signing requires LF2_ANDROID_KEYSTORE, LF2_ANDROID_KEY_ALIAS, ' +
+            'LF2_ANDROID_STORE_PASSWORD, and LF2_ANDROID_KEY_PASSWORD. Refusing an unsigned APK.')
+}
+
+android {
+    namespace = 'io.github.someoneisworking.lf2port'
+    compileSdk = 35
+    ndkVersion = '28.2.13676358'
+
+    signingConfigs {
+        release {
+            if (signingValues.every { it }) {
+                storeFile file(releaseKeystore)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+                v1SigningEnabled true
+                v2SigningEnabled true
+                v3SigningEnabled true
+            }
+        }
+    }
+
+    defaultConfig {
+        applicationId = 'io.github.someoneisworking.lf2port'
+        minSdk = 24
+        targetSdk = 35
+        versionCode = (System.getenv('LF2_ANDROID_VERSION_CODE') ?: '1').toInteger()
+        versionName = System.getenv('LF2_ANDROID_VERSION_NAME') ?: '0.1.0'
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
