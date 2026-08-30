@@ -1,11 +1,11 @@
 #include "game_selection.h"
+#include "game_data.h"
 
 #include <lucent/platform.h>
 #include <lucent/zip.h>
 
 #include <algorithm>
 #include <cctype>
-#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -30,19 +30,15 @@ bool equal_extension(std::string extension, std::string_view wanted)
     return extension == wanted;
 }
 
-std::uint32_t archive_fingerprint(const std::filesystem::path &archive)
+bool validate_candidate(const std::filesystem::path &path, char *executable, std::size_t executable_capacity,
+                        char *error, std::size_t error_capacity)
 {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(archive, error);
-    const auto modified = std::filesystem::last_write_time(archive, error).time_since_epoch().count();
-    const std::string identity = archive.string() + ":" + std::to_string(static_cast<unsigned long long>(size)) + ":" +
-                                 std::to_string(static_cast<long long>(modified));
-    std::uint32_t hash = 2166136261U;
-    for (const unsigned char value : identity) {
-        hash ^= value;
-        hash *= 16777619U;
+    GameData game;
+    if (!game_data_validate_executable(path.string().c_str(), &game)) {
+        std::snprintf(error, error_capacity, "%s", game.error);
+        return false;
     }
-    return hash;
+    return copy_path(game.executable, executable, executable_capacity, error, error_capacity);
 }
 
 } // namespace
@@ -57,13 +53,13 @@ extern "C" int game_selection_resolve(const char *selection, char *executable, s
     const std::filesystem::path source(selection);
     std::error_code status_error;
     if (std::filesystem::is_directory(source, status_error))
-        return copy_path(source / "lf2.exe", executable, executable_capacity, error, error_capacity);
+        return validate_candidate(source / "lf2.exe", executable, executable_capacity, error, error_capacity);
     if (status_error) {
         std::snprintf(error, error_capacity, "cannot inspect the selected path: %s", status_error.message().c_str());
         return 0;
     }
     if (!equal_extension(source.extension().string(), ".zip"))
-        return copy_path(source, executable, executable_capacity, error, error_capacity);
+        return validate_candidate(source, executable, executable_capacity, error, error_capacity);
 
     const auto user_data = lucent::platform::user_data_directory("lf2-port");
     if (!user_data) {
@@ -76,9 +72,7 @@ extern "C" int game_selection_resolve(const char *selection, char *executable, s
         return 0;
     }
 
-    char leaf[64];
-    std::snprintf(leaf, sizeof leaf, "game-import-archive-%08x", archive_fingerprint(source));
-    const std::filesystem::path destination = *user_data / leaf;
+    const std::filesystem::path destination = *user_data / "game-import";
     const std::filesystem::path preparing = destination.string() + ".preparing";
     const std::filesystem::path previous = destination.string() + ".previous";
     std::filesystem::remove_all(preparing, status_error);
@@ -114,7 +108,26 @@ extern "C" int game_selection_resolve(const char *selection, char *executable, s
                       cleanup_error ? "; its incomplete preparation could not be removed" : "");
         return 0;
     }
-    const std::filesystem::path relative_executable = resolved.lexically_relative(preparing);
+    GameData prepared_game;
+    if (!game_data_validate_executable(resolved.string().c_str(), &prepared_game)) {
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(preparing, cleanup_error);
+        std::snprintf(error, error_capacity, "that ZIP is not a complete LF2 v2.0a install: %s%s", prepared_game.error,
+                      cleanup_error ? "; its invalid preparation could not be removed" : "");
+        return 0;
+    }
+    const std::filesystem::path relative_executable =
+        std::filesystem::path(prepared_game.executable).lexically_relative(preparing);
+    if (relative_executable.empty() || relative_executable.is_absolute() ||
+        relative_executable.begin() == relative_executable.end() || *relative_executable.begin() == "..") {
+        std::filesystem::remove_all(preparing, status_error);
+        std::snprintf(error, error_capacity, "that ZIP produced an invalid executable path");
+        return 0;
+    }
+    if (!copy_path(destination / relative_executable, executable, executable_capacity, error, error_capacity)) {
+        std::filesystem::remove_all(preparing, status_error);
+        return 0;
+    }
 
     status_error.clear();
     std::filesystem::remove_all(previous, status_error);
@@ -135,6 +148,7 @@ extern "C" int game_selection_resolve(const char *selection, char *executable, s
     }
     std::filesystem::rename(preparing, destination, status_error);
     if (status_error) {
+        executable[0] = 0;
         std::error_code restore_error;
         if (moved_previous) std::filesystem::rename(previous, destination, restore_error);
         std::snprintf(error, error_capacity, "cannot accept the prepared ZIP extraction: %s%s",
@@ -148,5 +162,5 @@ extern "C" int game_selection_resolve(const char *selection, char *executable, s
             fprintf(stderr, "setup: accepted ZIP but could not remove its previous extraction: %s\n",
                     status_error.message().c_str());
     }
-    return copy_path(destination / relative_executable, executable, executable_capacity, error, error_capacity);
+    return 1;
 }
