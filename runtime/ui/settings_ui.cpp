@@ -191,7 +191,7 @@ static const char SETTINGS_RML[] = R"RML(
         <div class="setting-row"><span class="label">Intensity</span><input class="setting-value" type="range" min="25" max="300" step="5" data-value="light_pct"/><span class="range-value">{{light_pct}}%</span></div>
         <span class="section-heading">SPRITE PASSES</span>
         <!-- PASS_ROWS -->
-        <div class="setting-row" data-if="pass_count < {{pass_max}}"><span class="label">Add a pass</span><button class="setting-value" data-event-click="add_pass">ADD</button></div>
+        <div class="setting-row" data-if="pass_count < pass_max"><span class="label">Add a pass</span><button class="setting-value" data-event-click="add_pass">ADD</button></div>
         <div class="setting-row"><span class="label">Edge smoothing</span><button class="setting-value" data-event-click="toggle_aa">{{aa ? 'ON' : 'OFF'}}</button></div>
         <div class="setting-row"><span class="label">Inner contour</span><button class="setting-value" data-event-click="toggle_inner">{{inner ? 'ON' : 'OFF'}}</button></div>
         <div class="setting-row"><span class="label">Outline</span><button class="setting-value" data-event-click="cycle_outline">{{outline_name}}</button></div>

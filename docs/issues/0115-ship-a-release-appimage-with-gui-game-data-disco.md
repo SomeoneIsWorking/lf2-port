@@ -1,7 +1,7 @@
 ---
 id: 115
 title: Ship a release AppImage with GUI game-data discovery
-status: investigating
+status: resolved
 symptom: A release AppImage launched without a terminal cannot explain where the user must place the required LF2 game files; it must find user-supplied data beside the AppImage and show an SDL dialog with the exact location when absent.
 tags: reported,release,appimage,startup,ux
 created: 2026-08-30
@@ -19,25 +19,26 @@ the clicked AppImage must instead be resolved from the parent of `$APPIMAGE`.
 The required input is the complete extracted LF2 v2.0a tree, not only `lf2.exe`: game startup
 opens `data/data.txt` and the remaining assets by paths relative to the working directory.
 
-There is a separate release constraint. The current `lf2` ELF includes 87,940 lines of
-machine-translated LF2 code generated from the user's `game/lf2.exe`. Publishing that ELF in a
-conventional prebuilt AppImage would violate this repository's rule against distributing
-derivative or reconstructable game content.
+The release may contain the compiled port, including its translated native code, but it may not
+contain `lf2.exe`, the installer, or extracted game assets. The packaged executable therefore still
+needs a player-owned complete LF2 v2.0a tree at runtime.
 
 ## What was tried / dead ends
 
-- **Conventional prebuilt AppImage:** rejected pending an explicit policy decision because it
-  embeds the translated game program even if the original `lf2.exe` is still requested at
-  runtime.
+- **Treat the translated native port as an unlicensed game-file payload:** superseded by the
+  repository-wide release rule added on 2026-08-30. AppImage/APK packages contain the port and
+  redistributable runtime resources, while excluding original executables and extracted assets.
 - **Only place `lf2.exe` beside the AppImage:** incomplete; the game also needs its full
   extracted relative asset tree.
 - **Use `SDL_GetBasePath()` for sibling data:** wrong under AppImage because it names the
   internal mount, not the directory containing the outer AppImage.
 
-A redistributable public artifact would need to extract and compile from the user's adjacent
-installer/game tree on first launch. To remain a self-contained, terminal-free AppImage, that
-design must also bundle its compiler/linker rather than silently depend on a developer
-toolchain. A conventional AppImage can only be a private/local build unless the distribution
-policy changes.
+The release path must provide a native setup screen with Browse, validate a selected extracted
+`lf2.exe` and its required sibling data, persist the selected game tree in the OS user-data/config
+location, and support reselection. A `game/` tree beside the outer AppImage is also a valid
+zero-configuration candidate. The original files remain outside the AppImage in every case.
 
 ## Resolution
+
+### Resolution (2026-08-30)
+Implemented CMake-owned AppDir installation, pinned and content-gated x86_64 AppImage packaging, a published-release workflow, exact LF2 v2.0a executable plus sibling-data validation, outer-APPIMAGE game/ discovery, an SDL Browse/Quit first-run picker, persisted selection, and --select-game reselection. Verified the extracted final artifact contains no original PE/game-data paths; sibling-data AppImage boot reached frame 1 and exited 0; the missing-data path exited 2 and named the exact sibling game directory.

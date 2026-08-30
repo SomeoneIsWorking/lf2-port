@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(lf2_port C CXX)
 
+include(GNUInstallDirs)
+
 # The recompiled game is intentionally very literal C: every guest instruction becomes
 # explicit register/memory operations.  Leaving a single-config generator at CMake's empty
 # build type compiles that hot dispatch code at -O0 and turns the data parser into seconds of
@@ -110,6 +112,8 @@ add_executable(lf2
     runtime/app/function_keys.c
     runtime/app/options.c
     runtime/app/config.c
+    runtime/app/user_paths.c
+    runtime/app/game_data.c
     runtime/app/port_entry.c
     runtime/input/gamepad.c
     runtime/input/bindings.c
@@ -149,6 +153,7 @@ add_executable(lf2
     runtime/ui/rmlui_input.cpp
     runtime/ui/rmlui_backend.cpp
     runtime/ui/rmlui_system.cpp
+    runtime/ui/setup_ui.c
     third_party/RmlUi/Backends/RmlUi_Platform_SDL.cpp
     runtime/app/main.c)
 # EVERY subsystem directory is on the include path, which is what lets a file say
@@ -200,6 +205,8 @@ set_source_files_properties(
     runtime/log/lf2_log.cpp runtime/ui/rmlui_system.cpp
     runtime/app/options.c
     runtime/app/config.c
+    runtime/app/user_paths.c
+    runtime/app/game_data.c
     runtime/app/port_entry.c
     runtime/win32/wsock.c
     runtime/overrides/boot_guest.c
@@ -229,6 +236,7 @@ set_source_files_properties(
     runtime/video/engine_lighting.c
     runtime/video/stagegeom.c
     runtime/ui/ui_rgba.c
+    runtime/ui/setup_ui.c
     runtime/app/main.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
@@ -247,7 +255,21 @@ find_package(SDL3 REQUIRED CONFIG)
 find_library(LF2_M m)
 target_link_libraries(lf2 PRIVATE SDL3::SDL3 lucent::lucent $<$<BOOL:${LF2_M}>:${LF2_M}>)
 
-add_executable(test_bindings tests/test_bindings.c runtime/input/bindings.c runtime/app/config.c)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_target_properties(lf2 PROPERTIES INSTALL_RPATH "$ORIGIN")
+endif()
+
+install(TARGETS lf2 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY stages DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.appdata.xml
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+
+add_executable(test_bindings tests/test_bindings.c runtime/input/bindings.c
+    runtime/app/config.c runtime/app/user_paths.c)
 target_include_directories(test_bindings PRIVATE runtime/input runtime/app)
 target_link_libraries(test_bindings PRIVATE SDL3::SDL3)
 target_compile_options(test_bindings PRIVATE -Wall -Wextra)
@@ -255,6 +277,22 @@ set(LF2_BINDINGS_TEST_CONFIG "${CMAKE_BINARY_DIR}/test-bindings.cfg")
 add_test(NAME bindings_write COMMAND test_bindings write ${LF2_BINDINGS_TEST_CONFIG})
 add_test(NAME bindings_read COMMAND test_bindings read ${LF2_BINDINGS_TEST_CONFIG})
 set_tests_properties(bindings_read PROPERTIES DEPENDS bindings_write)
+
+add_executable(test_config tests/test_config.c runtime/app/config.c runtime/app/user_paths.c)
+target_include_directories(test_config PRIVATE runtime/app)
+target_link_libraries(test_config PRIVATE SDL3::SDL3)
+target_compile_options(test_config PRIVATE -Wall -Wextra)
+set(LF2_CONFIG_TEST_DIR "${CMAKE_BINARY_DIR}/test-config")
+add_test(NAME config_write COMMAND test_config write ${LF2_CONFIG_TEST_DIR})
+add_test(NAME config_read COMMAND test_config read ${LF2_CONFIG_TEST_DIR})
+set_tests_properties(config_read PROPERTIES DEPENDS config_write)
+
+add_executable(test_game_data tests/test_game_data.c runtime/app/game_data.c)
+target_include_directories(test_game_data PRIVATE runtime/app)
+target_compile_definitions(test_game_data PRIVATE
+    LF2_EXPECTED_EXE_SIZE=17u LF2_EXPECTED_EXE_CRC32=0xe4158afcu)
+target_compile_options(test_game_data PRIVATE -Wall -Wextra)
+add_test(NAME game_data COMMAND test_game_data ${CMAKE_BINARY_DIR}/test-game-data)
 
 add_executable(test_keyboard tests/test_keyboard.c runtime/input/keyboard.c)
 target_include_directories(test_keyboard PRIVATE runtime/input)
@@ -313,6 +351,8 @@ add_test(NAME runtime_log_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_runtime_log.py)
 add_test(NAME build_shaders_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_build_shaders.py)
+add_test(NAME appimage_tool COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_appimage.py)
 
 # ---- RmlUi (issue #70) ----
 #
@@ -334,7 +374,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/RmlUi/CMakeLists.txt")
     set(RMLUI_SVG_PLUGIN OFF)
     set(RMLUI_BACKEND_AUTO OFF)
     set(RMLUI_FONT_ENGINE "freetype")
-    add_subdirectory(third_party/RmlUi)
+    add_subdirectory(third_party/RmlUi EXCLUDE_FROM_ALL)
     target_link_libraries(lf2 PRIVATE RmlUi::Core)
 else()
     message(FATAL_ERROR "third_party/RmlUi is missing -- run `git submodule update --init --recursive`")

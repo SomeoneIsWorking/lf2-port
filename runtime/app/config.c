@@ -1,22 +1,33 @@
 /* See config.h for what this is and why the keys moved here. */
 #include "config.h"
 
+#include "user_paths.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* The file, or NULL when settings are disabled (LF2_CONFIG set-but-empty). */
-static const char *config_file(void)
+static const char *config_file(int create_directory)
 {
     const char *v = getenv("LF2_CONFIG");
     if (v) return *v ? v : NULL;
-    return "lf2.cfg";
+    static char path[4096];
+    char error[512];
+    if (!user_paths_config_file(path, sizeof path, create_directory, error, sizeof error)) {
+        fprintf(stderr, "config: %s\n", error);
+        return NULL;
+    }
+    return path;
 }
 
 /* The generic store. Fixed size: the port's settings are a handful of short names, and a
  * dynamic map for that is an allocation for nothing. */
 enum { SLOT_N = 32 };
-static struct { char name[32]; char value[32]; } slot[SLOT_N];
+static struct {
+    char name[32];
+    char value[4096];
+} slot[SLOT_N];
 static int slot_n;
 
 static int find_slot(const char *name)
@@ -32,37 +43,55 @@ const char *config_get(const char *name)
     return i < 0 ? NULL : slot[i].value;
 }
 
-void config_set(const char *name, const char *value)
+int config_set(const char *name, const char *value)
 {
+    const char *stored_value = value ? value : "";
+    if (strlen(name) >= sizeof slot[0].name || strlen(stored_value) >= sizeof slot[0].value) return 0;
     int i = find_slot(name);
     if (i < 0) {
-        if (slot_n >= SLOT_N) return;
+        if (slot_n >= SLOT_N) return 0;
         i = slot_n++;
         snprintf(slot[i].name, sizeof slot[i].name, "%s", name);
     }
-    snprintf(slot[i].value, sizeof slot[i].value, "%s", value ? value : "");
+    snprintf(slot[i].value, sizeof slot[i].value, "%s", stored_value);
+    return 1;
 }
 
 void config_load(void)
 {
-    const char *path = config_file();
+    const char *path = config_file(0);
     FILE *f = path ? fopen(path, "r") : NULL;
-    if (!f) return;                              /* no file is a valid, default state */
-    char line[128];
+    if (!f) return; /* no file is a valid, default state */
+    char line[8192];
     while (fgets(line, sizeof line, f)) {
-        char name[32], value[32];
-        const int n = sscanf(line, "%31s %31s", name, value);
-        if (n == 2 && name[0] != '#') config_set(name, value);
+        char name[32];
+        int consumed = 0;
+        if (sscanf(line, "%31s%n", name, &consumed) != 1 || name[0] == '#') continue;
+        char *value = line + consumed;
+        while (*value == ' ' || *value == '\t') ++value;
+        value[strcspn(value, "\r\n")] = 0;
+        if (*value) (void)config_set(name, value);
     }
     fclose(f);
 }
 
-void config_save(void)
+int config_save(void)
 {
-    const char *path = config_file();
+    const char *path = config_file(1);
+    if (!path) {
+        const char *override = getenv("LF2_CONFIG");
+        return override && !*override;
+    }
     FILE *f = path ? fopen(path, "w") : NULL;
-    if (!f) return;
+    if (!f) {
+        perror(path);
+        return 0;
+    }
     fprintf(f, "# LF2 port settings\n");
     for (int i = 0; i < slot_n; i++) fprintf(f, "%s %s\n", slot[i].name, slot[i].value);
-    fclose(f);
+    if (fclose(f) != 0) {
+        perror(path);
+        return 0;
+    }
+    return 1;
 }

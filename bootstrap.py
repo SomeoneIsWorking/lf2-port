@@ -27,8 +27,8 @@ Order matters and each step needs only the ones before it:
   5. build                tools/build/build.py (cmake; skipped when the
                           binary is newer than every input -- REBUILD=1
                           forces it).
-  6. run                  the game, from the game tree (its data opens by
-                          relative path), with your arguments passed through.
+  6. run                  the game; the executable validates and enters the
+                          selected game tree, with your arguments passed through.
 """
 
 from __future__ import annotations
@@ -285,8 +285,8 @@ def main(argv: list[str]) -> int:
     ensure_game_tree()
     build(venv_python, port_assets)
 
-    # Run from the game tree: the game opens its data by relative path.
-    # The venv goes on PATH so helper scripts' bare `python3` lands on the
+    # The executable owns game-tree discovery and changes into the validated root before
+    # guest startup. The venv goes on PATH so helper scripts' bare `python3` lands on the
     # interpreter with this port's dependencies installed.
     env = dict(os.environ)
     env["PATH"] = "{}{}{}".format(venv_python.parent, os.pathsep, env.get("PATH", ""))
@@ -295,8 +295,8 @@ def main(argv: list[str]) -> int:
     # execve discards this process image -- and its buffered stdout with it.
     sys.stdout.flush()
     sys.stderr.flush()
-    os.chdir(ROOT / "game")
-    os.execve(str(BINARY), [str(BINARY), "lf2.exe", *argv], env)
+    os.chdir(ROOT)
+    os.execve(str(BINARY), [str(BINARY), *argv], env)
 
 
 if __name__ == "__main__":

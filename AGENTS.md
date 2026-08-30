@@ -31,7 +31,10 @@ grepping these — nearly all of them are already recorded with the measurement 
 # After ./run.sh has provisioned the external checkouts, Python environment,
 # and game tree, the direct build/run path is:
 uv run --frozen python tools/build/build.py
-cd game && ../scratch/build-clang/lf2 lf2.exe      # cwd MUST be the game tree — data is opened by relative path
+scratch/build-clang/lf2                    # discovers, validates, and enters game/ before guest startup
+
+# Release artifact; contains the compiled port and redistributable resources, never original files.
+uv run --frozen python tools/build/appimage.py --fetch-tools --version dev
 ```
 
 `bootstrap.py` is stdlib-only Python; setup logic lives there, never in
@@ -95,7 +98,7 @@ game's four monolithic functions (28/20/18/15 KB — main loop, character state 
 | `runtime/video/` | `ddraw.c` (DirectDraw → SDL3), `host_frame.c` (completed-frame presentation, diagnostics, pacing and SDL teardown), `render.c`, `engine.c` + `engine_textures.c` (native rendering and its frame-safe texture cache), `hd2d.c` (lighting), `hostwin.h` |
 | `runtime/audio/` | `dsound.c` + `mixer.c` |
 | `runtime/input/` | device state and persistent action bindings — `gamepad.c/.h`, `keyboard.c/.h`, `bindings.c/.h` |
-| `runtime/app/` | the port's own shell — `main.c`, `pause.c`, `script.c` (scripted input), `loadprof.c` |
+| `runtime/app/` | the port's own shell — `main.c` composes startup; `game_data.c` validates/discovers the player-owned game tree; `user_paths.c` owns OS configuration paths; `pause.c`, `script.c` (scripted input), `loadprof.c` |
 | `runtime/log/` | the narrow C/stdio-to-Lucent bridge; Lucent owns timestamps, channels, sinks, and serialization |
 | `runtime/overrides/` | see below |
 | `tests/` | the unit tests, which are programs rather than runtime code |
@@ -113,12 +116,14 @@ COM vtable the recompiler cannot resolve statically, and `runtime/win32/com.c` s
 Dusklight is the architecture reference for host-side ownership. LF2 adapts that pattern to SDL3 and
 static recompilation rather than copying Dusklight's platform implementations:
 
-- `runtime/app/` composes lifecycle and startup policy.
+- `runtime/app/` composes lifecycle and startup policy. Game-data discovery and validation live in
+  `game_data.c`; OS-owned settings paths live in `user_paths.c`.
 - `runtime/log/` assembles legacy C output into complete source-named records and delegates all
   logging policy and timestamping to the pinned Lucent subsystem.
 - `runtime/ui/` owns the RmlUi document, device-independent UI input translation, SDL
   render backend, and Lucent-backed system interface as separate modules (`settings_ui.cpp`,
-  `rmlui_input.cpp`, `rmlui_backend.cpp`, `rmlui_system.cpp`). LF2's pre-fight CHARMENU remains the game's original bitmap-authored
+  `rmlui_input.cpp`, `rmlui_backend.cpp`, `rmlui_system.cpp`), while `setup_ui.c` owns the small
+  SDL-native no-terminal first-run picker. LF2's pre-fight CHARMENU remains the game's original bitmap-authored
   panel; host UI does not replace its layout or lettering.
 - `runtime/input/` owns device discovery and persistent action bindings; config only stores values.
 - `runtime/video/`, `runtime/audio/`, and `runtime/win32/` remain cohesive peer subsystems.
@@ -128,6 +133,13 @@ Generic port UI art comes from `PORT_ASSETS_DIR`, `SHARED_DIR/port-assets`, an e
 `../../shared/port-assets` checkout, or bootstrap's pinned gitignored `scratch/deps/port-assets`,
 never from a copied tracked LF2-local version. The settings screen and in-game device indicators
 embed that repository's SVG icons at build time, so the installed game has no host checkout path.
+
+The Linux release boundary is `CMakeLists.txt`'s install rules plus
+`tools/build/appimage.py`; `.github/workflows/release-appimage.yml` builds its pinned SDL stack and
+attaches the inspected artifact to a published release. The AppImage may include the translated port
+but must refuse original `lf2.exe`, installer, or extracted assets. Android is not a release target
+until its Activity/SAF selection, URI persistence, authored touch controls, and real-device
+performance matrix exist.
 
 `tools/build/check_structure.py` enforces the boundary: new runtime source files are capped at 1,200
 lines and existing files above that limit may not grow. At 2,000 lines a file is critical extraction

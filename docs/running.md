@@ -10,11 +10,41 @@ the direct build/run path is:
 
 ```sh
 uv run --frozen python tools/build/build.py
-cd game && ../scratch/build-clang/lf2 lf2.exe
+scratch/build-clang/lf2
 ```
 
-The working directory must be the extracted game tree — the game opens its data with
-relative paths.
+The executable discovers `game/lf2.exe` from the repository root, validates it, and enters the
+extracted tree before the guest starts. An explicit executable path remains available for
+maintainer runs.
+
+## AppImage
+
+The release artifact contains the native port and redistributable host resources, never the
+original installer, `lf2.exe`, or extracted assets. A desktop launch with no configured game tree
+shows an SDL setup dialog and native file picker. Select the exact `lf2.exe` in a complete extracted
+LF2 v2.0a tree. The port validates its size and CRC32 plus the sibling `data/data.txt`, stores the
+tree in the per-user configuration, and changes into that directory before loading the guest.
+
+A complete `game/` tree beside the outer AppImage is discovered automatically through `$APPIMAGE`;
+`SDL_GetBasePath()` is intentionally not used because it points inside the temporary AppImage
+mount. Use the desktop action **Select Little Fighter 2 Game Files…** or `--select-game` to reset the
+saved location.
+
+Maintainers build the exact CMake install tree and final image with:
+
+```sh
+uv run --frozen python tools/build/appimage.py --fetch-tools --version dev
+```
+
+The tool verifies pinned SHA256 values for linuxdeploy, appimagetool, and the Type 2 runtime. It
+rejects an install tree containing an original PE executable or known game-data paths, extracts the
+finished AppImage, and repeats the content gate against the artifact itself. Published GitHub
+releases run the same command after building pinned SDL revisions on Ubuntu 22.04.
+
+Android is not a release target yet. It requires a native Activity/Storage Access Framework setup
+path with persisted URI permission, an authored touch-control layer routed through the existing
+action model, and a named-device performance matrix; the desktop AppImage flow is not evidence for
+any of those gates.
 
 ## macOS
 
@@ -457,9 +487,12 @@ tabs, document model, controlled values, and live input navigation follow Duskli
 ownership pattern; device-independent UI input and the SDL rendering adapter remain separate
 modules. The context is drawable-sized and its `dp` scale comes from
 `SDL_GetWindowDisplayScale`, so FreeType rasterizes the 16dp body font at 32 pixels on a 2x
-display instead of enlarging a fixed 16px atlas. The settings — seven keyboard
-bindings, seven controller bindings, renderer, and character lighting — persist across runs in
-`lf2.cfg` beside the game tree (`runtime/app/config.c`).
+display instead of enlarging a fixed 16px atlas. The settings — seven keyboard bindings, seven
+controller bindings, renderer, character lighting, and selected game tree — persist across runs in
+`lf2-port/lf2.cfg` below `$XDG_CONFIG_HOME` (or `~/.config` when XDG is unset). Other SDL platforms
+use the application preference directory. `LF2_CONFIG` remains the diagnostic override, and an
+empty value disables persistence for scripted runs (`runtime/app/config.c`,
+`runtime/app/user_paths.c`).
 
 The keyboard/gamepad headers and in-game device indicators are SVGs from the shared
 `port-assets` repository, embedded at build time rather than copied into this tree. The

@@ -7,10 +7,11 @@
  * mapping a player cannot change is not a mapping, so the seven keys move here, editable from
  * the RmlUi settings screen, and persist across runs.
  *
- * THE FILE is `lf2.cfg` beside the game tree (the port runs with the game tree as its cwd),
+ * THE FILE is `lf2.cfg` in the OS-owned per-user application configuration directory,
  * overridable with LF2_CONFIG. An EMPTY LF2_CONFIG disables the file entirely, which is how the
  * scripted routes stay deterministic: tools/e2e.py exports it, so a developer's personal key
- * bindings can never re-aim a route's scripted key presses.
+ * bindings can never re-aim a route's scripted key presses. It never defaults to the checkout,
+ * current working directory, game tree, or an AppImage mount.
  *
  * The format is one `name value` per line, `#` comments. It is deliberately the seed for the
  * rest of the port's options rather than a key-only bag: renderer and character-lighting
@@ -23,10 +24,10 @@
 void config_load(void);
 
 /* Write the current settings to the file (or do nothing when there is none). */
-void config_save(void);
+int config_save(void);
 
 /* The generic store used by cohesive option/binding owners. Returns NULL when unset. */
 const char *config_get(const char *name);
-void        config_set(const char *name, const char *value);
+int config_set(const char *name, const char *value);
 
 #endif
