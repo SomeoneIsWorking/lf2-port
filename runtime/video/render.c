@@ -157,7 +157,10 @@ static void target_free(void)
     target_w = target_h = 0;
 }
 
-static void targets_free(void) { target_free(); }
+static void targets_free(void)
+{
+    target_free();
+}
 
 void render_shutdown(void)
 {
@@ -331,7 +334,10 @@ static void render_blit_record(uint32_t dst_pixels, int dl, int dt, int dr, int 
     e->shadow_ground_y = shadow_object_ground_y;
 }
 
-void render_background_phase_set(float phase) { background_phase = phase; }
+void render_background_phase_set(float phase)
+{
+    background_phase = phase;
+}
 
 void render_blit(uint32_t dst_pixels, int dl, int dt, int dr, int db, uint32_t src_pixels, int sw, int sh, int spitch,
                  int sl, int st, int sr, int sb, int keyed, uint32_t key_lo, uint32_t key_hi)
@@ -355,7 +361,10 @@ void render_shadow_object_begin(int ground_y, int character, int casts_shadow)
     shadow_object_ground_y = (float)ground_y;
 }
 
-void render_shadow_object_end(void) { shadow_object_open = 0; }
+void render_shadow_object_end(void)
+{
+    shadow_object_open = 0;
+}
 
 /* A finished geometry pass, placed at THIS point in the painter order (issue #62).
  *
@@ -634,7 +643,10 @@ static void draw_texture_quad(Tex *t, const SDL_FRect *src, const SDL_FRect *dst
  * window, so the geometry is exact and only a sprite's own texels are resampled -- once,
  * NEAREST, from the source art. Scaling the composed frame instead is what the port used to
  * do and it quantises everything to the small grid first. */
-static float world_scale(void) { return lf2_world_scale(); }
+static float world_scale(void)
+{
+    return lf2_world_scale();
+}
 
 /* The ONE pass: everything the game composed, in the order it composed it. The two lighting
  * passes that shared this function -- the character buffer and the cast-shadow mask -- moved
@@ -736,7 +748,10 @@ static void draw_list(List *l, float world, float ox, float oy, int from, int to
  * mask nothing consumes would simply delete the game's shadow and put nothing in its place.
  * ddraw.c asks before it decides whether the game's own ellipse becomes a ground marker or
  * stays a picture. */
-int render_shadows_enabled(void) { return engine_enabled() && opt_lighting(); }
+int render_shadows_enabled(void)
+{
+    return engine_enabled() && opt_lighting();
+}
 
 static void clear_to(SDL_Texture *rt, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {

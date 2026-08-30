@@ -197,7 +197,8 @@ static void trim_line(char *line)
 static void discard_line(FILE *file)
 {
     int c;
-    while ((c = fgetc(file)) != '\n' && c != EOF) {}
+    while ((c = fgetc(file)) != '\n' && c != EOF) {
+    }
 }
 
 static void load_control_file(void)

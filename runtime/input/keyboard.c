@@ -17,7 +17,10 @@ void keyboard_note(unsigned vk, int down)
     }
 }
 
-int keyboard_held(unsigned vk) { return vk < 256 && held[vk]; }
+int keyboard_held(unsigned vk)
+{
+    return vk < 256 && held[vk];
+}
 
 int keyboard_take_escape(void)
 {

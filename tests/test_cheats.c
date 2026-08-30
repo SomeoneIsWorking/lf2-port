@@ -14,13 +14,18 @@ uint32_t g_rwatch_lo, g_rwatch_hi;
 
 static uint32_t requested_vk;
 
-void rwatch_hit(uint32_t address) { (void)address; }
+void rwatch_hit(uint32_t address)
+{
+    (void)address;
+}
 int function_key_request(uint32_t vk)
 {
     requested_vk = vk;
     return 1;
 }
-void function_keys_tick(void) {}
+void function_keys_tick(void)
+{
+}
 int hostwin_injected_key(uint32_t vk)
 {
     (void)vk;

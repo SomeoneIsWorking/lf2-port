@@ -58,7 +58,9 @@ std::string channel_from_source(const char *source)
 }
 
 PendingLine &pending_for(ThreadLines &lines, FILE *stream)
-{ return stream == stdout ? lines.standard_output : lines.standard_error; }
+{
+    return stream == stdout ? lines.standard_output : lines.standard_error;
+}
 
 void emit(std::vector<CompleteLine> lines, lucent::Level level = lucent::Level::Info)
 {

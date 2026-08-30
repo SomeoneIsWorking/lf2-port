@@ -30,7 +30,10 @@ A complete `game/` tree beside the outer AppImage is discovered automatically th
 mount. Use the desktop action **Select Little Fighter 2 Game Files…** or `--select-game` to reset the
 saved location.
 
-Maintainers build the exact CMake install tree and final image with:
+Maintainers build the pinned SDL stack and the exact CMake install tree in an Ubuntu 22.04 local
+container, run CTest and the AppImage content gates there, then upload the ignored artifact manually.
+The container needs the native build dependencies plus the `file` package used by appimagetool. The
+final packaging command is:
 
 ```sh
 uv run --frozen python tools/build/appimage.py --fetch-tools --version dev
@@ -38,8 +41,9 @@ uv run --frozen python tools/build/appimage.py --fetch-tools --version dev
 
 The tool verifies pinned SHA256 values for linuxdeploy, appimagetool, and the Type 2 runtime. It
 rejects an install tree containing an original PE executable or known game-data paths, extracts the
-finished AppImage, and repeats the content gate against the artifact itself. Published GitHub
-releases run the same command after building pinned SDL revisions on Ubuntu 22.04.
+finished AppImage, and repeats the content gate against the artifact itself. The resulting
+`scratch/release/LF2-Port-x86_64.AppImage` is gitignored; generated source and package output are
+never committed, and there is no GitHub Actions release workflow.
 
 Android is not a release target yet. It requires a native Activity/Storage Access Framework setup
 path with persisted URI permission, an authored touch-control layer routed through the existing

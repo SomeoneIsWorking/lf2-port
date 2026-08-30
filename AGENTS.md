@@ -136,11 +136,12 @@ never from a copied tracked LF2-local version. The settings screen and in-game d
 embed that repository's SVG icons at build time, so the installed game has no host checkout path.
 
 The Linux release boundary is `CMakeLists.txt`'s install rules plus
-`tools/build/appimage.py`; `.github/workflows/release-appimage.yml` builds its pinned SDL stack and
-attaches the inspected artifact to a published release. The AppImage may include the translated port
-but must refuse original `lf2.exe`, installer, or extracted assets. Android is not a release target
-until its Activity/SAF selection, URI persistence, authored touch controls, and real-device
-performance matrix exist.
+`tools/build/appimage.py`; maintainers build the pinned SDL stack in a controlled local environment,
+run the release gates, and upload the inspected ignored artifact manually. There is no hosted release
+workflow, and generated source or package output is never committed. The AppImage may include the
+translated port but must refuse original `lf2.exe`, installer, or extracted assets. Android is not a
+release target until its Activity/SAF selection, URI persistence, authored touch controls, and
+real-device performance matrix exist.
 
 `tools/build/check_structure.py` enforces the boundary: new runtime source files are capped at 1,200
 lines and existing files above that limit may not grow. At 2,000 lines a file is critical extraction

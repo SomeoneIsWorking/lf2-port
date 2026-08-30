@@ -58,7 +58,10 @@ static void open_menu(void)
     rmlui_open();
 }
 
-int pause_menu_in_match(void) { return opened_in_match; }
+int pause_menu_in_match(void)
+{
+    return opened_in_match;
+}
 
 int pause_menu_can_drop(void)
 {

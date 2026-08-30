@@ -73,7 +73,10 @@ int cheats_request(CheatAction action)
     return 1;
 }
 
-void cheats_tick(void) { function_keys_tick(); }
+void cheats_tick(void)
+{
+    function_keys_tick();
+}
 
 void cheats_report(void)
 {
@@ -98,9 +101,15 @@ void fn_00416e10(void)
     R(ESP) += 4;
 }
 
-static int cheat_can_run(void) { return LD32(GX_SCREEN) == 0; }
+static int cheat_can_run(void)
+{
+    return LD32(GX_SCREEN) == 0;
+}
 
-static void mark(uint32_t event, uint8_t bit) { ST8(event + 8, LD8(event + 8) | bit); }
+static void mark(uint32_t event, uint8_t bit)
+{
+    ST8(event + 8, LD8(event + 8) | bit);
+}
 
 /* These exact cdecl leaf ports deliberately omit only the original non-VS/hidden-code
  * restriction. Their callers clean the arguments; each leaf pops its return address. */

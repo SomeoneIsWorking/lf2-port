@@ -48,7 +48,9 @@ Rml::CompiledGeometryHandle RmlUiRenderBackend::CompileGeometry(Rml::Span<const 
 }
 
 void RmlUiRenderBackend::ReleaseGeometry(Rml::CompiledGeometryHandle handle)
-{ delete reinterpret_cast<Geometry *>(handle); }
+{
+    delete reinterpret_cast<Geometry *>(handle);
+}
 
 void RmlUiRenderBackend::RenderGeometry(Rml::CompiledGeometryHandle handle, Rml::Vector2f translation,
                                         Rml::TextureHandle texture)

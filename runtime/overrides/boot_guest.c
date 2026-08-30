@@ -33,7 +33,10 @@ static void initialise_local_players(void)
 
 static int loading_data;
 
-int boot_guest_loading_data(void) { return loading_data; }
+int boot_guest_loading_data(void)
+{
+    return loading_data;
+}
 
 void fn_00419e40(void)
 {

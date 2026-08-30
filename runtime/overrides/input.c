@@ -64,11 +64,17 @@ static unsigned char dev_prev[MAX_DEV][7];
 
 /* Which player the keyboard claimed, or -1. The mouse drives the same one, so the two
  * never disagree about who they are. */
-int keyboard_player(void) { return dev_player[0]; }
+int keyboard_player(void)
+{
+    return dev_player[0];
+}
 
 /* Which player a device is driving, for the pause menu: drop-out is per player, and the
  * player it drops out is the one belonging to whoever opened the menu. */
-int device_player(int dev) { return dev >= 0 && dev < MAX_DEV ? dev_player[dev] : -1; }
+int device_player(int dev)
+{
+    return dev >= 0 && dev < MAX_DEV ? dev_player[dev] : -1;
+}
 
 /* The reverse, for the HUD: which DEVICE is driving a player slot (issue #74). 0 is the
  * keyboard, 1..4 the pads; -1 when no device drives it -- a computer slot, or one nobody

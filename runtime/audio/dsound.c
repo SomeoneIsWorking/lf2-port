@@ -244,7 +244,8 @@ static void ffmpeg_terminate(pid_t pid)
 {
     if (pid <= 0) return;
     kill(pid, SIGKILL);
-    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+    }
 }
 
 int music_load(const char *path)

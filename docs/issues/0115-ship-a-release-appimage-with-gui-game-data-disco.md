@@ -41,4 +41,10 @@ zero-configuration candidate. The original files remain outside the AppImage in 
 ## Resolution
 
 ### Resolution (2026-08-30)
-Implemented CMake-owned AppDir installation, pinned and content-gated x86_64 AppImage packaging, a published-release workflow, exact LF2 v2.0a executable plus sibling-data validation, outer-APPIMAGE game/ discovery, an SDL Browse/Quit first-run picker, persisted selection, and --select-game reselection. Verified the extracted final artifact contains no original PE/game-data paths; sibling-data AppImage boot reached frame 1 and exited 0; the missing-data path exited 2 and named the exact sibling game directory.
+Implemented CMake-owned AppDir installation, pinned and content-gated x86_64 AppImage packaging,
+manual local release build/upload tooling, exact LF2 v2.0a executable plus sibling-data validation,
+outer-APPIMAGE `game/` discovery, an SDL Browse/Quit first-run picker, persisted selection, and
+`--select-game` reselection. Verified the extracted final artifact contains no original PE/game-data
+paths; sibling-data AppImage boot reached frame 1 and exited 0; the missing-data path exited 2 and
+named the exact sibling game directory. No hosted release workflow or generated package/source
+output is committed.

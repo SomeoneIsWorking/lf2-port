@@ -5,10 +5,10 @@ ColumnLimit: 120
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterFunction: true
-AllowShortBlocksOnASingleLine: Always
+AllowShortBlocksOnASingleLine: false
 AllowShortCaseLabelsOnASingleLine: true
 AllowShortEnumsOnASingleLine: true
-AllowShortFunctionsOnASingleLine: All
+AllowShortFunctionsOnASingleLine: false
 AllowShortIfStatementsOnASingleLine: AllIfsAndElse
 AllowShortLoopsOnASingleLine: true
 SortIncludes: Never
