@@ -271,7 +271,7 @@ install(FILES platforms/freedesktop/io.github.SomeoneIsWorking.lf2-port.appdata.
 add_executable(test_bindings tests/test_bindings.c runtime/input/bindings.c
     runtime/app/config.c runtime/app/user_paths.c)
 target_include_directories(test_bindings PRIVATE runtime/input runtime/app)
-target_link_libraries(test_bindings PRIVATE SDL3::SDL3)
+target_link_libraries(test_bindings PRIVATE SDL3::SDL3 lucent::lucent)
 target_compile_options(test_bindings PRIVATE -Wall -Wextra)
 set(LF2_BINDINGS_TEST_CONFIG "${CMAKE_BINARY_DIR}/test-bindings.cfg")
 add_test(NAME bindings_write COMMAND test_bindings write ${LF2_BINDINGS_TEST_CONFIG})
@@ -280,7 +280,7 @@ set_tests_properties(bindings_read PROPERTIES DEPENDS bindings_write)
 
 add_executable(test_config tests/test_config.c runtime/app/config.c runtime/app/user_paths.c)
 target_include_directories(test_config PRIVATE runtime/app)
-target_link_libraries(test_config PRIVATE SDL3::SDL3)
+target_link_libraries(test_config PRIVATE lucent::lucent)
 target_compile_options(test_config PRIVATE -Wall -Wextra)
 set(LF2_CONFIG_TEST_DIR "${CMAKE_BINARY_DIR}/test-config")
 add_test(NAME config_write COMMAND test_config write ${LF2_CONFIG_TEST_DIR})

@@ -98,7 +98,7 @@ game's four monolithic functions (28/20/18/15 KB — main loop, character state 
 | `runtime/video/` | `ddraw.c` (DirectDraw → SDL3), `host_frame.c` (completed-frame presentation, diagnostics, pacing and SDL teardown), `render.c`, `engine.c` + `engine_textures.c` (native rendering and its frame-safe texture cache), `hd2d.c` (lighting), `hostwin.h` |
 | `runtime/audio/` | `dsound.c` + `mixer.c` |
 | `runtime/input/` | device state and persistent action bindings — `gamepad.c/.h`, `keyboard.c/.h`, `bindings.c/.h` |
-| `runtime/app/` | the port's own shell — `main.c` composes startup; `game_data.c` validates/discovers the player-owned game tree; `user_paths.c` owns OS configuration paths; `pause.c`, `script.c` (scripted input), `loadprof.c` |
+| `runtime/app/` | the port's own shell — `main.c` composes startup; `game_data.c` validates/discovers the player-owned game tree; `user_paths.c` composes the LF2 settings filename below Lucent's platform user-data directory; `pause.c`, `script.c` (scripted input), `loadprof.c` |
 | `runtime/log/` | the narrow C/stdio-to-Lucent bridge; Lucent owns timestamps, channels, sinks, and serialization |
 | `runtime/overrides/` | see below |
 | `tests/` | the unit tests, which are programs rather than runtime code |
@@ -117,7 +117,8 @@ Dusklight is the architecture reference for host-side ownership. LF2 adapts that
 static recompilation rather than copying Dusklight's platform implementations:
 
 - `runtime/app/` composes lifecycle and startup policy. Game-data discovery and validation live in
-  `game_data.c`; OS-owned settings paths live in `user_paths.c`.
+  `game_data.c`; Lucent owns cross-platform user-data resolution while `user_paths.c` composes the
+  LF2 settings filename at that boundary.
 - `runtime/log/` assembles legacy C output into complete source-named records and delegates all
   logging policy and timestamping to the pinned Lucent subsystem.
 - `runtime/ui/` owns the RmlUi document, device-independent UI input translation, SDL

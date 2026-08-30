@@ -3,8 +3,7 @@
 
 #include <stddef.h>
 
-/* Resolve the port-owned settings file. Linux follows XDG_CONFIG_HOME; the other
- * packaged platforms use SDL's application-specific writable directory. */
+/* Compose the port-owned settings filename below Lucent's platform user-data directory. */
 int user_paths_config_file(char *output, size_t capacity, int create_directory, char *error, size_t error_capacity);
 
 #endif
