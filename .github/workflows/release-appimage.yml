@@ -1,0 +1,76 @@
+name: Release AppImage
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    env:
+      CC: clang
+      CXX: clang++
+      CMAKE_PREFIX_PATH: ${{ github.workspace }}/scratch/release-deps/prefix
+      LD_LIBRARY_PATH: ${{ github.workspace }}/scratch/release-deps/prefix/lib
+      PKG_CONFIG_PATH: ${{ github.workspace }}/scratch/release-deps/prefix/lib/pkgconfig
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: recursive
+
+      - name: Install native build prerequisites
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          appstream build-essential clang clang-format clang-tidy cmake
+          desktop-file-utils ffmpeg git libasound2-dev libaudio-dev libdbus-1-dev
+          libdecor-0-dev libdrm-dev libegl1-mesa-dev libfreetype6-dev libfribidi-dev
+          libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libharfbuzz-dev
+          libibus-1.0-dev libjack-dev libpipewire-0.3-dev libpulse-dev libsndio-dev
+          libthai-dev libudev-dev liburing-dev libusb-1.0-0-dev libwayland-dev
+          libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxi-dev
+          libxkbcommon-dev libxrandr-dev libxss-dev libxtst-dev ninja-build
+          pkg-config zlib1g-dev
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+
+      - name: Build pinned SDL release stack
+        run: uv run --frozen python tools/build/release_dependencies.py
+
+      - name: Provision, build, and smoke-test the default target
+        env:
+          SDL_AUDIODRIVER: dummy
+          SDL_VIDEODRIVER: dummy
+          LF2_CONFIG: ""
+          LF2_QUIT_AFTER: "1"
+        run: ./run.sh
+
+      - name: Run the offline release gates
+        run: ctest --test-dir scratch/build-clang --output-on-failure
+
+      - name: Build and inspect the game-file-free AppImage
+        env:
+          APPIMAGE_VERSION: ${{ github.event.release.tag_name || github.ref_name }}
+        run: >-
+          uv run --frozen python tools/build/appimage.py --fetch-tools
+          --version "${APPIMAGE_VERSION}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: LF2-Port-x86_64.AppImage
+          path: scratch/release/LF2-Port-x86_64.AppImage
+          if-no-files-found: error
+
+      - name: Attach AppImage to the published release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: >-
+          gh release upload "${RELEASE_TAG}"
+          scratch/release/LF2-Port-x86_64.AppImage --clobber

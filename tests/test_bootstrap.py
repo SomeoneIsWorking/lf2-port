@@ -140,6 +140,25 @@ class BootstrapCheckoutTest(unittest.TestCase):
             bootstrap.ensure_game_tree()
         installer.assert_not_called()
 
+    def test_launcher_preserves_product_arguments_and_starts_from_repo_root(self) -> None:
+        binary = self.root / "scratch" / "build-clang" / "lf2"
+        venv_python = self.root / ".venv" / "bin" / "python"
+        port_assets = self.root / "scratch" / "deps" / "port-assets"
+        with (
+            mock.patch.object(bootstrap, "BINARY", binary),
+            mock.patch.object(bootstrap, "ensure_port_assets", return_value=port_assets),
+            mock.patch.object(bootstrap, "ensure_submodules"),
+            mock.patch.object(bootstrap, "ensure_venv", return_value=venv_python),
+            mock.patch.object(bootstrap, "ensure_game_tree"),
+            mock.patch.object(bootstrap, "build"),
+            mock.patch.object(bootstrap.os, "chdir") as chdir,
+            mock.patch.object(bootstrap.os, "execve", side_effect=OSError("stop")) as execve,
+            self.assertRaisesRegex(OSError, "stop"),
+        ):
+            bootstrap.main(["--select-game"])
+        self.assertEqual(chdir.call_args_list[-1].args[0], self.root)
+        self.assertEqual(execve.call_args.args[:2], (str(binary), [str(binary), "--select-game"]))
+
     def test_build_passes_the_resolved_asset_path_to_cmake(self) -> None:
         venv_python = self.root / ".venv" / "bin" / "python"
         venv_python.parent.mkdir(parents=True)

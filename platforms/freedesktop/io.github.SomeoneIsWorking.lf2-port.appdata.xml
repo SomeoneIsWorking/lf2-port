@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.SomeoneIsWorking.lf2-port</id>
+  <name>LF2 Port</name>
+  <summary>Native port of Little Fighter 2 v2.0a</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      LF2 Port statically recompiles the original 32-bit game logic and provides native SDL3
+      video, audio, input, and user interface implementations. Players supply their own complete
+      Little Fighter 2 v2.0a game tree on first launch.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.SomeoneIsWorking.lf2-port.desktop</launchable>
+  <url type="homepage">https://github.com/SomeoneIsWorking/lf2-port</url>
+  <content_rating type="oars-1.1"/>
+</component>

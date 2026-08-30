@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=LF2 Port
+GenericName=Fighting Game
+Comment=Native port of Little Fighter 2 v2.0a
+Exec=lf2
+Icon=io.github.SomeoneIsWorking.lf2-port
+Terminal=false
+Categories=Game;ActionGame;
+Actions=SelectGame;
+
+[Desktop Action SelectGame]
+Name=Select Little Fighter 2 Game Files…
+Exec=lf2 --select-game
