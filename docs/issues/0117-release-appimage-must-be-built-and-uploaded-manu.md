@@ -28,3 +28,11 @@ After nested-ZIP setup and bounded extraction landed, built v0.1.1 from commit
 the 16,226,808-byte asset with SHA-256
 `d887a62aebd6778d96be70c11d80abde47eaa5166412460f8226bb421d06c7f7`, matching the locally gated
 artifact. The APK remains deliberately absent until its signed-device release gates pass.
+
+After complete-install validation moved ahead of the ZIP swap, built v0.1.2 from commit
+`e821a2a354f5a001d482260a10a70c1447835e64` in the same local Ubuntu 22.04 release environment and
+published the AppImage-only release. The packaged binary reached LF2's mode menu with the local
+user-supplied game tree, presented through the Vulkan renderer, loaded music, and exited cleanly
+through `LF2_QUIT_AFTER`. GitHub reports the 14,641,656-byte asset with SHA-256
+`39f328e34df2220d151ff1e807f3315509ec6b2ceaace2f8fe40ef98302da731`, matching the locally gated
+artifact. The APK remains deliberately absent until its signed-device release gates pass.
