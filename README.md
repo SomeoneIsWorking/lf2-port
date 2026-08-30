@@ -37,7 +37,8 @@ executable and extracted assets are not distributed in this repository.
 This repository and its releases contain the port and its statically translated native program,
 but **not** the original `lf2.exe`, installer, sprites, audio, or data. Little Fighter 2 is freeware
 by **Marti Wong and Starsky Wong** and remains their copyright. To play, download the official
-installer from <https://lf2.net> and extract it locally; the extracted tree is gitignored.
+installer from <https://lf2.net>. Packaged builds can initialize directly from that installer;
+source builds extract it locally during bootstrap. The installer and extracted tree are gitignored.
 
 The curated promotional screenshots above are the only tracked visual output from the game;
 they do not include or replace any separately usable game asset.
@@ -54,10 +55,10 @@ This is an unofficial project with no affiliation with or endorsement by the LF2
 ## AppImage release
 
 Download `LF2-Port-x86_64.AppImage` from a GitHub release, make it executable, and open it. On the
-first launch, the port shows a native SDL setup dialog: choose `lf2.exe` inside a complete extracted
-Little Fighter 2 v2.0a tree, or choose a ZIP containing that tree at any folder depth. The executable
-identity and every file named by `data/data.txt` are validated before play, and the accepted directory
-is remembered in the user's XDG configuration directory.
+first launch, the port shows a native SDL setup dialog. Choose the original `LF2_v2.0a.exe` installer
+directly, `lf2.exe` inside a complete extracted tree, or a ZIP containing that tree at any folder
+depth. The executable identity and every file named by `data/data.txt` are validated before play, and
+the accepted directory is remembered in the user's XDG configuration directory.
 
 As a zero-configuration alternative, put the complete extracted tree in a directory named `game`
 beside the AppImage:
@@ -102,11 +103,15 @@ uv run --frozen python tools/build/build.py
 scratch/build-clang/lf2
 ```
 
-Needs SDL3, `SDL3_ttf`, `SDL3_image` and cmake (plus a C11 and C++20 toolchain).
+Needs SDL3, `SDL3_ttf`, `SDL3_image`, bzip2 and cmake (plus a C11 and C++20 toolchain).
 Agents verify with Clang; the project does not select or police the user's compiler.
 Extraction needs only Python 3 standard library —
 no Windows, no Wine. Background music additionally needs `ffmpeg` on PATH at
 runtime (see below); everything else works without it.
+
+The bzip2 development package is `bzip2-devel` on Fedora (`sudo dnf install bzip2-devel`),
+`libbz2-dev` on Debian/Ubuntu (`sudo apt install libbz2-dev`), and `bzip2` in Homebrew
+(`brew install bzip2`).
 
 The launcher resolves and validates the game tree, then enters it before starting the guest because
 the game opens its data by relative path. Full details, including headless operation and the
@@ -126,7 +131,7 @@ debugging environment variables, are in [`docs/running.md`](docs/running.md).
 | Borderless / windowed / fullscreen, Alt+Enter | works |
 | Linux | works |
 | macOS | user-built; Metal shader support added after the shadow report, **re-test pending (#100)** |
-| Android | **no release yet** — ARM64 native build, private folder/ZIP setup, touch controls, and signed-build gates are implemented; signed install/device correctness and performance evidence remain |
+| Android | **no verified release yet** — ARM64 native build, private installer/folder/ZIP setup, touch controls, and signed-build gates are implemented; signed install/device correctness and performance evidence remain |
 | Netplay | **not ported** — stubbed as "no network available" |
 
 The controller row remains untested because no gamepad was available. The macOS row records a

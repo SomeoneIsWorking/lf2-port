@@ -93,7 +93,7 @@ SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t 
         return SETUP_UI_ERROR;
     }
     const SDL_DialogFileFilter filters[] = {
-        {"LF2 v2.0a executable", "exe"},
+        {"LF2 v2.0a installer or executable", "exe"},
         {"ZIP archive", "zip"},
     };
     SDL_ShowOpenFileDialog(file_selected, &state, NULL, filters, 2, SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS), false);
