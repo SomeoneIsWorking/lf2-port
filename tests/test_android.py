@@ -33,6 +33,20 @@ def make_apk(path: Path, names: list[str]) -> None:
 
 
 def main() -> int:
+    assert not ANDROID.supported_java_major(16)
+    assert ANDROID.supported_java_major(17)
+    assert ANDROID.supported_java_major(25)
+    assert ANDROID.supported_java_major(26)
+    assert not ANDROID.supported_java_major(27)
+
+    wrapper = ROOT / "platforms" / "android" / "gradle-wrapper.properties"
+    wrapper_text = wrapper.read_text()
+    assert "gradle-9.7.1-bin.zip" in wrapper_text
+    assert "distributionSha256Sum=acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a" in wrapper_text
+    assert "com.android.tools.build:gradle:9.3.0" in (
+        ROOT / "platforms" / "android" / "build.gradle"
+    ).read_text()
+
     scratch = ROOT / "scratch" / "test-android-tool"
     if scratch.exists():
         shutil.rmtree(scratch)
