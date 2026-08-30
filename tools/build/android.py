@@ -54,13 +54,17 @@ def android_sdk() -> Path:
     required = [
         sdk / "ndk" / NDK_VERSION / "build" / "cmake" / "android.toolchain.cmake",
         sdk / "platforms" / "android-35" / "android.jar",
-        sdk / "build-tools" / "35.0.0" / "aapt2",
+        sdk / "build-tools" / "36.0.0" / "aapt2",
         sdk / "platform-tools" / "adb",
     ]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         refuse("required SDK components are missing:\n  " + "\n  ".join(missing))
     return sdk
+
+
+def supported_java_major(major: int) -> bool:
+    return 17 <= major <= 26
 
 
 def java_home() -> Path:
@@ -87,10 +91,10 @@ def java_home() -> Path:
             major = int(first[0].split('version "', 1)[1].split(".", 1)[0])
         except (IndexError, ValueError):
             continue
-        if 17 <= major <= 24:
+        if supported_java_major(major):
             return home
     refuse(
-        "Android Gradle needs JDK 17 through 24. On this DNF system install it with: "
+        "Android Gradle needs JDK 17 through 26. On this DNF system install it with: "
         "sudo dnf install java-17-openjdk-devel; then set JAVA_HOME to that JDK"
     )
 
@@ -318,6 +322,11 @@ def assemble_project(work: Path, sources: dict[str, Path], prefix: Path, native:
     project = work / "project"
     scoped_clean(project)
     shutil.copytree(sources["SDL"] / "android-project", project)
+    shutil.copy2(ROOT / "platforms" / "android" / "build.gradle", project / "build.gradle")
+    shutil.copy2(
+        ROOT / "platforms" / "android" / "gradle-wrapper.properties",
+        project / "gradle" / "wrapper" / "gradle-wrapper.properties",
+    )
     shutil.copytree(ROOT / "platforms" / "android" / "app", project / "app", dirs_exist_ok=True)
     assets = project / "app" / "src" / "main" / "assets"
     shutil.copytree(ROOT / "stages", assets / "stages")
@@ -351,6 +360,10 @@ def build_apk(project: Path, sdk: Path, java: Path, signing: Mapping[str, str] |
               release: bool) -> Path:
     task = ":app:assembleRelease" if release else ":app:assembleDebug"
     environment = dict(os.environ)
+    native_access = "--enable-native-access=ALL-UNNAMED"
+    environment["JAVA_OPTS"] = " ".join(
+        option for option in (environment.get("JAVA_OPTS", ""), native_access) if option
+    )
     if signing:
         environment.update(signing)
     run([str(project / "gradlew"), "--no-daemon", f"-Dorg.gradle.java.home={java}", task],
