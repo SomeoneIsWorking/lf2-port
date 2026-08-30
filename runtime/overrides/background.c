@@ -59,6 +59,7 @@
 #include "render.h"
 #include "backdrop.h"
 #include "backdrop_layout.h"
+#include "port_resources.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,13 +69,13 @@ void fn_0041a250__orig(void);
 void fn_0041a5a0__orig(void);
 
 /* The camera's shadow copy and the two words that gate it, straight out of fn_0041b5d0. */
-enum { CAM_MIRROR    = 0x00450b7c,
-       CAM_MIRROR_ON_A = 0x00450b74,
-       CAM_MIRROR_ON_B = 0x00450b84 };
+enum { CAM_MIRROR = 0x00450b7c, CAM_MIRROR_ON_A = 0x00450b74, CAM_MIRROR_ON_B = 0x00450b84 };
 
-enum { BG_ALT_PASS = 99 };              /* the index fn_0041a250 hands to fn_0041a050 */
-enum { DRAW_CLIP = 0x0043f010,          /* six args, stdcall: the callee pops them */
-       DRAW_FILL = 0x00415160 };        /* five args, cdecl:  this function pops them */
+enum { BG_ALT_PASS = 99 }; /* the index fn_0041a250 hands to fn_0041a050 */
+enum {
+    DRAW_CLIP = 0x0043f010, /* six args, stdcall: the callee pops them */
+    DRAW_FILL = 0x00415160
+}; /* five args, cdecl:  this function pops them */
 
 /* A layer field, addressed the way the game addresses it. Kept local to the draw so the
  * per-layer reads read like the disassembly they came from. */
@@ -97,7 +98,7 @@ static void lf_store(uint32_t registry, uint32_t bg, uint32_t field, int i, uint
  * `transparency:` into that field, and fn_0043f010 uses it as a key enable. */
 static void draw_layer(uint32_t obj, int32_t x, int32_t y, uint32_t transparent, uint32_t arg0)
 {
-    const uint32_t args[6] = { (uint32_t)x, (uint32_t)y, 0xffffffffu, transparent, 0u, arg0 };
+    const uint32_t args[6] = {(uint32_t)x, (uint32_t)y, 0xffffffffu, transparent, 0u, arg0};
     R(ECX) = obj;
     guest_call(DRAW_CLIP, args, 6);
 }
@@ -114,7 +115,7 @@ static uint32_t tint_remap(uint32_t c)
     case 0x575347u: return 0x5a4e4bu;
     case 0x977757u: return 0x9a6e5au;
     case 0x473f1fu: return 0x423818u;
-    default:        return c;
+    default: return c;
     }
 }
 
@@ -145,7 +146,7 @@ static void fill_layer(uint32_t registry, uint32_t bg, int i, uint32_t tint)
     world_band_hint_set(1);
     guest_call(DRAW_FILL, args, 5);
     world_band_hint_set(0);
-    R(ESP) += 5 * 4;                     /* cdecl: fn_00415160 pops only its return address */
+    R(ESP) += 5 * 4; /* cdecl: fn_00415160 pops only its return address */
 }
 
 /* The parallax, in the game's own order of operations: the product first, then the divide,
@@ -163,14 +164,17 @@ static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, i
      * geom_layer_offset -- checked by tests/test_geom.c without booting the game. The pin is
      * issue #23: every stage's sky is non-looping and only just wider than 794. Any declared
      * native-size continuation is placed later; parallax itself remains the game's formula. */
-    if (stage_width <= w || span <= w) return 0;      /* pinned: the skew must not move it */
+    if (stage_width <= w || span <= w) return 0; /* pinned: the skew must not move it */
     const int32_t off = geom_layer_offset(span, stage_width, camera, w);
     /* LF2_BG_SKEW=<n> shifts every parallax offset by n. It exists so the byte-identity
      * check in tools/routes/background_test.sh has a NEGATIVE case: a frame dump that is identical
      * whatever this function returns would be measuring nothing. Never set in normal use.
      * Read once -- this runs for every layer of every frame. */
     static int skew = -1;
-    if (skew < 0) { const char *s = getenv("LF2_BG_SKEW"); skew = s ? atoi(s) : 0; }
+    if (skew < 0) {
+        const char *s = getenv("LF2_BG_SKEW");
+        skew = s ? atoi(s) : 0;
+    }
     return off + skew;
 }
 
@@ -217,7 +221,7 @@ int bg_draw_camera(void)
     cam_frames++;
     if (c != cam) cam_shifted++;
     if (cam > cam_game_max) cam_game_max = cam;
-    if (c   > cam_draw_max) cam_draw_max = c;
+    if (c > cam_draw_max) cam_draw_max = c;
     return (int)c;
 }
 
@@ -233,27 +237,33 @@ void bg_camera_report(void)
     if (!getenv("LF2_CAMERA")) return;
     const int view = bg_view_width();
     const int32_t stage = (int32_t)bg_stage_field(BG_STAGE_WIDTH);
-    fprintf(stderr, "camera: view %d, centring offset %d; the game's camera reached %d and the "
-                    "drawing camera %d over %ld frame(s)\n",
+    fprintf(stderr,
+            "camera: view %d, centring offset %d; the game's camera reached %d and the "
+            "drawing camera %d over %ld frame(s)\n",
             view, cam_k, cam_game_max, cam_draw_max, cam_frames);
     /* The section lock is what stage mode uses to hold the camera until a section is cleared,
      * and it is ZERO in VS mode. Reporting it is how a route can show it reached stage mode at
      * all -- and it is the only evidence issue #36's clamp has ever run. */
     /* Issue #58's open question, answered by every run that prints this. */
     if (bg_alt_frames)
-        fprintf(stderr, "camera: the game's BUILT-IN background (index %d, fn_0041a050) was "
-                        "drawn on %ld of those frames -- its bands are 794 wide as literals, so "
-                        "issue #58 is REACHABLE and visible in a wide view\n",
+        fprintf(stderr,
+                "camera: the game's BUILT-IN background (index %d, fn_0041a050) was "
+                "drawn on %ld of those frames -- its bands are 794 wide as literals, so "
+                "issue #58 is REACHABLE and visible in a wide view\n",
                 BG_ALT_PASS, bg_alt_frames);
     else
-        fprintf(stderr, "camera: the built-in background (index %d, fn_0041a050) was never "
-                        "selected in %ld frame(s), so this run says nothing about issue #58 -- "
-                        "it does NOT show the backdrop is unreachable, only that this route did "
-                        "not reach it\n", BG_ALT_PASS, cam_frames);
+        fprintf(stderr,
+                "camera: the built-in background (index %d, fn_0041a050) was never "
+                "selected in %ld frame(s), so this run says nothing about issue #58 -- "
+                "it does NOT show the backdrop is unreachable, only that this route did "
+                "not reach it\n",
+                BG_ALT_PASS, cam_frames);
     if (cam_locked)
-        fprintf(stderr, "camera: the stage-mode section lock was set on %ld frame(s), reaching "
-                        "%d, and BOUND the camera on %ld of them -- so this run entered stage "
-                        "mode%s\n", cam_locked, cam_lock_max, cam_lock_bound,
+        fprintf(stderr,
+                "camera: the stage-mode section lock was set on %ld frame(s), reaching "
+                "%d, and BOUND the camera on %ld of them -- so this run entered stage "
+                "mode%s\n",
+                cam_locked, cam_lock_max, cam_lock_bound,
                 cam_lock_bound ? " and the lock's view substitution did work (issue #36)"
                                : ", but the stage's own bound was always tighter, so the "
                                  "lock's view substitution was NOT exercised");
@@ -268,33 +278,44 @@ void bg_camera_report(void)
         fprintf(stderr, "camera: no walk bound was widened because this run set no section "
                         "lock at all, which is VS mode -- it says nothing about issue #43\n");
     else if (view <= BG_SCREEN_W)
-        fprintf(stderr, "camera: no walk bound was widened, and correctly so -- the view is "
-                        "the game's own %d, where geom_walk_max returns the game's B by "
-                        "construction\n", BG_SCREEN_W);
+        fprintf(stderr,
+                "camera: no walk bound was widened, and correctly so -- the view is "
+                "the game's own %d, where geom_walk_max returns the game's B by "
+                "construction\n",
+                BG_SCREEN_W);
     else if (cam_walk_widened)
-        fprintf(stderr, "camera: the walk bound was widened to the screen's right edge on %ld "
-                        "frame(s), reaching %d -- so a fighter can reach every part of the "
-                        "stage this %d-wide view shows (issue #43)\n",
+        fprintf(stderr,
+                "camera: the walk bound was widened to the screen's right edge on %ld "
+                "frame(s), reaching %d -- so a fighter can reach every part of the "
+                "stage this %d-wide view shows (issue #43)\n",
                 cam_walk_widened, cam_walk_max, view);
     else
-        fprintf(stderr, "camera: the view is %d and a section lock was set, but NO walk bound "
-                        "needed widening -- the camera reached its bound on every frame, so "
-                        "the screen's right edge already sat on the game's own B\n", view);
+        fprintf(stderr,
+                "camera: the view is %d and a section lock was set, but NO walk bound "
+                "needed widening -- the camera reached its bound on every frame, so "
+                "the screen's right edge already sat on the game's own B\n",
+                view);
     if (cam_shifted)
-        fprintf(stderr, "camera: %ld of %ld frames were re-centred, so the wide view is "
-                        "centred on what the 4:3 view showed rather than extended right\n",
+        fprintf(stderr,
+                "camera: %ld of %ld frames were re-centred, so the wide view is "
+                "centred on what the 4:3 view showed rather than extended right\n",
                 cam_shifted, cam_frames);
     else if (cam_k <= 0)
-        fprintf(stderr, "camera: NOTHING was re-centred, and correctly so -- the view is the "
-                        "game's own %d, where the offset is zero by definition\n", BG_SCREEN_W);
+        fprintf(stderr,
+                "camera: NOTHING was re-centred, and correctly so -- the view is the "
+                "game's own %d, where the offset is zero by definition\n",
+                BG_SCREEN_W);
     else if (stage <= view)
-        fprintf(stderr, "camera: NOTHING was re-centred -- the stage is %d wide and the view "
-                        "is %d, so the whole stage already fits and the camera never left 0. "
-                        "There is no world to centre into\n", stage, view);
+        fprintf(stderr,
+                "camera: NOTHING was re-centred -- the stage is %d wide and the view "
+                "is %d, so the whole stage already fits and the camera never left 0. "
+                "There is no world to centre into\n",
+                stage, view);
     else
-        fprintf(stderr, "camera: NOTHING was re-centred although the offset is %d and the "
-                        "stage (%d) is wider than the view (%d) -- the camera never got past "
-                        "the offset, so this run does NOT exercise the centring\n",
+        fprintf(stderr,
+                "camera: NOTHING was re-centred although the offset is %d and the "
+                "stage (%d) is wider than the view (%d) -- the camera never got past "
+                "the offset, so this run does NOT exercise the centring\n",
                 cam_k, stage, view);
 }
 
@@ -303,7 +324,7 @@ void bg_camera_report(void)
  * the blit path cannot tell the two apart (issue #42). */
 static void alt_fill(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t colour)
 {
-    const uint32_t args[5] = { (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h, colour };
+    const uint32_t args[5] = {(uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h, colour};
     world_band_hint_set(1);
     guest_call(DRAW_FILL, args, 5);
     world_band_hint_set(0);
@@ -329,23 +350,28 @@ static void alt_fill(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t colour
  *
  * LF2_ALTBG_ORIG=1 runs the recompiled body instead, for the byte-identity A/B.
  */
-enum { ALTBG_SKY   = 0x4d81978,      /* [[this+0x7d4]+off] -- the receiver of each clip draw */
-       ALTBG_CLOUD = 0x4d8197c,
-       ALTBG_POST  = 0x4d81974 };
+enum {
+    ALTBG_SKY = 0x4d81978, /* [[this+0x7d4]+off] -- the receiver of each clip draw */
+    ALTBG_CLOUD = 0x4d8197c,
+    ALTBG_POST = 0x4d81974
+};
 
 void fn_0041a050__orig(void);
 
 void fn_0041a050(void)
 {
-    if (getenv("LF2_ALTBG_ORIG")) { fn_0041a050__orig(); return; }
+    if (getenv("LF2_ALTBG_ORIG")) {
+        fn_0041a050__orig();
+        return;
+    }
 
     const uint32_t self = R(ECX);
     const uint32_t arg0 = LD32(R(ESP) + 4);
-    const uint32_t rec  = LD32(self + 0x7d4);
-    const int32_t  cam  = (int32_t)LD32(BG_CAMERA_X);
+    const uint32_t rec = LD32(self + 0x7d4);
+    const int32_t cam = (int32_t)LD32(BG_CAMERA_X);
     /* THE ONE SUBSTITUTION. Everything below that was 0x31a is this, and the fence's bound
      * 0x319 is one less than it, exactly as the game wrote them. */
-    const int32_t  w    = bg_view_width();
+    const int32_t w = bg_view_width();
 
     draw_layer(LD32(rec + ALTBG_SKY), 0xfa - cam / 100, 0x78, 0, arg0);
 
@@ -355,10 +381,10 @@ void fn_0041a050(void)
     alt_fill(0, 0x146, w, 0x14, 0x3f3f3f);
     alt_fill(0, 0x159, w, 0x9c, 0x575757);
     alt_fill(0, 0x1d7, w, 0x1e, 0x3f3f3f);
-    alt_fill(0, 0x148, w, 2,   0x373737);
+    alt_fill(0, 0x148, w, 2, 0x373737);
 
     for (int32_t x = (900 - cam) % 0x46; x < w - 1; x += 0x46) {
-        alt_fill(x,     0x124, 1, 0x25, 0x577fa7);
+        alt_fill(x, 0x124, 1, 0x25, 0x577fa7);
         alt_fill(x + 1, 0x124, 1, 0x25, 0x2f4357);
     }
 
@@ -370,7 +396,7 @@ void fn_0041a050(void)
     for (int32_t i = 0; i < 0xc80; i += 0x140)
         draw_layer(LD32(LD32(self + 0x7d4) + ALTBG_POST), (i - cam) + 10, 0x186, 0, arg0);
 
-    R(ESP) += 4 + 4;                  /* RET 4: the return address and one stack arg */
+    R(ESP) += 4 + 4; /* RET 4: the return address and one stack arg */
 }
 
 /* fn_0041a5a0 -- the stage's object pass -- is now HAND-PORTED, in
@@ -419,9 +445,9 @@ static int stage_layer_lookup(void *ctx, const char *layer, int *span, int *stag
 /* The loaded stage's geometry, reloaded when the stage changes and NOT once per frame. A
  * stage is identified by its background index, which is the same word fn_0041a250 draws from. */
 static StageGeom stage_geom;
-static int       stage_geom_bg = -1;    /* the index stage_geom was loaded for */
-static int       stage_geom_tried;      /* a load was attempted, so 0 vertices means 0 */
-static int       geom_planned_bg = -1;  /* the stage the gap plan below was built for */
+static int stage_geom_bg = -1;   /* the index stage_geom was loaded for */
+static int stage_geom_tried;     /* a load was attempted, so 0 vertices means 0 */
+static int geom_planned_bg = -1; /* the stage the gap plan below was built for */
 
 static void stage_geom_sync(void)
 {
@@ -433,7 +459,7 @@ static void stage_geom_sync(void)
     stage_geom_tried = 1;
 
     const char *name = bg_stage_name();
-    if (!name || !*name) return;         /* no stage loaded yet: try again next frame */
+    if (!name || !*name) return; /* no stage loaded yet: try again next frame */
 
     /* WHERE `stages/` IS, and why it is not simply the working directory. The process runs
      * with its cwd in the GAME TREE, because the game opens all of its own data by relative
@@ -446,14 +472,10 @@ static void stage_geom_sync(void)
      * second, which is what makes a drop-in into an existing game tree work. Both are tried
      * and the one that has the file wins; `stagegeom_load` treats a missing file as success
      * with nothing in it, so a directory that is not there is not an error. */
-    char beside[512];
+    char packaged[512];
     const char *dirs[2];
     int nd = 0;
-    const char *base = SDL_GetBasePath();
-    if (base) {
-        snprintf(beside, sizeof beside, "%.480sstages", base);   /* base ends in a separator */
-        dirs[nd++] = beside;
-    }
+    if (port_resources_stages(packaged, sizeof packaged)) dirs[nd++] = packaged;
     dirs[nd++] = "stages";
 
     for (int i = 0; i < nd; i++) {
@@ -461,8 +483,7 @@ static void stage_geom_sync(void)
             /* A file that exists and is wrong is reported EVERY time the stage is entered,
              * not once: an author fixing a .stage file re-enters the stage to see whether it
              * worked, and a once-only message would go quiet exactly then. */
-            fprintf(stderr, "stage geometry: %s/%s.stage was REFUSED -- %s\n",
-                    dirs[i], name, stage_geom.error);
+            fprintf(stderr, "stage geometry: %s/%s.stage was REFUSED -- %s\n", dirs[i], name, stage_geom.error);
             return;
         }
         if (stage_geom.n) break;
@@ -475,16 +496,18 @@ static void stage_geom_sync(void)
          * names every directory it looked in, so a file in the wrong place reads as a file in
          * the wrong place rather than as a stage nobody has woven yet. */
         if (getenv("LF2_STAGE_GEOM")) {
-            fprintf(stderr, "stage geometry: %s has no <dir>/%s.stage, so nothing is woven "
-                            "into it -- this stage draws exactly as it always has. Looked "
-                            "in:\n", name, name);
-            for (int i = 0; i < nd; i++)
-                fprintf(stderr, "stage geometry:   %s\n", dirs[i]);
+            fprintf(stderr,
+                    "stage geometry: %s has no <dir>/%s.stage, so nothing is woven "
+                    "into it -- this stage draws exactly as it always has. Looked "
+                    "in:\n",
+                    name, name);
+            for (int i = 0; i < nd; i++) fprintf(stderr, "stage geometry:   %s\n", dirs[i]);
         }
         return;
     }
-    fprintf(stderr, "stage geometry: %s -- %d solid(s), %d vertices, %d OBJ line(s) this "
-                    "loader does not read\n",
+    fprintf(stderr,
+            "stage geometry: %s -- %d solid(s), %d vertices, %d OBJ line(s) this "
+            "loader does not read\n",
             name, stage_geom.solids, stage_geom.n, stage_geom.skipped_lines);
     /* THE DEPTHS, and they are the half of this worth printing. A count of vertices says the
      * file parsed; a depth says the solid landed in the plane it was authored for, which is
@@ -493,11 +516,10 @@ static void stage_geom_sync(void)
      * like a bug. Printed per solid, by watching the depth change down the vertex list. */
     for (int i = 0; i < stage_geom.n; i++) {
         if (i && stage_geom.v[i].depth == stage_geom.v[i - 1].depth) continue;
-        fprintf(stderr, "stage geometry:   solid at depth %.4f (%s)\n",
-                (double)stage_geom.v[i].depth,
-                stage_geom.v[i].depth > 1.0f ? "further than the fighters" :
-                stage_geom.v[i].depth < 1.0f ? "nearer than the fighters"  :
-                                               "the fighters' own plane");
+        fprintf(stderr, "stage geometry:   solid at depth %.4f (%s)\n", (double)stage_geom.v[i].depth,
+                stage_geom.v[i].depth > 1.0f   ? "further than the fighters"
+                : stage_geom.v[i].depth < 1.0f ? "nearer than the fighters"
+                                               : "the fighters' own plane");
     }
 }
 
@@ -522,35 +544,37 @@ static void stage_geom_sync(void)
  * layer that never moves -- and 0 means INFINITELY FAR here, so it sorts behind everything.
  * Comparing 0 as a small number would put the sky in front of the fighters.
  */
-enum { GEOM_GAPS_MAX = 8 };     /* mesh.c's MESH_SLOTS; each gap needs its own live target */
+enum { GEOM_GAPS_MAX = 8 }; /* mesh.c's MESH_SLOTS; each gap needs its own live target */
 
-typedef struct { int gap, first, count; } GeomRun;   /* one solid: a run of equal depth */
-static GeomRun   geom_runs[64];
-static int       geom_nruns;
-static int       geom_gaps[GEOM_GAPS_MAX];           /* the occupied gaps, ascending */
-static int       geom_ngaps;
+typedef struct {
+    int gap, first, count;
+} GeomRun; /* one solid: a run of equal depth */
+static GeomRun geom_runs[64];
+static int geom_nruns;
+static int geom_gaps[GEOM_GAPS_MAX]; /* the occupied gaps, ascending */
+static int geom_ngaps;
 /* ONE PERSISTENT BUFFER PER GAP, built when the plan is, not per frame. The display list holds
  * a reference to these, so they must outlive the frame -- and a stage's geometry does not change
  * while the stage is loaded, so rebuilding them per frame would be pure copying. */
 static MeshVertex *geom_slice[GEOM_GAPS_MAX];
-static int         geom_slice_n[GEOM_GAPS_MAX];
-static long        geom_frames, geom_submits, geom_no_surface, geom_over_gaps;
+static int geom_slice_n[GEOM_GAPS_MAX];
+static long geom_frames, geom_submits, geom_no_surface, geom_over_gaps;
 
 /* How deep is layer `i`, with 0 meaning infinitely far. */
 static float layer_depth(int i, int32_t stage_width)
 {
     const int32_t span = (int32_t)bg_layer_field(BG_LAYER_SPAN, i);
     const float d = geom_layer_depth((int)span, (int)stage_width);
-    return d > 0.0f ? d : 1e30f;         /* not derivable == never moves == infinitely far */
+    return d > 0.0f ? d : 1e30f; /* not derivable == never moves == infinitely far */
 }
 
 /* Which gap a solid at depth `d` belongs in: the index of the first layer it is in front of. */
 static int gap_for_depth(float d, int count, int32_t stage_width)
 {
-    if (!(d > 0.0f)) d = 1e30f;          /* the loader refuses this, but the rule is total */
+    if (!(d > 0.0f)) d = 1e30f; /* the loader refuses this, but the rule is total */
     for (int i = 0; i < count; i++)
         if (layer_depth(i, stage_width) <= d) return i;
-    return count;                        /* nearer than every layer */
+    return count; /* nearer than every layer */
 }
 
 /* Group the loaded vertices into solids and assign each a gap. Recomputed per frame because a
@@ -558,7 +582,7 @@ static int gap_for_depth(float d, int count, int32_t stage_width)
 static void geom_plan(int count, int32_t stage_width)
 {
     geom_nruns = geom_ngaps = 0;
-    for (int i = 0; i < stage_geom.n; ) {
+    for (int i = 0; i < stage_geom.n;) {
         const float d = stage_geom.v[i].depth;
         int j = i;
         while (j < stage_geom.n && stage_geom.v[j].depth == d) j++;
@@ -568,24 +592,31 @@ static void geom_plan(int count, int32_t stage_width)
             static int said;
             if (!said) {
                 said = 1;
-                fprintf(stderr, "stage geometry: more than %d solids at distinct depths -- the "
-                                "rest are NOT drawn\n",
+                fprintf(stderr,
+                        "stage geometry: more than %d solids at distinct depths -- the "
+                        "rest are NOT drawn\n",
                         (int)(sizeof geom_runs / sizeof geom_runs[0]));
             }
             break;
         }
         const int gap = gap_for_depth(d, count, stage_width);
-        geom_runs[geom_nruns++] = (GeomRun){ gap, i, j - i };
+        geom_runs[geom_nruns++] = (GeomRun){gap, i, j - i};
         int seen = 0;
-        for (int k = 0; k < geom_ngaps; k++) if (geom_gaps[k] == gap) { seen = 1; break; }
+        for (int k = 0; k < geom_ngaps; k++)
+            if (geom_gaps[k] == gap) {
+                seen = 1;
+                break;
+            }
         if (!seen && geom_ngaps < GEOM_GAPS_MAX) geom_gaps[geom_ngaps++] = gap;
         else if (!seen) geom_over_gaps++;
         i = j;
     }
-    for (int a = 0; a < geom_ngaps; a++)            /* ascending, so the loop can walk them */
+    for (int a = 0; a < geom_ngaps; a++) /* ascending, so the loop can walk them */
         for (int b = a + 1; b < geom_ngaps; b++)
             if (geom_gaps[b] < geom_gaps[a]) {
-                const int t = geom_gaps[a]; geom_gaps[a] = geom_gaps[b]; geom_gaps[b] = t;
+                const int t = geom_gaps[a];
+                geom_gaps[a] = geom_gaps[b];
+                geom_gaps[b] = t;
             }
 
     /* Gather each gap's solids into one buffer. Done HERE rather than per frame because the
@@ -629,7 +660,11 @@ static void geom_plan(int count, int32_t stage_width)
 static void geom_submit(int gap, int camera, int view_w, int view_h)
 {
     int slot = -1;
-    for (int k = 0; k < geom_ngaps; k++) if (geom_gaps[k] == gap) { slot = k; break; }
+    for (int k = 0; k < geom_ngaps; k++)
+        if (geom_gaps[k] == gap) {
+            slot = k;
+            break;
+        }
     if (slot < 0 || !geom_slice[slot] || geom_slice_n[slot] <= 0) return;
 
     const uint32_t dst = frame_source_pixels();
@@ -641,17 +676,17 @@ static void geom_submit(int gap, int camera, int view_w, int view_h)
         geom_no_surface++;
         return;
     }
-    render_stage_mesh(dst, geom_slice[slot], geom_slice_n[slot], slot,
-                      camera, view_w, view_h);
+    render_stage_mesh(dst, geom_slice[slot], geom_slice_n[slot], slot, camera, view_w, view_h);
     geom_submits++;
 }
 
 void bg_geom_report(void)
 {
     if (!getenv("LF2_STAGE_GEOM")) return;
-    fprintf(stderr, "stage geometry: %ld frame(s) with geometry, %ld pass(es) placed in the "
-                    "display list, %ld dropped for want of a known composition surface, "
-                    "%ld solid(s) past the %d-gap limit\n",
+    fprintf(stderr,
+            "stage geometry: %ld frame(s) with geometry, %ld pass(es) placed in the "
+            "display list, %ld dropped for want of a known composition surface, "
+            "%ld solid(s) past the %d-gap limit\n",
             geom_frames, geom_submits, geom_no_surface, geom_over_gaps, GEOM_GAPS_MAX);
     if (geom_frames && !geom_submits)
         fprintf(stderr, "stage geometry: a stage HAS geometry and NOT ONE pass reached the "
@@ -739,7 +774,10 @@ static void camera_clamp_to_view(int32_t stage_width, int32_t view)
     const int32_t walk = (int32_t)LD32(BG_WALK_LOCK);
     if (walk > 0) {
         const int32_t want = (int32_t)geom_walk_max(walk, max, view);
-        if (want != walk) { ST32(BG_WALK_LOCK, (uint32_t)want); cam_walk_widened++; }
+        if (want != walk) {
+            ST32(BG_WALK_LOCK, (uint32_t)want);
+            cam_walk_widened++;
+        }
         if (want > cam_walk_max) cam_walk_max = want;
     }
 
@@ -752,7 +790,7 @@ static void camera_clamp_to_view(int32_t stage_width, int32_t view)
 
 void fn_0041a250(void)
 {
-    const uint32_t self = R(ECX);                    /* __thiscall */
+    const uint32_t self = R(ECX); /* __thiscall */
     const uint32_t arg0 = LD32(R(ESP) + 4);
     uint32_t bg = LD32(BG_INDEX);
 
@@ -766,7 +804,10 @@ void fn_0041a250(void)
      * for. Two runs agreeing proves nothing if the dump would agree whatever was drawn. */
     static int use_orig = -1;
     if (use_orig < 0) use_orig = getenv("LF2_BG_ORIG") != NULL;
-    if (use_orig) { fn_0041a250__orig(); return; }
+    if (use_orig) {
+        fn_0041a250__orig();
+        return;
+    }
 
     /* Index 99 is a different pass entirely (fn_0041a050) and nothing here applies to it.
      * The original body is kept callable for exactly this, and for the escape below. */
@@ -782,7 +823,10 @@ void fn_0041a250(void)
      * "neither arm ever called the ported function". */
     const int alt_forced = getenv("LF2_ALTBG_FORCE") != NULL;
     const uint32_t bg_saved = LD32(BG_INDEX);
-    if (alt_forced) { bg = BG_ALT_PASS; ST32(BG_INDEX, BG_ALT_PASS); }
+    if (alt_forced) {
+        bg = BG_ALT_PASS;
+        ST32(BG_INDEX, BG_ALT_PASS);
+    }
 
     if (bg == BG_ALT_PASS) {
         /* COUNTED, because issue #58 turns on whether anyone ever sees this. fn_0041a050 draws
@@ -806,7 +850,8 @@ void fn_0041a250(void)
     const uint32_t base = registry + bg * BG_STRIDE_DW * 4u;
     const int32_t count = (int32_t)LD32(base + BG_LAYER_COUNT);
     if (count <= 0) {
-        R(ESP) += 8; return;                         /* RET 4: return address and one arg */
+        R(ESP) += 8;
+        return; /* RET 4: return address and one arg */
     }
 
     /* A record with more layers than the table can hold would mean the field constants are
@@ -816,9 +861,10 @@ void fn_0041a250(void)
         static int said;
         if (!said) {
             said = 1;
-            fprintf(stderr, "background: layer count %d for background %u exceeds the %d the "
-                            "table holds -- the layer field constants do not describe this "
-                            "record, so the game's own body is drawing this stage\n",
+            fprintf(stderr,
+                    "background: layer count %d for background %u exceeds the %d the "
+                    "table holds -- the layer field constants do not describe this "
+                    "record, so the game's own body is drawing this stage\n",
                     count, bg, BG_MAX_LAYERS);
         }
         fn_0041a250__orig();
@@ -828,7 +874,7 @@ void fn_0041a250(void)
     const int32_t stage_width = (int32_t)LD32(base + BG_STAGE_WIDTH);
     const int32_t view = bg_view_width();
     camera_clamp_to_view(stage_width, view);
-    stage_geom_sync();       /* reloads only when the stage changes */
+    stage_geom_sync(); /* reloads only when the stage changes */
     /* The layers are part of the world, so they are drawn from the same shifted camera the
      * objects are -- their parallax included, because a re-centring IS a camera pan and a
      * nearer layer must move further than a distant one. */
@@ -836,9 +882,8 @@ void fn_0041a250(void)
     const long trace_frame = hostwin_frames() + 1;
     const int trace_selected = hostwin_frame_selected(getenv("LF2_BLT_FRAME"), trace_frame);
     if (trace_selected)
-        fprintf(stderr,
-                "backdrop camera frame %ld guest=%d draw=%d view=%d stage=%d\n",
-                trace_frame, (int32_t)LD32(BG_CAMERA_X), camera, view, stage_width);
+        fprintf(stderr, "backdrop camera frame %ld guest=%d draw=%d view=%d stage=%d\n", trace_frame,
+                (int32_t)LD32(BG_CAMERA_X), camera, view, stage_width);
 
     /* The hand-woven geometry, planned before the loop and submitted INSIDE it, because where
      * each pass lands in the painter order is the whole point (issue #62). */
@@ -890,8 +935,7 @@ void fn_0041a250(void)
         /* LF2 keeps only IDIV's integer answer. At a magnified output that turns a rational
          * scroll into visible stalls and whole-logical-pixel jumps, so retain the discarded
          * fraction for this layer's complete synchronous draw, including continuations. */
-        render_background_phase_set(
-            geom_layer_offset_phase(span, stage_width, camera, view));
+        render_background_phase_set(geom_layer_offset_phase(span, stage_width, camera, view));
         if (loop > 0) {
             /* The game stops at the layer's span, which is exactly enough to fill 794. A
              * wider view needs more copies, and a LOOPING layer is the one kind that can
@@ -900,8 +944,7 @@ void fn_0041a250(void)
              * the game's own 794 this adds nothing -- a layer's span always reaches the
              * right edge there, which is why the native-width arm of the test still comes
              * out byte-identical. */
-            for (int32_t x = lx; x < span || off + x < view; x += loop)
-                draw_layer(obj, off + x, y, transparent, arg0);
+            for (int32_t x = lx; x < span || off + x < view; x += loop) draw_layer(obj, off + x, y, transparent, arg0);
         } else {
             /* loop < 0 would spin for ever; the game would too, but it is a data error and
              * drawing the layer once is the closest thing to what was meant. */
@@ -912,9 +955,8 @@ void fn_0041a250(void)
             backdrop_plane_placement(stage_name, span, lx, view, &translation, &backdrop_flags);
             if (transparent) backdrop_flags &= ~BACKDROP_EXTEND_BOTTOM;
             if (trace_selected)
-                fprintf(stderr,
-                        "backdrop layer frame %ld index=%d span=%d x=%d off=%d flags=%d\n",
-                        trace_frame, i, span, lx, off + translation, backdrop_flags);
+                fprintf(stderr, "backdrop layer frame %ld index=%d span=%d x=%d off=%d flags=%d\n", trace_frame, i,
+                        span, lx, off + translation, backdrop_flags);
             world_backdrop_hint_set(backdrop_flags);
             draw_layer(obj, off + lx + translation, y, transparent, arg0);
             world_backdrop_hint_set(0);
@@ -923,8 +965,7 @@ void fn_0041a250(void)
     }
     /* Anything nearer than every layer -- still behind the sprites, which the game goes on
      * placing itself. */
-    while (next_gap < geom_ngaps)
-        geom_submit(geom_gaps[next_gap++], (int)camera, (int)view, GEOM_SCREEN_H);
+    while (next_gap < geom_ngaps) geom_submit(geom_gaps[next_gap++], (int)camera, (int)view, GEOM_SCREEN_H);
 
-    R(ESP) += 8;                                     /* RET 4: return address and one arg */
+    R(ESP) += 8; /* RET 4: return address and one arg */
 }

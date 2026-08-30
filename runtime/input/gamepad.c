@@ -190,7 +190,18 @@ int gamepad_all_player_buttons(unsigned char out[7])
 
 /* Start, on any attached pad. The pause menu needs it separately from the seven game
  * buttons, which do not include Start. */
-int gamepad_start_held(void) { return gamepad_start_index() >= 0; }
+int gamepad_start_held(void)
+{
+    return gamepad_start_index() >= 0;
+}
+
+int gamepad_any_connected(void)
+{
+    ensure_init();
+    for (int index = 0; index < GAMEPAD_MAX_DEVICES; index++)
+        if (slot[index]) return 1;
+    return 0;
+}
 
 /* WHICH pad is holding Start, not merely whether one is. The pause menu needs it because
  * drop-out is per player: the menu is one screen, but the player it drops out is whoever
@@ -414,9 +425,18 @@ static void h_joyGetPos(void)
 
 /* The game asks Windows to post MM_JOY messages on a timer. Nothing needs to happen: it
  * polls with joyGetPosEx anyway, and the polled state is always current. */
-static void h_joySetCapture(void) { ret_stdcall(4, JOYERR_NOERROR); }
-static void h_joySetThreshold(void) { ret_stdcall(2, JOYERR_NOERROR); }
-static void h_joyReleaseCapture(void) { ret_stdcall(1, JOYERR_NOERROR); }
+static void h_joySetCapture(void)
+{
+    ret_stdcall(4, JOYERR_NOERROR);
+}
+static void h_joySetThreshold(void)
+{
+    ret_stdcall(2, JOYERR_NOERROR);
+}
+static void h_joyReleaseCapture(void)
+{
+    ret_stdcall(1, JOYERR_NOERROR);
+}
 
 typedef void (*Handler)(void);
 

@@ -5,7 +5,11 @@
 #include "lf2_log.h"
 #include "port_entry.h"
 #include "game_data.h"
+#include "game_selection.h"
 #include "setup_ui.h"
+#ifdef __ANDROID__
+#include "android_bridge.h"
+#endif
 
 void import_stats_report(void);
 void scan_prof_report(void);
@@ -34,8 +38,13 @@ static int prepare_game_data(int argc, char **argv, GameData *game)
         return 0;
     }
 
+    const char *configured_root = config_get("game_dir");
+#ifdef __ANDROID__
+    char android_root[GAME_DATA_PATH_CAPACITY];
+    if (android_bridge_game_root(android_root, sizeof android_root)) configured_root = android_root;
+#endif
     if (!force_selection &&
-        game_data_discover(explicit_executable, config_get("game_dir"), getenv("APPIMAGE"), working_directory, game)) {
+        game_data_discover(explicit_executable, configured_root, getenv("APPIMAGE"), working_directory, game)) {
         SDL_free(working_directory);
         if (game_data_activate(game)) return 1;
     } else {
@@ -50,9 +59,19 @@ static int prepare_game_data(int argc, char **argv, GameData *game)
 
     for (;;) {
         char selection[GAME_DATA_PATH_CAPACITY];
+        char executable[GAME_DATA_PATH_CAPACITY];
         const SetupUiResult choice = setup_ui_choose_game(game->error, selection, sizeof selection);
         if (choice != SETUP_UI_SELECTED) return 0;
-        if (!game_data_validate_executable(selection, game)) continue;
+        if (!game_selection_resolve(selection, executable, sizeof executable, game->error, sizeof game->error))
+            continue;
+        if (!game_data_validate_executable(executable, game)) continue;
+#ifdef __ANDROID__
+        char committed_root[GAME_DATA_PATH_CAPACITY];
+        if (!android_bridge_commit_game_tree(game->root, committed_root, sizeof committed_root, game->error,
+                                             sizeof game->error))
+            continue;
+        if (!game_data_validate_root(committed_root, game)) continue;
+#endif
         if (!game_data_activate(game)) continue;
         if (!config_set("game_dir", game->root)) {
             snprintf(game->error, sizeof game->error, "The selected game-data path is too long to save:\n%s",
@@ -70,6 +89,9 @@ static int prepare_game_data(int argc, char **argv, GameData *game)
 
 int main(int argc, char **argv)
 {
+#ifdef __ANDROID__
+    if (!android_bridge_initialize()) return 2;
+#endif
     config_load();
     GameData game;
     if (!prepare_game_data(argc, argv, &game)) return 2;

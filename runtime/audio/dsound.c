@@ -7,6 +7,7 @@
 #include "dsound.h"
 #include "guest_map.h"
 #include "guest_ops.h"
+#include "music_decode.h"
 
 #include <SDL3/SDL.h>
 #include <errno.h>
@@ -14,15 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <fcntl.h>
-#include <poll.h>
-#include <spawn.h>
-#include <signal.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
-
-extern char **environ;
 
 #define ARG(n) LD32(R(ESP) + 4 + 4 * (n))
 
@@ -192,62 +186,6 @@ void music_start(void)
     SDL_UnlockMutex(mix_lock);
 }
 
-/* Returns 0 and explains itself on any failure; never leaves a half-loaded track.
- *
- * fork/exec rather than popen: the path comes from the game's data files, and building a
- * shell command string around it would make an attacker-supplied filename a shell
- * injection. Quoting it would be a patch over the wrong mechanism -- there is no reason
- * for a shell to be involved at all. */
-static int ffmpeg_open(const char *path, pid_t *out_pid)
-{
-    int fd[2];
-    if (pipe(fd) != 0) return -1;
-
-    char rate[16], chans[8];
-    snprintf(rate, sizeof rate, "%d", MIX_RATE);
-    snprintf(chans, sizeof chans, "%d", MIX_CHANNELS);
-
-    posix_spawn_file_actions_t actions;
-    if (posix_spawn_file_actions_init(&actions) != 0) {
-        close(fd[0]);
-        close(fd[1]);
-        return -1;
-    }
-
-    const int action_error = posix_spawn_file_actions_addclose(&actions, fd[0]) ||
-                             posix_spawn_file_actions_adddup2(&actions, fd[1], STDOUT_FILENO) ||
-                             posix_spawn_file_actions_addclose(&actions, fd[1]) ||
-                             posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-    if (action_error) {
-        posix_spawn_file_actions_destroy(&actions);
-        close(fd[0]);
-        close(fd[1]);
-        return -1;
-    }
-
-    char *const args[] = {"ffmpeg",  "-v",        "quiet", "-nostdin", "-i",  (char *)path, "-f", "s16le",
-                          "-acodec", "pcm_s16le", "-ar",   rate,       "-ac", chans,        "-",  NULL};
-    pid_t pid = -1;
-    const int spawn_error = posix_spawnp(&pid, "ffmpeg", &actions, NULL, args, environ);
-    posix_spawn_file_actions_destroy(&actions);
-    close(fd[1]);
-    if (spawn_error) {
-        close(fd[0]);
-        errno = spawn_error;
-        return -1;
-    }
-    *out_pid = pid;
-    return fd[0];
-}
-
-static void ffmpeg_terminate(pid_t pid)
-{
-    if (pid <= 0) return;
-    kill(pid, SIGKILL);
-    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
-    }
-}
-
 int music_load(const char *path)
 {
     music_stop();
@@ -259,93 +197,11 @@ int music_load(const char *path)
      * was in flight had it mixing freed heap at full scale. That is a ~1s burst of
      * full-amplitude garbage immediately after the music changes, which is what a
      * recording of a real session actually shows. */
-    pid_t pid = -1;
-    const int pipe_fd = ffmpeg_open(path, &pid);
-    if (pipe_fd < 0) {
-        fprintf(stderr, "music: could not start ffmpeg: %s\n", strerror(errno));
-        return 0;
-    }
-
-    enum { FFMPEG_DECODE_TIMEOUT_MS = 30000 };
-    const Uint64 deadline = SDL_GetTicks() + FFMPEG_DECODE_TIMEOUT_MS;
-    size_t cap = 1u << 20, len = 0;
-    int16_t *buf = malloc(cap);
-    if (!buf) {
-        close(pipe_fd);
-        ffmpeg_terminate(pid);
-        return 0;
-    }
-
-    int decode_failed = 0;
-    for (;;) {
-        if (len == cap) {
-            int16_t *bigger = realloc(buf, cap * 2);
-            if (!bigger) {
-                decode_failed = 1;
-                break;
-            }
-            buf = bigger;
-            cap *= 2;
-        }
-
-        const Uint64 now = SDL_GetTicks();
-        if (now >= deadline) {
-            fprintf(stderr, "music: ffmpeg did not finish within %d ms for %s\n", FFMPEG_DECODE_TIMEOUT_MS, path);
-            decode_failed = 1;
-            break;
-        }
-        struct pollfd ready = {pipe_fd, POLLIN | POLLHUP, 0};
-        const int wait_ms = (int)((deadline - now) < 250 ? deadline - now : 250);
-        const int polled = poll(&ready, 1, wait_ms);
-        if (polled < 0) {
-            if (errno == EINTR) continue;
-            decode_failed = 1;
-            break;
-        }
-        if (polled == 0) continue;
-
-        const ssize_t got = read(pipe_fd, (char *)buf + len, cap - len);
-        if (got > 0) {
-            len += (size_t)got;
-            continue;
-        }
-        if (got == 0) break;
-        if (errno != EINTR && errno != EAGAIN) {
-            decode_failed = 1;
-            break;
-        }
-    }
-    close(pipe_fd);
-
-    int status = 0;
-    if (decode_failed) {
-        ffmpeg_terminate(pid);
-        free(buf);
-        return 0;
-    }
-    for (;;) {
-        const pid_t waited = waitpid(pid, &status, WNOHANG);
-        if (waited == pid) break;
-        if (waited < 0 && errno != EINTR) {
-            decode_failed = 1;
-            pid = -1;
-            break;
-        }
-        if (SDL_GetTicks() >= deadline) {
-            fprintf(stderr, "music: ffmpeg closed output but did not exit for %s\n", path);
-            decode_failed = 1;
-            break;
-        }
-        SDL_Delay(5);
-    }
-    if (decode_failed) {
-        ffmpeg_terminate(pid);
-        free(buf);
-        return 0;
-    }
-
-    if (len == 0) {
-        free(buf);
+    int16_t *decoded = NULL;
+    size_t decoded_frames = 0;
+    char decode_error[512] = "";
+    if (!music_decode_file(path, MIX_RATE, MIX_CHANNELS, &decoded, &decoded_frames, decode_error,
+                           sizeof decode_error)) {
         /* A failed load still replaces the track -- the game asked for a different one and
          * leaving the previous one playing would be worse than silence. Cleared through
          * the same locked swap, never by freeing under the mixer's feet. */
@@ -358,10 +214,7 @@ int music_load(const char *path)
         SDL_UnlockMutex(mix_lock);
         free(stale);
         au_music_frames = 0;
-
-        const int exited = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-        fprintf(stderr, "music: no audio decoded from %s%s\n", path,
-                exited == 127 ? " (ffmpeg not found on PATH)" : "");
+        fprintf(stderr, "music: %s\n", decode_error[0] ? decode_error : "decoder returned no audio");
         return 0;
     }
     /* Publish pointer, length and cursor together, with the mixer excluded. Assigning
@@ -369,8 +222,8 @@ int music_load(const char *path)
     ensure_mix_lock();
     SDL_LockMutex(mix_lock);
     int16_t *old = mus_pcm;
-    mus_pcm = buf;
-    mus_frames = len / (sizeof(int16_t) * MIX_CHANNELS);
+    mus_pcm = decoded;
+    mus_frames = decoded_frames;
     mus_pos = 0;
     SDL_UnlockMutex(mix_lock);
     free(old); /* safe now: the mixer can no longer reach it */

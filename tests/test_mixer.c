@@ -9,6 +9,7 @@
  * The legacy code lives here rather than behind a flag in the shipping mixer -- a
  * bug-compatible mode in production is a liability, in a test it is the control. */
 #include "mixer.h"
+#include "music_decode.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -165,6 +166,11 @@ static double measured_freq(int rate, double hz, int legacy)
 int main(void)
 {
     printf("mixer tests\n");
+
+    check(music_decode_frame_limit(48000) == 48000u * 600u, "music decode is bounded to ten minutes",
+          "complete-track decoder limit drifted");
+    check(music_decode_frame_limit(0) == 0, "invalid music sample rate has no allocation budget",
+          "invalid sample rate produced an allocation budget");
 
     /* The rates the game actually uses, from LF2_AUDIO_DEBUG over a real run. 22050 is
      * included deliberately: it is the one that always worked, so it must pass on the

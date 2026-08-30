@@ -55,8 +55,9 @@ This is an unofficial project with no affiliation with or endorsement by the LF2
 
 Download `LF2-Port-x86_64.AppImage` from a GitHub release, make it executable, and open it. On the
 first launch, the port shows a native SDL setup dialog: choose `lf2.exe` inside a complete extracted
-Little Fighter 2 v2.0a tree. The executable identity and the required sibling data are validated
-before play, and the selected directory is remembered in the user's XDG configuration directory.
+Little Fighter 2 v2.0a tree, or choose a ZIP containing that tree at any folder depth. The executable
+identity and every file named by `data/data.txt` are validated before play, and the accepted directory
+is remembered in the user's XDG configuration directory.
 
 As a zero-configuration alternative, put the complete extracted tree in a directory named `game`
 beside the AppImage:
@@ -125,7 +126,7 @@ debugging environment variables, are in [`docs/running.md`](docs/running.md).
 | Borderless / windowed / fullscreen, Alt+Enter | works |
 | Linux | works |
 | macOS | user-built; Metal shader support added after the shadow report, **re-test pending (#100)** |
-| Android | **no release yet** — Activity/SAF setup, touch controls, and the real-device performance matrix are not implemented |
+| Android | **no release yet** — ARM64 native build, private folder/ZIP setup, touch controls, and signed-build gates are implemented; signed install/device correctness and performance evidence remain |
 | Netplay | **not ported** — stubbed as "no network available" |
 
 The controller row remains untested because no gamepad was available. The macOS row records a

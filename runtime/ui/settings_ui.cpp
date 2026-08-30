@@ -206,6 +206,8 @@ static const char SETTINGS_RML[] = R"RML(
         <div class="binding-row"><span class="label">Attack</span><button class="key" data-event-click="capture_key('attack')">{{key_attack}}</button><button class="key" data-event-click="capture_pad('attack')">{{pad_attack}}</button></div>
         <div class="binding-row"><span class="label">Jump</span><button class="key" data-event-click="capture_key('jump')">{{key_jump}}</button><button class="key" data-event-click="capture_pad('jump')">{{pad_jump}}</button></div>
         <div class="binding-row"><span class="label">Defend</span><button class="key" data-event-click="capture_key('defend')">{{key_defend}}</button><button class="key" data-event-click="capture_pad('defend')">{{pad_defend}}</button></div>
+        <span class="section-heading">TOUCH</span>
+        <div class="setting-row"><span class="label">Touch controls</span><button class="setting-value" data-event-click="toggle_touch_controls">{{touch_controls ? 'ON' : 'OFF'}}</button></div>
       </pane>
       <pane data-if="page == 'cheats'">
         <span class="section-heading">CHEATS</span>
@@ -297,6 +299,7 @@ static float content_scale()
 static struct {
     bool engine;
     bool lighting;
+    bool touch_controls;
     bool in_match;
     bool can_drop;
     int light_angle;
@@ -363,6 +366,7 @@ static void model_load(void)
     float angle = 0.0f, height = 0.0f;
     M.engine = opt_renderer_engine() != 0;
     M.lighting = opt_lighting() != 0;
+    M.touch_controls = opt_touch_controls() != 0;
     M.in_match = pause_menu_in_match() != 0;
     M.can_drop = pause_menu_can_drop() != 0;
     hd2d_light_angles(&angle, &height);
@@ -387,6 +391,7 @@ static void model_store(void)
 {
     opt_set_renderer_engine(M.engine);
     opt_set_lighting(M.lighting);
+    opt_set_touch_controls(M.touch_controls);
     opt_set_sprite_chain(&M.chain);
     char passes[128];
     spritechain_format(&M.chain, passes, sizeof passes);
@@ -394,6 +399,7 @@ static void model_store(void)
     char buf[32];
     config_set("renderer", M.engine ? "engine" : "classic");
     config_set("lighting", M.lighting ? "on" : "off");
+    config_set("touch_controls", M.touch_controls ? "on" : "off");
     snprintf(buf, sizeof buf, "%.2f", (double)((float)M.light_pct / 100.0f));
     config_set("light_intensity", buf);
     config_save();
@@ -403,6 +409,7 @@ static void model_store_live(void)
 {
     opt_set_renderer_engine(M.engine);
     opt_set_lighting(M.lighting);
+    opt_set_touch_controls(M.touch_controls);
     hd2d_light_set_angles((float)M.light_angle, (float)M.light_height);
     opt_set_sprite_chain(&M.chain);
     /* The slider edits a percentage; the light wants the multiplier itself. */
@@ -458,6 +465,7 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     data_model() = ctor.GetModelHandle();
     ctor.Bind("engine", &M.engine);
     ctor.Bind("lighting", &M.lighting);
+    ctor.Bind("touch_controls", &M.touch_controls);
     ctor.Bind("in_match", &M.in_match);
     ctor.Bind("can_drop", &M.can_drop);
     ctor.Bind("light_angle", &M.light_angle);
@@ -510,6 +518,10 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     ctor.BindEventCallback("toggle_lighting", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
         M.lighting = !M.lighting;
         data_model().DirtyVariable("lighting");
+    });
+    ctor.BindEventCallback("toggle_touch_controls", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
+        M.touch_controls = !M.touch_controls;
+        data_model().DirtyVariable("touch_controls");
     });
     /* THE PASS ROWS. Every one of these steps a value and asks spritefilter.h to keep the
      * chain legal -- the menu holds no rule of its own, so a cap or a spelling can change in
@@ -721,6 +733,20 @@ int rmlui_event(SDL_Event *e)
 
     if (rmlui_input_note_event(*e)) return 1;
 
+    /* The pinned SDL backend predates SDL_EVENT_FINGER_CANCELED even though this RmlUi
+     * revision has an explicit cancellation API. Forward it here so Android lifecycle
+     * cancellation cannot leave a pressed element or captured touch behind. */
+    if (e->type == SDL_EVENT_FINGER_CANCELED) {
+        const Rml::Vector2i dimensions = g_ctx->GetDimensions();
+        const Rml::Vector2f position = {
+            e->tfinger.x * static_cast<float>(dimensions.x),
+            e->tfinger.y * static_cast<float>(dimensions.y),
+        };
+        const Rml::TouchList touches = {Rml::Touch{static_cast<Rml::TouchId>(e->tfinger.fingerID), position}};
+        g_ctx->ProcessTouchCancel(touches);
+        return 1;
+    }
+
     /* Conventional raw keyboard activation remains available even when Return and Space are
      * not player-action bindings. Configured actions take the device-independent path above. */
     if (e->type == SDL_EVENT_KEY_DOWN &&
@@ -745,7 +771,10 @@ int rmlui_event(SDL_Event *e)
     case SDL_EVENT_MOUSE_WHEEL:
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
     case SDL_EVENT_GAMEPAD_BUTTON_UP:
-    case SDL_EVENT_GAMEPAD_AXIS_MOTION: return 1;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_UP:
+    case SDL_EVENT_FINGER_MOTION:
     default: return 0;
     }
 }

@@ -13,6 +13,7 @@ typedef struct GameData {
 
 /* Validate the exact LF2 v2.0a executable and its critical sibling data. */
 int game_data_validate_executable(const char *executable, GameData *result);
+int game_data_validate_root(const char *root, GameData *result);
 
 /* Shipping discovery order: explicit developer path, persisted player selection,
  * outer-AppImage sibling game/, then the two source-tree development layouts. */
