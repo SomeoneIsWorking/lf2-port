@@ -215,3 +215,9 @@ JNIEXPORT void JNICALL Java_io_github_someoneisworking_lf2port_Lf2Activity_nativ
     }
     SDL_UnlockMutex(selection.mutex);
 }
+
+void android_bridge_finish_activity(void)
+{
+    char error[256] = "";
+    call_activity_void_string("finishApp", "", error, sizeof error);
+}

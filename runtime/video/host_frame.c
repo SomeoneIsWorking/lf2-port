@@ -43,6 +43,11 @@ uint32_t frame_source_pixels(void)
     return frame_src_pixels;
 }
 
+#include "dsound.h"
+#ifdef __ANDROID__
+#include "android_bridge.h"
+#endif
+
 /* Release SDL explicitly at exit. Leaving it to process teardown is usually harmless, but
  * it means the audio device and window outlive the game's own shutdown, and a diagnostic
  * that runs at exit cannot tell an orderly stop from a crash. */
@@ -54,6 +59,7 @@ void hostwin_shutdown(void)
     clock_sites_report();
     window_resize_report();
     if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
+    dsound_shutdown();
     render_shutdown();
     device_icons_shutdown();
     if (hw.texture) {
@@ -69,6 +75,9 @@ void hostwin_shutdown(void)
         hw.window = NULL;
     }
     SDL_Quit();
+#ifdef __ANDROID__
+    android_bridge_finish_activity();
+#endif
 }
 
 /* LF2_UNPACED=1 runs frames as fast as the machine will do them.

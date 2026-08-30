@@ -53,8 +53,8 @@ inline Layout make_layout(Rect safe)
     Layout layout;
     const float width = std::max(1.0F, safe.right - safe.left);
     const float height = std::max(1.0F, safe.bottom - safe.top);
-    const float unit = std::clamp(std::min(width, height) * 0.125F, 52.0F, 132.0F);
-    const float edge = unit * 0.28F;
+    const float unit = std::clamp(std::min(width, height) * 0.155F, 56.0F, 160.0F);
+    const float edge = std::max(16.0F, unit * 0.32F);
     const float dpad_left = safe.left + edge;
     const float dpad_top = safe.bottom - edge - unit * 3.0F;
 
@@ -70,12 +70,13 @@ inline Layout make_layout(Rect safe)
                                direction_actions[index]};
     }
 
-    const float buttons_left = safe.right - edge - unit * 3.0F;
-    const float buttons_top = safe.bottom - edge - unit * 2.55F;
-    layout.zones[8] = {9, cell(buttons_left + unit * 2.0F, buttons_top + unit * 0.78F, unit), action_attack};
-    layout.zones[9] = {10, cell(buttons_left + unit, buttons_top + unit * 1.55F, unit), action_jump};
-    layout.zones[10] = {11, cell(buttons_left, buttons_top + unit * 0.78F, unit), action_defend};
-    layout.zones[11] = {12, cell(safe.right - edge - unit, safe.top + edge, unit), action_pause};
+    const float buttons_width = unit * 3.2F;
+    const float buttons_left = safe.right - edge - buttons_width;
+    const float buttons_top = safe.bottom - edge - unit * 2.65F;
+    layout.zones[8] = {9, cell(buttons_left + unit * 2.1F, buttons_top + unit * 0.72F, unit), action_attack};
+    layout.zones[9] = {10, cell(buttons_left + unit * 1.05F, buttons_top + unit * 1.62F, unit), action_jump};
+    layout.zones[10] = {11, cell(buttons_left, buttons_top + unit * 0.72F, unit), action_defend};
+    layout.zones[11] = {12, cell(safe.right - edge - unit * 0.9F, safe.top + edge, unit * 0.9F), action_pause};
 
     layout.visuals = {
         Visual{cell(dpad_left + unit, dpad_top, unit), VisualKind::up, action_up},

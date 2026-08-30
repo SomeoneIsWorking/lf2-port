@@ -802,3 +802,16 @@ Handler dsound_lookup(const char *dll, const char *name)
         return dsound_create;
     return NULL;
 }
+
+void dsound_shutdown(void)
+{
+    if (stream) {
+        SDL_DestroyAudioStream(stream);
+        stream = NULL;
+    }
+    if (mix_lock) {
+        SDL_DestroyMutex(mix_lock);
+        mix_lock = NULL;
+    }
+    nbufs = 0;
+}
