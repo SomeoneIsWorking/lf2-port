@@ -33,8 +33,8 @@ def main() -> int:
         try:
             APPIMAGE.require_host_tools()
         except SystemExit as error:
-            assert "sudo apt install file" in str(error)
-            assert "sudo dnf install file" in str(error)
+            assert "sudo apt install file zsync" in str(error)
+            assert "sudo dnf install file zsync" in str(error)
         else:
             raise AssertionError("missing file utility was accepted")
     finally:
@@ -48,6 +48,26 @@ def main() -> int:
     binary.parent.mkdir(parents=True)
     binary.write_bytes(b"\x7fELF-port")
     APPIMAGE.verify_no_game_content(appdir)
+    assert APPIMAGE.sidecar_path(Path("LF2-Port-x86_64.AppImage")) == Path(
+        "LF2-Port-x86_64.AppImage.zsync"
+    )
+    assert APPIMAGE.UPDATE_INFORMATION == (
+        "gh-releases-zsync|SomeoneIsWorking|lf2-port|latest-all|"
+        "LF2-Port*x86_64.AppImage.zsync"
+    )
+    updater = appdir / APPIMAGE.UPDATER_RELATIVE_PATH
+    updater.parent.mkdir(parents=True)
+    updater.write_bytes(b"\x7fELF-updater")
+    updater.chmod(0o755)
+    APPIMAGE.verify_update_payload(appdir)
+    updater.chmod(0o644)
+    try:
+        APPIMAGE.verify_update_payload(appdir)
+    except SystemExit as error:
+        assert "not executable" in str(error)
+    else:
+        raise AssertionError("non-executable AppImage updater was accepted")
+    updater.chmod(0o755)
 
     original = appdir / "usr" / "share" / "LF2_v2.0a.exe"
     original.parent.mkdir(parents=True)

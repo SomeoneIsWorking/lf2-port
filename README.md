@@ -75,7 +75,8 @@ game/data/data.txt
 
 Use the launcher's **Select Little Fighter 2 Game Files…** desktop action, or run the AppImage with
 `--select-game`, to replace the saved location. The AppImage never copies or embeds the selected
-game tree.
+game tree. Open the in-game settings menu and choose **Check for updates** to run the bundled graphical
+updater against the AppImage; releases also include the matching `.AppImage.zsync` delta metadata.
 
 ## Building and running
 
@@ -135,7 +136,7 @@ debugging environment variables, are in [`docs/running.md`](docs/running.md).
 | Borderless / windowed / fullscreen, Alt+Enter | works |
 | Linux | works |
 | macOS | user-built; Metal shader support added after the shadow report, **re-test pending (#100)** |
-| Android | **no verified release yet** — ARM64 native build, private installer/folder/ZIP setup, touch controls, and signed-build gates are implemented; signed install/device correctness and performance evidence remain |
+| Android | **no verified release yet** — ARM64 native build, landscape policy, private installer/folder/ZIP setup, all-menu touch routing, GitHub updater, and signed-build gates are implemented; signed install/device correctness and performance evidence remain |
 | Netplay | **not ported** — stubbed as "no network available" |
 
 The controller row remains untested because no gamepad was available. The macOS row records a

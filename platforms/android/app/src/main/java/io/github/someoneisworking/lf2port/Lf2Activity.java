@@ -34,6 +34,7 @@ public final class Lf2Activity extends LucentActivity {
 
     private boolean pickerActive;
     private boolean selectionPending;
+    private UpdateManager updateManager;
 
     private static native void nativeGameTreeResult(String executable, String error);
 
@@ -51,10 +52,13 @@ public final class Lf2Activity extends LucentActivity {
             Log.e(TAG, "Could not extract packaged stage geometry", exception);
         }
         super.onCreate(savedInstanceState);
+        updateManager = new UpdateManager(this);
+        updateManager.check(false);
     }
 
     @Override
     protected void onDestroy() {
+        if (updateManager != null) updateManager.destroy();
         finishSelection(null, "The Android activity closed before game-file setup completed.");
         super.onDestroy();
     }
@@ -148,6 +152,7 @@ public final class Lf2Activity extends LucentActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (updateManager != null && updateManager.handleActivityResult(requestCode)) return;
         if (requestCode != REQUEST_GAME_TREE && requestCode != REQUEST_GAME_FILE) {
             return;
         }
@@ -166,6 +171,13 @@ public final class Lf2Activity extends LucentActivity {
         Toast.makeText(this, R.string.importing_game_files, Toast.LENGTH_LONG).show();
         Thread worker = new Thread(() -> importGameTree(tree), "lf2-game-import");
         worker.start();
+    }
+
+    public void requestLf2Update() {
+        runOnUiThread(() -> {
+            if (updateManager == null) updateManager = new UpdateManager(this);
+            updateManager.check(true);
+        });
     }
 
     private void handleSelectedFile(Uri source) {

@@ -34,22 +34,24 @@ mount. Use the desktop action **Select Little Fighter 2 Game Files…** or `--se
 saved location.
 
 Maintainers build the pinned SDL stack and the exact CMake install tree in an Ubuntu 22.04 local
-container, run CTest and the AppImage content gates there, then upload the ignored artifact manually.
-The container needs the native build dependencies plus the `file` package used by appimagetool. The
-final packaging command is:
+container, run CTest and the AppImage content gates there, then upload the ignored artifacts manually.
+The container needs the native build dependencies plus `file` and `zsync`. The final packaging command is:
 
 ```sh
 uv run --frozen python tools/build/appimage.py --fetch-tools --version dev
 ```
 
-The tool verifies pinned SHA256 values for linuxdeploy, appimagetool, and the Type 2 runtime. It
+The tool verifies pinned SHA256 values for linuxdeploy, appimagetool, the Type 2 runtime, and the
+graphical AppImageUpdate payload. It embeds GitHub `gh-releases-zsync` metadata and requires the
+matching `scratch/release/LF2-Port-x86_64.AppImage.zsync` sidecar. It
 rejects an install tree containing an original PE executable or known game-data paths, extracts the
-finished AppImage, and repeats the content gate against the artifact itself. The resulting
-`scratch/release/LF2-Port-x86_64.AppImage` is gitignored; generated source and package output are
-never committed, and there is no GitHub Actions release workflow.
+finished AppImage, repeats the content gate, and refuses a package without its executable updater.
+Both generated release files are gitignored and uploaded manually; generated source and package
+output are never committed, and there is no GitHub Actions release workflow.
 
-Android is not a verified release target yet. The ARM64 SDL Activity, private installer/folder/ZIP import, authored
-multi-touch layer, in-process WMA decoder, and signed-build refusal are implemented. Release still
+Android is not a verified release target yet. The ARM64 SDL Activity, pre-window landscape policy,
+private installer/folder/ZIP import, authored multi-touch plus all-menu pointer routing, GitHub release
+updater, in-process WMA decoder, and signed-build refusal are implemented. Release still
 requires a supported JDK, a real signing identity, installed-device setup/touch/audio/lifecycle
 acceptance, and a named-device sustained performance matrix; the desktop AppImage and native-link
 results are not evidence for those hardware gates.
@@ -1799,7 +1801,8 @@ plus A lands on the control settings page, and the mouse-driven smoke test is un
 ## Every menu takes every device
 
 The chain from the launcher to a running match is mouse-drivable end to end, with no key
-and no pad: `tools/routes/mouse_test.sh` is that route, and `ctest -R mouse` runs it.
+and no pad: `tools/e2e.py mouse` runs that route. It also reads three shipping `.data` dumps
+to prove that two clicks on the pre-fight difficulty row change the guest state `0 -> 2 -> 1`.
 
 | screen | selection | how it was located |
 |---|---|---|

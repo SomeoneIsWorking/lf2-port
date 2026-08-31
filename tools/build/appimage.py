@@ -19,6 +19,7 @@ DEFAULT_WORK = ROOT / "scratch" / "appimage"
 LINUXDEPLOY_SHA256 = "421ca71d5c69ea97c6309276232990d43df1dcece0edfaa26bbf926ff96ed12e"
 APPIMAGETOOL_SHA256 = "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 APPIMAGE_RUNTIME_SHA256 = "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf"
+APPIMAGE_UPDATE_SHA256 = "52a58d7edf49eecf62b9d04e574406509cf58f204f0616b72724df03b1f3d37e"
 LINUXDEPLOY_URL = (
     "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/"
     "linuxdeploy-x86_64.AppImage"
@@ -30,19 +31,31 @@ APPIMAGETOOL_URL = (
 APPIMAGE_RUNTIME_URL = (
     "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
 )
+APPIMAGE_UPDATE_URL = (
+    "https://github.com/AppImageCommunity/AppImageUpdate/releases/download/"
+    "2.0.0-alpha-1-20251018/AppImageUpdate-x86_64.AppImage"
+)
 APP_ID = "io.github.SomeoneIsWorking.lf2-port"
+UPDATE_INFORMATION = (
+    "gh-releases-zsync|SomeoneIsWorking|lf2-port|latest-all|"
+    "LF2-Port*x86_64.AppImage.zsync"
+)
+UPDATER_RELATIVE_PATH = Path("usr/libexec/lf2/AppImageUpdate-x86_64.AppImage")
 
 
 def refuse(message: str) -> None:
     raise SystemExit(f"appimage: {message}")
 
 
-def require_host_tools() -> None:
-    if shutil.which("file") is None:
+def require_host_tools(*, packaging: bool = True) -> None:
+    missing = [name for name in ("file", "zsyncmake") if shutil.which(name) is None]
+    if not packaging:
+        missing = [name for name in missing if name == "file"]
+    if missing:
         refuse(
-            "missing required host tool: file\n"
-            "  Ubuntu/Debian: sudo apt install file\n"
-            "  Fedora: sudo dnf install file"
+            "missing required host tool(s): " + ", ".join(missing) + "\n"
+            "  Ubuntu/Debian: sudo apt install file zsync\n"
+            "  Fedora: sudo dnf install file zsync"
         )
 
 
@@ -138,6 +151,25 @@ def verified_tool(path: Path, expected: str, name: str) -> Path:
     return path.resolve()
 
 
+def bundle_updater(appdir: Path, source: Path) -> Path:
+    source = verified_tool(source, APPIMAGE_UPDATE_SHA256, "AppImageUpdate")
+    destination = appdir / UPDATER_RELATIVE_PATH
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    destination.chmod(destination.stat().st_mode | 0o111)
+    return destination
+
+
+def sidecar_path(appimage: Path) -> Path:
+    return appimage.with_name(appimage.name + ".zsync")
+
+
+def verify_update_payload(root: Path) -> None:
+    updater = root / UPDATER_RELATIVE_PATH
+    if not updater.is_file() or not os.access(updater, os.X_OK):
+        refuse(f"packaged AppImage updater is missing or not executable: {updater}")
+
+
 def fetch_tool(path: Path, url: str, expected: str, name: str) -> None:
     if path.is_file() and sha256(path) == expected:
         return
@@ -173,10 +205,12 @@ def verify_artifact(appimage: Path, extraction_root: Path) -> None:
     if not extracted.is_dir():
         refuse(f"{appimage} did not extract a squashfs-root for final artifact verification")
     verify_no_game_content(extracted)
+    verify_update_payload(extracted)
 
 
 def build_appimage(appdir: Path, linuxdeploy: Path, appimagetool: Path,
-                   runtime: Path, output: Path, version: str, extraction_root: Path) -> None:
+                   runtime: Path, updater: Path, output: Path, version: str,
+                   extraction_root: Path) -> None:
     if platform.system() != "Linux":
         refuse("AppImage packaging is supported only on Linux")
     if platform.machine() not in {"x86_64", "AMD64"}:
@@ -184,9 +218,13 @@ def build_appimage(appdir: Path, linuxdeploy: Path, appimagetool: Path,
     linuxdeploy = verified_tool(linuxdeploy, LINUXDEPLOY_SHA256, "linuxdeploy")
     appimagetool = verified_tool(appimagetool, APPIMAGETOOL_SHA256, "appimagetool")
     runtime = verified_tool(runtime, APPIMAGE_RUNTIME_SHA256, "AppImage runtime")
+    bundle_updater(appdir, updater)
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         output.unlink()
+    sidecar = sidecar_path(output)
+    if sidecar.exists():
+        sidecar.unlink()
 
     environment = dict(os.environ)
     environment.update(
@@ -212,7 +250,7 @@ def build_appimage(appdir: Path, linuxdeploy: Path, appimagetool: Path,
     )
     verify_no_game_content(appdir)
     subprocess.run(
-        [str(appimagetool), "--runtime-file", str(runtime),
+        [str(appimagetool), "--runtime-file", str(runtime), "-u", UPDATE_INFORMATION,
          str(appdir.resolve()), str(output.resolve())],
         cwd=output.parent,
         env=environment,
@@ -220,8 +258,13 @@ def build_appimage(appdir: Path, linuxdeploy: Path, appimagetool: Path,
     )
     if not output.is_file():
         refuse(f"appimagetool reported success but did not create {output}")
+    if not sidecar.is_file() or sidecar.stat().st_size == 0:
+        refuse(f"appimagetool did not create the required update sidecar {sidecar}")
     verify_artifact(output, extraction_root)
-    print(f"appimage: wrote {output} ({output.stat().st_size} bytes)")
+    print(
+        f"appimage: wrote {output} ({output.stat().st_size} bytes)\n"
+        f"appimage: wrote {sidecar} ({sidecar.stat().st_size} bytes)"
+    )
 
 
 def main() -> int:
@@ -234,6 +277,8 @@ def main() -> int:
                         default=ROOT / "scratch/tools/appimagetool-x86_64.AppImage")
     parser.add_argument("--runtime", type=Path,
                         default=ROOT / "scratch/tools/runtime-x86_64")
+    parser.add_argument("--updater", type=Path,
+                        default=ROOT / "scratch/tools/AppImageUpdate-x86_64.AppImage")
     parser.add_argument("--output", type=Path,
                         default=ROOT / "scratch/release/LF2-Port-x86_64.AppImage")
     parser.add_argument("--version", default="dev")
@@ -241,7 +286,7 @@ def main() -> int:
     parser.add_argument("--stage-only", action="store_true")
     args = parser.parse_args()
 
-    require_host_tools()
+    require_host_tools(packaging=not args.stage_only)
     appdir = args.work_dir.resolve() / "LF2.AppDir"
     stage(args.build_dir.resolve(), appdir)
     if not args.stage_only:
@@ -249,8 +294,9 @@ def main() -> int:
             fetch_tool(args.linuxdeploy.resolve(), LINUXDEPLOY_URL, LINUXDEPLOY_SHA256, "linuxdeploy")
             fetch_tool(args.appimagetool.resolve(), APPIMAGETOOL_URL, APPIMAGETOOL_SHA256, "appimagetool")
             fetch_tool(args.runtime.resolve(), APPIMAGE_RUNTIME_URL, APPIMAGE_RUNTIME_SHA256, "AppImage runtime")
+            fetch_tool(args.updater.resolve(), APPIMAGE_UPDATE_URL, APPIMAGE_UPDATE_SHA256, "AppImageUpdate")
         build_appimage(appdir, args.linuxdeploy.resolve(), args.appimagetool.resolve(),
-                       args.runtime.resolve(), args.output.resolve(), args.version,
+                       args.runtime.resolve(), args.updater.resolve(), args.output.resolve(), args.version,
                        args.work_dir.resolve() / "extracted-artifact")
     return 0
 

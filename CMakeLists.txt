@@ -136,6 +136,8 @@ set(LF2_RUNTIME_SOURCES
     runtime/app/user_paths.c
     runtime/app/game_data.c
     runtime/app/port_entry.c
+    runtime/app/update.c
+    runtime/platform/window_policy.c
     runtime/input/gamepad.c
     runtime/input/bindings.c
     runtime/input/keyboard.c
@@ -239,6 +241,8 @@ set_source_files_properties(
     runtime/app/user_paths.c
     runtime/app/game_data.c
     runtime/app/port_entry.c
+    runtime/app/update.c
+    runtime/platform/window_policy.c
     runtime/win32/wsock.c
     runtime/overrides/boot_guest.c
     runtime/overrides/startup_init.c

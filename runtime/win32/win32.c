@@ -4,6 +4,7 @@
 #include "hostwin.h"
 #include "keyboard.h"
 #include "touch_input.h"
+#include "window_policy.h"
 #include "render.h"
 #include "script.h"
 #include "config.h"
@@ -164,6 +165,7 @@ static void h_CreateWindowExA(void)
     if (hw.win_h <= 0 || hw.win_h > 8192) hw.win_h = 550;
     apply_initial_window_size();
 
+    window_policy_prepare();
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -435,6 +437,16 @@ void hostwin_inject_pointer(int x, int y, int down)
     push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
 }
 
+void hostwin_inject_window_pointer(float x, float y, int down)
+{
+    const uint32_t lp = mouse_lparam(x, y);
+    push_message(WM_MOUSEMOVE, (uint32_t)(mouse_left_down ? 1 : 0), lp);
+    if (down < 0 || ((down != 0) == mouse_left_down)) return;
+    mouse_left_down = down != 0;
+    if (mouse_left_down) mouse_click_arm();
+    push_message(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? 1 : 0, lp);
+}
+
 int hostwin_injected_key(uint32_t vk)
 {
     return vk < 256 && injected_keys[vk];
@@ -489,7 +501,9 @@ void hostwin_pump(void)
          * -- a key rebind, an Escape that closed it -- must not also reach the game's message
          * pump or the pause menu's key ledger. */
         if (rmlui_event(&e)) continue;
-        if (touch_input_handle_event(&e, hw.renderer, hw.window, gamepad_any_connected(), hostwin_inject_key)) continue;
+        if (touch_input_handle_event(&e, hw.renderer, hw.window, gamepad_any_connected(), hostwin_inject_key,
+                                     hostwin_inject_window_pointer))
+            continue;
         if (e.type == SDL_EVENT_QUIT) quit_posted = 1;
         /* Alt+Enter is what players expect, and the game cannot ask for it itself. */
         if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT)) {

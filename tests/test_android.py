@@ -40,10 +40,13 @@ def main() -> int:
     assert not ANDROID.supported_java_major(27)
     assert ANDROID.android_version_name({}) == "0.1.0"
     assert ANDROID.android_version_name({"LF2_ANDROID_VERSION_NAME": "0.1.3"}) == "0.1.3"
+    assert ANDROID.android_version_code("0.1.3") == 1003
+    assert ANDROID.android_version_code("1.0.0") == 1_000_000
     expect_refused(
         lambda: ANDROID.android_version_name({"LF2_ANDROID_VERSION_NAME": "../release"}),
-        "filename-safe",
+        "semantic version",
     )
+    expect_refused(lambda: ANDROID.android_version_code("0.0.0"), "cannot be published")
 
     wrapper = ROOT / "platforms" / "android" / "gradle-wrapper.properties"
     wrapper_text = wrapper.read_text()
@@ -52,6 +55,21 @@ def main() -> int:
     assert "com.android.tools.build:gradle:9.3.0" in (
         ROOT / "platforms" / "android" / "build.gradle"
     ).read_text()
+
+    manifest = (ROOT / "platforms" / "android" / "app" / "src" / "main" / "AndroidManifest.xml").read_text()
+    assert 'android:screenOrientation="sensorLandscape"' in manifest
+    assert 'android.permission.REQUEST_INSTALL_PACKAGES' in manifest
+    assert 'android.permission.INTERNET' in manifest
+    assert 'android:name="io.github.someoneisworking.lf2port.UpdateFileProvider"' in manifest
+    updater = (
+        ROOT / "platforms" / "android" / "app" / "src" / "main" / "java" / "io" / "github"
+        / "someoneisworking" / "lf2port" / "UpdateManager.java"
+    ).read_text()
+    assert "SomeoneIsWorking/lf2-port/releases?per_page=20" in updater
+    assert '"-android-arm64-release.apk"' in updater
+    assert "APK signing certificate does not match" in updater
+    window_policy = (ROOT / "runtime" / "platform" / "window_policy.c").read_text()
+    assert 'SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight")' in window_policy
 
     scratch = ROOT / "scratch" / "test-android-tool"
     if scratch.exists():

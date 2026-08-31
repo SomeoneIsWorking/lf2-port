@@ -45,7 +45,7 @@ static void open_menu(void)
     /* A touch on Pause opens RmlUi before that finger necessarily lifts. Release every
      * captured action at the ownership transition so the modal document cannot swallow
      * the corresponding up event and leave a guest key held. */
-    touch_input_cancel(hostwin_inject_key);
+    touch_input_cancel(hostwin_inject_key, hostwin_inject_window_pointer);
     opened_in_match = panel_hud_up() != 0;
     opening_device = menu_device();
     if (opened_in_match) {
