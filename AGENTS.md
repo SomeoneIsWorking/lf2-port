@@ -138,13 +138,17 @@ embed that repository's SVG icons at build time, so the installed game has no ho
 
 The Linux release boundary is `CMakeLists.txt`'s install rules plus
 `tools/build/appimage.py`; maintainers build the pinned SDL stack in a controlled local environment,
-run the release gates, and upload the inspected ignored artifact manually. There is no hosted release
-workflow, and generated source or package output is never committed. The AppImage may include the
+run the release gates, and upload the inspected ignored AppImage and `.zsync` sidecar manually. The
+AppImage embeds GitHub release update information and a pinned graphical AppImageUpdate payload;
+`runtime/app/update.c` owns the Settings action. There is no hosted release workflow, and generated
+source or package output is never committed. The AppImage may include the
 translated port but must refuse original `lf2.exe`, installer, or extracted assets. `platforms/android/`
 owns the SDL Activity/SAF import and manifest; `runtime/platform/android_bridge.c` is the JNI boundary;
-and `tools/build/android.py` owns the one NDK build, signed Gradle assembly, content inspection, and
-device install. Android remains unreleased until the signed APK passes first-run import, touch, audio,
-lifecycle, and the named-device performance matrix on hardware.
+`runtime/platform/window_policy.c` owns SDL's pre-window landscape hint; and `tools/build/android.py`
+owns the one NDK build, signed Gradle assembly, monotonic version code, content inspection, and device
+install. Java owns GitHub release discovery, same-certificate APK validation, and the platform installer
+handoff. Android remains unreleased until the signed APK passes first-run import, touch, orientation,
+audio, lifecycle, and the named-device performance matrix on hardware.
 
 `tools/build/check_structure.py` enforces the boundary: new runtime source files are capped at 1,200
 lines and existing files above that limit may not grow. At 2,000 lines a file is critical extraction

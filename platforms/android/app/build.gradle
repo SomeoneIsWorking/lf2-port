@@ -37,7 +37,7 @@ android {
         applicationId = 'io.github.someoneisworking.lf2port'
         minSdk = 24
         targetSdk = 35
-        versionCode = (System.getenv('LF2_ANDROID_VERSION_CODE') ?: '1').toInteger()
+        versionCode = (System.getenv('LF2_ANDROID_VERSION_CODE') ?: '1000').toInteger()
         versionName = System.getenv('LF2_ANDROID_VERSION_NAME') ?: '0.1.0'
     }
 

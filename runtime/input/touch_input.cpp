@@ -4,6 +4,7 @@
 #include "options.h"
 #include "touch_action_state.h"
 #include "touch_layout.h"
+#include "touch_pointer_state.h"
 
 #include <lucent/touch.h>
 
@@ -17,6 +18,7 @@ struct TouchState {
     lucent::touch::Router router;
     lf2::touch::Layout layout;
     lf2::touch::ActionState actions;
+    lf2::touch::PointerState pointer;
     int output_width = 0;
     int output_height = 0;
     SDL_Rect safe_area{};
@@ -77,6 +79,19 @@ SDL_Rect safe_area_in_render_coordinates(SDL_Renderer *renderer, SDL_Window *win
 }
 
 void cancel_all(TouchInputEmitKey emit_key);
+
+bool point_in_zone(const lf2::touch::Zone &zone, float x, float y)
+{
+    return x >= zone.bounds.left && x <= zone.bounds.right && y >= zone.bounds.top && y <= zone.bounds.bottom;
+}
+
+bool claimed_by_controls(float x, float y)
+{
+    if (!state.enabled) return false;
+    for (const auto &zone : state.layout.zones)
+        if (point_in_zone(zone, x, y)) return true;
+    return false;
+}
 
 void update_layout(SDL_Renderer *renderer, SDL_Window *window)
 {
@@ -145,7 +160,8 @@ lucent::touch::Phase phase_for(Uint32 type)
 } // namespace
 
 extern "C" int touch_input_handle_event(const SDL_Event *event, SDL_Renderer *renderer, SDL_Window *window,
-                                        int controller_connected, TouchInputEmitKey emit_key)
+                                        int controller_connected, TouchInputEmitKey emit_key,
+                                        TouchInputEmitPointer emit_pointer)
 {
     if (!event) return 0;
     if (emit_key) state.emit_key = emit_key;
@@ -153,13 +169,29 @@ extern "C" int touch_input_handle_event(const SDL_Event *event, SDL_Renderer *re
                            event->type == SDL_EVENT_FINGER_MOTION || event->type == SDL_EVENT_FINGER_CANCELED;
     if (event->type == SDL_EVENT_FINGER_DOWN) state.observed = true;
     sync_enabled(controller_connected != 0, emit_key);
-    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND || event->type == SDL_EVENT_WINDOW_FOCUS_LOST)
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND || event->type == SDL_EVENT_WINDOW_FOCUS_LOST) {
         cancel_all(emit_key);
-    if (!is_finger || !state.enabled) return is_finger ? 1 : 0;
+        lf2::touch::cancel_pointer(state.pointer, emit_pointer);
+    }
+    if (!is_finger) return 0;
 
     update_layout(renderer, window);
     SDL_Event converted = *event;
     if (!renderer || !SDL_ConvertEventToRenderCoordinates(renderer, &converted)) return 1;
+    int window_width = 0;
+    int window_height = 0;
+    if (!window || !SDL_GetWindowSize(window, &window_width, &window_height)) return 1;
+    const auto pointer_phase = converted.type == SDL_EVENT_FINGER_DOWN       ? lf2::touch::PointerPhase::began
+                               : converted.type == SDL_EVENT_FINGER_UP       ? lf2::touch::PointerPhase::ended
+                               : converted.type == SDL_EVENT_FINGER_CANCELED ? lf2::touch::PointerPhase::canceled
+                                                                             : lf2::touch::PointerPhase::moved;
+    const bool pointer_claimed = lf2::touch::route_pointer(
+        state.pointer, static_cast<std::int64_t>(converted.tfinger.fingerID),
+        event->tfinger.x * static_cast<float>(window_width), event->tfinger.y * static_cast<float>(window_height),
+        pointer_phase, claimed_by_controls(converted.tfinger.x, converted.tfinger.y), emit_pointer);
+    if (pointer_claimed) return 1;
+    if (!state.enabled) return 1;
+
     const lucent::touch::Contact contact = {static_cast<std::int64_t>(converted.tfinger.fingerID),
                                             {converted.tfinger.x, converted.tfinger.y},
                                             phase_for(converted.type)};
@@ -174,9 +206,10 @@ extern "C" int touch_input_handle_event(const SDL_Event *event, SDL_Renderer *re
     return 1;
 }
 
-extern "C" void touch_input_cancel(TouchInputEmitKey emit_key)
+extern "C" void touch_input_cancel(TouchInputEmitKey emit_key, TouchInputEmitPointer emit_pointer)
 {
     cancel_all(emit_key);
+    lf2::touch::cancel_pointer(state.pointer, emit_pointer);
 }
 
 extern "C" int touch_input_visuals(SDL_Renderer *renderer, SDL_Window *window, int controller_connected,

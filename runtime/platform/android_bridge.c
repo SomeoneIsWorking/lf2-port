@@ -66,6 +66,31 @@ static int call_activity_void_string(const char *method_name, const char *argume
     return error[0] == 0;
 }
 
+static int call_activity_void(const char *method_name, char *error, size_t error_capacity)
+{
+    JNIEnv *environment = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject activity = (jobject)SDL_GetAndroidActivity();
+    if (!environment || !activity) {
+        snprintf(error, error_capacity, "Android Activity is not available: %s", SDL_GetError());
+        return 0;
+    }
+    jclass activity_class = (*environment)->GetObjectClass(environment, activity);
+    jmethodID method =
+        activity_class ? (*environment)->GetMethodID(environment, activity_class, method_name, "()V") : NULL;
+    if (!activity_class || !method) {
+        snprintf(error, error_capacity, "Android Activity is missing %s()", method_name);
+    } else {
+        (*environment)->CallVoidMethod(environment, activity, method);
+        if ((*environment)->ExceptionCheck(environment)) {
+            (*environment)->ExceptionClear(environment);
+            snprintf(error, error_capacity, "Android Activity failed while calling %s", method_name);
+        }
+    }
+    if (activity_class) (*environment)->DeleteLocalRef(environment, activity_class);
+    (*environment)->DeleteLocalRef(environment, activity);
+    return error[0] == 0;
+}
+
 int android_bridge_initialize(void)
 {
     const char *directory = SDL_GetAndroidInternalStoragePath();
@@ -220,4 +245,10 @@ void android_bridge_finish_activity(void)
 {
     char error[256] = "";
     call_activity_void_string("finishApp", "", error, sizeof error);
+}
+
+void android_bridge_request_update(void)
+{
+    char error[256] = "";
+    if (!call_activity_void("requestLf2Update", error, sizeof error)) fprintf(stderr, "android: %s\n", error);
 }

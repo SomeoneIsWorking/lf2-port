@@ -122,9 +122,19 @@ def release_signing(environment: Mapping[str, str] = os.environ) -> dict[str, st
 
 def android_version_name(environment: Mapping[str, str] = os.environ) -> str:
     version = environment.get("LF2_ANDROID_VERSION_NAME", "0.1.0")
-    if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}", version):
-        refuse("LF2_ANDROID_VERSION_NAME must be a short filename-safe Android version")
+    if not re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}", version):
+        refuse("LF2_ANDROID_VERSION_NAME must be a three-part semantic version")
     return version
+
+
+def android_version_code(version: str) -> int:
+    parts = [int(part) for part in version.split(".")]
+    if len(parts) != 3 or any(part > 999 for part in parts):
+        refuse("Android version components must each be between 0 and 999")
+    code = parts[0] * 1_000_000 + parts[1] * 1_000 + parts[2]
+    if code < 1:
+        refuse("Android version 0.0.0 cannot be published")
+    return code
 
 
 def apksigner(sdk: Path) -> Path:
@@ -407,6 +417,8 @@ def build_apk(project: Path, sdk: Path, java: Path, signing: Mapping[str, str] |
     )
     if signing:
         environment.update(signing)
+    version = android_version_name(environment)
+    environment["LF2_ANDROID_VERSION_CODE"] = str(android_version_code(version))
     run([str(project / "gradlew"), "--no-daemon", f"-Dorg.gradle.java.home={java}", task],
         cwd=project, environment=environment)
     kind = "release" if release else "debug"
@@ -414,7 +426,6 @@ def build_apk(project: Path, sdk: Path, java: Path, signing: Mapping[str, str] |
     if len(candidates) != 1:
         refuse(f"expected one {kind} APK, found {len(candidates)}")
     inspect_apk(candidates[0])
-    version = android_version_name(environment)
     output = ROOT / "scratch" / "releases" / f"LF2-Port-{version}-android-arm64-{kind}.apk"
     output.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(candidates[0], output)

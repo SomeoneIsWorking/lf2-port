@@ -11,5 +11,6 @@ SetupUiResult android_bridge_choose_game_tree(const char *message, char *selecti
 int android_bridge_commit_game_tree(const char *staging_root, char *output, size_t capacity, char *error,
                                     size_t error_capacity);
 void android_bridge_finish_activity(void);
+void android_bridge_request_update(void);
 
 #endif
