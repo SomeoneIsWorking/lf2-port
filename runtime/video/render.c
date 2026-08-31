@@ -1050,7 +1050,7 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
      * into the composed frame between the game's draw and the present, so it is a layer of
      * the picture rather than a separate window. */
     SDL_SetRenderTarget(R, target);
-    touch_controls_render(R, hw.window, gamepad_any_connected());
+    touch_controls_render(R, hw.window);
     if (rmlui_active()) {
         rmlui_render();
     }

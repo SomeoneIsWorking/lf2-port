@@ -5,6 +5,7 @@
 #include "touch_action_state.h"
 #include "touch_layout.h"
 #include "touch_pointer_state.h"
+#include "touch_presentation_state.h"
 
 #include <lucent/touch.h>
 
@@ -19,6 +20,7 @@ struct TouchState {
     lf2::touch::Layout layout;
     lf2::touch::ActionState actions;
     lf2::touch::PointerState pointer;
+    lf2::touch::PresentationState presentation;
     int output_width = 0;
     int output_height = 0;
     SDL_Rect safe_area{};
@@ -130,22 +132,19 @@ void cancel_all(TouchInputEmitKey emit_key)
                                [emit_key](int action, bool down) { emit_transition(action, down, emit_key); });
 }
 
-bool should_enable(bool controller_connected)
+bool should_enable()
 {
     if (!opt_touch_controls()) return false;
 #if defined(__ANDROID__)
-    /* A Bluetooth/virtual pad is not a player choice to hide the on-screen controls. Android
-     * exposes that choice in Settings, so touch stays available until the player turns it off. */
-    (void)controller_connected;
     return true;
 #else
-    return state.observed && !controller_connected;
+    return state.observed;
 #endif
 }
 
-void sync_enabled(bool controller_connected, TouchInputEmitKey emit_key)
+void sync_enabled(TouchInputEmitKey emit_key)
 {
-    const bool enabled = should_enable(controller_connected);
+    const bool enabled = should_enable();
     if (state.enabled && !enabled) cancel_all(emit_key);
     state.enabled = enabled;
 }
@@ -163,15 +162,17 @@ lucent::touch::Phase phase_for(Uint32 type)
 } // namespace
 
 extern "C" int touch_input_handle_event(const SDL_Event *event, SDL_Renderer *renderer, SDL_Window *window,
-                                        int controller_connected, TouchInputEmitKey emit_key,
-                                        TouchInputEmitPointer emit_pointer)
+                                        TouchInputEmitKey emit_key, TouchInputEmitPointer emit_pointer)
 {
     if (!event) return 0;
     if (emit_key) state.emit_key = emit_key;
     const bool is_finger = event->type == SDL_EVENT_FINGER_DOWN || event->type == SDL_EVENT_FINGER_UP ||
                            event->type == SDL_EVENT_FINGER_MOTION || event->type == SDL_EVENT_FINGER_CANCELED;
-    if (event->type == SDL_EVENT_FINGER_DOWN) state.observed = true;
-    sync_enabled(controller_connected != 0, emit_key);
+    if (event->type == SDL_EVENT_FINGER_DOWN) {
+        state.observed = true;
+        state.presentation.note_touch();
+    }
+    sync_enabled(emit_key);
     if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND || event->type == SDL_EVENT_WINDOW_FOCUS_LOST) {
         cancel_all(emit_key);
         lf2::touch::cancel_pointer(state.pointer, emit_pointer);
@@ -209,17 +210,24 @@ extern "C" int touch_input_handle_event(const SDL_Event *event, SDL_Renderer *re
     return 1;
 }
 
+extern "C" void touch_input_note_controller_event(const SDL_Event *event)
+{
+    if (!event) return;
+    if (event->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+        (event->type == SDL_EVENT_GAMEPAD_AXIS_MOTION && SDL_abs(event->gaxis.value) >= 16000))
+        state.presentation.note_controller();
+}
+
 extern "C" void touch_input_cancel(TouchInputEmitKey emit_key, TouchInputEmitPointer emit_pointer)
 {
     cancel_all(emit_key);
     lf2::touch::cancel_pointer(state.pointer, emit_pointer);
 }
 
-extern "C" int touch_input_visuals(SDL_Renderer *renderer, SDL_Window *window, int controller_connected,
-                                   TouchVisual *output, int capacity)
+extern "C" int touch_input_visuals(SDL_Renderer *renderer, SDL_Window *window, TouchVisual *output, int capacity)
 {
-    sync_enabled(controller_connected != 0, nullptr);
-    if (!state.enabled || !output || capacity <= 0) return 0;
+    sync_enabled(nullptr);
+    if (!state.presentation.shows_touch_controls(state.enabled) || !output || capacity <= 0) return 0;
     update_layout(renderer, window);
     const int count = std::min(capacity, static_cast<int>(state.layout.visuals.size()));
     for (int index = 0; index < count; ++index) {

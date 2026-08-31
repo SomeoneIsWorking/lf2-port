@@ -1,6 +1,7 @@
 #include "touch_action_state.h"
 #include "touch_layout.h"
 #include "touch_pointer_state.h"
+#include "touch_presentation_state.h"
 
 #include <cassert>
 #include <iostream>
@@ -86,5 +87,13 @@ int main()
     assert(pointer_transitions[5].down == 0);
     assert(pointer_transitions[5].x == 85.0F && pointer_transitions[5].y == 90.0F);
     assert(!pointer.active);
+
+    lf2::touch::PresentationState presentation;
+    assert(presentation.shows_touch_controls(true));
+    presentation.note_controller();
+    assert(!presentation.shows_touch_controls(true));
+    presentation.note_touch();
+    assert(presentation.shows_touch_controls(true));
+    assert(!presentation.shows_touch_controls(false));
     std::cout << "touch layout: all checks passed\n";
 }

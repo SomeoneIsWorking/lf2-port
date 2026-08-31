@@ -83,7 +83,8 @@ def main() -> int:
     assert "ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE" in activity
     assert "hideSystemUI();" in activity
     touch_input = (ROOT / "runtime" / "input" / "touch_input.cpp").read_text()
-    assert "A Bluetooth/virtual pad is not a player choice" in touch_input
+    assert "touch_input_note_controller_event" in touch_input
+    assert "state.presentation.note_touch();" in touch_input
 
     build = ROOT / "build" / "test-android-tool"
     if build.exists():

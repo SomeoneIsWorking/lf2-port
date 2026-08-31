@@ -3,6 +3,6 @@
 
 #include <SDL3/SDL.h>
 
-void touch_controls_render(SDL_Renderer *renderer, SDL_Window *window, int controller_connected);
+void touch_controls_render(SDL_Renderer *renderer, SDL_Window *window);
 
 #endif

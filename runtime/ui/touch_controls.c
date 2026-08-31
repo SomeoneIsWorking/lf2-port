@@ -22,8 +22,8 @@ static void control_colour(TouchVisualKind kind, Uint8 *red, Uint8 *green, Uint8
     }
 }
 
-static void fill_triangle(SDL_Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3,
-                          Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha)
+static void fill_triangle(SDL_Renderer *renderer, float x1, float y1, float x2, float y2, float x3, float y3, Uint8 red,
+                          Uint8 green, Uint8 blue, Uint8 alpha)
 {
     SDL_Vertex vertices[3];
     const SDL_FColor color = {(float)red / 255.0f, (float)green / 255.0f, (float)blue / 255.0f, (float)alpha / 255.0f};
@@ -44,8 +44,8 @@ static void line(SDL_Renderer *renderer, float x1, float y1, float x2, float y2)
     SDL_RenderLine(renderer, x1, y1, x2, y2);
 }
 
-static void thick_line(SDL_Renderer *renderer, float x1, float y1, float x2, float y2, float thickness,
-                       Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha)
+static void thick_line(SDL_Renderer *renderer, float x1, float y1, float x2, float y2, float thickness, Uint8 red,
+                       Uint8 green, Uint8 blue, Uint8 alpha)
 {
     const float dx = x2 - x1;
     const float dy = y2 - y1;
@@ -73,8 +73,8 @@ static void thick_line(SDL_Renderer *renderer, float x1, float y1, float x2, flo
     SDL_RenderGeometry(renderer, NULL, vertices, 4, indices, 6);
 }
 
-static void direction_icon(SDL_Renderer *renderer, const SDL_FRect *bounds, TouchVisualKind kind,
-                           Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha)
+static void direction_icon(SDL_Renderer *renderer, const SDL_FRect *bounds, TouchVisualKind kind, Uint8 red,
+                           Uint8 green, Uint8 blue, Uint8 alpha)
 {
     const float cx = bounds->x + bounds->w * 0.5f;
     const float cy = bounds->y + bounds->h * 0.5f;
@@ -95,35 +95,33 @@ static void direction_icon(SDL_Renderer *renderer, const SDL_FRect *bounds, Touc
     }
 }
 
-static void sword_icon(SDL_Renderer *renderer, float cx, float cy, float span,
-                       Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha)
+static void sword_icon(SDL_Renderer *renderer, float cx, float cy, float span, Uint8 red, Uint8 green, Uint8 blue,
+                       Uint8 alpha)
 {
     const float thick = SDL_max(2.0f, span * 0.16f);
     /* Blade 1 (NW to SE) */
-    thick_line(renderer, cx - span * 0.95f, cy - span * 0.95f, cx + span * 0.65f, cy + span * 0.65f, thick,
-               red, green, blue, alpha);
+    thick_line(renderer, cx - span * 0.95f, cy - span * 0.95f, cx + span * 0.65f, cy + span * 0.65f, thick, red, green,
+               blue, alpha);
     /* Crossguard 1 */
     thick_line(renderer, cx + span * 0.35f - span * 0.35f, cy + span * 0.35f + span * 0.35f,
-               cx + span * 0.35f + span * 0.35f, cy + span * 0.35f - span * 0.35f, thick,
-               red, green, blue, alpha);
+               cx + span * 0.35f + span * 0.35f, cy + span * 0.35f - span * 0.35f, thick, red, green, blue, alpha);
     /* Pommel 1 */
-    thick_line(renderer, cx + span * 0.65f, cy + span * 0.65f, cx + span * 0.95f, cy + span * 0.95f, thick * 1.3f,
-               red, green, blue, alpha);
+    thick_line(renderer, cx + span * 0.65f, cy + span * 0.65f, cx + span * 0.95f, cy + span * 0.95f, thick * 1.3f, red,
+               green, blue, alpha);
 
     /* Blade 2 (NE to SW) */
-    thick_line(renderer, cx + span * 0.95f, cy - span * 0.95f, cx - span * 0.65f, cy + span * 0.65f, thick,
-               red, green, blue, alpha);
+    thick_line(renderer, cx + span * 0.95f, cy - span * 0.95f, cx - span * 0.65f, cy + span * 0.65f, thick, red, green,
+               blue, alpha);
     /* Crossguard 2 */
     thick_line(renderer, cx - span * 0.35f - span * 0.35f, cy + span * 0.35f - span * 0.35f,
-               cx - span * 0.35f + span * 0.35f, cy + span * 0.35f + span * 0.35f, thick,
-               red, green, blue, alpha);
+               cx - span * 0.35f + span * 0.35f, cy + span * 0.35f + span * 0.35f, thick, red, green, blue, alpha);
     /* Pommel 2 */
-    thick_line(renderer, cx - span * 0.65f, cy + span * 0.65f, cx - span * 0.95f, cy + span * 0.95f, thick * 1.3f,
-               red, green, blue, alpha);
+    thick_line(renderer, cx - span * 0.65f, cy + span * 0.65f, cx - span * 0.95f, cy + span * 0.95f, thick * 1.3f, red,
+               green, blue, alpha);
 }
 
-static void shield_icon(SDL_Renderer *renderer, float cx, float cy, float span,
-                        Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha)
+static void shield_icon(SDL_Renderer *renderer, float cx, float cy, float span, Uint8 red, Uint8 green, Uint8 blue,
+                        Uint8 alpha)
 {
     const float top = cy - span * 0.9f;
     const float mid = cy + span * 0.05f;
@@ -148,25 +146,21 @@ static void shield_icon(SDL_Renderer *renderer, float cx, float cy, float span,
     line(renderer, left, mid * 0.5f + top * 0.5f, right, mid * 0.5f + top * 0.5f);
 }
 
-static void jump_icon(SDL_Renderer *renderer, float cx, float cy, float span,
-                      Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha)
+static void jump_icon(SDL_Renderer *renderer, float cx, float cy, float span, Uint8 red, Uint8 green, Uint8 blue,
+                      Uint8 alpha)
 {
     const float thick = SDL_max(2.5f, span * 0.22f);
     /* Upper chevron */
-    thick_line(renderer, cx - span * 0.85f, cy - span * 0.15f, cx, cy - span * 0.9f, thick,
-               red, green, blue, alpha);
-    thick_line(renderer, cx + span * 0.85f, cy - span * 0.15f, cx, cy - span * 0.9f, thick,
-               red, green, blue, alpha);
+    thick_line(renderer, cx - span * 0.85f, cy - span * 0.15f, cx, cy - span * 0.9f, thick, red, green, blue, alpha);
+    thick_line(renderer, cx + span * 0.85f, cy - span * 0.15f, cx, cy - span * 0.9f, thick, red, green, blue, alpha);
 
     /* Lower chevron */
-    thick_line(renderer, cx - span * 0.85f, cy + span * 0.65f, cx, cy - span * 0.1f, thick,
-               red, green, blue, alpha);
-    thick_line(renderer, cx + span * 0.85f, cy + span * 0.65f, cx, cy - span * 0.1f, thick,
-               red, green, blue, alpha);
+    thick_line(renderer, cx - span * 0.85f, cy + span * 0.65f, cx, cy - span * 0.1f, thick, red, green, blue, alpha);
+    thick_line(renderer, cx + span * 0.85f, cy + span * 0.65f, cx, cy - span * 0.1f, thick, red, green, blue, alpha);
 }
 
-static void action_icon(SDL_Renderer *renderer, const SDL_FRect *bounds, TouchVisualKind kind,
-                        Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha)
+static void action_icon(SDL_Renderer *renderer, const SDL_FRect *bounds, TouchVisualKind kind, Uint8 red, Uint8 green,
+                        Uint8 blue, Uint8 alpha)
 {
     const float cx = bounds->x + bounds->w * 0.5f;
     const float cy = bounds->y + bounds->h * 0.5f;
@@ -192,8 +186,8 @@ static void action_icon(SDL_Renderer *renderer, const SDL_FRect *bounds, TouchVi
 
 enum { CIRCLE_SEGMENTS = 24 };
 
-static void draw_circle(SDL_Renderer *renderer, float cx, float cy, float radius,
-                        Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha)
+static void draw_circle(SDL_Renderer *renderer, float cx, float cy, float radius, Uint8 red, Uint8 green, Uint8 blue,
+                        Uint8 alpha)
 {
     SDL_Vertex vertices[CIRCLE_SEGMENTS + 2];
     const SDL_FColor color = {(float)red / 255.0f, (float)green / 255.0f, (float)blue / 255.0f, (float)alpha / 255.0f};
@@ -218,8 +212,8 @@ static void draw_circle(SDL_Renderer *renderer, float cx, float cy, float radius
     SDL_RenderGeometry(renderer, NULL, vertices, CIRCLE_SEGMENTS + 2, indices, CIRCLE_SEGMENTS * 3);
 }
 
-static void draw_circle_ring(SDL_Renderer *renderer, float cx, float cy, float radius, float thickness,
-                             Uint8 red, Uint8 green, Uint8 blue, Uint8 alpha)
+static void draw_circle_ring(SDL_Renderer *renderer, float cx, float cy, float radius, float thickness, Uint8 red,
+                             Uint8 green, Uint8 blue, Uint8 alpha)
 {
     const float r_outer = radius;
     const float r_inner = SDL_max(1.0f, radius - thickness);
@@ -252,10 +246,10 @@ static void draw_circle_ring(SDL_Renderer *renderer, float cx, float cy, float r
     SDL_RenderGeometry(renderer, NULL, vertices, CIRCLE_SEGMENTS * 2, indices, CIRCLE_SEGMENTS * 6);
 }
 
-void touch_controls_render(SDL_Renderer *renderer, SDL_Window *window, int controller_connected)
+void touch_controls_render(SDL_Renderer *renderer, SDL_Window *window)
 {
     TouchVisual controls[8];
-    const int count = touch_input_visuals(renderer, window, controller_connected, controls, 8);
+    const int count = touch_input_visuals(renderer, window, controls, 8);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     for (int index = 0; index < count; ++index) {
         TouchVisual *control = &controls[index];
@@ -276,8 +270,7 @@ void touch_controls_render(SDL_Renderer *renderer, SDL_Window *window, int contr
         const Uint8 icon_alpha = control->pressed ? 255 : 225;
         if (control->kind <= TOUCH_VISUAL_RIGHT)
             direction_icon(renderer, &control->bounds, control->kind, red, green, blue, icon_alpha);
-        else
-            action_icon(renderer, &control->bounds, control->kind, red, green, blue, icon_alpha);
+        else action_icon(renderer, &control->bounds, control->kind, red, green, blue, icon_alpha);
     }
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }

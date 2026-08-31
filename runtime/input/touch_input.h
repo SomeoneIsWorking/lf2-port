@@ -30,10 +30,10 @@ typedef struct TouchVisual {
 } TouchVisual;
 
 int touch_input_handle_event(const SDL_Event *event, SDL_Renderer *renderer, SDL_Window *window,
-                             int controller_connected, TouchInputEmitKey emit_key, TouchInputEmitPointer emit_pointer);
+                             TouchInputEmitKey emit_key, TouchInputEmitPointer emit_pointer);
+void touch_input_note_controller_event(const SDL_Event *event);
 void touch_input_cancel(TouchInputEmitKey emit_key, TouchInputEmitPointer emit_pointer);
-int touch_input_visuals(SDL_Renderer *renderer, SDL_Window *window, int controller_connected, TouchVisual *output,
-                        int capacity);
+int touch_input_visuals(SDL_Renderer *renderer, SDL_Window *window, TouchVisual *output, int capacity);
 
 #ifdef __cplusplus
 }

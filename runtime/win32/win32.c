@@ -506,12 +506,12 @@ void hostwin_pump(void)
                         e.type == SDL_EVENT_KEY_DOWN ? "down" : "up");
         }
         gamepad_handle_event(&e); /* controllers may come and go at any time */
+        touch_input_note_controller_event(&e);
         /* The RmlUi settings screen takes its own input while it is up; an event it consumed
          * -- a key rebind, an Escape that closed it -- must not also reach the game's message
          * pump or the pause menu's key ledger. */
         if (rmlui_event(&e)) continue;
-        if (touch_input_handle_event(&e, hw.renderer, hw.window, gamepad_any_connected(), hostwin_inject_key,
-                                     hostwin_inject_window_pointer))
+        if (touch_input_handle_event(&e, hw.renderer, hw.window, hostwin_inject_key, hostwin_inject_window_pointer))
             continue;
         if (e.type == SDL_EVENT_QUIT) quit_posted = 1;
         /* Alt+Enter is what players expect, and the game cannot ask for it itself. */
