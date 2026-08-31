@@ -85,6 +85,12 @@ def main() -> int:
     touch_input = (ROOT / "runtime" / "input" / "touch_input.cpp").read_text()
     assert "touch_input_note_controller_event" in touch_input
     assert "state.presentation.note_touch();" in touch_input
+    settings_ui = (ROOT / "runtime" / "ui" / "settings_ui.cpp").read_text()
+    assert 'data-if="quit_supported"' in settings_ui
+    assert "M.quit_supported = false;" in settings_ui
+    dsound = (ROOT / "runtime" / "audio" / "dsound.c").read_text()
+    assert "SDL_PauseAudioStreamDevice(stream);" in dsound
+    assert "SDL_ClearAudioStream(stream);" in dsound
 
     build = ROOT / "build" / "test-android-tool"
     if build.exists():

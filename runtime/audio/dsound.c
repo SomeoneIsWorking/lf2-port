@@ -805,10 +805,28 @@ Handler dsound_lookup(const char *dll, const char *name)
 
 void dsound_shutdown(void)
 {
+    /* On Android, destroying an AudioStream without first pausing it leaves queued device
+     * samples eligible to play while the Activity is being removed. Stop the producer and
+     * discard that queue before the SDL/Activity teardown begins. The lock also keeps an
+     * in-flight callback from retaining the music PCM while it is released below. */
+    int16_t *music = NULL;
+    if (mix_lock) {
+        SDL_LockMutex(mix_lock);
+        mus_playing = 0;
+        mus_pos = 0;
+        music = mus_pcm;
+        mus_pcm = NULL;
+        mus_frames = 0;
+        SDL_UnlockMutex(mix_lock);
+    }
     if (stream) {
+        SDL_PauseAudioStreamDevice(stream);
+        SDL_ClearAudioStream(stream);
         SDL_DestroyAudioStream(stream);
         stream = NULL;
     }
+    free(music);
+    au_music_frames = 0;
     if (mix_lock) {
         SDL_DestroyMutex(mix_lock);
         mix_lock = NULL;
