@@ -75,6 +75,9 @@ def main() -> int:
     assert 'SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight")' in window_policy
     bridge = (ROOT / "runtime" / "platform" / "android_bridge.c").read_text()
     assert 'call_activity_void("enforceLf2WindowPolicy"' in bridge
+    assert "finishApp" not in bridge
+    host_frame = (ROOT / "runtime" / "video" / "host_frame.c").read_text()
+    assert "android_bridge_finish_activity" not in host_frame
     activity = (
         ROOT / "platforms" / "android" / "app" / "src" / "main" / "java" / "io" / "github"
         / "someoneisworking" / "lf2port" / "Lf2Activity.java"
@@ -82,6 +85,8 @@ def main() -> int:
     assert "enforceLf2WindowPolicy" in activity
     assert "ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE" in activity
     assert "hideSystemUI();" in activity
+    assert 'android:alwaysRetainTaskState="true"' in manifest
+    assert 'android:launchMode="singleInstance"' in manifest
     touch_input = (ROOT / "runtime" / "input" / "touch_input.cpp").read_text()
     assert "touch_input_note_controller_event" in touch_input
     assert "state.presentation.note_touch();" in touch_input

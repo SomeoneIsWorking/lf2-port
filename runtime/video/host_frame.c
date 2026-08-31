@@ -43,9 +43,6 @@ uint32_t frame_source_pixels(void)
 }
 
 #include "dsound.h"
-#ifdef __ANDROID__
-#include "android_bridge.h"
-#endif
 
 /* Release SDL explicitly at exit. Leaving it to process teardown is usually harmless, but
  * it means the audio device and window outlive the game's own shutdown, and a diagnostic
@@ -74,9 +71,6 @@ void hostwin_shutdown(void)
         hw.window = NULL;
     }
     SDL_Quit();
-#ifdef __ANDROID__
-    android_bridge_finish_activity();
-#endif
 }
 
 /* LF2_UNPACED=1 runs frames as fast as the machine will do them.
