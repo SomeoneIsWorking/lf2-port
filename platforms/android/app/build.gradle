@@ -28,7 +28,7 @@ android {
                 keyPassword = releaseKeyPassword
                 v1SigningEnabled = true
                 v2SigningEnabled = true
-                v3SigningEnabled = true
+                enableV3Signing = true
             }
         }
     }

@@ -56,7 +56,7 @@ def same_program(a: str, b: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--build-dir", type=Path, default=ROOT / "scratch" / "build-clang")
+    parser.add_argument("--build-dir", type=Path, default=ROOT / "build" / "clang")
     parser.add_argument("--configure-only", action="store_true")
     args = parser.parse_args()
     build = args.build_dir.resolve()

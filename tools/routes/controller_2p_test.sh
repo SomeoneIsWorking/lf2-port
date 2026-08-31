@@ -24,7 +24,7 @@
 # caught both -- which is what the control is for.
 set -eu
 
-BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
+BUILD=$(cd "${BUILD:-build/clang}" 2>/dev/null && pwd) || BUILD=${BUILD:-build/clang}
 GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
 LOG1=$(mktemp); LOG2=$(mktemp)
 trap 'rm -f "$LOG1" "$LOG2"' EXIT

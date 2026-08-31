@@ -157,7 +157,7 @@ def check_results() -> int:
 
 
 def main(argv: list[str]) -> int:
-    build = (ROOT / os.environ.get("BUILD", "scratch/build-clang")).resolve()
+    build = (ROOT / os.environ.get("BUILD", "build/clang")).resolve()
     game = (ROOT / os.environ.get("GAME", "game")).resolve()
     if not (build / "lf2").is_file():
         print(f"SKIP: {build / 'lf2'} not built")

@@ -368,7 +368,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--build-dir",
-        default=os.environ.get("BUILD", "scratch/build-clang"),
+        default=os.environ.get("BUILD", "build/clang"),
         help="directory containing the current lf2 binary",
     )
     parser.add_argument(

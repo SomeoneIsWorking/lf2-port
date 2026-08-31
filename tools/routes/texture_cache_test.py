@@ -33,7 +33,7 @@ PAD = ",".join(
 
 
 def main() -> int:
-    build = (ROOT / os.environ.get("BUILD", "scratch/build-clang")).resolve()
+    build = (ROOT / os.environ.get("BUILD", "build/clang")).resolve()
     game = (ROOT / os.environ.get("GAME", "game")).resolve()
     executable = build / "lf2"
     if not executable.is_file():

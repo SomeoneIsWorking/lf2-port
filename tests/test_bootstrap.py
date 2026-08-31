@@ -41,10 +41,10 @@ class BootstrapCheckoutTest(unittest.TestCase):
             path.touch()
 
     @mock.patch.object(bootstrap.shutil, "which", return_value="/usr/bin/git")
-    def test_missing_port_assets_are_cloned_and_pinned_in_scratch(
+    def test_missing_port_assets_are_cloned_and_pinned_in_build(
         self, _which: mock.Mock
     ) -> None:
-        target = self.root / "scratch" / "deps" / "port-assets"
+        target = self.root / "build" / "deps" / "port-assets"
 
         def clone(
             command: list[str], **kwargs: object
@@ -127,7 +127,7 @@ class BootstrapCheckoutTest(unittest.TestCase):
 
     @mock.patch.object(bootstrap.shutil, "which", return_value="/usr/bin/git")
     def test_partial_checkout_names_the_required_svg(self, _which: mock.Mock) -> None:
-        target = self.root / "scratch" / "deps" / "port-assets"
+        target = self.root / "build" / "deps" / "port-assets"
         (target / "sets").mkdir(parents=True)
         with self.assertRaisesRegex(SystemExit, "sets/devices/keyboard.svg"):
             bootstrap.ensure_port_assets()
@@ -141,9 +141,9 @@ class BootstrapCheckoutTest(unittest.TestCase):
         installer.assert_not_called()
 
     def test_launcher_preserves_product_arguments_and_starts_from_repo_root(self) -> None:
-        binary = self.root / "scratch" / "build-clang" / "lf2"
+        binary = self.root / "build" / "clang" / "lf2"
         venv_python = self.root / ".venv" / "bin" / "python"
-        port_assets = self.root / "scratch" / "deps" / "port-assets"
+        port_assets = self.root / "build" / "deps" / "port-assets"
         with (
             mock.patch.object(bootstrap, "BINARY", binary),
             mock.patch.object(bootstrap, "ensure_port_assets", return_value=port_assets),
@@ -163,8 +163,8 @@ class BootstrapCheckoutTest(unittest.TestCase):
         venv_python = self.root / ".venv" / "bin" / "python"
         venv_python.parent.mkdir(parents=True)
         venv_python.touch()
-        binary = self.root / "scratch" / "build-clang" / "lf2"
-        port_assets = self.root / "scratch" / "deps" / "port-assets"
+        binary = self.root / "build" / "clang" / "lf2"
+        port_assets = self.root / "build" / "deps" / "port-assets"
 
         def build(
             command: list[str], **kwargs: object

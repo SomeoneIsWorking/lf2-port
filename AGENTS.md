@@ -31,7 +31,7 @@ grepping these — nearly all of them are already recorded with the measurement 
 # After ./run.sh has provisioned the external checkouts, Python environment,
 # and game tree, the direct build/run path is:
 uv run --frozen python tools/build/build.py
-scratch/build-clang/lf2                    # discovers, validates, and enters game/ before guest startup
+build/clang/lf2                    # discovers, validates, and enters game/ before guest startup
 
 # Release artifact; contains the compiled port and redistributable resources, never original files.
 uv run --frozen python tools/build/appimage.py --fetch-tools --version dev
@@ -41,10 +41,11 @@ uv run --frozen python tools/build/appimage.py --fetch-tools --version dev
 run.sh, so it can refuse by name and be read like any other code. Python
 dependencies are managed by uv (`pyproject.toml` + committed `uv.lock`).
 
-Build artefacts go in the gitignored `scratch/`, never `/tmp`.
+Build artefacts go in gitignored `build/`; disposable logs, captures, and RE output go in
+gitignored `scratch/`, never `/tmp`.
 
 ```sh
-ctest --test-dir scratch/build-clang                 # offline suite + Clang gates, about 15 s
+ctest --test-dir build/clang                 # offline suite + Clang gates, about 15 s
 tools/e2e.py                                   # the scripts that boot the game (minutes)
 tools/e2e.py mouse render                      # one or more of them by name
 ```
@@ -74,7 +75,7 @@ tools/e2e.py mouse render                      # one or more of them by name
   re/entries.tsv  +  game/lf2.exe
         |  recompiler/lift.c  (x86 -> C, using recompiler/x86_decode.c)
         v
-  scratch/build-clang/gen/lf2_recomp.c        the game's own logic, machine-generated, never edited
+  build/clang/gen/lf2_recomp.c        the game's own logic, machine-generated, never edited
         |  calls fn_<addr>() and the imports below
         v
   runtime/{cpu,win32,video,audio,input,app,log}/ the platform: guest CPU/memory +
@@ -132,7 +133,7 @@ static recompilation rather than copying Dusklight's platform implementations:
 - `runtime/overrides/` changes game behavior and does not absorb host platform mechanisms.
 
 Generic port UI art comes from `PORT_ASSETS_DIR`, `SHARED_DIR/port-assets`, an existing standard
-`../../shared/port-assets` checkout, or bootstrap's pinned gitignored `scratch/deps/port-assets`,
+`../../shared/port-assets` checkout, or bootstrap's pinned gitignored `build/deps/port-assets`,
 never from a copied tracked LF2-local version. The settings screen and in-game device indicators
 embed that repository's SVG icons at build time, so the installed game has no host checkout path.
 

@@ -55,6 +55,9 @@ def main() -> int:
     assert "com.android.tools.build:gradle:9.3.0" in (
         ROOT / "platforms" / "android" / "build.gradle"
     ).read_text()
+    app_gradle = (ROOT / "platforms" / "android" / "app" / "build.gradle").read_text()
+    assert "enableV3Signing = true" in app_gradle
+    assert "v3SigningEnabled" not in app_gradle
 
     manifest = (ROOT / "platforms" / "android" / "app" / "src" / "main" / "AndroidManifest.xml").read_text()
     assert 'android:screenOrientation="sensorLandscape"' in manifest
@@ -71,13 +74,13 @@ def main() -> int:
     window_policy = (ROOT / "runtime" / "platform" / "window_policy.c").read_text()
     assert 'SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight")' in window_policy
 
-    scratch = ROOT / "scratch" / "test-android-tool"
-    if scratch.exists():
-        shutil.rmtree(scratch)
-    scratch.mkdir(parents=True)
+    build = ROOT / "build" / "test-android-tool"
+    if build.exists():
+        shutil.rmtree(build)
+    build.mkdir(parents=True)
 
     expect_refused(lambda: ANDROID.release_signing({}), "Refusing an unsigned APK")
-    keystore = scratch / "release.jks"
+    keystore = build / "release.jks"
     keystore.write_bytes(b"not-a-real-keystore")
     signing = ANDROID.release_signing(
         {
@@ -93,21 +96,21 @@ def main() -> int:
         "lib/arm64-v8a/libmain.so",
         "lib/arm64-v8a/libSDL3.so",
         "lib/arm64-v8a/libc++_shared.so",
-        "res/drawable/lf2_port_icon.xml",
+        "resources.arsc",
     ]
-    clean_apk = scratch / "clean.apk"
+    clean_apk = build / "clean.apk"
     make_apk(clean_apk, required)
     ANDROID.inspect_apk(clean_apk)
 
-    game_apk = scratch / "contains-game.apk"
+    game_apk = build / "contains-game.apk"
     make_apk(game_apk, [*required, "assets/game/data/data.txt"])
     expect_refused(lambda: ANDROID.inspect_apk(game_apk), "prohibited original game paths")
 
-    incomplete_apk = scratch / "incomplete.apk"
+    incomplete_apk = build / "incomplete.apk"
     make_apk(incomplete_apk, required[:-1])
-    expect_refused(lambda: ANDROID.inspect_apk(incomplete_apk), "lf2_port_icon.xml")
+    expect_refused(lambda: ANDROID.inspect_apk(incomplete_apk), "resources.arsc")
 
-    shutil.rmtree(scratch)
+    shutil.rmtree(build)
     print("android tool: signing and APK content gates passed positive and negative cases")
     return 0
 

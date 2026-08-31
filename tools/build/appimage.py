@@ -14,8 +14,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BUILD = ROOT / "scratch" / "build-clang"
-DEFAULT_WORK = ROOT / "scratch" / "appimage"
+DEFAULT_BUILD = ROOT / "build" / "clang"
+DEFAULT_WORK = ROOT / "build" / "appimage"
 LINUXDEPLOY_SHA256 = "421ca71d5c69ea97c6309276232990d43df1dcece0edfaa26bbf926ff96ed12e"
 APPIMAGETOOL_SHA256 = "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 APPIMAGE_RUNTIME_SHA256 = "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf"
@@ -61,9 +61,9 @@ def require_host_tools(*, packaging: bool = True) -> None:
 
 def scoped_clean(path: Path) -> None:
     resolved = path.resolve()
-    scratch = (ROOT / "scratch").resolve()
-    if resolved == scratch or scratch not in resolved.parents:
-        refuse(f"refusing to clean non-scoped path {resolved}; expected a child of {scratch}")
+    build = (ROOT / "build").resolve()
+    if resolved == build or build not in resolved.parents:
+        refuse(f"refusing to clean non-scoped path {resolved}; expected a child of {build}")
     if resolved.exists():
         shutil.rmtree(resolved)
 
@@ -272,15 +272,15 @@ def main() -> int:
     parser.add_argument("--build-dir", type=Path, default=DEFAULT_BUILD)
     parser.add_argument("--work-dir", type=Path, default=DEFAULT_WORK)
     parser.add_argument("--linuxdeploy", type=Path,
-                        default=ROOT / "scratch/tools/linuxdeploy-x86_64.AppImage")
+                        default=ROOT / "build/tools/linuxdeploy-x86_64.AppImage")
     parser.add_argument("--appimagetool", type=Path,
-                        default=ROOT / "scratch/tools/appimagetool-x86_64.AppImage")
+                        default=ROOT / "build/tools/appimagetool-x86_64.AppImage")
     parser.add_argument("--runtime", type=Path,
-                        default=ROOT / "scratch/tools/runtime-x86_64")
+                        default=ROOT / "build/tools/runtime-x86_64")
     parser.add_argument("--updater", type=Path,
-                        default=ROOT / "scratch/tools/AppImageUpdate-x86_64.AppImage")
+                        default=ROOT / "build/tools/AppImageUpdate-x86_64.AppImage")
     parser.add_argument("--output", type=Path,
-                        default=ROOT / "scratch/release/LF2-Port-x86_64.AppImage")
+                        default=ROOT / "build/release/LF2-Port-x86_64.AppImage")
     parser.add_argument("--version", default="dev")
     parser.add_argument("--fetch-tools", action="store_true")
     parser.add_argument("--stage-only", action="store_true")

@@ -20,7 +20,7 @@
 # happens to vanish at one camera is exactly what this is meant to catch.
 set -eu
 
-BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
+BUILD=$(cd "${BUILD:-build/clang}" 2>/dev/null && pwd) || BUILD=${BUILD:-build/clang}
 GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
 # NOT mktemp -d, and the frames are NOT deleted on the way out. Two separate reasons, both
 # learned the hard way:

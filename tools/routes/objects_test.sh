@@ -41,7 +41,7 @@
 # frame is presented, and issue #40 is why nothing runs on the GPU that does not have to.
 set -eu
 
-BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
+BUILD=$(cd "${BUILD:-build/clang}" 2>/dev/null && pwd) || BUILD=${BUILD:-build/clang}
 GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
 # NOT mktemp -d. The heap dump is ~106 MB per frame per arm, and /tmp here is a RAM-backed
 # tmpfs with a per-user quota that a single run of this would eat. scratch/ is gitignored and

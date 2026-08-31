@@ -18,7 +18,7 @@ from pathlib import Path
 from release_dependencies import DEPENDENCIES
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_WORK = ROOT / "scratch" / "android"
+DEFAULT_WORK = ROOT / "build" / "android"
 ANDROID_ABI = "arm64-v8a"
 ANDROID_API = 24
 NDK_VERSION = "28.2.13676358"
@@ -34,9 +34,9 @@ def refuse(message: str) -> None:
 
 def scoped_clean(path: Path) -> None:
     resolved = path.resolve()
-    scratch = (ROOT / "scratch").resolve()
-    if resolved == scratch or scratch not in resolved.parents:
-        refuse(f"refusing to clean non-scoped path {resolved}; expected a child of {scratch}")
+    build = (ROOT / "build").resolve()
+    if resolved == build or build not in resolved.parents:
+        refuse(f"refusing to clean non-scoped path {resolved}; expected a child of {build}")
     if resolved.exists():
         shutil.rmtree(resolved)
 
@@ -399,7 +399,7 @@ def inspect_apk(apk: Path) -> None:
         or game_directories.intersection(part.lower() for part in Path(name).parts)
     ]
     required = [f"lib/{ANDROID_ABI}/libmain.so", f"lib/{ANDROID_ABI}/libSDL3.so",
-                f"lib/{ANDROID_ABI}/libc++_shared.so", "res/drawable/lf2_port_icon.xml"]
+                f"lib/{ANDROID_ABI}/libc++_shared.so", "resources.arsc"]
     missing = [name for name in required if name not in names]
     if forbidden:
         refuse("APK contains prohibited original game paths: " + ", ".join(forbidden))
@@ -426,7 +426,7 @@ def build_apk(project: Path, sdk: Path, java: Path, signing: Mapping[str, str] |
     if len(candidates) != 1:
         refuse(f"expected one {kind} APK, found {len(candidates)}")
     inspect_apk(candidates[0])
-    output = ROOT / "scratch" / "releases" / f"LF2-Port-{version}-android-arm64-{kind}.apk"
+    output = ROOT / "build" / "release" / f"LF2-Port-{version}-android-arm64-{kind}.apk"
     output.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(candidates[0], output)
     if release:

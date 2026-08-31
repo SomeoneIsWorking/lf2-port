@@ -29,7 +29,7 @@
 # 30-frame instance and asks nothing of the game. See issue #40 for why GPU runs are counted.
 set -eu
 
-BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
+BUILD=$(cd "${BUILD:-build/clang}" 2>/dev/null && pwd) || BUILD=${BUILD:-build/clang}
 GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
 LOG=$(mktemp)
 trap 'rm -f "$LOG"' EXIT
