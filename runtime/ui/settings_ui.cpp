@@ -181,7 +181,7 @@ static const char SETTINGS_RML[] = R"RML(
         <button data-if="can_drop" data-event-click="drop_out">DROP OUT</button>
         <button data-if="in_match" data-event-click="leave_match">LEAVE MATCH</button>
         <button data-if="updates" data-event-click="update">CHECK FOR UPDATES</button>
-        <button class="danger" data-event-click="quit">QUIT GAME</button>
+        <button class="danger" data-if="quit_supported" data-event-click="quit">QUIT GAME</button>
       </pane>
       <pane data-if="page == 'graphics'">
         <span class="section-heading">RENDERING</span>
@@ -305,6 +305,7 @@ static struct {
     bool in_match;
     bool can_drop;
     bool updates;
+    bool quit_supported;
     int light_angle;
     int light_height;
     int light_pct; /* key-light strength as a percentage of a flat key (#111) */
@@ -373,6 +374,11 @@ static void model_load(void)
     M.in_match = pause_menu_in_match() != 0;
     M.can_drop = pause_menu_can_drop() != 0;
     M.updates = update_supported() != 0;
+#ifdef __ANDROID__
+    M.quit_supported = false;
+#else
+    M.quit_supported = true;
+#endif
     hd2d_light_angles(&angle, &height);
     M.light_angle = (int)(angle + (angle < 0.0f ? -0.5f : 0.5f));
     M.light_height = (int)std::lround(height);
@@ -473,6 +479,7 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     ctor.Bind("in_match", &M.in_match);
     ctor.Bind("can_drop", &M.can_drop);
     ctor.Bind("updates", &M.updates);
+    ctor.Bind("quit_supported", &M.quit_supported);
     ctor.Bind("light_angle", &M.light_angle);
     ctor.Bind("light_height", &M.light_height);
     ctor.Bind("light_pct", &M.light_pct);
