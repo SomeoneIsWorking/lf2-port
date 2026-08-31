@@ -233,7 +233,7 @@ def check_results(
 
 
 def main() -> int:
-    build = resolved_environment_path("BUILD", "scratch/build")
+    build = resolved_environment_path("BUILD", "build/clang")
     game = resolved_environment_path("GAME", "game")
     log_dir = resolved_environment_path("LF2_SCRATCH", "scratch") / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)

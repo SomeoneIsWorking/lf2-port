@@ -72,7 +72,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     env = os.environ.copy()
-    env.setdefault("BUILD", "scratch/build-clang")
+    env.setdefault("BUILD", "build/clang")
     env.setdefault("GAME", "game")
     env["LF2_CONFIG"] = ""
 

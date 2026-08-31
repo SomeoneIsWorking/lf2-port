@@ -202,6 +202,13 @@ def main() -> int:
     assert staged_executable.parent == staged_root / "prepared"
     assert staged_executable.read_bytes() == b"fixture"
 
+    aliased_staged_root = root / "android-staging-alias"
+    aliased_staged_root.symlink_to(staged_root, target_is_directory=True)
+    aliased_staged_result = run(binary, aliased_staged_root / "installer.exe", config, True, staged=True)
+    aliased_staged_executable = Path(aliased_staged_result.stdout.strip())
+    assert aliased_staged_executable.resolve() == (staged_root / "prepared" / "lf2.exe").resolve()
+    assert aliased_staged_executable.read_bytes() == b"fixture"
+
     staged_zip_root = root / "android-zip-staging"
     staged_zip_root.mkdir()
     staged_zip = staged_zip_root / "game.zip"

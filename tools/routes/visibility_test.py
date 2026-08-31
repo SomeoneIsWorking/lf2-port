@@ -85,7 +85,7 @@ def run_arm(binary: Path, game: Path, arm: str) -> bool:
 
 
 def main() -> int:
-    build = (ROOT / os.environ.get("BUILD", "scratch/build-clang")).resolve()
+    build = (ROOT / os.environ.get("BUILD", "build/clang")).resolve()
     game = (ROOT / os.environ.get("GAME", "game")).resolve()
     binary = build / "lf2"
     if not binary.is_file():

@@ -104,7 +104,17 @@ bool validate_prepared_import(const std::filesystem::path &resolved, const std::
                       prepared_game.error, cleanup_error ? "; its invalid preparation could not be removed" : "");
         return false;
     }
-    relative_executable = std::filesystem::path(prepared_game.executable).lexically_relative(preparing);
+    std::error_code canonical_error;
+    const std::filesystem::path canonical_preparing = std::filesystem::canonical(preparing, canonical_error);
+    if (canonical_error) {
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(preparing, cleanup_error);
+        std::snprintf(error, error_capacity, "cannot resolve the prepared %s import: %s%s", kind_name(kind),
+                      canonical_error.message().c_str(),
+                      cleanup_error ? "; its invalid preparation could not be removed" : "");
+        return false;
+    }
+    relative_executable = std::filesystem::path(prepared_game.executable).lexically_relative(canonical_preparing);
     if (!relative_executable.empty() && !relative_executable.is_absolute() &&
         relative_executable.begin() != relative_executable.end() && *relative_executable.begin() != "..")
         return true;

@@ -90,7 +90,7 @@ if(ANDROID)
     if(NOT LF2_RECOMP_SOURCE OR NOT EXISTS "${LF2_RECOMP_SOURCE}")
         message(FATAL_ERROR
             "Android requires -DLF2_RECOMP_SOURCE=<host-generated lf2_recomp.c>. "
-            "Run tools/build/android.py; generated code remains under scratch/ and is never committed.")
+            "Run tools/build/android.py; generated code remains under build/ and is never committed.")
     endif()
     set(LF2_MUSIC_DECODER runtime/audio/music_decode_libav.c)
 else()

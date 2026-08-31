@@ -14,7 +14,7 @@ Order matters and each step needs only the ones before it:
   1. port-assets          validates $PORT_ASSETS_DIR without touching it;
                           otherwise reuses $SHARED_DIR/port-assets or the
                           established ../../shared checkout when available,
-                          and clones a pinned copy into scratch/deps as the
+                          and clones a pinned copy into build/deps as the
                           portable fallback.
   2. source submodules    initializes pinned RmlUi and Lucent checkouts when absent.
   3. Python environment   `uv sync --frozen`, from the committed lockfile. uv
@@ -44,7 +44,7 @@ ROOT = Path(__file__).resolve().parent
 INSTALLER_URL = "https://lf2.net/LF2_v2.0a.exe"
 INSTALLER = "LF2_v2.0a.exe"
 GAME_EXE = "game/lf2.exe"
-BUILD_DIR = ROOT / "scratch" / "build-clang"
+BUILD_DIR = ROOT / "build" / "clang"
 BINARY = BUILD_DIR / "lf2"
 PORT_ASSET_FILES = (
     Path("sets/devices/keyboard.svg"),
@@ -98,7 +98,7 @@ def ensure_port_assets() -> Path:
         legacy = ROOT.parent.parent / "shared" / "port-assets"
         if not missing_port_assets(legacy):
             return legacy.resolve()
-        target = ROOT / "scratch" / "deps" / "port-assets"
+        target = ROOT / "build" / "deps" / "port-assets"
 
     missing = missing_port_assets(target)
     if not missing:

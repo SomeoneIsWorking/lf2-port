@@ -39,7 +39,7 @@
 # fails rather than silently asserting against the wrong numbers.
 set -eu
 
-BUILD=$(cd "${BUILD:-scratch/build}" 2>/dev/null && pwd) || BUILD=${BUILD:-scratch/build}
+BUILD=$(cd "${BUILD:-build/clang}" 2>/dev/null && pwd) || BUILD=${BUILD:-build/clang}
 GAME=$(cd "${GAME:-game}" 2>/dev/null && pwd) || GAME=${GAME:-game}
 
 if [ ! -x "$BUILD/lf2" ]; then echo "SKIP: $BUILD/lf2 not built"; exit 77; fi

@@ -2,6 +2,7 @@
 LF2_v2.0a.exe
 game/
 scratch/
+/build/
 .venv/
 __pycache__/
 # The port's settings file (issue #70): a user's bindings are their own.

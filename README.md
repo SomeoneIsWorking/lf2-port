@@ -90,7 +90,7 @@ refuses by name — with the exact fix — when something is missing:
 
 1. `port-assets` validated at `$PORT_ASSETS_DIR`, reused or provisioned below
    `$SHARED_DIR`, reused from the standard shared-repo layout when present, or
-   cloned at a pinned revision into gitignored `scratch/deps`.
+   cloned at a pinned revision into gitignored `build/deps`.
 2. the pinned `third_party/RmlUi` and `third_party/lucent` submodules initialized when missing.
 3. the Python environment synced by **uv** from the committed lockfile with `--frozen`
    (`pyproject.toml`; uv installs Python itself if the system one is old).
@@ -105,7 +105,7 @@ and game tree, the direct build/run path is:
 
 ```sh
 uv run --frozen python tools/build/build.py
-scratch/build-clang/lf2
+build/clang/lf2
 ```
 
 Needs SDL3, `SDL3_ttf`, `SDL3_image`, bzip2 and cmake (plus a C11 and C++20 toolchain).

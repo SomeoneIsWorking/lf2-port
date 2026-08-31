@@ -10,7 +10,7 @@ the direct build/run path is:
 
 ```sh
 uv run --frozen python tools/build/build.py
-scratch/build-clang/lf2
+build/clang/lf2
 ```
 
 The executable discovers `game/lf2.exe` from the repository root, validates it, and enters the
@@ -43,7 +43,7 @@ uv run --frozen python tools/build/appimage.py --fetch-tools --version dev
 
 The tool verifies pinned SHA256 values for linuxdeploy, appimagetool, the Type 2 runtime, and the
 graphical AppImageUpdate payload. It embeds GitHub `gh-releases-zsync` metadata and requires the
-matching `scratch/release/LF2-Port-x86_64.AppImage.zsync` sidecar. It
+matching `build/release/LF2-Port-x86_64.AppImage.zsync` sidecar. It
 rejects an install tree containing an original PE executable or known game-data paths, extracts the
 finished AppImage, repeats the content gate, and refuses a package without its executable updater.
 Both generated release files are gitignored and uploaded manually; generated source and package
@@ -70,7 +70,7 @@ brew install cmake sdl3 sdl3_image sdl3_ttf bzip2 uv
 
 Use `./run.sh` for the first run. It validates a user-owned `PORT_ASSETS_DIR`, otherwise reuses or
 provisions `SHARED_DIR/port-assets`, reuses the established `../../shared/port-assets` checkout
-when present, or clones the pinned asset revision into gitignored `scratch/deps`. It then
+when present, or clones the pinned asset revision into gitignored `build/deps`. It then
 initializes the pinned RmlUi and Lucent submodules, syncs the locked Python environment with
 `uv --frozen`, downloads and extracts
 the game installer when needed, builds, and starts the port. `tools/build/build.py` deliberately
@@ -122,7 +122,7 @@ This is worth stating plainly because it was invisible for the life of the proje
 differential passed 66,984 checks every time it ran, and the game rendered correctly. A
 second compiler was the instrument that could see it.
 
-`tools/build/build_matrix.sh` builds and tests every compiler on the machine at two optimisation
+`tools/build/build_matrix.py` builds and tests every compiler on the machine at two optimisation
 levels — evaluation order is the front end's choice and can differ with `-O` too — so this
 stays a routine check rather than something done once. Pass `-R instructions` for just the
 differential; the whole suite is a second and a half. It warns when fewer than
@@ -176,7 +176,7 @@ Forcing the video driver is required, and the reason is worth knowing:
 
 ```sh
 Xvfb :99 -screen 0 1024x768x24 &
-cd game && DISPLAY=:99 SDL_VIDEODRIVER=x11 ../scratch/build-clang/lf2 lf2.exe &
+cd game && DISPLAY=:99 SDL_VIDEODRIVER=x11 ../build/clang/lf2 lf2.exe &
 DISPLAY=:99 import -window root shot.png
 ```
 
@@ -829,8 +829,8 @@ Two are build options rather than environment variables, because they need code 
 into the generated file:
 
 ```sh
-CC=clang CXX=clang++ cmake -S . -B scratch/build-clang -DLF2_STACK_CHECK=ON   # assert stack balance at every guest RET
-LF2_PROBE=4246fd,4274da cmake --build scratch/build-clang --target lf2   # log ESP at those instructions
+CC=clang CXX=clang++ cmake -S . -B build/clang -DLF2_STACK_CHECK=ON   # assert stack balance at every guest RET
+LF2_PROBE=4246fd,4274da cmake --build build/clang --target lf2   # log ESP at those instructions
 ```
 
 `LF2_PROBE` is read when the code is **generated**, not when it runs, so the target has to
@@ -971,7 +971,7 @@ opponent, entirely unattended:
 cd game && LF2_AUTOCLICK_ONCE=1 LF2_AUTOCLICK=403,228 LF2_AUTOCLICK_START=3000 \
   LF2_AUTOKEY_ONCE=1 LF2_AUTOKEY=0x5A,0x5A,0x5A,0x5A,0x5A,0x5A,0x5A,0x5A,0x26,0x26,0x5A \
   LF2_AUTOKEY_START=32000 LF2_AUTOKEY_EVERY=1800 \
-  ../scratch/build-clang/lf2 lf2.exe
+  ../build/clang/lf2 lf2.exe
 ```
 
 The click picks **game start**; the game then loads its data for ~25 s, which is why the
@@ -1021,7 +1021,7 @@ table dump taken there is 400 lines of untouched defaults, which reads exactly l
 result. The dump now says `NOT A MATCH` outright in that case.
 
 ```sh
-cd game && LF2_COOP_TABLE=live+60 LF2_COOP_SPAWN=13,1 ../scratch/build-clang/lf2 lf2.exe
+cd game && LF2_COOP_TABLE=live+60 LF2_COOP_SPAWN=13,1 ../build/clang/lf2 lf2.exe
 ```
 
 puts a Bandit into a running match: it animates, walks, collides and gets its own HUD bar
@@ -1065,7 +1065,7 @@ drawn by its code from its record; the port is not painting a character-select s
 the match.
 
 ```sh
-cd game && ../scratch/build-clang/lf2 lf2.exe
+cd game && ../build/clang/lf2 lf2.exe
 ```
 
 The remaining `LF2_COOP_*` variables are the **diagnostics** over this — `_SPAWN`, `_JOIN`,
@@ -1334,7 +1334,7 @@ sits at ~13%.
 ## Tests
 
 ```sh
-ctest --test-dir scratch/build-clang  # offline suite + Clang gates, about 15 s; no game boot
+ctest --test-dir build/clang  # offline suite + Clang gates, about 15 s; no game boot
 tools/e2e.py                   # the scripts that DO boot the game (seconds to minutes each)
 tools/e2e.py mouse render      # by name
 ```
@@ -1383,7 +1383,7 @@ leading space.
 
 ```sh
 cd game && SDL_VIDEODRIVER=offscreen LF2_DUMP_DIR=../scratch/frames \
-  LF2_FRAME_DUMP=1900,2400 ../scratch/build-clang/lf2 lf2.exe
+  LF2_FRAME_DUMP=1900,2400 ../build/clang/lf2 lf2.exe
 ```
 
 Prefer this to screenshotting an X server. Frame numbers are exact and reproducible, it
@@ -2090,7 +2090,7 @@ regeneration refuses either missing tool rather than silently leaving one backen
   ```sh
   cd game && SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
       LF2_VIRTUAL_PAD="$ROUTE" LF2_BG_TABLE=all LF2_QUIT_AFTER=2300 \
-      ../scratch/build-clang/lf2 lf2.exe 2>&1 | grep "bg table" > ../scratch/alltables.txt
+      ../build/clang/lf2 lf2.exe 2>&1 | grep "bg table" > ../scratch/alltables.txt
   tools/re/bg_table_check.py scratch/alltables.txt          # 12/12 against the shipped bg.dat
   tools/re/bg_table_check.py --selftest                     # asserts it can also say FAIL
   ```

@@ -39,7 +39,7 @@ def configured_path(name: str, default: str) -> Path:
 
 
 def main() -> int:
-    build = configured_path("BUILD", "scratch/build-clang")
+    build = configured_path("BUILD", "build/clang")
     game = configured_path("GAME", "game")
     binary = build / "lf2"
     if not binary.is_file():

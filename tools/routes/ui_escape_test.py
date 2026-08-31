@@ -190,7 +190,7 @@ def check_results() -> int:
 
 
 def main(argv: list[str]) -> int:
-    build = (ROOT / os.environ.get("BUILD", "scratch/build-clang")).resolve()
+    build = (ROOT / os.environ.get("BUILD", "build/clang")).resolve()
     game = (ROOT / os.environ.get("GAME", "game")).resolve()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     TOOL_LOG.write_text("")

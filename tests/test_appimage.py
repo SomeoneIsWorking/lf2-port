@@ -40,10 +40,10 @@ def main() -> int:
     finally:
         APPIMAGE.shutil.which = real_which
 
-    scratch = ROOT / "scratch" / "test-appimage-tool"
-    if scratch.exists():
-        shutil.rmtree(scratch)
-    appdir = scratch / "LF2.AppDir"
+    build = ROOT / "build" / "test-appimage-tool"
+    if build.exists():
+        shutil.rmtree(build)
+    appdir = build / "LF2.AppDir"
     binary = appdir / "usr" / "bin" / "lf2"
     binary.parent.mkdir(parents=True)
     binary.write_bytes(b"\x7fELF-port")
@@ -79,7 +79,7 @@ def main() -> int:
     extracted.parent.mkdir(parents=True)
     extracted.write_text("game data", encoding="utf-8")
     expect_refused(appdir, "game-data directory")
-    shutil.rmtree(scratch)
+    shutil.rmtree(build)
     print("appimage tool: positive and two negative content gates passed")
     return 0
 
