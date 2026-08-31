@@ -134,7 +134,10 @@ bool should_enable(bool controller_connected)
 {
     if (!opt_touch_controls()) return false;
 #if defined(__ANDROID__)
-    return !controller_connected;
+    /* A Bluetooth/virtual pad is not a player choice to hide the on-screen controls. Android
+     * exposes that choice in Settings, so touch stays available until the player turns it off. */
+    (void)controller_connected;
+    return true;
 #else
     return state.observed && !controller_connected;
 #endif

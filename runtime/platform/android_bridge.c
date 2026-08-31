@@ -113,6 +113,14 @@ int android_bridge_game_root(char *output, size_t capacity)
     return written >= 0 && (size_t)written < capacity;
 }
 
+int android_bridge_enforce_window_policy(void)
+{
+    char error[256] = "";
+    if (call_activity_void("enforceLf2WindowPolicy", error, sizeof error)) return 1;
+    fprintf(stderr, "android: %s\n", error);
+    return 0;
+}
+
 SetupUiResult android_bridge_choose_game_tree(const char *message, char *output, size_t capacity)
 {
     if (!ensure_selection_state() || !output || capacity == 0) return SETUP_UI_ERROR;

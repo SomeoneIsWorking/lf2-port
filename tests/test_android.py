@@ -73,6 +73,17 @@ def main() -> int:
     assert "APK signing certificate does not match" in updater
     window_policy = (ROOT / "runtime" / "platform" / "window_policy.c").read_text()
     assert 'SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight")' in window_policy
+    bridge = (ROOT / "runtime" / "platform" / "android_bridge.c").read_text()
+    assert 'call_activity_void("enforceLf2WindowPolicy"' in bridge
+    activity = (
+        ROOT / "platforms" / "android" / "app" / "src" / "main" / "java" / "io" / "github"
+        / "someoneisworking" / "lf2port" / "Lf2Activity.java"
+    ).read_text()
+    assert "enforceLf2WindowPolicy" in activity
+    assert "ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE" in activity
+    assert "hideSystemUI();" in activity
+    touch_input = (ROOT / "runtime" / "input" / "touch_input.cpp").read_text()
+    assert "A Bluetooth/virtual pad is not a player choice" in touch_input
 
     build = ROOT / "build" / "test-android-tool"
     if build.exists():
