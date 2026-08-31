@@ -5,6 +5,9 @@
 #include "keyboard.h"
 #include "touch_input.h"
 #include "window_policy.h"
+#ifdef __ANDROID__
+#include "android_bridge.h"
+#endif
 #include "render.h"
 #include "script.h"
 #include "config.h"
@@ -191,6 +194,12 @@ static void h_CreateWindowExA(void)
         fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         abort();
     }
+#ifdef __ANDROID__
+    /* SDL turns its orientation hint into USER_LANDSCAPE after creating a resizable window.
+     * Ask the Activity to restore the stronger SENSOR_LANDSCAPE + immersive policy after that
+     * write, while the game owns a real native window. */
+    if (!android_bridge_enforce_window_policy()) abort();
+#endif
     fprintf(stderr, "startup: window created visible\n");
     /* THE GPU RENDERER BY NAME, not whichever SDL picks. SDL's default order puts the
      * OpenGL backend first, and that one has no SDL_GPUDevice -- so SDL_GPURenderState, and

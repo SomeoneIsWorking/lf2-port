@@ -4,6 +4,7 @@ import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.ContentResolver;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
@@ -177,6 +178,18 @@ public final class Lf2Activity extends LucentActivity {
         runOnUiThread(() -> {
             if (updateManager == null) updateManager = new UpdateManager(this);
             updateManager.check(true);
+        });
+    }
+
+    /**
+     * SDL updates the activity orientation after it creates a resizable window. Reassert the
+     * game contract at that boundary: either landscape rotation is valid, and both system bars
+     * remain transient rather than reserving part of LF2's fixed game viewport.
+     */
+    public void enforceLf2WindowPolicy() {
+        runOnUiThread(() -> {
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            hideSystemUI();
         });
     }
 
