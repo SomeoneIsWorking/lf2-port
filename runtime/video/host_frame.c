@@ -10,7 +10,6 @@
 #include "render.h"
 #include "rmlui.h"
 #include "script.h"
-#include "gamepad.h"
 #include "touch_controls.h"
 
 #include <stdio.h>
@@ -225,7 +224,7 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
     SDL_SetRenderDrawColor(hw.renderer, 0, 0, 0, 255);
     SDL_RenderClear(hw.renderer);
     SDL_RenderTexture(hw.renderer, hw.texture, NULL, &place);
-    touch_controls_render(hw.renderer, hw.window, gamepad_any_connected());
+    touch_controls_render(hw.renderer, hw.window);
     if (rmlui_active()) rmlui_render();
     SDL_RenderPresent(hw.renderer);
     frame_pace();
