@@ -7,7 +7,7 @@
   <project_license>MIT</project_license>
   <description>
     <p>
-      LF2 Port statically recompiles the original 32-bit game logic and provides native SDL3
+      LF2 Port runs the original 32-bit game logic through a runtime JIT and provides native SDL3
       video, audio, input, and user interface implementations. Players supply their own complete
       Little Fighter 2 v2.0a game tree on first launch.
     </p>

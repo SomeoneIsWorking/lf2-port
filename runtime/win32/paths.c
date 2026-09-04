@@ -3,7 +3,7 @@
  * of another responsibility inside the legacy import-handler table. */
 #include "paths.h"
 
-#include "guest_ops.h"
+#include "guest.h"
 
 #include <dirent.h>
 #include <stdlib.h>

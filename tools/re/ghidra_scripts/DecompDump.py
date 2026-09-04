@@ -2,8 +2,8 @@
 # Decompile the function containing each VA in $LF2_DECOMP_TARGETS to
 # scratch/decomp/<VA>.c, one file per target.
 #
-# WHY THIS EXISTS. re/instructions.tsv is a disassembly and answers "what bytes are here";
-# it does not answer "what does this function DO". Reading 2000 bytes of x86 to find four
+# WHY THIS EXISTS. A disassembly answers "what bytes are here" but not "what does this
+# function DO". Reading 2000 bytes of x86 to find four
 # geometry constants is how a wrong constant gets copied into the port -- the pre-fight
 # overlay's row spacing was measured off blit rectangles and was wrong, and no amount of
 # staring at instructions would have said so. The decompiler's C says it in a line.

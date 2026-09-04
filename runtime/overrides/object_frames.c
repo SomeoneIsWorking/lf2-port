@@ -1,13 +1,11 @@
 #include "object_parser.h"
 
-#include "guest_ops.h"
+#include "guest.h"
+#include "jit_executor.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
-void fn_004014e0(void);
-void fn_004450ac(void);
 
 enum {
     FRAME_COUNT = 400,
@@ -74,7 +72,7 @@ static uint32_t guest_allocate(uint32_t size)
 {
     PUSH32(size);
     PUSH32(0x0040ef72);
-    fn_004450ac();
+    lf2_jit_call(0x004450ac);
     R(ESP) += 4;
     return R(EAX);
 }
@@ -163,7 +161,7 @@ static void load_sound(const char *path, uint32_t frame)
         PUSH32(copy);
         R(ECX) = SOUND_OBJECTS + index * 4;
         PUSH32(0x0040ef73);
-        fn_004014e0();
+        lf2_jit_call(0x004014e0);
         const uint32_t sound = LD32(SOUND_OBJECTS + index * 4);
         const uint32_t method = LD32(LD32(sound) + 60);
         PUSH32(0xffffd8f0u);

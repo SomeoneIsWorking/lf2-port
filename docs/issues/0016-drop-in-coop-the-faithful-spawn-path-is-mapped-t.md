@@ -13,7 +13,7 @@ Groundwork with a concrete route, not a bug. Issue #15 found the GATE (the byte 
 CLONING a live fighter's record, which is a probe, not a mechanism: it copies the source's
 character, HP and everything else, so it can only ever duplicate a fighter already present.
 
-The game's own spawn is inlined in fn_0041bc90 (around 0x004211db in the lifted C) and reads
+The game's own spawn is inlined in fn_0041bc90 around executable address 0x004211db and reads
 as:
 
     reg   = LD32(this + 2004)            // pointer to the object-data registry
@@ -48,7 +48,7 @@ WHAT IS NOT ESTABLISHED, and must be measured before it is written:
     so "the next free slot" is not what it does, and the reason matters.
   - how the new fighter binds to the joining device. The ported gather in fn_00419a60 walks
     `i < 4` over the device-selector table at 0x00450b4c, against a 400-entry object table;
-    that cap is a port limitation, and changing it has to keep tools/routes/controller_2p_test.sh
+    that cap is a port limitation, and changing it has to keep the recorded controller_2p runtime scenario
     passing.
 
 The instruments from #15 are all still there and are the ones to use:
@@ -143,7 +143,7 @@ player slot, and because character selection is over there is no fighter waiting
 one is built there: the faithful spawn (registry lookup, fn_004061d0 reset, +872, position,
 gate byte) plus the slot's device-selector entry and its bit in the joined mask.
 
-VERIFIED TWO-SIDED, and it is now a test (tools/routes/coop_dropin_test.sh, ctest `coop_dropin`):
+VERIFIED TWO-SIDED, and it is now a test (the recorded coop_dropin runtime scenario, ctest `coop_dropin`):
 the same join run twice, differing only in whether the pad presses a direction afterwards.
 
   press  the joined fighter travels ~180 px and its animation counter cycles
@@ -158,7 +158,7 @@ negative log and does not fire on it.
 THE FOUR-PLAYER CAP IS GONE, on evidence rather than optimism. The gather looped `i < 4`
 against a device-selector table of eight entries. It is PLAYER_SLOTS = (DEVSEL_END -
 DEVSEL) / 4 now, so the count comes from the table rather than from a literal, and a fighter
-placed in slot 4 is drawn by the game's own name plate as "5". tools/routes/controller_2p_test.sh
+placed in slot 4 is drawn by the game's own name plate as "5". the recorded controller_2p runtime scenario
 still passes, which is what the cap was left alone for.
 
 NEW OPEN QUESTION, and it is a real one: PLAYER N'S FIGHTER IS NOT ALWAYS OBJECT INDEX N.
@@ -184,7 +184,7 @@ interface is not.
 RESOLVED: player slot i IS object index i, and the previous note's "counter-example" was a
 misreading of what the joined mask means.
 
-The game's own gather settles it statically -- fn_00419a60__orig walks the device-selector
+The game's own gather settles it statically -- original guest routine 0x00419a60 walks the device-selector
 table and the object table IN LOCKSTEP:
 
     EBP = 0x450b4c              // &devsel[0]
@@ -215,10 +215,10 @@ drop-in run the stage ends up with three fighters: the human at index 0, the com
 index 11, and the joiner at index 1. Whether that is the wanted behaviour is a design
 question, not a defect.
 
-A GAP IN THE EXISTING TESTS, found on the way: tools/routes/controller_2p_test.sh proves a second
+A GAP IN THE EXISTING TESTS, found on the way: the recorded controller_2p runtime scenario proves a second
 pad JOINS at character selection -- it asserts the word "Computer" is not drawn -- but it
 quits at frame 1900 and never reaches a match. So "a second human's fighter is driven in a
-match" had never been tested. tools/routes/coop_dropin_test.sh now covers that shape for a
+match" had never been tested. the recorded coop_dropin runtime scenario now covers that shape for a
 drop-in joiner (two-sided, press vs quiet); the character-select route for two humans is
 still uncovered, and a route that reaches a match with two joined humans is the thing to
 build for it -- the scripted attempts here stalled on character selection, where both
@@ -227,7 +227,7 @@ joined players have to confirm before player one can proceed.
 ### Note (2026-08-05)
 TEST GAP CLOSED, and closing it found a defect in the drop-in feature itself.
 
-tools/routes/two_human_match_test.sh (ctest `two_human_match`) now reaches a match with TWO HUMAN
+the recorded two_human_match runtime scenario (ctest `two_human_match`) now reaches a match with TWO HUMAN
 players and asserts, two-sided, that pad two drives its fighter: ~1350 px of travel with a
 direction pressed, 0 px without. It also asserts player two's fighter is at OBJECT INDEX 1,
 which is the dynamic half of a claim that was only static before.

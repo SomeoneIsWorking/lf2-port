@@ -23,4 +23,4 @@ a wrap that reports OK while SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER reads back a d
 
 ## Re-confirmed 2026-08-21
 
-After the renderer changes, tools/e2e.py render read back and compared both engine frames through the wrapped SDL_Texture path; the engine matched the software frame within the established tolerance on menu and match captures.
+After the renderer changes, the recorded renderer comparison read back both engine frames through the wrapped SDL_Texture path; the engine matched the software frame within the established tolerance on menu and match captures.

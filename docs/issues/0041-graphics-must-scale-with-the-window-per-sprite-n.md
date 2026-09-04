@@ -67,7 +67,7 @@ WHAT IS NOT ESTABLISHED and must be measured before the design is fixed:
     at 1x while the world grew. That is the same seam that stops them being lit today.
 
 VERIFICATION IS BLOCKED ON #40 AS THINGS STAND: the arm that would prove this is
-tools/e2e.sh render, four GPU runs, and #40 forbids batch headless GPU runs on this machine
+the recorded four-run GPU renderer comparison, and #40 forbids batch headless GPU runs on this machine
 until Vulkan validation has been run. A single run is allowed by #40's own plan (step 1 is
 "ONE run, not a batch"), so the honest route is one instrumented run at a time.
 
@@ -104,11 +104,11 @@ size and its position come from the same number.
 VERIFIED, on real data:
   - `ctest geometry`, 75 checks including that the drawn height EQUALS the window's height at
     794x550, 1600x550, 1920x1080, 1280x720 and 2560x1440.
-  - `tools/e2e.sh widescreen` PASSED with a new second assertion per window, read out of the
+  - The recorded widescreen scenario passed with a new second assertion per window, read out of the
     run's own output rather than recomputed: fill / fill / fill / band. The 800x900 case is
     the negative -- it is taller in aspect than the game, so a band is correct there, and a
     build that stretched unconditionally fails that case and no other.
-  - `tools/e2e.sh background` PASSED: byte-identical to the recompiled body at 794x550 on both
+  - The recorded background scenario matched retail behavior at 794x550 on both
     dumped frames, with both LF2_BG_SKEW control arms still differing. At the game's own size
     the scale is exactly 1, so the 4:3 game is untouched -- which is what every byte-identity
     arm in the suite rests on.
@@ -133,7 +133,7 @@ WHAT IS NOT DONE, and it is the second half of the original report:
   THE PAUSE MENU AND CONTROLS HINT draw straight onto the primary and are in NO display list,
   so they are not scaled per quad either. Same seam that stops them being lit.
 
-  tools/e2e.sh render HAS NOT BEEN RUN against this. It is four GPU runs and #40 forbids
+  The renderer comparison HAD NOT BEEN RUN against this. It is four GPU runs and #40 forbids
   batches on this machine; the single run above is what stands in, and it checks the framing
   rather than the GPU-vs-software agreement. At 794x550 the scale is exactly 1, so that
   comparison should be unaffected -- should, not verified.
@@ -180,11 +180,11 @@ list of three seams, and each has since been closed by its own issue rather than
   at 1920x1080. Both are recorded into the display list now (the pause menu over a retained
   frame, since it freezes the game and records nothing), and the menus draw at 900 of 901.
 
-  tools/e2e.sh render NEVER RUN AGAINST THIS -- run, and passing, on both its frames: the GPU
+  The renderer comparison later ran and passed on both frames: the GPU
   frame matches the software compositor to a max channel difference of 1 on the menu and 2 on
   the match. Worth noting that this arm was WORTHLESS on the menu frame until #52 landed, for
   the same reason: character selection has the hint up, so the "gpu" arm was dumping the
-  software buffer and comparing it with itself (instrument I010).
+  software buffer and comparing it with itself, the vacuous-instrument failure recorded in issue #52.
 
 WHAT REMAINS TRUE AND IS NOT A DEFECT: the software compositor stretches one finished buffer,
 because by the time a frame reaches it every sprite has been flattened into those pixels. It

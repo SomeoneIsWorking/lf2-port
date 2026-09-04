@@ -1,25 +1,25 @@
 /* fn_0043f010 / fn_00423940 / fn_0043c4a0 -- clip and glyph drawing.
  *
- * One of the hand-written native replacements for recompiled functions; see
+ * One of the hand-written native replacements for guest routines; see
  * runtime/overrides/overrides.h for how the set is divided and why.
  */
 
+#include "environment.h"
 #include "overrides.h"
 #include "boot_guest.h"
 #include "world.h"
 #include "guest_cursor.h"
 #include "geom.h"
 
-#include "guest_ops.h"
+#include "guest.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "jit_executor.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-void fn_0043f010__orig(void);
-void fn_00423940__orig(void);
 
 /* ---------------------------------------------------------------------------
  * fn_0043f010 -- draw one clip from a sprite sheet, and the update notice.
@@ -48,9 +48,8 @@ void fn_00423940__orig(void);
  * found one destination in that corner across 500 frames. Declining it here is the same
  * shape as declining the ad panel by its descriptor in fn_00423b00.
  *
- * The honest alternative is porting fn_004246b0's body around that block, which is 4689
- * lines of generated C with no function boundary anywhere near it. That is worth doing
- * eventually; it is not worth doing to remove one label.
+ * A broader native replacement would require recovering fn_004246b0 around
+ * this block. That larger behavior owner is not required to remove one label.
  *
  * Args, from the call sites: (x, y, clip, ...), six of them, RET 0x18, ECX = the sheet.
  * ------------------------------------------------------------------------ */
@@ -110,12 +109,13 @@ void fn_0043f010(void)
          * earlier "identical at both widths" reading was taken for an answer. cam is the
          * game's own camera, draw is what bg_draw_camera returns; they differ only when the
          * widescreen shift is actually biting. */
-        if (getenv("LF2_GLYPH_POS"))
-            fprintf(stderr, "glyph sheet=%d x=%d y=%d ch=%d ret=%08x cam=%d draw=%d\n", sheet,
-                    (int32_t)LD32(R(ESP) + 4), (int32_t)LD32(R(ESP) + 8), (int32_t)LD32(R(ESP) + 12), LD32(R(ESP)),
-                    (int32_t)LD32(BG_CAMERA_X), geom_draw_camera((int32_t)LD32(BG_CAMERA_X), bg_view_width()));
+        if (lf2_environment_get(LF2_ENV_GLYPH_POS))
+            lf2_log_writef(LF2_LOG_INFO, "text", "glyph sheet=%d x=%d y=%d ch=%d ret=%08x cam=%d draw=%d\n", sheet,
+                           (int32_t)LD32(R(ESP) + 4), (int32_t)LD32(R(ESP) + 8), (int32_t)LD32(R(ESP) + 12),
+                           LD32(R(ESP)), (int32_t)LD32(BG_CAMERA_X),
+                           geom_draw_camera((int32_t)LD32(BG_CAMERA_X), bg_view_width()));
         glyph_hint_set((int32_t)LD32(R(ESP) + 12));
-        fn_0043f010__orig();
+        lf2_jit_call_original(0x0043f010);
         glyph_hint_clear();
         return;
     }
@@ -148,7 +148,7 @@ void fn_0043f010(void)
     /* Which call draws the mouse cursor? It reaches Blt as an 11x19 sprite at the
      * pointer, but that blit is issued from inside this function, which draws everything
      * -- so the identity has to come from this call's own arguments and caller. */
-    if (getenv("LF2_CURSOR_TRACE")) {
+    if (lf2_environment_get(LF2_ENV_CURSOR_TRACE)) {
         const int ax = (int)LD32(R(ESP) + 4), ay = (int)LD32(R(ESP) + 8);
         const int mx = (int)LD32(GX_MOUSE_X), my = (int)LD32(GX_MOUSE_Y);
         if (ax >= mx - 4 && ax <= mx + 4 && ay >= my - 4 && ay <= my + 4) {
@@ -163,14 +163,15 @@ void fn_0043f010(void)
                 }
             if (!known && n < 8) {
                 seen[n++] = ra;
-                fprintf(stderr,
-                        "cursor draw: caller=%08x args x=%d y=%d clip=%d sheet=%08x "
-                        "(pointer %d,%d)\n",
-                        ra, ax, ay, (int32_t)LD32(R(ESP) + 12), R(ECX), mx, my);
+                lf2_log_writef(LF2_LOG_INFO, "text",
+                               "cursor draw: caller=%08x args x=%d y=%d clip=%d sheet=%08x "
+                               "(pointer %d,%d)\n",
+                               ra, ax, ay, (int32_t)LD32(R(ESP) + 12), R(ECX), mx, my);
                 /* The handle is a heap pointer with no stable identity across runs; the
                  * .data slot that HOLDS it does have one. Find it. */
                 for (uint32_t a = 0x0044d000; a < 0x00459724; a += 4)
-                    if (LD32(a) == R(ECX)) fprintf(stderr, "    sheet handle also lives at .data %08x\n", a);
+                    if (LD32(a) == R(ECX))
+                        lf2_log_writef(LF2_LOG_INFO, "text", "    sheet handle also lives at .data %08x\n", a);
             }
         }
     }
@@ -183,7 +184,7 @@ void fn_0043f010(void)
         R(ESP) += 4 + 24;
         return;
     }
-    fn_0043f010__orig();
+    lf2_jit_call_original(0x0043f010);
 }
 
 /* ---------------------------------------------------------------------------
@@ -207,7 +208,7 @@ void fn_0043f010(void)
  * ------------------------------------------------------------------------ */
 void fn_00423940(void)
 {
-    if (getenv("LF2_GAMETEXT_DEBUG")) {
+    if (lf2_environment_get(LF2_ENV_GAMETEXT_DEBUG)) {
         char buf[128];
         const uint32_t str = LD32(R(ESP) + 4);
         unsigned n = 0;
@@ -217,11 +218,11 @@ void fn_00423940(void)
             buf[n] = (c >= 32 && c < 127) ? (char)c : '.';
         }
         buf[n] = 0;
-        fprintf(stderr, "gametext x=%d y=%d cols=%d rows=%d font=%d \"%s\"\n", (int32_t)LD32(R(ESP) + 8),
-                (int32_t)LD32(R(ESP) + 12), (int32_t)LD32(R(ESP) + 16), (int32_t)LD32(R(ESP) + 20),
-                (int32_t)LD32(R(ESP) + 24), buf);
+        lf2_log_writef(LF2_LOG_INFO, "text", "gametext x=%d y=%d cols=%d rows=%d font=%d \"%s\"\n",
+                       (int32_t)LD32(R(ESP) + 8), (int32_t)LD32(R(ESP) + 12), (int32_t)LD32(R(ESP) + 16),
+                       (int32_t)LD32(R(ESP) + 20), (int32_t)LD32(R(ESP) + 24), buf);
     }
-    fn_00423940__orig();
+    lf2_jit_call_original(0x00423940);
 }
 
 /* ---------------------------------------------------------------------------
@@ -249,9 +250,8 @@ void fn_00423940(void)
  * ------------------------------------------------------------------------ */
 void fn_0043c4a0(void)
 {
-    if (getenv("LF2_ADS_ON")) {
-        void fn_0043c4a0__orig(void);
-        fn_0043c4a0__orig();
+    if (lf2_environment_get(LF2_ENV_ADS_ON)) {
+        lf2_jit_call_original(0x0043c4a0);
         return;
     }
     R(EAX) = 0;
@@ -295,7 +295,6 @@ void fn_0043c4a0(void)
  *
  * ABI: __cdecl-in-guest, two stack arguments, RET 8.
  * ------------------------------------------------------------------------ */
-void fn_0041b130__orig(void);
 
 enum { CAPTION = 0x00450c38, DIFFICULTY = 0x00450c30, STAGE_KIND = 0x00450b94 };
 /* The right margin the game lays the caption out against: 794 - 790. */
@@ -339,12 +338,6 @@ static uint32_t guest_append(uint32_t dst, uint32_t src)
 
 void fn_0041b130(void)
 {
-    /* LF2_CAPTION_ORIG=1 runs the recompiled body, which is the gate's control arm. */
-    if (getenv("LF2_CAPTION_ORIG")) {
-        fn_0041b130__orig();
-        return;
-    }
-
     const int32_t mode = (int32_t)LD32(R(ESP) + 4);
     const int32_t raised = (int32_t)LD32(R(ESP) + 8);
 
@@ -367,7 +360,6 @@ void fn_0041b130(void)
      * arguments. The return address is the game's own, from the call site this replaces
      * (guest 0x0041b349), so a trace through here reads as the original call rather than as a
      * synthetic one. */
-    void fn_00423a70(void);
     PUSH32(0u);
     PUSH32(0u);
     PUSH32(4u);
@@ -376,7 +368,7 @@ void fn_0041b130(void)
     PUSH32((uint32_t)x);
     PUSH32(CAPTION);
     PUSH32(0x0041b349u);
-    fn_00423a70();
+    lf2_jit_call(0x00423a70);
     R(ESP) += 28;
 
     R(ESP) += 4 + 8; /* RET 8 */

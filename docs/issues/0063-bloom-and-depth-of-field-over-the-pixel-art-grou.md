@@ -44,7 +44,7 @@ one that was cut could not make that claim.
 - No blur that is a function of screen position. Tilt-shift-by-row is the version of this that
   looks right on one screenshot of one stage and is wrong the moment the camera pans.
 - No bloom whose bright pass is the frame multiplied by itself. A threshold is a threshold.
-- Nothing that changes a frame with no fighters and no stage geometry in it. `tools/e2e.sh
+- Nothing that changes a frame with no fighters and no stage geometry in it. `tools/e2e.py
   render` has that arm precisely because it is what catches an effect spreading over the whole
   picture, and it must stay green.
 
@@ -163,7 +163,7 @@ STILL OPEN: the BLOOM half of this entry.
 
 The depth of field ships: `runtime/shaders/dof.frag`, driven by the G-buffer's distance
 channel, focus at the fighters' plane (1.0), asserted opposite ways on two frames by
-`tools/e2e.sh render` -- 0 px changed on a frame with no stage in it, 84,395 px in a match.
+The recorded renderer comparison changed 0 pixels on a frame with no stage in it and 84,395 pixels in a match.
 
 A bloom was written to the same shape (threshold + world gate) and **it glowed nothing at all**.
 The cause is not a bug in it, and this is the part worth keeping:

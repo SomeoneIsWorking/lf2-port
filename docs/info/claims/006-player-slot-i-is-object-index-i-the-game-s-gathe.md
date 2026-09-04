@@ -13,7 +13,7 @@ Player slot i is object index i: the game's gather walks the device-selector tab
 
 ## Evidence
 
-fn_00419a60__orig sets EBP=0x450b4c and EAX=this+404, reads the object as LD32(EAX) when (int32_t)LD32(EBP) > 0, and at the loop tail does EBP+=4, EAX+=4, ECX+=1, looping while EBP < 0x450b6c. So a human player's fighter must be at its own index and eight is the game's own bound. A computer's fighter is not bound by this -- its AI writes buttons directly -- which is why one is observed at index 11 while the joined mask reads two players and index 1 is empty.
+original guest routine 0x00419a60 sets EBP=0x450b4c and EAX=this+404, reads the object as LD32(EAX) when (int32_t)LD32(EBP) > 0, and at the loop tail does EBP+=4, EAX+=4, ECX+=1, looping while EBP < 0x450b6c. So a human player's fighter must be at its own index and eight is the game's own bound. A computer's fighter is not bound by this -- its AI writes buttons directly -- which is why one is observed at index 11 while the joined mask reads two players and index 1 is empty.
 
 ## What would falsify it
 

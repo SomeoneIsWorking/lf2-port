@@ -68,7 +68,7 @@ WHAT REPLACED THE KNOB, and why it is not the knob renamed: LF2_WINDOW_SIZE=<w>x
 WINDOW's initial size, and the composition is derived from it by exactly the code a window
 manager drives. A headless run has nobody to drag an edge.
 
-VERIFIED. tools/e2e.sh widescreen asserts the whole table -- 794x550 -> 794 (off), 1600x550 -> 1600,
+VERIFIED. The recorded widescreen scenario asserted the whole table -- 794x550 -> 794 (off), 1600x550 -> 1600,
 1920x1080 -> 978, 800x900 -> 794 (off) -- plus the MID-RUN case, which is the actual headline
 and which no scripted run could otherwise reach: offscreen SDL has no window manager and never
 delivers a resize event, so LF2_WINDOW_RESIZE=<frame>:<w>x<h> stands in for one, driving the

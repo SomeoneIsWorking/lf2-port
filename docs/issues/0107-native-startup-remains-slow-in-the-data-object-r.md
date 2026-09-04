@@ -19,7 +19,7 @@ looked up `LF2_WATCH` through `getenv` on every imported call.
 ## What was tried / dead ends
 
 Optimizing drawing cannot remove token/import traffic: the measured parser spent only milliseconds
-inside host `gscan`, with the rest in recompiled control flow and dispatch. Replacing the entire
+inside host `gscan`, with the rest in guest control flow and dispatch. Replacing the entire
 object constructor would duplicate bitmap, sound, metadata, and weapon setup unnecessarily.
 
 ## Resolution

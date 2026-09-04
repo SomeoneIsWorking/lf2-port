@@ -1,8 +1,7 @@
 /* SDL_Render implementation of RmlUi's rendering boundary.
  *
- * This is intentionally ignorant of settings, bindings and document structure. Dusklight's
- * backend has the same ownership boundary but targets Aurora/WebGPU; LF2 keeps its SDL backend
- * and copies the separation, not an incompatible renderer implementation.
+ * This is intentionally ignorant of settings, bindings, and document structure.
+ * LF2 keeps its SDL renderer implementation behind this narrow boundary.
  */
 #ifndef LF2_RMLUI_BACKEND_H
 #define LF2_RMLUI_BACKEND_H

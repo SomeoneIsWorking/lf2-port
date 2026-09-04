@@ -17,7 +17,7 @@ The player's number tag is pinned by the GAME's own 794-wide screen clamp inside
 
 TWO MEASUREMENTS, and the second one discriminates where every earlier attempt on issue #55 did not.
 
-THE CODE, from re/instructions.tsv, 0041a9c9..0041aa33 -- the tag's x is world - camera, clamped low at 0 and high at 794 less the string's pixel width:
+THE CODE, from retail addresses 0041a9c9..0041aa33 -- the tag's x is world - camera, clamped low at 0 and high at 794 less the string's pixel width:
 
     0041a9e2  SUB ESI,dword ptr [0x00450bc4]   ; ESI = (obj+0x1c - len*9/2 + obj+0x10) - camera
     0041a9eb  TEST ESI,ESI / JGE
@@ -48,4 +48,4 @@ STILL HOLDS OF THE GAME, and the port now overrides it. The falsifier this claim
     window 1100x550   tag stops at x=1091   ( = view 1100 - 9 )
     window 1920x1080  tag stops at x=969    ( = view  978 - 9 )
 
-against 785 at both widths before. The bound now follows the view, which is what a 794-based clamp replaced by a view-based one predicts and what the old behaviour could not produce. runtime/overrides/objects.c is the port; tools/e2e.sh objects accepts it byte-identically against the recompiled body at 794 in pixels AND state.
+against 785 at both widths before. The bound now follows the view, which is what replacing the retail routine's 794-based clamp with a view-based one predicts and what the old behavior could not produce. `runtime/overrides/objects.c` owns the native behavior; the retained evidence is the retail-address formula and the observed view-relative bounds above.

@@ -23,4 +23,4 @@ an engine path submits scale 1/composition dimensions and enlarges the finished 
 
 ## Re-confirmed 2026-08-26
 
-Reverified 2026-08-26 after sprite-AA/source-rectangle changes: tools/e2e.py fullres reported composition 1070x550 at scale 3.591 drawn into 3842x1975, engine target 3840x1975, exact 3840x1975 capture and zero black pixels in either outer column; tools/e2e.py sprite_passes independently required five 3840x1975 match captures; tools/e2e.py render kept engine/software within max channel diff 2.
+Reverified 2026-08-26 after sprite-AA/source-rectangle changes: `tools/e2e.py fullres` reported composition 1070x550 at scale 3.591 drawn into 3842x1975, engine target 3840x1975, exact 3840x1975 capture and zero black pixels in either outer column; `tools/e2e.py sprite_passes` independently required five 3840x1975 match captures; the recorded renderer comparison kept engine/software within maximum channel difference 2.

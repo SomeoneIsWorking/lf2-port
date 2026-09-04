@@ -16,7 +16,7 @@
  * None of that is a bug in SDL. SDL_Render is a 2D sprite API and this port draws a lit scene
  * with pixel-art sprites in it.
  *
- * WHAT IT IS NOT. Not a rewrite of the port -- the recompiler, the runtime, the overrides and
+ * WHAT IT IS NOT. Not a rewrite of the port -- guest execution, overrides, and
  * the DirectDraw shim are untouched. Not a redesign of the display list either: `ddraw.c`
  * reaches the renderer through eight call sites, and turning the game's blit stream into an
  * ordered scene is the part that came out of measurement and is right. This replaces what
@@ -116,8 +116,7 @@ typedef struct {
 int engine_init(struct SDL_Renderer *r);
 int engine_ready(void);
 
-/* Is the engine the thing that draws? False keeps the SDL_Render path, which stays as the A/B
- * control arm the way LF2_BG_ORIG did for the background override. */
+/* Is the engine the thing that draws? False keeps the native SDL_Render comparison path. */
 int engine_enabled(void);
 
 /* Draw `n` quads into an offscreen target `w` x `h` and return it as a texture the caller can

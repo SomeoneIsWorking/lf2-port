@@ -1,6 +1,8 @@
 /* Guest memory read-watch. Its own translation unit because the load macros in
  * guest.h reference it, so every target that includes them must be able to link it,
  * including the test harnesses that do not pull in guest.c. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "guest.h"
 
 #include <stdio.h>
@@ -29,7 +31,7 @@ static long rwatch_hits;
  * arrow keys are 0x25..0x28), so this must sit above any plausible cluster. */
 enum { SCAN_RUN = 16, RW_SPAN = 4096, RW_SEQ = 16384 };
 
-static uint8_t  rw_prev[RW_SPAN], rw_seen[RW_SPAN];
+static uint8_t rw_prev[RW_SPAN], rw_seen[RW_SPAN];
 static uint16_t rw_seq[RW_SEQ];
 static int rw_seqn, rw_have_prev, rw_sweeps;
 
@@ -56,8 +58,7 @@ void (*rwatch_trace_hook)(void);
  * something on every load. Naming the reader ONCE costs nothing measurable and is what turns
  * "the layer periods are read" into a function to go and read (issue #23).
  *
- * The trace it prints is the guest call ring, which only exists in an LF2_FN_TRACE build.
- * dump_fn_trace() says so itself when the ring is empty rather than printing nothing. */
+ * The trace it prints is the always-on bounded dispatch ring owned by guest.c. */
 static int rw_named;
 
 void rwatch_hit(uint32_t a)
@@ -67,13 +68,20 @@ void rwatch_hit(uint32_t a)
     rwatch_hits++;
     if (!rw_named) {
         rw_named = 1;
-        fprintf(stderr, "LF2_READ_WATCH: FIRST read in the span is at %08x (offset +%u); "
-                        "the guest call ring at that moment follows\n", a, off);
+        lf2_log_writef(LF2_LOG_INFO, "rwatch",
+                       "LF2_READ_WATCH: FIRST read in the span is at %08x (offset +%u); "
+                       "the guest dispatch state at that moment follows\n",
+                       a, off);
         if (rwatch_trace_hook) rwatch_trace_hook();
-        else fprintf(stderr, "LF2_READ_WATCH: no call-ring hook is installed in this binary, "
-                             "so the reader cannot be named\n");
+        else
+            lf2_log_writef(LF2_LOG_INFO, "rwatch",
+                           "LF2_READ_WATCH: no dispatch-trace hook is installed in this binary, "
+                           "so the reader cannot be named\n");
     }
-    if (rw_raw > 0) { rw_count[off]++; return; }
+    if (rw_raw > 0) {
+        rw_count[off]++;
+        return;
+    }
     if (rw_seqn == RW_SEQ) return;
     rw_seen[off] = 1;
     rw_seq[rw_seqn++] = (uint16_t)off;
@@ -88,24 +96,22 @@ static void rwatch_raw_report(const char *when)
     const int n = RW_SPAN;
     long total = 0;
     for (int i = 0; i < n; i++) total += rw_count[i];
-    fprintf(stderr, "read profile (%s) [%08x,%08x), %ld reads over %u bytes:\n",
-            when, g_rwatch_lo, g_rwatch_hi, total, g_rwatch_hi - g_rwatch_lo);
+    lf2_log_writef(LF2_LOG_INFO, "rwatch", "read profile (%s) [%08x,%08x), %ld reads over %u bytes:\n", when,
+                   g_rwatch_lo, g_rwatch_hi, total, g_rwatch_hi - g_rwatch_lo);
     if (total == 0) {
-        fprintf(stderr, "  NOTHING in the span was read. The watch saw zero loads, which is\n"
-                        "  a statement about the watch as much as about the game -- check\n"
-                        "  the span is the one you meant before reading anything into it.\n");
+        lf2_log_writef(LF2_LOG_INFO, "rwatch",
+                       "  NOTHING in the span was read. The watch saw zero loads, which is\n"
+                       "  a statement about the watch as much as about the game -- check\n"
+                       "  the span is the one you meant before reading anything into it.\n");
         return;
     }
     const int last = (int)(g_rwatch_hi - g_rwatch_lo);
-    for (int i = 0; i < last && i < n; ) {
+    for (int i = 0; i < last && i < n;) {
         int j = i + 1;
         while (j < last && j < n && rw_count[j] == rw_count[i]) j++;
-        if (rw_count[i] == 0 && j - i > 1)
-            fprintf(stderr, "  +%03x..+%03x  0\n", i, j - 1);
-        else if (j - i == 1)
-            fprintf(stderr, "  +%03x         %ld\n", i, rw_count[i]);
-        else
-            fprintf(stderr, "  +%03x..+%03x  %ld each\n", i, j - 1, rw_count[i]);
+        if (rw_count[i] == 0 && j - i > 1) lf2_log_writef(LF2_LOG_INFO, "rwatch", "  +%03x..+%03x  0\n", i, j - 1);
+        else if (j - i == 1) lf2_log_writef(LF2_LOG_INFO, "rwatch", "  +%03x         %ld\n", i, rw_count[i]);
+        else lf2_log_writef(LF2_LOG_INFO, "rwatch", "  +%03x..+%03x  %ld each\n", i, j - 1, rw_count[i]);
         i = j;
     }
 }
@@ -124,17 +130,20 @@ void rwatch_raw_flush(const char *when)
  * is a guess that drifts with load time. */
 static int trigger_seen;
 
-int rwatch_triggered(void) { return trigger_seen; }
+int rwatch_triggered(void)
+{
+    return trigger_seen;
+}
 
 void rwatch_frame(void)
 {
-    if (rw_raw > 0) return;              /* raw mode reports on demand, not per frame */
+    if (rw_raw > 0) return; /* raw mode reports on demand, not per frame */
     if (!g_rwatch_hi || rw_seqn == 0) return;
     rw_sweeps++;
 
     static uint8_t cur[RW_SPAN];
     memset(cur, 0, sizeof cur);
-    for (int i = 0; i < rw_seqn; ) {
+    for (int i = 0; i < rw_seqn;) {
         int j = i + 1;
         while (j < rw_seqn && rw_seq[j] == rw_seq[j - 1] + 1) j++;
         if (j - i < SCAN_RUN)
@@ -142,23 +151,26 @@ void rwatch_frame(void)
         i = j;
     }
 
-    const char *after = getenv("LF2_AUTOKEY_AFTER");
+    const char *after = lf2_environment_get(LF2_ENV_AUTOKEY_AFTER);
     if (after && !trigger_seen) {
         const uint32_t want = (uint32_t)strtoul(after, NULL, 0);
         if (want < RW_SPAN && cur[want]) {
             trigger_seen = 1;
-            fprintf(stderr, "input trigger: game polled key %02x, starting key script\n",
-                    want);
+            lf2_log_writef(LF2_LOG_INFO, "rwatch", "input trigger: game polled key %02x, starting key script\n", want);
         }
     }
 
     if (!rw_have_prev || memcmp(cur, rw_prev, sizeof cur) != 0) {
-        fprintf(stderr, "read set changed (frame %d, +0x%x, scans filtered):",
-                rw_sweeps, g_rwatch_lo);
+        lf2_log_writef(LF2_LOG_INFO, "rwatch", "read set changed (frame %d, +0x%x, scans filtered):", rw_sweeps,
+                       g_rwatch_lo);
         int any = 0;
-        for (int i = 0; i < RW_SPAN; i++) if (cur[i]) { fprintf(stderr, " %02x", i); any = 1; }
-        if (!any) fprintf(stderr, " (nothing but sequential scans)");
-        fprintf(stderr, "\n");
+        for (int i = 0; i < RW_SPAN; i++)
+            if (cur[i]) {
+                lf2_log_writef(LF2_LOG_INFO, "rwatch", " %02x", i);
+                any = 1;
+            }
+        if (!any) lf2_log_writef(LF2_LOG_INFO, "rwatch", " (nothing but sequential scans)");
+        lf2_log_writef(LF2_LOG_INFO, "rwatch", "\n");
         memcpy(rw_prev, cur, sizeof cur);
         rw_have_prev = 1;
     }
@@ -178,64 +190,67 @@ void rwatch_selftest(void)
         /* Raw mode has its own failure to rule out: a counter that never increments, and a
          * range collapse that hides the one entry that differs. Reading dword 3 four times
          * and nothing else must come back as exactly that, with the rest at zero. */
-        fprintf(stderr, "LF2_READ_WATCH selftest (raw): expect +00c read 4 times, "
-                        "everything else 0\n");
+        lf2_log_writef(LF2_LOG_INFO, "rwatch",
+                       "LF2_READ_WATCH selftest (raw): expect +00c read 4 times, "
+                       "everything else 0\n");
         for (unsigned i = 0; i < 4; i++) rwatch_hit(g_rwatch_lo + 12);
         const uint32_t save_lo_hi = g_rwatch_hi;
-        g_rwatch_hi = g_rwatch_lo + 32;             /* report only the first 32 bytes */
+        g_rwatch_hi = g_rwatch_lo + 32; /* report only the first 32 bytes */
         rwatch_raw_flush("selftest");
         g_rwatch_hi = save_lo_hi;
     } else {
-        fprintf(stderr, "LF2_READ_WATCH selftest: expect exactly '68 57 49 26' below\n");
+        lf2_log_writef(LF2_LOG_INFO, "rwatch", "LF2_READ_WATCH selftest: expect exactly '68 57 49 26' below\n");
         for (unsigned i = 0; i < 250; i++) rwatch_hit(g_rwatch_lo + i);
-        const unsigned keys[] = { 0x68, 0x57, 0x49, 0x26 };
+        const unsigned keys[] = {0x68, 0x57, 0x49, 0x26};
         for (unsigned i = 0; i < 4; i++) rwatch_hit(g_rwatch_lo + keys[i]);
         rwatch_frame();
     }
     g_rwatch_hi = save_hi;
     rw_have_prev = 0;
     rwatch_hits = 0;
-    fprintf(stderr, "LF2_READ_WATCH selftest: done\n");
+    lf2_log_writef(LF2_LOG_INFO, "rwatch", "LF2_READ_WATCH selftest: done\n");
 }
 
 void rwatch_report(void)
 {
     if (!g_rwatch_hi) return;
-    fprintf(stderr, "LF2_READ_WATCH [%08x,%08x): %ld reads\n",
-            g_rwatch_lo, g_rwatch_hi, rwatch_hits);
+    lf2_log_writef(LF2_LOG_INFO, "rwatch", "LF2_READ_WATCH [%08x,%08x): %ld reads\n", g_rwatch_lo, g_rwatch_hi,
+                   rwatch_hits);
     if (rwatch_hits == 0)
-        fprintf(stderr, "  nothing in that span was read -- the watch saw NOTHING, which\n"
-                        "  is not the same as the game not reading its input.\n");
+        lf2_log_writef(LF2_LOG_INFO, "rwatch",
+                       "  nothing in that span was read -- the watch saw NOTHING, which\n"
+                       "  is not the same as the game not reading its input.\n");
 }
 
 void rwatch_init(void)
 {
-    const char *spec = getenv("LF2_READ_WATCH");
+    const char *spec = lf2_environment_get(LF2_ENV_READ_WATCH);
     /* LF2_AUTOKEY_AFTER needs the key array watched to see the trigger, so arm it here
      * rather than making the caller remember to pass both. */
-    if (!spec && getenv("LF2_AUTOKEY_AFTER")) spec = "0x455378:0x455478";
+    if (!spec && lf2_environment_get(LF2_ENV_AUTOKEY_AFTER)) spec = "0x455378:0x455478";
     if (!spec) return;
     char *end = NULL;
     const uint32_t lo = (uint32_t)strtoul(spec, &end, 0);
     if (!end || *end != ':') {
-        fprintf(stderr, "LF2_READ_WATCH must be <lo>:<hi>, got \"%s\"\n", spec);
-        exit(2);                       /* refuse rather than silently watch nothing */
+        lf2_log_writef(LF2_LOG_INFO, "rwatch", "LF2_READ_WATCH must be <lo>:<hi>, got \"%s\"\n", spec);
+        exit(2); /* refuse rather than silently watch nothing */
     }
     const uint32_t hi = (uint32_t)strtoul(end + 1, NULL, 0);
     if (hi <= lo) {
-        fprintf(stderr, "LF2_READ_WATCH: empty span %08x:%08x\n", lo, hi);
+        lf2_log_writef(LF2_LOG_INFO, "rwatch", "LF2_READ_WATCH: empty span %08x:%08x\n", lo, hi);
         exit(2);
     }
     if (hi - lo > RW_SPAN) {
-        fprintf(stderr, "LF2_READ_WATCH: span %08x:%08x is %u bytes, past the %d-byte "
-                        "window -- reads past it would be dropped silently\n",
-                lo, hi, hi - lo, RW_SPAN);
+        lf2_log_writef(LF2_LOG_INFO, "rwatch",
+                       "LF2_READ_WATCH: span %08x:%08x is %u bytes, past the %d-byte "
+                       "window -- reads past it would be dropped silently\n",
+                       lo, hi, hi - lo, RW_SPAN);
         exit(2);
     }
-    g_rwatch_lo = lo; g_rwatch_hi = hi;
-    rw_raw = getenv("LF2_READ_WATCH_RAW") != NULL;
-    if (getenv("LF2_READ_WATCH_SELFTEST")) rwatch_selftest();
-    fprintf(stderr, "LF2_READ_WATCH watching [%08x,%08x)%s\n", lo, hi,
-            rw_raw > 0 ? " in raw per-byte counting mode" : "");
+    g_rwatch_lo = lo;
+    g_rwatch_hi = hi;
+    rw_raw = lf2_environment_get(LF2_ENV_READ_WATCH_RAW) != NULL;
+    if (lf2_environment_get(LF2_ENV_READ_WATCH_SELFTEST)) rwatch_selftest();
+    lf2_log_writef(LF2_LOG_INFO, "rwatch", "LF2_READ_WATCH watching [%08x,%08x)%s\n", lo, hi,
+                   rw_raw > 0 ? " in raw per-byte counting mode" : "");
 }
-

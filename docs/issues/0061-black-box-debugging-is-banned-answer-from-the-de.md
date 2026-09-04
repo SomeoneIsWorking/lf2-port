@@ -39,8 +39,8 @@ it does not substitute for one.
 
 ## Why this is right
 
-The bandaid rule says name the cause before fixing. On a static-recompilation port the cause is
-always a specific branch in translated code, so \"I cannot name it\" means \"I have not read it\",
+The bandaid rule says name the cause before fixing. In this binary-grounded port the cause is
+still a specific branch or host boundary, so \"I cannot name it\" means \"I have not read it\",
 not \"I need another run\". Probing also produces confidently-wrong notes: #22's \"REFUTED\" note
 was written from a sampled sequence and is wrong.
 

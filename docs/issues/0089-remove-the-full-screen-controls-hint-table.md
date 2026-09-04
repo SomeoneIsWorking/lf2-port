@@ -11,7 +11,7 @@ updated: 2026-08-22
 ## Root cause
 
 The table is not the port's one-line input hint or its RmlUi Controls page. It is sub-screen 6
-inside the original 4,689-line launcher body `fn_004246b0__orig`, entered from launcher item 3.
+inside the original 4,689-line launcher body `original guest routine 0x004246b0`, entered from launcher item 3.
 Direct startup changed the constructor's initial top-level mode, but the update boundary did not
 retire top-level mode 0 itself. If that launcher state reached the body, the entire old launcher,
 including its control editor, became dispatchable again over the retained frame.

@@ -47,7 +47,7 @@ confirmed and the obvious fix would have been wrong. Recording what was eliminat
 session does not repeat it.
 
 EVERY INSTRUCTION IN THE BINARY THAT TOUCHES THE CAMERA WORD [0x00450bc4], from
-re/instructions.tsv -- 26 sites, and this is the whole set rather than a sample:
+the retail disassembly -- 26 sites, and this is the whole set rather than a sample:
 
     0x00416fb6, 0x00417096      the two audio pan functions, already overridden and scaled
     0x0041a059..0x0041a226      fn_0041a050  -- the game's BUILT-IN background (see below)
@@ -152,7 +152,7 @@ predict the SAME x and the measurement cannot separate them. Repeating it with a
 (right held for 680 frames) gave 785 at both widths -- also cam=0, also vacuous.
 
 WHERE IT IS DRAWN, from the return address the probe now prints: all 524 tag glyphs come from
-guest 0x0041ab26, and re/functions.tsv puts that inside FUN_0041a5a0 (0x0041a5a0 + 2173). So
+guest 0x0041ab26, inside FUN_0041a5a0 (0x0041a5a0 + 2173). So
 the tag IS inside the wrapped object pass, it DOES get the shifted camera, and the entry's
 original hypothesis -- a missing centring offset -- is dead. So is the "scale" note. The fix
 this entry twice pointed at (give the tag bg_draw_camera's k) would have double-shifted it.
@@ -173,10 +173,10 @@ so a name never runs off the edge; in a 978-wide view that clamp bites 184 px ea
 the tag while the fighter walks on. Both clamps are wrong in a wide view -- the right one wants
 the view width, and the left one is only correct because the shifted camera keeps screen x >= 0.
 
-WHY THIS IS NOT A ONE-LINE FIX, and what NOT to do. 0x31a is an IMMEDIATE in the recompiled
-code, not a data word, so no ST32 can reach it -- unlike the walk lock (issue #43) and the
+WHY THIS IS NOT A ONE-LINE FIX, and what NOT to do. 0x31a is an immediate in the retail
+routine, not a data word, so no ST32 can reach it -- unlike the walk lock (issue #43) and the
 camera word (issue #39), which are memory and are why those fixes were small. The wrapper in
-background.c is a camera substitution around fn_0041a5a0__orig, not a hand-port, so there is
+background.c is a camera substitution around original guest routine 0x0041a5a0, not a hand-port, so there is
 nothing there to edit either.
 
   DO NOT special-case the clamped value at the glyph call (x == 794 - 9*len => add view-794).
@@ -207,7 +207,7 @@ but every call inside FUN_0041a5a0 decompiles as SIX arguments with the receiver
 Ghidra types the call and hides the ECX load. The receiver is not incidental: text.c's override
 identifies a glyph BY it (font_sheet_index(R(ECX))), and the shadow hint keys off it too. So a
 port cannot be written from the decompilation alone; it needs the raw listing from
-re/instructions.tsv for the whole 2173 bytes to recover which object is in ECX at each of the
+the retail listing for the whole 2173 bytes to recover which object is in ECX at each of the
 draw sites. Same question for FUN_0040de30 (819 bytes), the sprite draw the pass delegates to.
 
 WHAT THE PORT WOULD CONTAIN, from the decompilation, so the size is not guessed: collect the
@@ -242,7 +242,7 @@ them: view-based would freeze at 1091 and at 969, 794-based freezes at 785 in bo
 
 Identical to the frame count. It is the game's 794, not the view.
 
-THE CLAMP IN MACHINE CODE (re/instructions.tsv, 0041a9c9..0041aa33):
+THE CLAMP IN MACHINE CODE (retail addresses 0041a9c9..0041aa33):
 
     0041a9e2  SUB ESI,dword ptr [0x00450bc4]   ; world - camera
     0041a9f3  XOR ESI,ESI                      ; low clamp at 0
@@ -264,13 +264,13 @@ lines" overstated the obstacle. Ghidra elides the __thiscall receiver, but the l
 Every other call site resolves the same way by reading back from the CALL to the nearest ECX
 load. The function is 636 instructions.
 
-WHAT IS STILL TRUE: 0x31a is an immediate in code the recompiler bakes into C, so no ST32
+WHAT IS STILL TRUE: 0x31a is an immediate in the retail routine, so no ST32
 reaches it and the fix is still a hand-port of fn_0041a5a0 with its four sites reading
 bg_view_width(). NOT STARTED, deliberately and not for lack of information: the pass WRITES
 BACK through the objects it draws (the effects loop at obj+0x3c0 advances per-effect counters),
 so a half-correct port corrupts state rather than misplacing a pixel, and the acceptance gate
-it needs -- byte-identity against fn_0041a5a0__orig at a 794 view, the shape background.c
-already has with LF2_BG_ORIG -- does not exist yet. Those two together are the session's worth
+it needs -- byte-identity against original guest routine 0x0041a5a0 at a 794 view, the shape background.c
+already had through a retail-control arm -- does not exist yet. Those two together are the session's worth
 of work, and starting them half-way is worse than not starting.
 
 DO NOT, when that port is written, "fix" this by widening only the high clamp. The low clamp at
@@ -280,7 +280,7 @@ rather than assuming it.
 ### Note (2026-08-12)
 THE ACCEPTANCE GATE THE PORT NEEDS NOW EXISTS, built before the port rather than after it.
 
-tools/routes/objects_test.sh (tools/e2e.sh objects), at a 794 view, software renderer:
+the recorded object-pass scenario, at a 794 view with the software renderer:
 
     ok  frame_001351  two default runs are byte-identical, so the pass is deterministic
     ok  frame_001351  moving the pass's camera by 3 changes 5598 pixel(s)
@@ -299,7 +299,7 @@ on this pass drawing the same frame twice, and NOTHING asserted that anywhere --
 test's byte-identity compares two different code paths and would not notice a pass that simply
 varied run to run.
 
-WHEN THE PORT LANDS: change the  arm from a second default run to LF2_OBJ_ORIG=1 and this
+WHEN THE PORT LANDS: change the control arm from a second default run to the retail routine and this
 becomes the real gate. Until then the first arm is a determinism check and the file says so
 rather than claiming to have compared a port with anything.
 
@@ -314,11 +314,11 @@ Eight calls in the whole function: 0041a767, 0041a79f, 0041a89d, 0041ab21, 0041a
 0041ad79, 0041add0 -- seven glyph draws and one sprite draw. 636 instructions.
 
 WHAT IS LEFT is the port itself: 636 instructions of C in the guest ABI, with the four 0x31a
-sites reading bg_view_width(), gated behind LF2_OBJ_ORIG so it can be A/B'd, and accepted only
+sites reading bg_view_width(), A/B'd against the retail routine, and accepted only
 when the identity arm above stays green at 794.
 
 ### Note (2026-08-12)
-THE PORT'S REMAINING UNKNOWNS ARE NOW ZERO. Everything below was read out of re/instructions.tsv
+THE PORT'S REMAINING UNKNOWNS ARE NOW ZERO. Everything below was read from the retail listing
 rather than the decompilation, because the decompilation is wrong or silent on each of them.
 
 THE SIGNATURE. Ghidra gives __thiscall FUN_0041a5a0(this, param_2, param_3) -- TWO stack args.
@@ -349,8 +349,8 @@ THE STRING BUILDING, which the decompilation renders as CONCAT12/CONCAT11 soup a
     idx < 10 and (&DAT_00450b4c)[idx] == -1 it is wrapped as "[" + name + <DAT_00449060>.
 
 WHAT REMAINS is transcription and verification, not investigation: 636 instructions, eight
-calls, the four 0x31a sites reading bg_view_width(), the whole thing behind LF2_OBJ_ORIG, and
-accepted only when tools/e2e.sh objects stays green at 794. The risk that keeps it from being
+calls, the four 0x31a sites reading bg_view_width(), the retail-control arm, and
+accepted only when the recorded object-pass comparison stays green at 794. The risk that keeps it from being
 started at the end of a session is unchanged and is not about information: the effects loop at
 obj+0x3c0 WRITES BACK (it advances per-effect counters and decrements obj[0x36c]), so a port
 that is subtly wrong corrupts game state rather than misplacing a pixel, and the gate compares
@@ -362,7 +362,7 @@ THE GATE NOW COVERS STATE, WHICH REMOVES THE LAST STATED REASON NOT TO START THE
 The objection recorded above was that the gate compared PIXELS, and fn_0041a5a0 does not only
 draw -- its effects loop advances per-effect counters and decrements obj[0x36c] -- so a subtly
 wrong port could corrupt the game while drawing a frame that still compared equal. That is now
-covered: tools/e2e.sh objects dumps .data and the guest heap at the same anchored frames and
+covered: the recorded object-pass comparison dumped `.data` and the guest heap at the same anchored frames and
 compares them too.
 
     ok  frame_001351 / frame_001801   two default runs byte-identical (pixels)
@@ -396,7 +396,7 @@ caught by running the arm rather than by reasoning about it:
 SO THE PORT'S PREREQUISITES ARE DONE: the RE is transcribed, the ABI is resolved including the
 RET 0xc the decompilation gets wrong, and the gate covers pixels and state with negatives that
 have been seen to fire. What is left is writing 636 instructions of guest-ABI C with the four
-0x31a sites reading bg_view_width(), behind LF2_OBJ_ORIG, and running this file.
+0x31a sites reading bg_view_width(), plus the retail-control arm, and running this file.
 
 ### Resolution (2026-08-12)
 PORTED. runtime/overrides/objects.c is a hand-port of fn_0041a5a0 in the guest ABI, and its four
@@ -407,11 +407,11 @@ THE FIX, measured -- the tag now stops where the view ends instead of where 794 
     window 1100x550   x=1091  ( view 1100 - 9 )     was 785
     window 1920x1080  x=969   ( view  978 - 9 )     was 785
 
-ACCEPTED ON A GATE THAT WAS BUILT FIRST AND SHOWN TO FAIL FIRST. tools/e2e.sh objects runs the
-port against the RECOMPILED body (LF2_OBJ_ORIG=1) at a 794 view, where bg_view_width() is 794
+ACCEPTED ON A GATE THAT WAS BUILT FIRST AND SHOWN TO FAIL FIRST. The recorded object-pass comparison ran the
+the native override against the retail routine at a 794 view, where bg_view_width() is 794
 and the two must agree exactly:
 
-    ok  frame_001351 / frame_001801   the port draws exactly what the recompiled body draws
+    ok  frame_001351 / frame_001801   the port matched the retail behavior
     ok  state vs orig  data x2, heap  same, 0 dwords outside the clock/cookie mask
     ok  skew / alt negatives          5598-5702 px, 73-78 dwords, and a heap size difference
 
@@ -423,14 +423,14 @@ A TRAP THIS ALMOST FELL INTO, recorded because it nearly shipped: the gate passe
 time it was run against the port -- while its  arm was still a SECOND DEFAULT RUN, i.e.
 the port compared with itself. It had been written that way deliberately, before the port
 existed, and the file said to switch it. Passing in that form proved nothing. It now runs
-LF2_OBJ_ORIG=1, and it passes for real.
+the retail-control arm, and it passes for real.
 
 THE CAMERA WRAPPER IS GONE with the port. background.c used to write the shifted camera into
-the guest's word around the recompiled body so its  sites would draw shifted;
+the guest's word around the ordinary guest call so its sites would draw shifted;
 the port reads bg_draw_camera() directly at each site, so there is nothing left to wrap. The
 draw-time value is still never written back (issue #39's easing).
 
-THREE THINGS THE DECOMPILATION GOT WRONG, all caught from re/instructions.tsv: the function
+THREE THINGS THE DECOMPILATION GOT WRONG, all caught from the retail listing: the function
 ends RET 0xc and takes THREE stack args where Ghidra types two; every fn_0043f010 call has an
 elided __thiscall receiver ([0x0044faf4] for glyphs, [rec+0x4d4673c] for the shadow); and the
 second tag variant's string is a stack buffer holding "Com", which Ghidra rendered as a pointer

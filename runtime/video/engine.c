@@ -1,4 +1,6 @@
 /* The port's own rendering engine. See engine.h for why it exists and what it is not. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "engine.h"
 
 #include <SDL3/SDL.h>
@@ -102,7 +104,10 @@ typedef struct {
     float x, y, depth, u, v, r, g, b, a;
 } QuadVertex;
 
-void engine_surface_dirty(uint32_t pixels) { engine_textures_surface_dirty(pixels); }
+void engine_surface_dirty(uint32_t pixels)
+{
+    engine_textures_surface_dirty(pixels);
+}
 
 /* ---- setup ------------------------------------------------------------------------------- */
 
@@ -111,7 +116,8 @@ static SDL_GPUShader *shader_make(const unsigned char *spv, size_t spv_len, cons
 {
     GPUShaderSource source;
     if (!gpu_shader_source_select(SHADER_FORMATS, spv, spv_len, msl, msl_len, &source)) {
-        fprintf(stderr, "engine: no shader payload matches the %s backend for %s\n", SDL_GetGPUDeviceDriver(DEV), what);
+        lf2_log_writef(LF2_LOG_INFO, "engine", "engine: no shader payload matches the %s backend for %s\n",
+                       SDL_GetGPUDeviceDriver(DEV), what);
         return NULL;
     }
     SDL_GPUShaderCreateInfo info;
@@ -124,7 +130,7 @@ static SDL_GPUShader *shader_make(const unsigned char *spv, size_t spv_len, cons
     info.num_samplers = (Uint32)samplers;
     info.num_uniform_buffers = (Uint32)uniforms;
     SDL_GPUShader *s = SDL_CreateGPUShader(DEV, &info);
-    if (!s) fprintf(stderr, "engine: the %s shader failed: %s\n", what, SDL_GetError());
+    if (!s) lf2_log_writef(LF2_LOG_INFO, "engine", "engine: the %s shader failed: %s\n", what, SDL_GetError());
     return s;
 }
 
@@ -150,19 +156,19 @@ int engine_init(SDL_Renderer *r)
     DEV = SDL_GetGPURendererDevice(r);
     if (!DEV) {
         init_why = "the renderer has no GPU device";
-        fprintf(stderr,
-                "engine: the '%s' renderer has no GPU device, so the engine cannot run "
-                "and the SDL_Render path draws instead.\n",
-                SDL_GetRendererName(r));
+        lf2_log_writef(LF2_LOG_INFO, "engine",
+                       "engine: the '%s' renderer has no GPU device, so the engine cannot run "
+                       "and the SDL_Render path draws instead.\n",
+                       SDL_GetRendererName(r));
         return 0;
     }
     SHADER_FORMATS = SDL_GetGPUShaderFormats(DEV);
     if (!(SHADER_FORMATS & (SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL))) {
         init_why = "the GPU backend has no matching shader payload";
-        fprintf(stderr,
-                "engine: the %s backend accepts shader formats 0x%x, but this port "
-                "ships SPIR-V and MSL.\n",
-                SDL_GetGPUDeviceDriver(DEV), (unsigned)SHADER_FORMATS);
+        lf2_log_writef(LF2_LOG_INFO, "engine",
+                       "engine: the %s backend accepts shader formats 0x%x, but this port "
+                       "ships SPIR-V and MSL.\n",
+                       SDL_GetGPUDeviceDriver(DEV), (unsigned)SHADER_FORMATS);
         return 0;
     }
     DEPTH_FORMAT = gpu_depth_format_select(DEV);
@@ -171,11 +177,11 @@ int engine_init(SDL_Renderer *r)
          * would still draw correctly without a depth buffer. It IS fatal to the reason this
          * engine exists, so it refuses rather than becoming a slower copy of what it replaces. */
         init_why = "no supported depth target";
-        fprintf(stderr,
-                "engine: the %s backend has no supported depth-stencil target. Sprites "
-                "would still draw, but a depth buffer shared with the stage geometry is "
-                "the whole reason for this engine, so it does NOT run here.\n",
-                SDL_GetGPUDeviceDriver(DEV));
+        lf2_log_writef(LF2_LOG_INFO, "engine",
+                       "engine: the %s backend has no supported depth-stencil target. Sprites "
+                       "would still draw, but a depth buffer shared with the stage geometry is "
+                       "the whole reason for this engine, so it does NOT run here.\n",
+                       SDL_GetGPUDeviceDriver(DEV));
         return 0;
     }
 
@@ -242,7 +248,7 @@ int engine_init(SDL_Renderer *r)
         pi.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
         PIPE[k] = SDL_CreateGPUGraphicsPipeline(DEV, &pi);
         if (PIPE[k]) made++;
-        else fprintf(stderr, "engine: blend pipeline %d failed: %s\n", k, SDL_GetError());
+        else lf2_log_writef(LF2_LOG_INFO, "engine", "engine: blend pipeline %d failed: %s\n", k, SDL_GetError());
     }
     SDL_ReleaseGPUShader(DEV, vs);
     SDL_ReleaseGPUShader(DEV, fs);
@@ -307,10 +313,10 @@ int engine_init(SDL_Renderer *r)
             gp.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
             GPIPE = SDL_CreateGPUGraphicsPipeline(DEV, &gp);
             if (!GPIPE)
-                fprintf(stderr,
-                        "engine: the geometry pipeline failed: %s -- sprites draw, "
-                        "hand-woven sets do NOT\n",
-                        SDL_GetError());
+                lf2_log_writef(LF2_LOG_INFO, "engine",
+                               "engine: the geometry pipeline failed: %s -- sprites draw, "
+                               "hand-woven sets do NOT\n",
+                               SDL_GetError());
         }
         if (gvs) SDL_ReleaseGPUShader(DEV, gvs);
         if (gfs) SDL_ReleaseGPUShader(DEV, gfs);
@@ -346,22 +352,26 @@ int engine_init(SDL_Renderer *r)
     GPUShaderSource selected;
     (void)gpu_shader_source_select(SHADER_FORMATS, quad_vert_spv, sizeof quad_vert_spv, quad_vert_msl,
                                    sizeof quad_vert_msl, &selected);
-    fprintf(stderr,
-            "engine: up on the %s backend with %s shaders, sharing the renderer's "
-            "device (%s depth, one texture pool)\n",
-            SDL_GetGPUDeviceDriver(DEV), gpu_shader_format_name(selected.format), gpu_depth_format_name(DEPTH_FORMAT));
+    lf2_log_writef(LF2_LOG_INFO, "engine",
+                   "engine: up on the %s backend with %s shaders, sharing the renderer's "
+                   "device (%s depth, one texture pool)\n",
+                   SDL_GetGPUDeviceDriver(DEV), gpu_shader_format_name(selected.format),
+                   gpu_depth_format_name(DEPTH_FORMAT));
     engine_visibility_probe_run(R);
     return 1;
 }
 
-int engine_ready(void) { return init_ok; }
+int engine_ready(void)
+{
+    return init_ok;
+}
 
 /* Which renderer draws. The pause menu's option owns it (issue #69); LF2_ENGINE is only the
- * startup pin, and a route that must pin the classic path sets it to 0. It is an A/B control
- * arm, not a feature switch: the engine is the default, and the old path stays selectable so
- * the two can go on being diffed -- exactly as LF2_BG_ORIG does for the background override. A
- * reimplementation that cannot be diffed against what it replaces is a rewrite. */
-int engine_enabled(void) { return opt_renderer_engine() && init_ok; }
+ * startup pin. The native SDL_Render path remains an independent presentation comparison. */
+int engine_enabled(void)
+{
+    return opt_renderer_engine() && init_ok;
+}
 
 /* ---- targets and buffers ------------------------------------------------------------------ */
 
@@ -437,7 +447,8 @@ static int targets_make(int w, int h)
     tex_lit = SDL_CreateGPUTexture(DEV, &ci);
 
     if (!tex_color || !tex_depth || !tex_chars || !tex_shadow || !tex_lit) {
-        fprintf(stderr, "engine: could not allocate the %dx%d target pair: %s\n", w, h, SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine", "engine: could not allocate the %dx%d target pair: %s\n", w, h,
+                       SDL_GetError());
         targets_release();
         return 0;
     }
@@ -450,7 +461,7 @@ static int targets_make(int w, int h)
     wrapped = SDL_CreateTextureWithProperties(R, p);
     SDL_DestroyProperties(p);
     if (!wrapped) {
-        fprintf(stderr, "engine: the colour target could not be wrapped: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine", "engine: the colour target could not be wrapped: %s\n", SDL_GetError());
         targets_release();
         return 0;
     }
@@ -479,10 +490,10 @@ static int targets_make(int w, int h)
             *w3[i].wrap = SDL_CreateTextureWithProperties(R, p);
             SDL_DestroyProperties(p);
             if (!*w3[i].wrap) {
-                fprintf(stderr,
-                        "engine: the %s could not be wrapped as a renderer texture "
-                        "(%s) -- it cannot be shown%s\n",
-                        w3[i].what, SDL_GetError(), w3[i].required ? ", so the engine target is refused" : "");
+                lf2_log_writef(LF2_LOG_INFO, "engine",
+                               "engine: the %s could not be wrapped as a renderer texture "
+                               "(%s) -- it cannot be shown%s\n",
+                               w3[i].what, SDL_GetError(), w3[i].required ? ", so the engine target is refused" : "");
                 if (w3[i].required) {
                     targets_release();
                     return 0;
@@ -523,7 +534,8 @@ static int vbuf_reserve(int bytes)
     vxfer = SDL_CreateGPUTransferBuffer(DEV, &ti);
 
     if (!vbuf || !vxfer) {
-        fprintf(stderr, "engine: could not allocate a %d-byte vertex buffer: %s\n", bytes, SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine", "engine: could not allocate a %d-byte vertex buffer: %s\n", bytes,
+                       SDL_GetError());
         if (vbuf) {
             SDL_ReleaseGPUBuffer(DEV, vbuf);
             vbuf = NULL;
@@ -563,7 +575,8 @@ static int gvbuf_reserve(int bytes)
     ti.size = (Uint32)bytes;
     gvxfer = SDL_CreateGPUTransferBuffer(DEV, &ti);
     if (!gvbuf || !gvxfer) {
-        fprintf(stderr, "engine: could not allocate a %d-byte geometry buffer: %s\n", bytes, SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine", "engine: could not allocate a %d-byte geometry buffer: %s\n", bytes,
+                       SDL_GetError());
         if (gvbuf) {
             SDL_ReleaseGPUBuffer(DEV, gvbuf);
             gvbuf = NULL;
@@ -590,12 +603,17 @@ enum { QUAD_UNIFORM_PASS0 = 8, QUAD_UNIFORM_FLOATS = QUAD_UNIFORM_PASS0 + 4 * SP
  * spritefilter.h, walked by ctest. */
 static SpriteChain sprite_chain;
 
-static void sprite_filter_begin_frame(void) { sprite_chain = *opt_sprite_chain(); }
+static void sprite_filter_begin_frame(void)
+{
+    sprite_chain = *opt_sprite_chain();
+}
 
 /* The AUTO factor of one quad: its magnification, which is the view's world scale measured
  * where it applies. Zero spans (a degenerate quad) fall back to 1 inside the helper. */
 static float quad_auto_factor(const EngineQuad *q)
-{ return spritechain_auto_factor(q->source_w, q->source_h, q->w, q->h); }
+{
+    return spritechain_auto_factor(q->source_w, q->source_h, q->w, q->h);
+}
 
 /* An outline lives OUTSIDE the art, so the quad that carries one has to be bigger than the
  * frame: the geometry and its uv both grow by the outline's width, converted from chain pixels
@@ -691,20 +709,22 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
      * than at 0 or 1, where a driver may clip it. */
     void *map = SDL_MapGPUTransferBuffer(DEV, vxfer, false);
     if (!map) {
-        fprintf(stderr, "engine: the vertex buffer could not be mapped: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine", "engine: the vertex buffer could not be mapped: %s\n", SDL_GetError());
         return NULL;
     }
     QuadVertex *vp = (QuadVertex *)map;
     for (int i = 0; i < n; i++) {
         EngineQuad e = q[i];
-        if (spritechain_needs_own_draw(&sprite_chain, e.is_object, e.host_argb != NULL)) { quad_grow_for_outline(&e); }
+        if (spritechain_needs_own_draw(&sprite_chain, e.is_object, e.host_argb != NULL)) {
+            quad_grow_for_outline(&e);
+        }
         emit(vp + (size_t)i * 6, &e, painter_depth(i, n));
     }
     SDL_UnmapGPUTransferBuffer(DEV, vxfer);
 
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(DEV);
     if (!cmd) {
-        fprintf(stderr, "engine: no command buffer: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine", "engine: no command buffer: %s\n", SDL_GetError());
         return NULL;
     }
 
@@ -774,7 +794,7 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
 
     SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &cti, 1, &dti);
     if (!pass) {
-        fprintf(stderr, "engine: the render pass could not begin: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine", "engine: the render pass could not begin: %s\n", SDL_GetError());
         SDL_SubmitGPUCommandBuffer(cmd);
         return NULL;
     }
@@ -853,7 +873,9 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
          * at fractional DPI and is why the supposedly high-resolution text still looked like
          * the original bitmap font. */
         SDL_GPUTextureSamplerBinding tsb = {t ? t : tex_color, t && q[i].host_argb ? SMP_LINEAR : SMP};
-        if (bound_tex != tsb.texture) { bound_tex = tsb.texture; }
+        if (bound_tex != tsb.texture) {
+            bound_tex = tsb.texture;
+        }
         SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
         /* The sampling uniform is per DRAW because the chain clamps its taps into the quad's
          * authoritative source bounds -- a sheet's frames butt edge to edge, so those bounds
@@ -905,30 +927,31 @@ SDL_Texture *engine_draw(const EngineQuad *q, int n, const EngineGeom *g, int ng
 
 void engine_report(void)
 {
-    if (!getenv("LF2_ENGINE_DEBUG")) return;
-    fprintf(stderr,
-            "engine: %s (%s). %ld frame(s), %ld quad(s) in %ld batch(es), "
-            "%ld quad(s) DROPPED\n",
-            engine_enabled() ? "DRAWING" : "not drawing", init_why, stat_frames, stat_quads, stat_batches,
-            stat_dropped);
-    fprintf(stderr, "engine: render targets are %dx%d output pixels\n", tgt_w, tgt_h);
+    if (!lf2_environment_get(LF2_ENV_ENGINE_DEBUG)) return;
+    lf2_log_writef(LF2_LOG_INFO, "engine",
+                   "engine: %s (%s). %ld frame(s), %ld quad(s) in %ld batch(es), "
+                   "%ld quad(s) DROPPED\n",
+                   engine_enabled() ? "DRAWING" : "not drawing", init_why, stat_frames, stat_quads, stat_batches,
+                   stat_dropped);
+    lf2_log_writef(LF2_LOG_INFO, "engine", "engine: render targets are %dx%d output pixels\n", tgt_w, tgt_h);
     engine_textures_report();
     /* The zero is printed and named, because zero is the ordinary answer when the engine is
      * built but not selected -- and "built but not selected" must not look like "selected and
      * drew nothing". */
     if (engine_enabled() && !stat_frames)
-        fprintf(stderr, "engine: it is SELECTED and has drawn NOTHING -- no frame reached it, "
-                        "which is a different fault from a frame that came out wrong\n");
-    fprintf(stderr,
-            "engine: stage geometry -- %ld draw(s), %ld triangle(s), in the SAME pass "
-            "as the sprites%s\n",
-            stat_geom_draws, stat_geom_tris, GPIPE ? "" : "  (NO geometry pipeline: sets are not drawn at all)");
+        lf2_log_writef(LF2_LOG_INFO, "engine",
+                       "engine: it is SELECTED and has drawn NOTHING -- no frame reached it, "
+                       "which is a different fault from a frame that came out wrong\n");
+    lf2_log_writef(LF2_LOG_INFO, "engine",
+                   "engine: stage geometry -- %ld draw(s), %ld triangle(s), in the SAME pass "
+                   "as the sprites%s\n",
+                   stat_geom_draws, stat_geom_tris, GPIPE ? "" : "  (NO geometry pipeline: sets are not drawn at all)");
     engine_lighting_report();
     if (stat_dropped)
-        fprintf(stderr,
-                "engine: %ld quad(s) were dropped for want of a texture; art is MISSING "
-                "from those frames\n",
-                stat_dropped);
+        lf2_log_writef(LF2_LOG_INFO, "engine",
+                       "engine: %ld quad(s) were dropped for want of a texture; art is MISSING "
+                       "from those frames\n",
+                       stat_dropped);
 }
 
 void engine_shutdown(void)

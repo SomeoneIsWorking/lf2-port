@@ -1,4 +1,4 @@
-/* The global RmlUi shell, ported from Dusklight's document/window ownership (issue #70).
+/* The global RmlUi document/window shell (issue #70).
  * Escape or the controller menu action opens this document directly on every game screen.
  * The app layer decides whether a match must freeze; this UI owns presentation, navigation,
  * settings, and input mapping. Both native and software render paths composite it.

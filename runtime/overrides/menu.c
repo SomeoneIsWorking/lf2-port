@@ -1,44 +1,38 @@
 /* The front end: the menu, its mouse and pad, the advertising panel, widescreen.
  *
- * One of the hand-written native replacements for recompiled functions; see
+ * One of the hand-written native replacements for guest functions; see
  * runtime/overrides/overrides.h for how the set is divided and why.
  */
 
+#include "environment.h"
 #include "overrides.h"
 #include "world.h"
 
-#include "guest_ops.h"
+#include "guest.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "jit_executor.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-void fn_004246b0__orig(void);
-void fn_00423b00__orig(void);
-
 /* ---------------------------------------------------------------------------
  * fn_004246b0 -- the menu.
  *
- * 4689 lines of generated C covering the main menu, control settings and recording info:
- * it draws every element, hit-tests the mouse against its band table, computes a selection
- * index and dispatches on it. The advertising is drawn inline alongside everything else,
+ * The recovered main-menu routine draws every element, hit-tests the mouse against its band
+ * table, computes a selection index, and dispatches on it. Advertising is drawn inline,
  * which is why there is no separate ad function to replace.
  *
- * Ported incrementally. Anything not yet handled here falls through to fn_004246b0__orig,
- * the original lifted body, so the game keeps working while the port proceeds screen by
- * screen. Landing 4689 lines in one step is not a thing that can be done correctly.
- *
- * Calling convention: ONE stack argument, RET 4. The generated body ends in
- * `R(ESP) += 8` -- it pops the return address AND four bytes of argument -- and the
- * decompiler agrees, calling it as FUN_004246b0(DAT_00455608).
+ * Calling convention: one stack argument, RET 4. The recovered instruction stream pops the
+ * return address and four bytes of argument, and the decompiler agrees by calling it as
+ * FUN_004246b0(DAT_00455608).
  *
  * This said "no arguments, RET c3, so nothing to pop" and was wrong. It cost real work:
  * an experiment that re-invoked the original body in a loop pushed back only the return
  * address, leaked four bytes an iteration, and aborted the game a long way from the
- * cause. A recompiled body's contract is readable straight out of the generated C --
- * `R(ESP) += n` at its return -- so read it rather than recall it. Measured for every
+ * cause. The contract must be read from the recovered instructions, not recalled. Measured for every
  * override here: fn_00423b00 +4, fn_004246b0 +8, fn_0043f010 +28, fn_00419a60 +16,
  * fn_0043c4a0 +4, fn_00423940 +4.
  * ------------------------------------------------------------------------ */
@@ -70,7 +64,7 @@ static int mode_force_done;
 static void mode_force_tick(void)
 {
     if (mode_force_want == -2) {
-        const char *v = getenv("LF2_MODE");
+        const char *v = lf2_environment_get(LF2_ENV_MODE);
         mode_force_want = -1;
         if (v) {
             for (int i = 0; i < MODEMENU_ITEMS_W; i++)
@@ -79,22 +73,24 @@ static void mode_force_tick(void)
                     break;
                 }
             if (mode_force_want < 0)
-                fprintf(stderr,
-                        "menu: LF2_MODE=%s names no mode -- the run will enter "
-                        "whatever the menu was already on. Try one of: vs stage "
-                        "championship1 championship2 battle demo playback quit\n",
-                        v);
-            else fprintf(stderr, "menu: LF2_MODE=%s -- holding the mode menu on item %d\n", v, mode_force_want);
+                lf2_log_writef(LF2_LOG_INFO, "menu",
+                               "menu: LF2_MODE=%s names no mode -- the run will enter "
+                               "whatever the menu was already on. Try one of: vs stage "
+                               "championship1 championship2 battle demo playback quit\n",
+                               v);
+            else
+                lf2_log_writef(LF2_LOG_INFO, "menu", "menu: LF2_MODE=%s -- holding the mode menu on item %d\n", v,
+                               mode_force_want);
         }
     }
     if (mode_force_want < 0 || mode_force_done) return;
     /* Once the overlay is up the mode has been chosen and the screen is gone. */
     if (panel_overlay_up()) {
         mode_force_done = 1;
-        fprintf(stderr,
-                "menu: LF2_MODE held the mode menu for %ld frame(s); the overlay is up, "
-                "so the mode is chosen and the hold is released\n",
-                mode_force_frames);
+        lf2_log_writef(LF2_LOG_INFO, "menu",
+                       "menu: LF2_MODE held the mode menu for %ld frame(s); the overlay is up, "
+                       "so the mode is chosen and the hold is released\n",
+                       mode_force_frames);
         return;
     }
     if (LD32(MODEMENU_SEL_W) >= MODEMENU_ITEMS_W) return; /* not that screen */
@@ -109,16 +105,17 @@ void mode_force_report(void)
 {
     if (mode_force_want < 0) return;
     if (mode_force_frames)
-        fprintf(stderr, "menu: LF2_MODE=%s was held on %ld frame(s)%s\n", MODE_NAME[mode_force_want], mode_force_frames,
-                mode_force_done ? " and released at the overlay"
-                                : " and never released -- the "
-                                  "run did not reach the pre-fight overlay");
+        lf2_log_writef(LF2_LOG_INFO, "menu", "menu: LF2_MODE=%s was held on %ld frame(s)%s\n",
+                       MODE_NAME[mode_force_want], mode_force_frames,
+                       mode_force_done ? " and released at the overlay"
+                                       : " and never released -- the "
+                                         "run did not reach the pre-fight overlay");
     else
-        fprintf(stderr,
-                "menu: LF2_MODE=%s was NEVER held -- the mode menu was not reached in "
-                "this run, so the game entered whatever it was already on and this "
-                "run says NOTHING about %s mode\n",
-                MODE_NAME[mode_force_want], MODE_NAME[mode_force_want]);
+        lf2_log_writef(LF2_LOG_INFO, "menu",
+                       "menu: LF2_MODE=%s was NEVER held -- the mode menu was not reached in "
+                       "this run, so the game entered whatever it was already on and this "
+                       "run says NOTHING about %s mode\n",
+                       MODE_NAME[mode_force_want], MODE_NAME[mode_force_want]);
 }
 
 /* 0x0044d070 was used here as an "which screen is up" word, derived from stage-mode .data
@@ -143,17 +140,17 @@ static long menu_click_seen;
 static int menu_click_debug(void)
 {
     static int on = -1;
-    if (on < 0) on = getenv("LF2_MENU_DEBUG") != NULL;
+    if (on < 0) on = lf2_environment_get(LF2_ENV_MENU_DEBUG) != NULL;
     return on;
 }
 
 void menu_click_report(void)
 {
     if (!menu_click_debug()) return;
-    fprintf(stderr,
-            "menu-click: %ld frame(s) reached the front-end menu with the game's "
-            "click flag set%s\n",
-            menu_click_seen, menu_click_seen ? "" : " -- so nothing the menu could act on ever arrived");
+    lf2_log_writef(LF2_LOG_INFO, "menu",
+                   "menu-click: %ld frame(s) reached the front-end menu with the game's "
+                   "click flag set%s\n",
+                   menu_click_seen, menu_click_seen ? "" : " -- so nothing the menu could act on ever arrived");
 }
 
 /* The top-level mode, cached for the input gather's routing: everything before the game
@@ -161,7 +158,10 @@ void menu_click_report(void)
  * first served. Written by the menu override because fn_004246b0 runs every frame and is
  * the function whose `this` holds the mode. */
 static uint32_t top_mode = 0xffffffffu;
-uint32_t game_top_mode(void) { return top_mode; }
+uint32_t game_top_mode(void)
+{
+    return top_mode;
+}
 
 /* The GUEST half of widescreen: a real wider field of view, not a stretched picture.
  *
@@ -197,7 +197,7 @@ static void wide_apply(void)
      * writing all three works but says nothing about which one the drawing reads. */
     static int only = -2;
     if (only == -2) {
-        const char *e = getenv("LF2_WIDE_ONLY");
+        const char *e = lf2_environment_get(LF2_ENV_WIDE_ONLY);
         only = e ? atoi(e) : -1;
     }
     for (unsigned i = 0; i < sizeof WIDTHS / sizeof WIDTHS[0]; i++) {
@@ -221,12 +221,12 @@ void fn_004246b0(void)
     const uint32_t screen = LD32(GX_SCREEN);
     top_mode = mode;
     controls_hint_enable(mode != MODE_IN_GAME);
-    if (getenv("LF2_MENU_DEBUG")) {
+    if (lf2_environment_get(LF2_ENV_MENU_DEBUG)) {
         static uint32_t last_screen = 0xfffffffdu, last_mode = 0xfffffffdu;
         if (screen != last_screen || mode != last_mode) {
             last_screen = screen;
             last_mode = mode;
-            fprintf(stderr, "menu mode=%u screen=%u updater=%u\n", mode, screen, LD32(0x00458424));
+            lf2_log_writef(LF2_LOG_INFO, "menu", "menu mode=%u screen=%u updater=%u\n", mode, screen, LD32(0x00458424));
         }
         /* The pre-fight overlay's selection index, located by diffing .data across one
          * d-pad press (tools/re/diff_data.py) and confirmed against the frame it drew. */
@@ -234,7 +234,7 @@ void fn_004246b0(void)
         const uint32_t overlay = LD32(OVERLAY_SEL);
         if (overlay != last_overlay) {
             last_overlay = overlay;
-            fprintf(stderr, "overlay selection = %u\n", overlay);
+            lf2_log_writef(LF2_LOG_INFO, "menu", "overlay selection = %u\n", overlay);
         }
     }
     /* ---- LF2_MODE=<name>: which game mode a scripted run enters ----
@@ -263,8 +263,8 @@ void fn_004246b0(void)
      * position can be read off a frame dump. Diagnostic scaffolding for building the
      * mouse hit-test table -- the positions have to come from the game, not from me
      * measuring a screenshot by eye. */
-    if (getenv("LF2_OVERLAY_FORCE")) {
-        const uint32_t want = (uint32_t)atoi(getenv("LF2_OVERLAY_FORCE"));
+    if (lf2_environment_get(LF2_ENV_OVERLAY_FORCE)) {
+        const uint32_t want = (uint32_t)atoi(lf2_environment_get(LF2_ENV_OVERLAY_FORCE));
         if (LD32(OVERLAY_SEL) != want) ST32(OVERLAY_SEL, want);
     }
 
@@ -278,10 +278,10 @@ void fn_004246b0(void)
 
     if (menu_click_debug() && LD32(GX_CLICK)) {
         menu_click_seen++;
-        fprintf(stderr,
-                "menu-click: frame %ld -- the menu is entered with click=1 at "
-                "mouse=(%d,%d), screen=%u\n",
-                hostwin_frames(), (int32_t)LD32(GX_MOUSE_X), (int32_t)LD32(GX_MOUSE_Y), LD32(GX_SCREEN));
+        lf2_log_writef(LF2_LOG_INFO, "menu",
+                       "menu-click: frame %ld -- the menu is entered with click=1 at "
+                       "mouse=(%d,%d), screen=%u\n",
+                       hostwin_frames(), (int32_t)LD32(GX_MOUSE_X), (int32_t)LD32(GX_MOUSE_Y), LD32(GX_SCREEN));
     }
 
     bg_table_report(); /* LF2_BG_TABLE=1: the loaded stage's layers, once */
@@ -291,7 +291,7 @@ void fn_004246b0(void)
      * same pointer and the slot cursor would wander while the player aims at "Fight!". */
     if (!overlay_open()) charselect_mouse();
 
-    fn_004246b0__orig();
+    lf2_jit_call_original(0x004246b0);
 }
 
 /* fn_00423b00 -- shared element draw, called with a descriptor.
@@ -314,5 +314,5 @@ void fn_00423b00(void)
         R(ESP) += 4; /* RET c3: pop the return address, nothing else */
         return;
     }
-    fn_00423b00__orig();
+    lf2_jit_call_original(0x00423b00);
 }

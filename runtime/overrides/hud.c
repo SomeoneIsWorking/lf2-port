@@ -1,7 +1,7 @@
 /* fn_0041ae60 -- the in-match HUD strip along the top of the screen, one panel per player
  * slot, and the one pass in the game that may see a slot the stage may not.
  *
- * One of the hand-written native replacements for recompiled functions; see
+ * One of the hand-written native replacements for guest routines; see
  * runtime/overrides/overrides.h for how the set is divided and why.
  *
  * WHAT THE GAME'S OWN PASS DOES, read off fn_0041ae60 rather than assumed. It loops the
@@ -41,18 +41,18 @@
 #include "overrides.h"
 #include "world.h"
 
-#include "guest_ops.h"
+#include "guest.h"
+#include "jit_executor.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
-
-void fn_0041ae60__orig(void);
 
 /* `this`, derived from the offset the port already located rather than written twice. */
 enum { HUD_THIS = EXISTS - 4 };
 
 void fn_0041ae60(void)
 {
-    const uint32_t self = R(ECX);              /* __thiscall */
+    const uint32_t self = R(ECX); /* __thiscall */
     int raised[PLAYER_SLOTS], n = 0;
 
     /* Both of the game's call sites pass the same object the rest of this port calls `self`
@@ -62,7 +62,7 @@ void fn_0041ae60(void)
     if (self == (uint32_t)HUD_THIS) {
         for (int i = 0; i < PLAYER_SLOTS; i++) {
             if (!coop_hud_preview(i)) continue;
-            if (LD8(EXISTS + (uint32_t)i)) continue;   /* already in the world; not ours */
+            if (LD8(EXISTS + (uint32_t)i)) continue; /* already in the world; not ours */
             ST8(EXISTS + (uint32_t)i, 1);
             raised[n++] = i;
         }
@@ -70,14 +70,15 @@ void fn_0041ae60(void)
         static int said;
         if (!said) {
             said = 1;
-            fprintf(stderr, "hud: the HUD pass was called with this=%08x, not the %08x this "
-                            "port's player slots are indexed from, so a joiner's panel is "
-                            "NOT being raised and a drop-in has nothing to choose in\n",
-                    self, (uint32_t)HUD_THIS);
+            lf2_log_writef(LF2_LOG_INFO, "hud",
+                           "hud: the HUD pass was called with this=%08x, not the %08x this "
+                           "port's player slots are indexed from, so a joiner's panel is "
+                           "NOT being raised and a drop-in has nothing to choose in\n",
+                           self, (uint32_t)HUD_THIS);
         }
     }
 
-    fn_0041ae60__orig();
+    lf2_jit_call_original(0x0041ae60);
 
     for (int k = 0; k < n; k++) ST8(EXISTS + (uint32_t)raised[k], 0);
 }

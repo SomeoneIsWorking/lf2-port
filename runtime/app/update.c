@@ -1,3 +1,4 @@
+#include "environment.h"
 #include "update.h"
 
 #include <SDL3/SDL.h>
@@ -17,7 +18,7 @@ enum { UPDATE_PATH_CAPACITY = 4096 };
 #ifndef __ANDROID__
 static int appimage_updater_path(char *output, size_t capacity)
 {
-    const char *outer = getenv("APPIMAGE");
+    const char *outer = lf2_environment_get(LF2_ENV_APPIMAGE);
     const char *base = SDL_GetBasePath();
     if (!outer || !*outer || !base || !*base) return 0;
     const int written = snprintf(output, capacity, "%s../libexec/lf2/AppImageUpdate-x86_64.AppImage", base);
@@ -43,7 +44,7 @@ void update_request(void)
     android_bridge_request_update();
 #else
     char updater[UPDATE_PATH_CAPACITY];
-    const char *outer = getenv("APPIMAGE");
+    const char *outer = lf2_environment_get(LF2_ENV_APPIMAGE);
     if (!appimage_updater_path(updater, sizeof updater) || !outer || !*outer) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LF2 Port update",
                                  "This build does not include the AppImage updater.", NULL);

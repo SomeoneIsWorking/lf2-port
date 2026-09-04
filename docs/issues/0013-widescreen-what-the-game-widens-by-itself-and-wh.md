@@ -28,7 +28,7 @@ a wider viewport. (The width came from `LF2_WIDESCREEN=<w>[x<h>]` at the time; i
      surface and never goes through Blt, so the game's own readout stayed at the left edge
      when the panels moved -- newly VISIBLE, because at 794 the panel covered it.
    - a tiling layer series stops one copy short, because the count comes from an immediate
-     794 inside FUN_0041a250 and immediates are baked into the recompiled code, unlike the
+     794 inside retail routine FUN_0041a250, unlike the
      viewport words. HK Coliseum's arch band ended at 803 with 255 px of black past it. A
      copy is recognised as part of a series by being CONTIGUOUS with the blit before it --
      same rows, left edge exactly where the last ended -- and then continued at the same

@@ -1,6 +1,6 @@
 ---
 id: 57
-title: tools/e2e.sh is treated as a test suite and takes minutes; the rule is nothing over 10 seconds
+title: tools/e2e.py is treated as a test suite and takes minutes; the rule is nothing over 10 seconds
 status: resolved
 symptom: reported, repeatedly. The route scripts boot the game and each run takes 25-83 seconds before a single assertion; thirteen scripts, several making 2-5 runs each, so a full sweep is 20+ minutes. They have been run as a routine gate after every change
 tags: reported,testing,verification,workflow
@@ -12,7 +12,7 @@ REPORTED 2026-08-11, and this is the THIRD time the same correction has been giv
 have one suite that is fast" (which produced ctest), then "your tests need to be static, don't
 run 10 minute tests" (which produced tests/test_framelife.c), and now "no tests over 10
 seconds, but your tests take 5+ minutes". The first two were answered by moving one thing
-offline each time while leaving tools/e2e.sh being run as a gate. That is the defect.
+offline each time while leaving tools/e2e.py being run as a gate. That is the defect.
 
 MEASURED, so the next session argues with numbers rather than with intent. A bare headless run
 to frame 3000, LF2_UNPACED=1, before any assertions at all:
@@ -159,7 +159,7 @@ every route onto screen anchors, changed the renderer pinning of nine of them, a
 mouse gate:
 
     ctest             10 tests, 1.53 s -- nothing in it boots the game
-    tools/e2e.sh      14 script(s) -- 14 passed, 0 failed, 0 skipped, 452 s
+    tools/e2e.py      14 script(s) -- 14 passed, 0 failed, 0 skipped, 452 s
     amdgpu faults     0 in the boot
 
 That matters more than the individual greens it is made of: every route had been verified alone,
@@ -168,7 +168,7 @@ renderer's character identification, the background pass and the coop tests alik
 
 THE RESOLUTION IS LEVER (a), which this entry named first and which the reporter asked for three
 times: `ctest` is THE suite. It is 10 tests in about a second and a half, nothing in it boots
-the game, and it is what may be run after every edit. tools/e2e.sh is an INVESTIGATION TOOL --
+the game, and it is what may be run after every edit. tools/e2e.py is an INVESTIGATION TOOL --
 run one when it answers a specific question about a running game, say in the commit message when
 they were not run, and never treat the sweep as a gate.
 

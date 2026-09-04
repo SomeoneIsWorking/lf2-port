@@ -1,16 +1,19 @@
 /* LF2's data-file decryptors, which the game ran one byte at a time.
  *
- * One of the hand-written native replacements for recompiled functions; see
+ * One of the hand-written native replacements for guest functions; see
  * runtime/overrides/overrides.h for how the set is divided and why.
  */
 
+#include "environment.h"
 #include "overrides.h"
 #include "world.h"
 
-#include "guest_ops.h"
+#include "guest.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "jit_executor.h"
 #include "paths.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +27,7 @@
  *
  *     fscanf(in, "%c", &c);  ...  fprintf(out, "%c", c - key[i]);
  *
- * which is fine at native speed and is not fine through a recompiled CPU, where each of
+ * which is fine at native speed and is not fine through guest execution, where each of
  * those is a guest call into a host import. It came to 2.5 million fscanf calls per load,
  * and it is why every attempt to speed the load up by touching the RENDERING failed: the
  * drawing was measured at 14% of the load (LF2_LOAD_PROF), and this is most of the rest.
@@ -46,13 +49,10 @@
  * output -- falls through to the original body rather than silently producing a short file,
  * because a truncated decrypt would show up as the game quietly missing objects.
  *
- * Calling convention: cdecl. The generated body ends in `R(ESP) += 4`, so the argument is
- * the caller's to pop and only the return address comes off here.
+ * Calling convention: cdecl. The recovered body returns with a four-byte stack adjustment,
+ * so the argument is the caller's to pop and only the return address comes off here.
  * ------------------------------------------------------------------------ */
 long decrypt_files, decrypt_bytes;
-
-void fn_004148a0__orig(void);
-void fn_00414a30__orig(void);
 
 /* LF2_DECRYPT_DUMP=<dir> copies each decrypted file out as NNN.txt, in order. Run once with
  * LF2_SLOW_DECRYPT=1 and once without, diff the two directories, and the native decrypt is
@@ -62,20 +62,20 @@ void fn_00414a30__orig(void);
  * path, or the control run dumps nothing and the diff reads as a pass. */
 static void decrypt_dump(void)
 {
-    const char *dir = getenv("LF2_DECRYPT_DUMP");
+    const char *dir = lf2_environment_get(LF2_ENV_DECRYPT_DUMP);
     if (!dir || !*dir) return;
     static int n;
     char dst[512];
     snprintf(dst, sizeof dst, "%s/%04d.txt", dir, n++);
     FILE *in = fopen(lf2_host_path("data\\temporary.txt"), "rb");
     if (!in) {
-        fprintf(stderr, "decrypt dump: cannot read the output for %s\n", dst);
+        lf2_log_writef(LF2_LOG_INFO, "assets", "decrypt dump: cannot read the output for %s\n", dst);
         return;
     }
     FILE *out = fopen(dst, "wb");
     if (!out) {
         fclose(in);
-        fprintf(stderr, "decrypt dump: cannot write %s\n", dst);
+        lf2_log_writef(LF2_LOG_INFO, "assets", "decrypt dump: cannot write %s\n", dst);
         return;
     }
     char b[65536];
@@ -128,9 +128,9 @@ static int decrypt_file(const char *source, const char *destination)
 void fn_004148a0(void)
 {
     static int native = -1;
-    if (native < 0) native = getenv("LF2_SLOW_DECRYPT") == NULL;
+    if (native < 0) native = lf2_environment_get(LF2_ENV_SLOW_DECRYPT) == NULL;
     if (!native) {
-        fn_004148a0__orig();
+        lf2_jit_call_original(0x004148a0);
         decrypt_dump();
         return;
     }
@@ -140,7 +140,7 @@ void fn_004148a0(void)
     snprintf(source, sizeof source, "%s", lf2_host_path((const char *)(g_mem + arg)));
     const char *destination = lf2_host_path("data\\temporary.txt");
     if (!decrypt_file(source, destination)) {
-        fn_004148a0__orig();
+        lf2_jit_call_original(0x004148a0);
         return;
     }
     decrypt_dump();
@@ -153,9 +153,9 @@ void fn_004148a0(void)
 void fn_00414a30(void)
 {
     static int native = -1;
-    if (native < 0) native = getenv("LF2_SLOW_DECRYPT") == NULL;
+    if (native < 0) native = lf2_environment_get(LF2_ENV_SLOW_DECRYPT) == NULL;
     if (!native) {
-        fn_00414a30__orig();
+        lf2_jit_call_original(0x00414a30);
         decrypt_dump();
         return;
     }
@@ -164,7 +164,7 @@ void fn_00414a30(void)
     snprintf(source, sizeof source, "%s", lf2_host_path((const char *)g_mem + LD32(R(ESP) + 4)));
     const char *destination = lf2_host_path((const char *)g_mem + LD32(R(ESP) + 8));
     if (!decrypt_file(source, destination)) {
-        fn_00414a30__orig();
+        lf2_jit_call_original(0x00414a30);
         return;
     }
     decrypt_dump();
@@ -204,7 +204,10 @@ void bg_shadow_size(int *w, int *h)
 }
 
 /* Which stage is loaded, so a shadow object learned on one is discarded on the next. */
-uint32_t bg_shadow_stage(void) { return LD32(BG_INDEX); }
+uint32_t bg_shadow_stage(void)
+{
+    return LD32(BG_INDEX);
+}
 
 /* ---- the record's two strings ----
  *
@@ -326,8 +329,9 @@ static void bg_z_report(void)
     if (!registry) return;
     const uint32_t here = LD32(BG_INDEX);
     int sane = 0, seen = 0;
-    fprintf(stderr, "bg zboundary: the walkable floor of each background, from the record's "
-                    "own scalar block\n");
+    lf2_log_writef(LF2_LOG_INFO, "assets",
+                   "bg zboundary: the walkable floor of each background, from the record's "
+                   "own scalar block\n");
     for (uint32_t bg = 0; bg < 60; bg++) {
         const uint32_t base = registry + bg * BG_STRIDE_DW * 4u;
         const int32_t count = (int32_t)LD32(base + BG_LAYER_COUNT);
@@ -338,12 +342,12 @@ static void bg_z_report(void)
         const int hi = (int)(int32_t)LD32(base + BG_Z_MAX);
         const int ok = (lo > 0 && hi > lo && hi <= 550);
         if (ok) sane++;
-        fprintf(stderr, "bg zboundary:  %2u %s  z %d..%d  (stage width %d, %d layer(s))%s\n", bg,
-                bg == here ? "<-loaded" : "        ", lo, hi, width, count,
-                ok ? "" : "   REFUSED: not an ordered pair inside 550 rows");
+        lf2_log_writef(LF2_LOG_INFO, "assets", "bg zboundary:  %2u %s  z %d..%d  (stage width %d, %d layer(s))%s\n", bg,
+                       bg == here ? "<-loaded" : "        ", lo, hi, width, count,
+                       ok ? "" : "   REFUSED: not an ordered pair inside 550 rows");
     }
-    fprintf(stderr, "bg zboundary: %d of %d backgrounds give a sane floor band%s\n", sane, seen,
-            seen == 0 ? " -- the table was EMPTY, so this says nothing" : "");
+    lf2_log_writef(LF2_LOG_INFO, "assets", "bg zboundary: %d of %d backgrounds give a sane floor band%s\n", sane, seen,
+                   seen == 0 ? " -- the table was EMPTY, so this says nothing" : "");
 }
 
 /* The game's own count, which is what fn_0041a250 iterates on -- not a scan for the first
@@ -374,11 +378,13 @@ static void bg_record_report(uint32_t which)
      * "the report did not get that far". */
     char nm[BG_NAME_LEN + 1];
     bg_string(base + BG_STAGE_NAME, nm, sizeof nm);
-    fprintf(stderr, "bg table: background %u  \"%s\"  stage width %u  %d layer(s)%s\n", which, nm[0] ? nm : "(empty)",
-            LD32(base + BG_STAGE_WIDTH), n, which == LD32(BG_INDEX) ? "   <- loaded" : "");
+    lf2_log_writef(LF2_LOG_INFO, "assets", "bg table: background %u  \"%s\"  stage width %u  %d layer(s)%s\n", which,
+                   nm[0] ? nm : "(empty)", LD32(base + BG_STAGE_WIDTH), n,
+                   which == LD32(BG_INDEX) ? "   <- loaded" : "");
     if (n == 0) {
-        fprintf(stderr, "bg table:   NO LAYERS -- this record is empty; that is a fact about "
-                        "this index, not about the address computation\n");
+        lf2_log_writef(LF2_LOG_INFO, "assets",
+                       "bg table:   NO LAYERS -- this record is empty; that is a fact about "
+                       "this index, not about the address computation\n");
         return;
     }
     for (int i = 0; i < n; i++) {
@@ -387,10 +393,11 @@ static void bg_record_report(uint32_t which)
          * strings and the numeric fields around it are dword arrays. Indexing it the way the
          * others are indexed reads a quarter of the way into each name. */
         bg_string(base + BG_LAYER_NAME + (uint32_t)i * BG_NAME_LEN, lp, sizeof lp);
-        fprintf(stderr, "bg table:   layer %-2d span=%-6u x=%-6d y=%-4d loop=%-4u %s\n", i,
-                LD32(base + BG_LAYER_SPAN + (uint32_t)i * 4u), (int32_t)LD32(base + BG_LAYER_X + (uint32_t)i * 4u),
-                (int32_t)LD32(base + BG_LAYER_Y + (uint32_t)i * 4u), LD32(base + BG_LAYER_LOOP + (uint32_t)i * 4u),
-                lp[0] ? lp : "(no name -- the record's string field is empty here)");
+        lf2_log_writef(
+            LF2_LOG_INFO, "assets", "bg table:   layer %-2d span=%-6u x=%-6d y=%-4d loop=%-4u %s\n", i,
+            LD32(base + BG_LAYER_SPAN + (uint32_t)i * 4u), (int32_t)LD32(base + BG_LAYER_X + (uint32_t)i * 4u),
+            (int32_t)LD32(base + BG_LAYER_Y + (uint32_t)i * 4u), LD32(base + BG_LAYER_LOOP + (uint32_t)i * 4u),
+            lp[0] ? lp : "(no name -- the record's string field is empty here)");
     }
 }
 
@@ -414,25 +421,25 @@ static void bg_record_report(uint32_t which)
  * what turns "the shadow is probably that small sprite" into an identification. */
 static void bg_record_dump(void)
 {
-    if (!getenv("LF2_BG_RECORD")) return;
+    if (!lf2_environment_get(LF2_ENV_BG_RECORD)) return;
     const uint32_t registry = LD32(BG_REGISTRY);
     if (!registry) return;
     const uint32_t base = registry + LD32(BG_INDEX) * BG_STRIDE_DW * 4u;
-    fprintf(stderr,
-            "bg record: background %u, every non-zero dword from base-2600 to "
-            "base+2600, offset relative to BG_LAYER_SPAN\n",
-            LD32(BG_INDEX));
+    lf2_log_writef(LF2_LOG_INFO, "assets",
+                   "bg record: background %u, every non-zero dword from base-2600 to "
+                   "base+2600, offset relative to BG_LAYER_SPAN\n",
+                   LD32(BG_INDEX));
     for (int32_t off = -2600; off <= 2600; off += 4) {
         const uint32_t v = LD32((uint32_t)((int32_t)(base + BG_LAYER_SPAN) + off));
         if (!v) continue; /* zeros are the bulk and say nothing */
-        fprintf(stderr, "bg record:  %+5d = %10u  0x%08x\n", off, v, v);
+        lf2_log_writef(LF2_LOG_INFO, "assets", "bg record:  %+5d = %10u  0x%08x\n", off, v, v);
     }
 }
 
 void bg_table_report(void)
 {
     static int done;
-    const char *want = getenv("LF2_BG_TABLE");
+    const char *want = lf2_environment_get(LF2_ENV_BG_TABLE);
     if (done || !want) return;
     /* Sampled while a MATCH is on screen, which is the moment a stage is certainly loaded.
      * Reporting on the first frame that had a registry pointer instead caught the front end,
@@ -443,7 +450,7 @@ void bg_table_report(void)
     const uint32_t registry = LD32(BG_REGISTRY);
     if (!registry) return;
     done = 1;
-    fprintf(stderr, "bg table: registry %08x, loaded background %u\n", registry, LD32(BG_INDEX));
+    lf2_log_writef(LF2_LOG_INFO, "assets", "bg table: registry %08x, loaded background %u\n", registry, LD32(BG_INDEX));
     bg_z_report();
     bg_record_dump();
     if (strcmp(want, "all") != 0) {
@@ -460,5 +467,6 @@ void bg_table_report(void)
         bg_record_report(i);
         found++;
     }
-    fprintf(stderr, "bg table: %d non-empty background record(s) in the first 64 slots\n", found);
+    lf2_log_writef(LF2_LOG_INFO, "assets", "bg table: %d non-empty background record(s) in the first 64 slots\n",
+                   found);
 }

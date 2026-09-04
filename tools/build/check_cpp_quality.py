@@ -12,6 +12,12 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 ADOPTED_C_SOURCES = (
     ROOT / "runtime" / "log" / "lf2_log.h",
+    ROOT / "runtime" / "app" / "environment.c",
+    ROOT / "runtime" / "app" / "environment.h",
+    ROOT / "runtime" / "cpu" / "jit_executor.c",
+    ROOT / "runtime" / "cpu" / "jit_executor.h",
+    ROOT / "runtime" / "overrides" / "native_override.c",
+    ROOT / "runtime" / "overrides" / "native_override.h",
     ROOT / "runtime" / "ui" / "rmlui_system.h",
     ROOT / "tests" / "test_lf2_log.cpp",
     ROOT / "runtime" / "app" / "pause.c",
@@ -57,6 +63,12 @@ ADOPTED_C_SOURCES = (
     ROOT / "tests" / "test_texrect.c",
 )
 
+ADOPTED_C_TIDY_SOURCES = (
+    ROOT / "runtime" / "app" / "environment.c",
+    ROOT / "runtime" / "cpu" / "jit_executor.c",
+    ROOT / "runtime" / "overrides" / "native_override.c",
+)
+
 
 def require(tool: str) -> str:
     path = shutil.which(tool)
@@ -86,7 +98,7 @@ def check_tidy(build: Path) -> int:
     if not compile_commands.is_file():
         raise SystemExit(f"missing {compile_commands}; configure with CMAKE_EXPORT_COMPILE_COMMANDS=ON")
     failed = False
-    for source in cpp_sources():
+    for source in [*ADOPTED_C_TIDY_SOURCES, *cpp_sources()]:
         result = subprocess.run(
             [
                 clang_tidy,
@@ -106,7 +118,7 @@ def check_tidy(build: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("format", "tidy"))
-    parser.add_argument("--build-dir", type=Path, default=ROOT / "scratch" / "build-clang")
+    parser.add_argument("--build-dir", type=Path, default=ROOT / "build" / "clang")
     args = parser.parse_args()
     return check_format() if args.mode == "format" else check_tidy(args.build_dir.resolve())
 

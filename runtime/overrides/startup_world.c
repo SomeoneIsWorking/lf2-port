@@ -1,15 +1,10 @@
 #include "startup_init.h"
 
-#include "guest_ops.h"
+#include "guest.h"
+#include "jit_executor.h"
 
 #include <stddef.h>
 #include <stdint.h>
-
-void fn_004014e0(void);
-void fn_004061d0(void);
-void fn_004122f0(void);
-void fn_0043ee50(void);
-void fn_004450ac(void);
 
 enum {
     WORLD_INIT_LATCH = 0x0044d05c,
@@ -70,7 +65,7 @@ static uint32_t guest_allocate(uint32_t bytes, uint32_t return_address)
 {
     PUSH32(bytes);
     PUSH32(return_address);
-    fn_004450ac();
+    lf2_jit_call(0x004450ac);
     R(ESP) += 4;
     return R(EAX);
 }
@@ -79,7 +74,7 @@ static void object_reset(uint32_t object)
 {
     R(ECX) = object;
     PUSH32(0x0041c096);
-    fn_004061d0();
+    lf2_jit_call(0x004061d0);
 }
 
 static uint32_t graphic_create(uint32_t name)
@@ -91,7 +86,7 @@ static uint32_t graphic_create(uint32_t name)
     PUSH32(0x40);
     R(ECX) = graphic;
     PUSH32(0x0041c325);
-    fn_0043ee50();
+    lf2_jit_call(0x0043ee50);
     return R(EAX);
 }
 
@@ -107,7 +102,7 @@ static void load_sound_effects(void)
         PUSH32(STARTUP_SOUNDS[i].path);
         R(ECX) = STARTUP_SOUNDS[i].sound_slot;
         PUSH32(0x0041bed7 + (uint32_t)(15 * i));
-        fn_004014e0();
+        lf2_jit_call(0x004014e0);
     }
     ST32(0x0045843c, (uint32_t)(sizeof STARTUP_SOUNDS / sizeof STARTUP_SOUNDS[0]));
 }
@@ -120,16 +115,16 @@ static uint32_t create_registry(uint32_t frame_surface)
     PUSH32(0x00448980); /* data\\data.txt */
     R(ECX) = allocation;
     PUSH32(0x0041c018);
-    fn_004122f0();
+    lf2_jit_call(0x004122f0);
     return R(EAX);
 }
 
 static void initialise_object(uint32_t object, uint32_t data)
 {
     object_reset(object);
-    STF64(object + 88, LDF64(0x00449470)); /* 200 */
-    STF64(object + 96, 0.0);
-    STF64(object + 104, LDF64(0x00447928)); /* 300 */
+    guest_store_f64(object + 88, guest_load_f64(0x00449470)); /* 200 */
+    guest_store_f64(object + 96, 0.0);
+    guest_store_f64(object + 104, guest_load_f64(0x00447928)); /* 300 */
     ST32(object + 872, data);
 }
 
@@ -150,9 +145,9 @@ static void seed_player_slots(uint32_t world, uint32_t data)
         object_reset(object);
         ST32(object + 872, data);
         ST32(object + 796, LD32(data + 144));
-        STF64(object + 88, LDF64(PLAYER_SEEDS[i].x_value));
-        STF64(object + 96, LDF64(PLAYER_SEEDS[i].y_value));
-        STF64(object + 104, LDF64(0x00447928)); /* 300 */
+        guest_store_f64(object + 88, guest_load_f64(PLAYER_SEEDS[i].x_value));
+        guest_store_f64(object + 96, guest_load_f64(PLAYER_SEEDS[i].y_value));
+        guest_store_f64(object + 104, guest_load_f64(0x00447928)); /* 300 */
         ST8(world + 4 + i, 1);
     }
 }

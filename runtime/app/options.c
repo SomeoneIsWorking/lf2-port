@@ -1,5 +1,7 @@
 /* See options.h for what this is and why the env vars are initial values rather than the
  * mechanism. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "options.h"
 
 #include <stdlib.h>
@@ -19,7 +21,7 @@ static int pinned_off(const char *v)
 int opt_renderer_engine(void)
 {
     if (renderer < 0) {
-        const char *v = getenv("LF2_ENGINE");
+        const char *v = lf2_environment_get(LF2_ENV_ENGINE);
         if (v && *v) {
             /* The env pin is the test arm, and it wins outright (tools/routes pin it). */
             renderer = strcmp(v, "0") != 0;
@@ -43,7 +45,7 @@ void opt_set_renderer_engine(int on)
 int opt_lighting(void)
 {
     if (lighting < 0) {
-        const char *v = getenv("LF2_HD2D");
+        const char *v = lf2_environment_get(LF2_ENV_HD2D);
         if (v && *v) lighting = pinned_off(v) ? 0 : 1;
         else {
             const char *c = config_get("lighting");
@@ -79,7 +81,7 @@ static float value_light_intensity = -1.0f;
 float opt_light_intensity(void)
 {
     if (value_light_intensity < 0.0f) {
-        const char *v = getenv("LF2_HD2D_KEY");
+        const char *v = lf2_environment_get(LF2_ENV_HD2D_KEY);
         const char *c = v && *v ? v : config_get("light_intensity");
         value_light_intensity = c && *c ? (float)atof(c) : 1.48f;
         if (value_light_intensity <= 0.0f || value_light_intensity > 8.0f) value_light_intensity = 1.48f;
@@ -104,11 +106,12 @@ const SpriteChain *opt_sprite_chain(void)
     if (!chain_read) {
         chain_read = 1;
         spritechain_clear(&chain);
-        const char *v = getenv("LF2_SPRITE_PASSES");
+        const char *v = lf2_environment_get(LF2_ENV_SPRITE_PASSES);
         const char *spec = v && *v ? v : config_get("sprite_passes");
         char err[128];
         if (spec && !spritechain_parse(spec, &chain, err, sizeof err)) {
-            fprintf(stderr, "sprite passes: %s in \"%s\"; no sampling chain is in effect\n", err, spec);
+            lf2_log_writef(LF2_LOG_INFO, "options", "sprite passes: %s in \"%s\"; no sampling chain is in effect\n",
+                           err, spec);
             spritechain_clear(&chain);
         }
     }

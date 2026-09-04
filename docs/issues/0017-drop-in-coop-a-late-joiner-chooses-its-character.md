@@ -53,7 +53,7 @@ walked while its player chose would be acting on both readings of one press.
 
 ### VERIFIED end to end
 
-One scripted run (tools/routes/coop_select_test.sh, and scratch/logs/select3.log):
+One scripted run (the recorded coop_select runtime scenario, and scratch/logs/select3.log):
 
   - 23 playable characters read from the game's own registry
   - flash: gate down and up on an 8-frame period, 17 cycles before lock-in

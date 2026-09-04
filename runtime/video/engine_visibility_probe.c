@@ -1,4 +1,6 @@
 /* Real-GPU visibility check for the engine's painter-depth and character-mask contract. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "engine_visibility_probe.h"
 
 #include <SDL3/SDL.h>
@@ -32,8 +34,8 @@ static void make_art(void)
     }
 }
 
-static EngineQuad textured_quad(const uint32_t *pixels, float x, float y, float w, float h,
-                                int character, int caster, float ground_y)
+static EngineQuad textured_quad(const uint32_t *pixels, float x, float y, float w, float h, int character, int caster,
+                                float ground_y)
 {
     EngineQuad q;
     SDL_zero(q);
@@ -55,14 +57,15 @@ static EngineQuad textured_quad(const uint32_t *pixels, float x, float y, float 
     return q;
 }
 
-static int read_samples(SDL_Renderer *renderer, SDL_Texture *frame, int width, int height,
-                        const int *xy, int count, uint32_t *rgb)
+static int read_samples(SDL_Renderer *renderer, SDL_Texture *frame, int width, int height, const int *xy, int count,
+                        uint32_t *rgb)
 {
     SDL_Texture *previous = SDL_GetRenderTarget(renderer);
     SDL_Texture *read_target =
         SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, width, height);
     if (!read_target) {
-        fprintf(stderr, "visibility probe: could not create readback target: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine_visibility_probe",
+                       "visibility probe: could not create readback target: %s\n", SDL_GetError());
         return 0;
     }
 
@@ -79,22 +82,24 @@ static int read_samples(SDL_Renderer *renderer, SDL_Texture *frame, int width, i
     SDL_SetRenderTarget(renderer, previous);
 
     if (!surface) {
-        fprintf(stderr, "visibility probe: output readback failed: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine_visibility_probe", "visibility probe: output readback failed: %s\n",
+                       SDL_GetError());
         SDL_DestroyTexture(read_target);
         return 0;
     }
     SDL_Surface *argb =
         surface->format == SDL_PIXELFORMAT_ARGB8888 ? surface : SDL_ConvertSurface(surface, SDL_PIXELFORMAT_ARGB8888);
     if (!argb) {
-        fprintf(stderr, "visibility probe: output conversion failed: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine_visibility_probe", "visibility probe: output conversion failed: %s\n",
+                       SDL_GetError());
         SDL_DestroySurface(surface);
         SDL_DestroyTexture(read_target);
         return 0;
     }
 
     for (int i = 0; i < count; i++) {
-        const uint32_t *row = (const uint32_t *)((const uint8_t *)argb->pixels +
-                                                 (size_t)xy[i * 2 + 1] * (size_t)argb->pitch);
+        const uint32_t *row =
+            (const uint32_t *)((const uint8_t *)argb->pixels + (size_t)xy[i * 2 + 1] * (size_t)argb->pitch);
         rgb[i] = row[xy[i * 2]] & 0x00ffffffu;
     }
     if (argb != surface) SDL_DestroySurface(argb);
@@ -103,7 +108,10 @@ static int read_samples(SDL_Renderer *renderer, SDL_Texture *frame, int width, i
     return 1;
 }
 
-static int channel(uint32_t rgb, int shift) { return (int)((rgb >> shift) & 0xffu); }
+static int channel(uint32_t rgb, int shift)
+{
+    return (int)((rgb >> shift) & 0xffu);
+}
 
 static int near_rgb(uint32_t actual, uint32_t expected, int tolerance)
 {
@@ -112,7 +120,10 @@ static int near_rgb(uint32_t actual, uint32_t expected, int tolerance)
     return 1;
 }
 
-static int mask_on(uint32_t rgb) { return channel(rgb, 16) >= 240; }
+static int mask_on(uint32_t rgb)
+{
+    return channel(rgb, 16) >= 240;
+}
 
 static int arm_passes(const char *arm, const uint32_t *rgb)
 {
@@ -140,14 +151,14 @@ static int arm_passes(const char *arm, const uint32_t *rgb)
 
 void engine_visibility_probe_run(SDL_Renderer *renderer)
 {
-    const char *arm = getenv("LF2_VISIBILITY_PROBE");
+    const char *arm = lf2_environment_get(LF2_ENV_VISIBILITY_PROBE);
     if (!arm || !*arm) return;
     const int shadow_arm = strncmp(arm, "shadow-", 7) == 0;
     if (strcmp(arm, "unlit") != 0 && strcmp(arm, "chars") != 0 && strcmp(arm, "chars-reversed") != 0 &&
         strcmp(arm, "lit") != 0 && strcmp(arm, "shadow-carried") != 0 && strcmp(arm, "shadow-fighter-only") != 0 &&
         strcmp(arm, "shadow-occluded") != 0 && strcmp(arm, "shadow-occluded-reversed") != 0 &&
         strcmp(arm, "shadow-self-lequal") != 0) {
-        fprintf(stderr, "visibility probe: FAIL unknown arm '%s'\n", arm);
+        lf2_log_writef(LF2_LOG_INFO, "engine_visibility_probe", "visibility probe: FAIL unknown arm '%s'\n", arm);
         return;
     }
 
@@ -192,9 +203,11 @@ void engine_visibility_probe_run(SDL_Renderer *renderer)
     const int count =
         strncmp(arm, "shadow-occluded", 15) == 0 || strcmp(arm, "shadow-self-lequal") == 0 ? 4 : (shadow_arm ? 3 : 2);
     if (!frame || !read_samples(renderer, frame, PROBE_W, PROBE_H, xy, count, rgb)) {
-        fprintf(stderr, "visibility probe: FAIL arm=%s no rendered readback\n", arm);
+        lf2_log_writef(LF2_LOG_INFO, "engine_visibility_probe", "visibility probe: FAIL arm=%s no rendered readback\n",
+                       arm);
         return;
     }
-    fprintf(stderr, "visibility probe: %s arm=%s left=#%06x right=#%06x third=#%06x fourth=#%06x\n",
-            arm_passes(arm, rgb) ? "PASS" : "FAIL", arm, rgb[0], rgb[1], rgb[2], rgb[3]);
+    lf2_log_writef(LF2_LOG_INFO, "engine_visibility_probe",
+                   "visibility probe: %s arm=%s left=#%06x right=#%06x third=#%06x fourth=#%06x\n",
+                   arm_passes(arm, rgb) ? "PASS" : "FAIL", arm, rgb[0], rgb[1], rgb[2], rgb[3]);
 }

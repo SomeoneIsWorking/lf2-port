@@ -23,4 +23,4 @@ a machine whose gpu backend reports device=no (an SDL build without the GPU rend
 
 ## Re-confirmed 2026-08-21
 
-After the renderer changes, ./run.sh brought the Vulkan engine up on SDL_GetGPURendererDevice and tools/e2e.py render completed every GPU/engine arm headlessly.
+After the renderer changes, `./run.sh` brought the Vulkan engine up on SDL_GetGPURendererDevice and the recorded renderer comparison completed every GPU/engine arm headlessly.

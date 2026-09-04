@@ -6,9 +6,9 @@ and `c++` are used. Maintainers select Clang in their invocation rather than
 encoding that policy into the project. A build directory is refused only
 when it was configured with a DIFFERENT compiler than this invocation would
 use -- reusing one cache across toolchains corrupts the build, which is a
-hygiene rule about the cache, not a ban on any compiler. The project target is
-RelWithDebInfo: the generated guest code must be optimized, while retaining
-symbols for crash reports and reverse-engineering probes.
+hygiene rule about the cache, not a ban on any compiler. RelWithDebInfo keeps
+symbols for JIT crash reports and reverse-engineering
+probes while optimizing the native host.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+
+from source_dependencies import DependencyError, resolve_runtime_dependencies
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +60,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build" / "clang")
     parser.add_argument("--configure-only", action="store_true")
+    parser.add_argument(
+        "--refresh-dependencies",
+        action="store_true",
+        help="replace only build/deps runtime checkouts with clean pinned clones",
+    )
     args = parser.parse_args()
     build = args.build_dir.resolve()
 
@@ -86,6 +93,17 @@ def main() -> int:
             "build directory (--build-dir) or keep CC/CXX stable."
         )
 
+    try:
+        dependencies = resolve_runtime_dependencies(
+            ROOT, refresh=args.refresh_dependencies
+        )
+    except DependencyError as error:
+        raise SystemExit(f"runtime dependencies: {error}") from error
+    print(
+        "runtime dependencies: 2 exact clean pins; "
+        f"x86port={dependencies['x86port']} jit-common={dependencies['jit-common']}"
+    )
+
     subprocess.run(
         [
             "cmake",
@@ -97,6 +115,8 @@ def main() -> int:
             f"-DCMAKE_CXX_COMPILER={cxx}",
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
             "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+            f"-DX86PORT_DIR={dependencies['x86port']}",
+            f"-DX86PORT_JITCOMMON_DIR={dependencies['jit-common']}",
         ],
         cwd=ROOT,
         check=True,

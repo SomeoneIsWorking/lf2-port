@@ -1,5 +1,7 @@
+#include "lf2_log.h"
+#include "environment.h"
 #include "com.h"
-#include "guest_ops.h"
+#include "guest.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,7 +13,11 @@ int com_cur_iface, com_cur_method;
  * forty characters with several sheets each, so 512 ran out mid-load. The table is only
  * pointers; the surfaces themselves live in guest memory. */
 enum { MAX_OBJECTS = 8192 };
-static struct { uint32_t self; void *host; int iface; } objects[MAX_OBJECTS];
+static struct {
+    uint32_t self;
+    void *host;
+    int iface;
+} objects[MAX_OBJECTS];
 static int nobjects;
 
 static uint32_t vtable_addr[IF_COUNT];
@@ -35,14 +41,16 @@ void com_init(void)
         if (!n) continue;
         vtable_addr[i] = arena_alloc((uint32_t)n * 4);
         for (int m = 0; m < n; m++)
-            ST32(vtable_addr[i] + (uint32_t)m * 4,
-                 COM_SENTINEL | ((uint32_t)i << 8) | (uint32_t)m);
+            ST32(vtable_addr[i] + (uint32_t)m * 4, COM_SENTINEL | ((uint32_t)i << 8) | (uint32_t)m);
     }
 }
 
 uint32_t com_create(int iface, void *host)
 {
-    if (nobjects >= MAX_OBJECTS) { fprintf(stderr, "too many COM objects\n"); abort(); }
+    if (nobjects >= MAX_OBJECTS) {
+        lf2_log_writef(LF2_LOG_INFO, "com", "too many COM objects\n");
+        abort();
+    }
     uint32_t self = arena_alloc(8);
     ST32(self, vtable_addr[iface]);
     ST32(self + 4, (uint32_t)nobjects);
@@ -50,10 +58,9 @@ uint32_t com_create(int iface, void *host)
     objects[nobjects].host = host;
     objects[nobjects].iface = iface;
     nobjects++;
-    if (getenv("LF2_COM_TRACE"))
-        fprintf(stderr, "com_create #%d %s -> %08x (vtbl %08x)\n",
-                nobjects - 1, com_class[iface].name ? com_class[iface].name : "?",
-                self, vtable_addr[iface]);
+    if (lf2_environment_get(LF2_ENV_COM_TRACE))
+        lf2_log_writef(LF2_LOG_INFO, "com", "com_create #%d %s -> %08x (vtbl %08x)\n", nobjects - 1,
+                       com_class[iface].name ? com_class[iface].name : "?", self, vtable_addr[iface]);
     return self;
 }
 
@@ -66,7 +73,7 @@ void *com_host(uint32_t self)
 void com_ret(int nargs, uint32_t hresult)
 {
     R(EAX) = hresult;
-    R(ESP) += 4 + 4u * (unsigned)nargs;   /* stdcall: callee pops, `this` included */
+    R(ESP) += 4 + 4u * (unsigned)nargs; /* stdcall: callee pops, `this` included */
 }
 
 /* Method 2 of every interface is IUnknown::Release. Counting calls per interface answers
@@ -76,13 +83,16 @@ long com_releases[IF_COUNT];
 
 void com_release_report(void)
 {
-    fprintf(stderr, "com releases:");
+    lf2_log_writef(LF2_LOG_INFO, "com", "com releases:");
     int any = 0;
     for (int i = 0; i < IF_COUNT; i++)
-        if (com_releases[i]) { fprintf(stderr, " %s=%ld",
-                com_class[i].name ? com_class[i].name : "?", com_releases[i]); any = 1; }
-    if (!any) fprintf(stderr, " none -- nothing is ever released");
-    fprintf(stderr, "\n");
+        if (com_releases[i]) {
+            lf2_log_writef(LF2_LOG_INFO, "com", " %s=%ld", com_class[i].name ? com_class[i].name : "?",
+                           com_releases[i]);
+            any = 1;
+        }
+    if (!any) lf2_log_writef(LF2_LOG_INFO, "com", " none -- nothing is ever released");
+    lf2_log_writef(LF2_LOG_INFO, "com", "\n");
 }
 
 void com_call(uint32_t sentinel)
@@ -90,17 +100,18 @@ void com_call(uint32_t sentinel)
     const int iface = (int)((sentinel >> 8) & 0xff);
     const int m = (int)(sentinel & 0xff);
     if (iface >= IF_COUNT || m >= com_class[iface].nmethods || !com_class[iface].method[m]) {
-        fprintf(stderr, "unimplemented COM method %s::[%d]\n",
-                iface < IF_COUNT && com_class[iface].name ? com_class[iface].name : "?", m);
+        lf2_log_writef(LF2_LOG_INFO, "com", "unimplemented COM method %s::[%d]\n",
+                       iface < IF_COUNT && com_class[iface].name ? com_class[iface].name : "?", m);
         abort();
     }
-    if (getenv("LF2_COM_TRACE"))
-    {
+    if (lf2_environment_get(LF2_ENV_COM_TRACE)) {
         const char *mn = com_class[iface].mname[m];
-        if (mn) fprintf(stderr, "TRACE %s::%s this=%08x\n", com_class[iface].name, mn, LD32(R(ESP) + 4));
-        else    fprintf(stderr, "TRACE %s::[%d]\n", com_class[iface].name, m);
+        if (mn)
+            lf2_log_writef(LF2_LOG_INFO, "com", "TRACE %s::%s this=%08x\n", com_class[iface].name, mn,
+                           LD32(R(ESP) + 4));
+        else lf2_log_writef(LF2_LOG_INFO, "com", "TRACE %s::[%d]\n", com_class[iface].name, m);
     }
-    if (m == 2) com_releases[iface]++;          /* IUnknown::Release */
+    if (m == 2) com_releases[iface]++; /* IUnknown::Release */
     com_cur_iface = iface;
     com_cur_method = m;
     const uint32_t self = LD32(R(ESP) + 4);
@@ -110,7 +121,7 @@ void com_call(uint32_t sentinel)
 uint32_t guest_call(uint32_t addr, const uint32_t *args, int nargs)
 {
     for (int i = nargs - 1; i >= 0; i--) PUSH32(args[i]);
-    PUSH32(0xDEAD0000u);            /* return address the guest's RET will pop */
+    PUSH32(0xDEAD0000u); /* return address the guest's RET will pop */
     dispatch(addr);
     return R(EAX);
 }

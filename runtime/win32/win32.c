@@ -1,6 +1,8 @@
 /* USER32 / GDI32 / ole32 / shell, on SDL3. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "com.h"
-#include "guest_ops.h"
+#include "guest.h"
 #include "hostwin.h"
 #include "keyboard.h"
 #include "touch_input.h"
@@ -119,24 +121,25 @@ static void h_RegisterClassA(void)
  * for. */
 static void apply_initial_window_size(void)
 {
-    const char *spec = getenv("LF2_WINDOW_SIZE");
+    const char *spec = lf2_environment_get(LF2_ENV_WINDOW_SIZE);
     if (!spec) return;
     int w = 0, h = 0;
     if (sscanf(spec, "%dx%d", &w, &h) != 2 || w < 320 || w > 8192 || h < 200 || h > 8192) {
-        fprintf(stderr,
-                "LF2_WINDOW_SIZE=\"%s\" is not <w>x<h> with w in 320..8192 and h in "
-                "200..8192; the window keeps the %dx%d the game asked for\n",
-                spec, hw.win_w, hw.win_h);
+        lf2_log_writef(LF2_LOG_INFO, "win32",
+                       "LF2_WINDOW_SIZE=\"%s\" is not <w>x<h> with w in 320..8192 and h in "
+                       "200..8192; the window keeps the %dx%d the game asked for\n",
+                       spec, hw.win_w, hw.win_h);
         return;
     }
-    fprintf(stderr, "window: starting at %dx%d (the game asked for %dx%d)\n", w, h, hw.win_w, hw.win_h);
+    lf2_log_writef(LF2_LOG_INFO, "win32", "window: starting at %dx%d (the game asked for %dx%d)\n", w, h, hw.win_w,
+                   hw.win_h);
     hw.win_w = w;
     hw.win_h = h;
 }
 
 static void apply_window_mode(void)
 {
-    const char *mode = getenv("LF2_WINDOW");
+    const char *mode = lf2_environment_get(LF2_ENV_WINDOW);
     if (!mode) mode = "windowed";
 
     if (strcmp(mode, "borderless") == 0) {
@@ -145,10 +148,10 @@ static void apply_window_mode(void)
         SDL_SetWindowBordered(hw.window, false);
         SDL_SetWindowFullscreen(hw.window, true);
     } else if (strcmp(mode, "windowed") != 0) {
-        fprintf(stderr,
-                "LF2_WINDOW: unknown mode \"%s\" "
-                "(windowed, borderless, fullscreen)\n",
-                mode);
+        lf2_log_writef(LF2_LOG_INFO, "win32",
+                       "LF2_WINDOW: unknown mode \"%s\" "
+                       "(windowed, borderless, fullscreen)\n",
+                       mode);
     }
 }
 
@@ -171,7 +174,7 @@ static void h_CreateWindowExA(void)
     window_policy_prepare();
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "win32", "SDL_Init: %s\n", SDL_GetError());
         abort();
     }
     /* HIGH_PIXEL_DENSITY, or the panel is never reached (issue #56). SDL sizes a window in
@@ -191,7 +194,7 @@ static void h_CreateWindowExA(void)
     hw.window =
         SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!hw.window) {
-        fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "win32", "SDL_CreateWindow: %s\n", SDL_GetError());
         abort();
     }
 #ifdef __ANDROID__
@@ -200,7 +203,7 @@ static void h_CreateWindowExA(void)
      * write, while the game owns a real native window. */
     if (!android_bridge_enforce_window_policy()) abort();
 #endif
-    fprintf(stderr, "startup: window created visible\n");
+    lf2_log_writef(LF2_LOG_INFO, "win32", "startup: window created visible\n");
     /* THE GPU RENDERER BY NAME, not whichever SDL picks. SDL's default order puts the
      * OpenGL backend first, and that one has no SDL_GPUDevice -- so SDL_GPURenderState, and
      * with it every shader the HD2D pass is made of, is simply unavailable on it. The
@@ -212,15 +215,15 @@ static void h_CreateWindowExA(void)
      * engine_init reports that the lighting cannot run rather than pretending it did. */
     hw.renderer = SDL_CreateRenderer(hw.window, SDL_GPU_RENDERER);
     if (!hw.renderer) {
-        fprintf(stderr,
-                "video: the '%s' renderer is unavailable (%s) -- falling back to "
-                "SDL's choice. The HD2D pass needs a GPU device and will report "
-                "itself off.\n",
-                SDL_GPU_RENDERER, SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "win32",
+                       "video: the '%s' renderer is unavailable (%s) -- falling back to "
+                       "SDL's choice. The HD2D pass needs a GPU device and will report "
+                       "itself off.\n",
+                       SDL_GPU_RENDERER, SDL_GetError());
         hw.renderer = SDL_CreateRenderer(hw.window, NULL);
     }
     if (!hw.renderer) {
-        fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "win32", "SDL_CreateRenderer: %s\n", SDL_GetError());
         abort();
     }
     render_init(hw.renderer);
@@ -238,10 +241,11 @@ static void h_CreateWindowExA(void)
             pw = hw.win_w;
             ph = hw.win_h;
         }
-        fprintf(stderr, "window: %dx%d points -> %dx%d pixels (display scale %.2f)%s\n", hw.win_w, hw.win_h, pw, ph,
-                (double)SDL_GetWindowPixelDensity(hw.window),
-                (pw == hw.win_w && ph == hw.win_h) ? " -- unscaled, so this run says nothing about HiDPI"
-                                                   : " -- a SCALED display: the frame is composed at the pixel size");
+        lf2_log_writef(LF2_LOG_INFO, "win32", "window: %dx%d points -> %dx%d pixels (display scale %.2f)%s\n", hw.win_w,
+                       hw.win_h, pw, ph, (double)SDL_GetWindowPixelDensity(hw.window),
+                       (pw == hw.win_w && ph == hw.win_h)
+                           ? " -- unscaled, so this run says nothing about HiDPI"
+                           : " -- a SCALED display: the frame is composed at the pixel size");
         hostwin_window_geometry(pw, ph);
     }
     apply_window_mode();
@@ -253,7 +257,8 @@ static void h_CreateWindowExA(void)
 static void h_GetClientRect(void)
 {
     uint32_t r = ARG(1);
-    if (getenv("LF2_BLT_DEBUG")) fprintf(stderr, "GetClientRect -> %08x (%dx%d)\n", r, hw.width, hw.height);
+    if (lf2_environment_get(LF2_ENV_BLT_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "win32", "GetClientRect -> %08x (%dx%d)\n", r, hw.width, hw.height);
     ST32(r, 0);
     ST32(r + 4, 0);
     ST32(r + 8, (uint32_t)hw.width);
@@ -302,22 +307,22 @@ static void pump_scripted_resize(void)
 {
     if (resize_n < 0) {
         resize_n = 0;
-        const char *spec = getenv("LF2_WINDOW_RESIZE");
+        const char *spec = lf2_environment_get(LF2_ENV_WINDOW_RESIZE);
         for (const char *c = spec; c && *c;) {
             long f = 0;
             int w = 0, h = 0, used = 0;
             if (sscanf(c, "%ld:%dx%d%n", &f, &w, &h, &used) < 3 || w <= 0 || h <= 0) {
-                fprintf(stderr,
-                        "LF2_WINDOW_RESIZE: \"%s\" is not <frame>:<w>x<h>; the rest "
-                        "of the script is IGNORED and no resize will happen there\n",
-                        c);
+                lf2_log_writef(LF2_LOG_INFO, "win32",
+                               "LF2_WINDOW_RESIZE: \"%s\" is not <frame>:<w>x<h>; the rest "
+                               "of the script is IGNORED and no resize will happen there\n",
+                               c);
                 break;
             }
             if (resize_n >= RESIZE_MAX) {
-                fprintf(stderr,
-                        "LF2_WINDOW_RESIZE: more than %d steps; \"%s\" and anything "
-                        "after it are IGNORED\n",
-                        RESIZE_MAX, c);
+                lf2_log_writef(LF2_LOG_INFO, "win32",
+                               "LF2_WINDOW_RESIZE: more than %d steps; \"%s\" and anything "
+                               "after it are IGNORED\n",
+                               RESIZE_MAX, c);
                 break;
             }
             resizes[resize_n].frame = f;
@@ -327,14 +332,14 @@ static void pump_scripted_resize(void)
             c += used;
             while (*c == ',' || *c == ' ') c++;
         }
-        if (resize_n) fprintf(stderr, "window resize script: %d step(s)\n", resize_n);
+        if (resize_n) lf2_log_writef(LF2_LOG_INFO, "win32", "window resize script: %d step(s)\n", resize_n);
     }
     const long f = hostwin_frames();
     for (int i = 0; i < resize_n; i++) {
         if (resizes[i].fired || f < resizes[i].frame) continue;
         resizes[i].fired = 1;
-        fprintf(stderr, "window resize script: frame %ld (asked for %ld) -- %dx%d\n", f, resizes[i].frame, resizes[i].w,
-                resizes[i].h);
+        lf2_log_writef(LF2_LOG_INFO, "win32", "window resize script: frame %ld (asked for %ld) -- %dx%d\n", f,
+                       resizes[i].frame, resizes[i].w, resizes[i].h);
         if (hw.window) SDL_SetWindowSize(hw.window, resizes[i].w, resizes[i].h);
         hostwin_window_geometry(resizes[i].w, resizes[i].h);
     }
@@ -344,10 +349,10 @@ void window_resize_report(void)
 {
     for (int i = 0; i < resize_n; i++)
         if (!resizes[i].fired)
-            fprintf(stderr,
-                    "window resize script: step %d (frame %ld -> %dx%d) NEVER FIRED "
-                    "-- the run ended at frame %ld\n",
-                    i, resizes[i].frame, resizes[i].w, resizes[i].h, hostwin_frames());
+            lf2_log_writef(LF2_LOG_INFO, "win32",
+                           "window resize script: step %d (frame %ld -> %dx%d) NEVER FIRED "
+                           "-- the run ended at frame %ld\n",
+                           i, resizes[i].frame, resizes[i].w, resizes[i].h, hostwin_frames());
 }
 
 static void pump_autoclick(void)
@@ -405,8 +410,9 @@ static void pump_autokey_messages(void)
         const uint8_t now = input_script_key_down(vk) ? 1 : 0;
         if (now == was_down[vk]) continue;
         was_down[vk] = now;
-        if (env_flag("LF2_MSG_DEBUG", &msg_debug))
-            fprintf(stderr, "autokey vk=%02x %s (pump %u)\n", vk, now ? "down" : "up", autokey_pumps);
+        if (env_flag(LF2_ENV_MSG_DEBUG, &msg_debug))
+            lf2_log_writef(LF2_LOG_INFO, "win32", "autokey vk=%02x %s (pump %u)\n", vk, now ? "down" : "up",
+                           autokey_pumps);
         push_message(now ? WM_KEYDOWN_FWD : WM_KEYUP_FWD, vk, 1);
     }
 }
@@ -471,16 +477,16 @@ void hostwin_pump(void)
     {
         static long qa_frames = -2; /* -2 unread, -1 unset */
         if (qa_frames == -2) {
-            const char *qa = getenv("LF2_QUIT_AFTER");
+            const char *qa = lf2_environment_get(LF2_ENV_QUIT_AFTER);
             qa_frames = qa ? strtol(qa, NULL, 10) : -1;
         }
         if (qa_frames >= 0 && hostwin_frames() >= qa_frames) quit_posted = 1;
     }
 
     static int keydbg = -1;
-    if (env_flag("LF2_KEY_DEBUG", &keydbg)) {
+    if (env_flag(LF2_ENV_KEY_DEBUG, &keydbg)) {
         static int pumps;
-        if (pumps == 0 && getenv("LF2_KEY_DEBUG_SELFTEST")) keydebug_selftest();
+        if (pumps == 0 && lf2_environment_get(LF2_ENV_KEY_DEBUG_SELFTEST)) keydebug_selftest();
         if (++pumps == 400) keydebug_report();
     }
 
@@ -501,9 +507,9 @@ void hostwin_pump(void)
             key_msg = e.type == SDL_EVENT_KEY_DOWN ? WM_KEYDOWN_FWD : WM_KEYUP_FWD;
             key_vk = keyboard_vk_from_scancode(e.key.scancode);
             if (key_vk) keyboard_note(key_vk, key_msg == WM_KEYDOWN_FWD);
-            if (env_flag("LF2_RMLUI_DEBUG", &rmlui_debug))
-                fprintf(stderr, "rmlui physical key: vk=%02x %s\n", key_vk,
-                        e.type == SDL_EVENT_KEY_DOWN ? "down" : "up");
+            if (env_flag(LF2_ENV_RMLUI_DEBUG, &rmlui_debug))
+                lf2_log_writef(LF2_LOG_INFO, "win32", "rmlui physical key: vk=%02x %s\n", key_vk,
+                               e.type == SDL_EVENT_KEY_DOWN ? "down" : "up");
         }
         gamepad_handle_event(&e); /* controllers may come and go at any time */
         touch_input_note_controller_event(&e);
@@ -660,12 +666,13 @@ static void h_PeekMessageA(void)
 {
     hostwin_pump();
     static int msg_debug = -1;
-    if (env_flag("LF2_MSG_DEBUG", &msg_debug)) {
+    if (env_flag(LF2_ENV_MSG_DEBUG, &msg_debug)) {
         static uint8_t seen[8];
         const uint32_t f = ARG(4) & 7;
         if (!seen[f]) {
             seen[f] = 1;
-            fprintf(stderr, "PeekMessage flags=%u hwnd=%08x filter=%u..%u\n", ARG(4), ARG(1), ARG(2), ARG(3));
+            lf2_log_writef(LF2_LOG_INFO, "win32", "PeekMessage flags=%u hwnd=%08x filter=%u..%u\n", ARG(4), ARG(1),
+                           ARG(2), ARG(3));
         }
     }
     if (quit_posted) {
@@ -684,9 +691,9 @@ static void h_GetMessageA(void)
 {
     hostwin_pump();
     static int msg_debug = -1;
-    if (env_flag("LF2_MSG_DEBUG", &msg_debug)) {
+    if (env_flag(LF2_ENV_MSG_DEBUG, &msg_debug)) {
         static long n;
-        if (++n % 500 == 1) fprintf(stderr, "GetMessage call #%ld\n", n);
+        if (++n % 500 == 1) lf2_log_writef(LF2_LOG_INFO, "win32", "GetMessage call #%ld\n", n);
     }
     if (quit_posted) {
         fill_msg(ARG(0), WM_QUIT);
@@ -709,9 +716,9 @@ static void h_DispatchMessageA(void)
     const uint32_t p = ARG(0);
     const uint32_t msg = LD32(p + 4);
     static int msg_debug = -1;
-    if (env_flag("LF2_MSG_DEBUG", &msg_debug))
-        fprintf(stderr, "dispatch msg=%04x wparam=%08x lparam=%08x wndproc=%08x\n", msg, LD32(p + 8), LD32(p + 12),
-                hw.wndproc);
+    if (env_flag(LF2_ENV_MSG_DEBUG, &msg_debug))
+        lf2_log_writef(LF2_LOG_INFO, "win32", "dispatch msg=%04x wparam=%08x lparam=%08x wndproc=%08x\n", msg,
+                       LD32(p + 8), LD32(p + 12), hw.wndproc);
     if (msg && hw.wndproc) {
         const uint32_t args[4] = {LD32(p), msg, LD32(p + 8), LD32(p + 12)};
         guest_call(hw.wndproc, args, 4);
@@ -786,10 +793,10 @@ static void keydebug_note(unsigned vk)
     if (cur[vk]) { /* repeat => sweep ended */
         sweeps++;
         if (!have_prev || memcmp(cur, prev, sizeof cur) != 0) {
-            fprintf(stderr, "poll set changed (sweep %d):", sweeps);
+            lf2_log_writef(LF2_LOG_INFO, "win32", "poll set changed (sweep %d):", sweeps);
             for (int i = 0; i < 256; i++)
-                if (cur[i]) fprintf(stderr, " %02x", i);
-            fprintf(stderr, "\n");
+                if (cur[i]) lf2_log_writef(LF2_LOG_INFO, "win32", " %02x", i);
+            lf2_log_writef(LF2_LOG_INFO, "win32", "\n");
             memcpy(prev, cur, sizeof cur);
             have_prev = 1;
         }
@@ -803,12 +810,12 @@ static void keydebug_note(unsigned vk)
  * which must produce exactly two "poll set changed" lines. */
 static void keydebug_selftest(void)
 {
-    fprintf(stderr, "LF2_KEY_DEBUG selftest: expect 2 'poll set changed' lines\n");
+    lf2_log_writef(LF2_LOG_INFO, "win32", "LF2_KEY_DEBUG selftest: expect 2 'poll set changed' lines\n");
     const unsigned a[] = {0x0d, 0x20, 0x0d};       /* sweep 1, then repeat */
     const unsigned b[] = {0x68, 0x57, 0x49, 0x68}; /* different set */
     for (unsigned i = 0; i < 3; i++) keydebug_note(a[i]);
     for (unsigned i = 0; i < 4; i++) keydebug_note(b[i]);
-    fprintf(stderr, "LF2_KEY_DEBUG selftest: done\n");
+    lf2_log_writef(LF2_LOG_INFO, "win32", "LF2_KEY_DEBUG selftest: done\n");
 }
 
 /* Called from the frame pump, not atexit: registering at exit inside the handler would
@@ -817,16 +824,16 @@ static void keydebug_selftest(void)
 static void keydebug_report(void)
 {
     if (keydebug_calls == 0)
-        fprintf(stderr, "LF2_KEY_DEBUG: the game never called GetKeyState, so this trace saw\n"
-                        "  NOTHING -- that is not evidence of no input. LF2 keeps its own key\n"
-                        "  array at 0x455378, filled from WM_KEYDOWN, and reads that instead.\n"
-                        "  To follow input, probe reads of 0x455378 rather than this import.\n");
+        lf2_log_writef(LF2_LOG_INFO, "win32",
+                       "LF2_KEY_DEBUG: the game never called GetKeyState, so this trace saw\n"
+                       "  NOTHING -- that is not evidence of no input. LF2 keeps its own key\n"
+                       "  array at 0x455378, filled from WM_KEYDOWN, and reads that instead.\n"
+                       "  To follow input, probe reads of 0x455378 rather than this import.\n");
 }
 
 /* Escape is the global RmlUi menu command. While its document is visible, all physical input
  * belongs to that document and must read as released to the guest; otherwise a front-end menu
- * moves behind the modal UI. This is Dusklight's input-block ownership applied at LF2's
- * Win32 boundary. */
+ * moves behind the modal UI. LF2 owns this policy at its Win32 boundary. */
 static int port_owns_key(uint32_t vk)
 {
     return vk == 0x1B || rmlui_active();
@@ -836,7 +843,7 @@ static void h_GetKeyState(void)
 {
     hostwin_pump();
     static int key_debug = -1;
-    if (env_flag("LF2_KEY_DEBUG", &key_debug)) keydebug_note(ARG(0) & 0xff);
+    if (env_flag(LF2_ENV_KEY_DEBUG, &key_debug)) keydebug_note(ARG(0) & 0xff);
     if (port_owns_key(ARG(0))) {
         ret_stdcall(1, 0);
         return;
@@ -865,8 +872,8 @@ static void h_GetKeyState(void)
 static void h_MessageBoxA(void)
 {
     /* Logged rather than shown: a modal dialog blocks the run and tells us nothing. */
-    fprintf(stderr, "[MessageBox] %s | %s\n", ARG(2) ? (const char *)(g_mem + ARG(2)) : "",
-            ARG(1) ? (const char *)(g_mem + ARG(1)) : "");
+    lf2_log_writef(LF2_LOG_INFO, "win32", "[MessageBox] %s | %s\n", ARG(2) ? (const char *)(g_mem + ARG(2)) : "",
+                   ARG(1) ? (const char *)(g_mem + ARG(1)) : "");
     ret_stdcall(4, 1);
 }
 
@@ -906,8 +913,9 @@ static void h_SetRect(void)
 }
 static void h_ClientToScreen(void)
 {
-    if (getenv("LF2_BLT_DEBUG"))
-        fprintf(stderr, "ClientToScreen pt=%08x (%d,%d)\n", ARG(1), (int)LD32(ARG(1)), (int)LD32(ARG(1) + 4));
+    if (lf2_environment_get(LF2_ENV_BLT_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "win32", "ClientToScreen pt=%08x (%d,%d)\n", ARG(1), (int)LD32(ARG(1)),
+                       (int)LD32(ARG(1) + 4));
     ret_stdcall(2, 1);
 }
 

@@ -2,7 +2,7 @@
 id: 18
 title: two_human_match's scripted route no longer reaches the match on this machine -- the test fails at HEAD too
 status: resolved
-symptom: tools/e2e.sh two_human_match fails both arms with 'no live fighter at object index 1'; coop_dropin and coop_select on the same build pass
+symptom: tools/e2e.py two_human_match fails both arms with 'no live fighter at object index 1'; coop_dropin and coop_select on the same build pass
 tags: test,flaky,timing,coop,two-player
 created: 2026-08-05
 updated: 2026-08-06
@@ -49,7 +49,7 @@ presents, so a busier machine should just take longer to REACH frame 2300, not b
 different screen when it gets there. The data load presents while it works. Under
 contention it gets through fewer presents for the same loading work, so the load finishes
 EARLIER in frame terms and the whole route shifts relative to the script.
-tools/routes/coop_dropin_test.sh already says this in passing ("the data load does not take a fixed
+the recorded coop_dropin runtime scenario already says this in passing ("the data load does not take a fixed
 number of frames"); what is new is that the variable behind it is OTHER PROCESSES, so a
 run's result depends on what else the machine happens to be doing.
 

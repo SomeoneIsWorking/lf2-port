@@ -14,7 +14,7 @@ Normal LF2 boot reaches the post-load mode menu without presenting the retired f
 
 ## Evidence
 
-tools/e2e.sh smoke: first script-visible screen modemenu; startup logs both direct guest transition and post-load presentation; 3 transitions and clean match/exit. runtime/app/startup.c invokes boot_guest_enter_loader before the blocking front-end body and ddraw.c suppresses presentation until top mode 2.
+tools/e2e.py smoke: first script-visible screen modemenu; startup logs both direct guest transition and post-load presentation; 3 transitions and clean match/exit. runtime/app/startup.c invokes boot_guest_enter_loader before the blocking front-end body and ddraw.c suppresses presentation until top mode 2.
 
 ## What would falsify it
 

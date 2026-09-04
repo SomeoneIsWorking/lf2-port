@@ -7,10 +7,12 @@
  * the slots below are re-bound live from SDL's add/remove events, so the same
  * joyGetPosEx the game already calls simply starts reporting the new device.
  */
-#include "guest_ops.h"
+#include "lf2_log.h"
+#include "guest.h"
 #include "gamepad.h"
 #include "script.h"
 #include "bindings.h"
+#include "environment.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -20,8 +22,8 @@
 
 enum { JOYERR_NOERROR = 0, JOYERR_UNPLUGGED = 167 };
 
-static const char *const VIRTUAL_PAD_VARS[GAMEPAD_MAX_DEVICES] = {"LF2_VIRTUAL_PAD", "LF2_VIRTUAL_PAD2",
-                                                                  "LF2_VIRTUAL_PAD3", "LF2_VIRTUAL_PAD4"};
+static const Lf2EnvironmentKey VIRTUAL_PAD_VARS[GAMEPAD_MAX_DEVICES] = {LF2_ENV_VIRTUAL_PAD, LF2_ENV_VIRTUAL_PAD2,
+                                                                        LF2_ENV_VIRTUAL_PAD3, LF2_ENV_VIRTUAL_PAD4};
 
 /* winmm reports axes over this range; the game scales against the min/max it is told. */
 enum { AXIS_MIN = 0, AXIS_MAX = 65535, AXIS_CENTRE = 32768 };
@@ -56,7 +58,7 @@ static void ret_stdcall(int nargs, uint32_t value)
 static int scripted_run(void)
 {
     for (int i = 0; i < GAMEPAD_MAX_DEVICES; i++)
-        if (getenv(VIRTUAL_PAD_VARS[i]) != NULL) return 1;
+        if (lf2_environment_enabled(VIRTUAL_PAD_VARS[i])) return 1;
     return 0;
 }
 
@@ -83,11 +85,11 @@ static void bind_available(void)
             if (!seen && nsaid < 8) {
                 said[nsaid++] = ids[i];
                 SDL_Gamepad *g = SDL_OpenGamepad(ids[i]);
-                fprintf(stderr,
-                        "gamepad: IGNORING physical controller \"%s\" -- this run is "
-                        "scripted (LF2_VIRTUAL_PAD), so only virtual pads bind and "
-                        "the script is not competing with hardware for slot 0\n",
-                        g && SDL_GetGamepadName(g) ? SDL_GetGamepadName(g) : "unnamed");
+                lf2_log_writef(LF2_LOG_INFO, "gamepad",
+                               "gamepad: IGNORING physical controller \"%s\" -- this run is "
+                               "scripted (LF2_VIRTUAL_PAD), so only virtual pads bind and "
+                               "the script is not competing with hardware for slot 0\n",
+                               g && SDL_GetGamepadName(g) ? SDL_GetGamepadName(g) : "unnamed");
                 if (g) SDL_CloseGamepad(g);
             }
             continue;
@@ -103,8 +105,8 @@ static void bind_available(void)
             if (!pad) break;
             slot[sl] = pad;
             slot_id[sl] = ids[i];
-            fprintf(stderr, "controller %d connected: %s\n", sl,
-                    SDL_GetGamepadName(pad) ? SDL_GetGamepadName(pad) : "unnamed");
+            lf2_log_writef(LF2_LOG_INFO, "gamepad", "controller %d connected: %s\n", sl,
+                           SDL_GetGamepadName(pad) ? SDL_GetGamepadName(pad) : "unnamed");
             break;
         }
     }
@@ -115,7 +117,7 @@ static void unbind(SDL_JoystickID id)
 {
     for (int sl = 0; sl < GAMEPAD_MAX_DEVICES; sl++) {
         if (!slot[sl] || slot_id[sl] != id) continue;
-        fprintf(stderr, "controller %d disconnected\n", sl);
+        lf2_log_writef(LF2_LOG_INFO, "gamepad", "controller %d disconnected\n", sl);
         SDL_CloseGamepad(slot[sl]);
         slot[sl] = NULL;
         slot_id[sl] = 0;
@@ -134,7 +136,7 @@ static void ensure_init(void)
     if (initialised) return;
     initialised = 1;
     if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
-        fprintf(stderr, "gamepad subsystem unavailable: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "gamepad", "gamepad subsystem unavailable: %s\n", SDL_GetError());
         return;
     }
     bind_available();
@@ -303,7 +305,7 @@ void virtual_pad_tick(long frame)
     script_observe_screens(frame);
 
     for (int i = 0; i < GAMEPAD_MAX_DEVICES; i++) {
-        const char *script = getenv(VIRTUAL_PAD_VARS[i]);
+        const char *script = lf2_environment_get(VIRTUAL_PAD_VARS[i]);
         if (!script) continue;
 
         if (!virtual_pad[i]) {
@@ -315,11 +317,12 @@ void virtual_pad_tick(long frame)
             desc.name = "lf2 virtual pad";
             virtual_id[i] = SDL_AttachVirtualJoystick(&desc);
             if (!virtual_id[i]) {
-                fprintf(stderr, "virtual pad %d: attach failed: %s\n", i, SDL_GetError());
+                lf2_log_writef(LF2_LOG_INFO, "gamepad", "virtual pad %d: attach failed: %s\n", i, SDL_GetError());
                 continue;
             }
             virtual_pad[i] = SDL_OpenJoystick(virtual_id[i]);
-            fprintf(stderr, "virtual pad %d: attached as joystick %u\n", i, (unsigned)virtual_id[i]);
+            lf2_log_writef(LF2_LOG_INFO, "gamepad", "virtual pad %d: attached as joystick %u\n", i,
+                           (unsigned)virtual_id[i]);
             continue; /* let the add event land before pressing anything */
         }
         play_script(i, virtual_pad[i], script, frame);

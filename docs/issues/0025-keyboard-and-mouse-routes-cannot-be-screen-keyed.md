@@ -48,7 +48,7 @@ aimed at the same moving target, and it is what made issue #18 look like a regre
 
 ### Note (2026-08-06)
 FOUND BY THE NEW REPORT, on the first run after the shared module went in, which is the
-argument for having built it: tools/routes/mouse_test.sh's FIRST CLICK IS DEAD.
+argument for having built it: the recorded mouse runtime scenario's FIRST CLICK IS DEAD.
 
     scripted input: screen charselect first up at frame 1352
     LF2_CLICK_SCRIPT: 5 of 5 items fired
@@ -76,13 +76,13 @@ understood: a click that works for a reason nobody has established is the same b
 ### Note (2026-08-06)
 CORRECTION and PROGRESS, 2026-08-06.
 
-CORRECTION: it is THREE routes, not four. tools/routes/widescreen_test.sh has no scripted input at
+CORRECTION: it is THREE routes, not four. the recorded widescreen runtime scenario has no scripted input at
 all -- it drives LF2_WINDOW_SIZE and LF2_WINDOW_RESIZE, whose frames land in the launcher
 before any screen exists, where a frame number is exactly the right thing. My first survey
 counted it by grepping for four-digit numbers, which is the sort of sizing-from-a-grep this
 project already has a rule against. The affected set is smoke, mouse and pause_dropout.
 
-DONE: the shared module (runtime/app/script.c, commit df3d148) and tools/routes/pause_dropout_test.sh,
+DONE: the shared module (runtime/app/script.c, commit df3d148) and the recorded pause_dropout runtime scenario,
 which is now keyed to charselect/overlay for pad one and entirely to @match for pad two --
 every one of pad two's presses is about the match, and a join landing before the match starts
 claims nothing, so the pause that follows would be a pause with no drop-out in it. Green in
@@ -110,7 +110,7 @@ derived from a route whose first input does nothing, which is how the current nu
 be off by one screen in the first place.
 
 ### Note (2026-08-06)
-CORRECTION, 2026-08-06: the note above claiming "tools/routes/mouse_test.sh's FIRST CLICK IS DEAD" is
+CORRECTION, 2026-08-06: the note above claiming "the recorded mouse runtime scenario's FIRST CLICK IS DEAD" is
 RETRACTED. It is not dead -- it starts the game. See issue #27, which carries the measurement
 and the retraction: a lone click on the launcher takes the top-level mode word to 2 within
 fifty frames and the game goes on to load and draw its mode menu.

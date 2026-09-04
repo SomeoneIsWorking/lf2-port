@@ -7,25 +7,20 @@ must not keep a title-local decoder or lifter.
 
 ## Evidence source and limit
 
-A Ghidra pass over LF2 v2.0a disassembled 70,508 instructions and observed 92
-distinct mnemonics. The raw-byte export is `re/instructions.tsv`, which is
-gitignored because its byte column can reconstruct game code. Maintainers may
-regenerate it from their own executable for an independent decoder corpus, but
-it is never a player, build, install, or launch prerequisite.
+A historical Ghidra pass over LF2 v2.0a disassembled 70,508 instructions and
+observed 92 distinct mnemonics. Its durable aggregate results are summarized
+here. The raw-byte export is intentionally neither retained nor a player,
+build, install, or launch prerequisite because it can reconstruct game code.
 
 Ghidra covered 93.6% of `.text`, so the census is a measured lower bound, not
 proof that an unobserved opcode does not exist. A reachable block at
 `0x004450ec` containing `FNSTCW` was missed by the export and already falsified
 the stronger interpretation.
 
-The corpus remains useful for two jobs:
-
-- compare `x86port` decode length and instruction identity with an independent
-  disassembler, reporting decoded, disagreed, and refused denominators; and
-- prioritize emitter coverage without weakening the rule that a reached
-  unsupported instruction must fail by guest PC and bytes.
-
-It must not seed guest function generation or a title-specific static corpus.
+These aggregates prioritize emitter coverage without weakening the rule that a
+reached unsupported instruction must report its guest PC and bytes. New decoder
+evidence comes from the authenticated executable through the JIT harness, not a
+checked-in title corpus.
 
 ## Observed shape
 
@@ -93,11 +88,10 @@ formulas or retain the old decoder/lifter as an oracle.
 The first bounded LF2 JIT test executes guest `0x004031b0` from the
 authenticated image with `ECX=0x00458440` and return sentinel `0x004462e0`.
 `docs/migration.md` defines the complete state comparison and controlled
-negative. The interpreter is linked only into that separately built test target
-(diagnostic tests included). Build-graph, link-map/symbol, and selector
-inspection must prove the gameplay product contains no interpreter execution,
-interpreter-backed helpers, or fallback machinery; a zero observed-fallback
-counter is only supplementary telemetry.
+negative. Explicit interpreter mode is linked only into that separately built
+test target. Product inspection must prove gameplay defaults to JIT execution
+and exposes no interpreter selector. Any bounded product fallback is
+reason-coded, counted, and excluded from gameplay/performance evidence.
 
 ## Coverage and refusal reporting
 
@@ -106,8 +100,8 @@ For every LF2 diagnostic, report at minimum:
 - bytes/blocks offered to decode and how many decoded or refused;
 - distinct instructions translated, block entries, cache hits, and
   invalidations;
-- instructions implemented as native JIT emission versus interpreter-backed
-  helpers; the gameplay answer for the latter is zero;
+- instructions implemented as native JIT emission versus bounded fallback,
+  including the fallback reason and coverage denominator;
 - the exact first unsupported guest PC and bytes; and
 - test-interpreter blocks checked, skipped, and divergent in diagnostic builds.
 

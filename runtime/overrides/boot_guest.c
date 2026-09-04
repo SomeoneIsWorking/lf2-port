@@ -2,13 +2,8 @@
 #include "startup_init.h"
 
 #include "dsound.h"
-#include "guest_ops.h"
-
-void fn_00419e40__orig(void);
-void fn_004028a0(void);
-void fn_00422ac0(void);
-void fn_00423910(void);
-void fn_0043e940__orig(void);
+#include "guest.h"
+#include "jit_executor.h"
 
 enum {
     CLICK_FLAG = 0x00457580,
@@ -23,7 +18,7 @@ static void initialise_local_players(void)
 {
     /* No arguments; the function consumes only the synthetic return address. */
     PUSH32(0x00427a31);
-    fn_00422ac0();
+    lf2_jit_call(0x00422ac0);
 
     ST32(PLAYER_DEVICE_1, 1);
     ST32(PLAYER_DEVICE_2, 2);
@@ -45,7 +40,7 @@ void fn_00419e40(void)
      * local loader, not the retired front end. This is earlier than the first update and does
      * not reproduce a menu selection, click flag, sound stop, or key/button event. */
     const uint32_t game = R(ECX);
-    fn_00419e40__orig();
+    lf2_jit_call_original(0x00419e40);
     ST8(LOCAL_PLAY_MARKER, 'u');
     ST32(game, BOOT_GUEST_LOAD);
 }
@@ -68,11 +63,11 @@ void boot_guest_load_data(uint32_t game, uint32_t frame_surface)
 
     startup_init_step_begin(STARTUP_INIT_TRANSIENT_SERVICES, "transient-services");
     PUSH32(0x00424708);
-    fn_00423910();
+    lf2_jit_call(0x00423910);
     ST32(game, BOOT_GUEST_GAME);
     PUSH32(frame_surface);
     PUSH32(0x00424728);
-    fn_004028a0();
+    lf2_jit_call(0x004028a0);
     R(ESP) += 4;
     startup_init_step_done(STARTUP_INIT_TRANSIENT_SERVICES, "transient-services");
 
@@ -93,5 +88,5 @@ void fn_0043e940(void)
         R(ESP) += 4;
         return;
     }
-    fn_0043e940__orig();
+    lf2_jit_call_original(0x0043e940);
 }

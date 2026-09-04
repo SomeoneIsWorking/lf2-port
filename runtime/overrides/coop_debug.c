@@ -1,15 +1,17 @@
 /* The instruments over the object world -- every LF2_COOP_* probe.
  *
- * One of the hand-written native replacements for recompiled functions; see
+ * One of the hand-written native replacements for guest routines; see
  * runtime/overrides/overrides.h for how the set is divided and why.
  */
 
+#include "environment.h"
 #include "overrides.h"
 #include "world.h"
 
-#include "guest_ops.h"
+#include "guest.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,11 +33,14 @@ static long spawn_frame;
 void coop_watch_latch(int dst, uint32_t obj)
 {
     if (spawn_dst_idx < 0) {
-        spawn_dst_obj = obj; spawn_dst_idx = dst; spawn_frame = hostwin_frames();
+        spawn_dst_obj = obj;
+        spawn_dst_idx = dst;
+        spawn_frame = hostwin_frames();
     } else if (spawn_dst_idx != dst) {
-        fprintf(stderr, "coop build: the follow-up watch stays on entry %d, the first spawn "
-                        "of this run -- entry %d is not being watched\n",
-                spawn_dst_idx, dst);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop build: the follow-up watch stays on entry %d, the first spawn "
+                       "of this run -- entry %d is not being watched\n",
+                       spawn_dst_idx, dst);
     }
 }
 
@@ -63,13 +68,16 @@ void coop_watch_latch(int dst, uint32_t obj)
  * it does not, the scan is not seeing memory it claims to see, and the line says FAILED
  * instead of a hit count. A scan that finds nothing and passes its control is evidence;
  * one that finds nothing and never checked is not. */
-uint32_t guest_heap_used(void);          /* imports.c */
+uint32_t guest_heap_used(void); /* imports.c */
 
-struct refs_region { const char *name; uint32_t lo, hi; };
+struct refs_region {
+    const char *name;
+    uint32_t lo, hi;
+};
 
 void coop_refs_scan(uint32_t self)
 {
-    enum { NTARGET = 12 };                /* eight slots, plus up to four extras */
+    enum { NTARGET = 12 }; /* eight slots, plus up to four extras */
     uint32_t target[NTARGET];
     char label[NTARGET][16];
     long hits[NTARGET];
@@ -87,8 +95,8 @@ void coop_refs_scan(uint32_t self)
 
     /* LF2_COOP_REFS_ADDR=<hex>[,...] -- chase an address the scan itself turned up, such
      * as the 1052-byte object at 0x25f149a0 that the "Fight!" heap diff left unexplained. */
-    const char *extra = getenv("LF2_COOP_REFS_ADDR");
-    for (const char *s = extra; s && *s && ntarget < NTARGET; ) {
+    const char *extra = lf2_environment_get(LF2_ENV_COOP_REFS_ADDR);
+    for (const char *s = extra; s && *s && ntarget < NTARGET;) {
         char *end;
         const unsigned long v = strtoul(s, &end, 16);
         if (end == s) break;
@@ -101,21 +109,22 @@ void coop_refs_scan(uint32_t self)
 
     const uint32_t heap_used = guest_heap_used();
     const struct refs_region regions[] = {
-        { "image", g_image_lo,       g_image_hi },
-        { "heap",  GUEST_HEAP_BASE,  GUEST_HEAP_BASE + heap_used },
-        { "stack", GUEST_STACK_BASE, GUEST_STACK_END },
+        {"image", g_image_lo, g_image_hi},
+        {"heap", GUEST_HEAP_BASE, GUEST_HEAP_BASE + heap_used},
+        {"stack", GUEST_STACK_BASE, GUEST_STACK_END},
     };
     const int nregion = (int)(sizeof regions / sizeof regions[0]);
 
-    fprintf(stderr, "coop refs: frame %ld, this=%08x, %d targets\n",
-            hostwin_frames(), self, ntarget);
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop refs: frame %ld, this=%08x, %d targets\n", hostwin_frames(), self,
+                   ntarget);
     for (int t = 0; t < ntarget; t++)
-        fprintf(stderr, "  target %-7s %08x\n", label[t], target[t]);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  target %-7s %08x\n", label[t], target[t]);
 
     if (ntarget == 0) {
-        fprintf(stderr, "coop refs: REFUSED -- every player pointer at this+404 is null, so "
-                        "there is nothing to look for. This is not a negative result; the "
-                        "scan was pointed at a frame that is not a match.\n");
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop refs: REFUSED -- every player pointer at this+404 is null, so "
+                       "there is nothing to look for. This is not a negative result; the "
+                       "scan was pointed at a frame that is not a match.\n");
         return;
     }
 
@@ -124,12 +133,14 @@ void coop_refs_scan(uint32_t self)
     for (int r = 0; r < nregion; r++) {
         const uint32_t lo = regions[r].lo, hi = regions[r].hi;
         if (hi <= lo) {
-            fprintf(stderr, "coop refs: region %-5s REFUSED -- empty range [%08x,%08x). "
-                            "Nothing in it was compared.\n", regions[r].name, lo, hi);
+            lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                           "coop refs: region %-5s REFUSED -- empty range [%08x,%08x). "
+                           "Nothing in it was compared.\n",
+                           regions[r].name, lo, hi);
             continue;
         }
-        fprintf(stderr, "coop refs: region %-5s [%08x,%08x) %.1f MiB\n",
-                regions[r].name, lo, hi, (double)(hi - lo) / (1024.0 * 1024.0));
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop refs: region %-5s [%08x,%08x) %.1f MiB\n", regions[r].name, lo,
+                       hi, (double)(hi - lo) / (1024.0 * 1024.0));
         for (uint32_t a = lo & ~3u; a + 4 <= hi; a += 4) {
             const uint32_t v = LD32(a);
             dwords++;
@@ -138,13 +149,17 @@ void coop_refs_scan(uint32_t self)
                 hits[t]++;
                 total_hits++;
                 if (printed++ < 80) {
-                    fprintf(stderr, "  hit %08x = %s (%s)  ctx:", a, label[t], regions[r].name);
+                    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  hit %08x = %s (%s)  ctx:", a, label[t],
+                                   regions[r].name);
                     for (int k = -4; k <= 4; k++) {
                         const uint32_t ca = a + 4u * (uint32_t)k;
-                        if (ca < lo || ca + 4 > hi) { fprintf(stderr, " --------"); continue; }
-                        fprintf(stderr, "%c%08x", k == 0 ? '[' : ' ', LD32(ca));
+                        if (ca < lo || ca + 4 > hi) {
+                            lf2_log_writef(LF2_LOG_INFO, "coop-debug", " --------");
+                            continue;
+                        }
+                        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "%c%08x", k == 0 ? '[' : ' ', LD32(ca));
                     }
-                    fprintf(stderr, "\n");
+                    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "\n");
                 }
             }
         }
@@ -159,9 +174,11 @@ void coop_refs_scan(uint32_t self)
         if (!LD32(at)) continue;
         int covered = 0;
         for (int r = 0; r < nregion; r++)
-            if (regions[r].hi > regions[r].lo && at >= regions[r].lo && at + 4 <= regions[r].hi)
-                covered = 1;
-        if (!covered) { control_ok = 0; continue; }
+            if (regions[r].hi > regions[r].lo && at >= regions[r].lo && at + 4 <= regions[r].hi) covered = 1;
+        if (!covered) {
+            control_ok = 0;
+            continue;
+        }
         control_checked++;
     }
     /* Being covered is necessary; having been counted is the actual check. Each covered
@@ -169,25 +186,27 @@ void coop_refs_scan(uint32_t self)
     for (int t = 0; t < nslot && control_ok; t++)
         if (hits[t] < 1) control_ok = 0;
 
-    fprintf(stderr, "coop refs: %ld dwords compared across %d regions, %d hits\n",
-            dwords, nregion, total_hits);
-    if (printed > 80)
-        fprintf(stderr, "coop refs: %d hits were not printed\n", printed - 80);
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop refs: %ld dwords compared across %d regions, %d hits\n", dwords,
+                   nregion, total_hits);
+    if (printed > 80) lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop refs: %d hits were not printed\n", printed - 80);
     for (int t = 0; t < ntarget; t++)
-        fprintf(stderr, "  %-7s %08x  %ld reference%s\n",
-                label[t], target[t], hits[t], hits[t] == 1 ? "" : "s");
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  %-7s %08x  %ld reference%s\n", label[t], target[t], hits[t],
+                       hits[t] == 1 ? "" : "s");
     if (control_ok && control_checked)
-        fprintf(stderr, "coop refs: control PASSED -- all %d slot pointers were found at "
-                        "this+404, so the scan does see the memory it reports on\n",
-                control_checked);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop refs: control PASSED -- all %d slot pointers were found at "
+                       "this+404, so the scan does see the memory it reports on\n",
+                       control_checked);
     else
-        fprintf(stderr, "coop refs: control FAILED (%d slot pointers inside a scanned "
-                        "region) -- the counts above are NOT evidence of anything\n",
-                control_checked);
-    fprintf(stderr, "coop refs: blind spots -- unaligned or tagged pointers, an object held "
-                    "only as base+offset, and the VRAM/PCM arenas (ours, no game structures). "
-                    "A zero count means no ALIGNED dword in the regions above holds that "
-                    "value.\n");
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop refs: control FAILED (%d slot pointers inside a scanned "
+                       "region) -- the counts above are NOT evidence of anything\n",
+                       control_checked);
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                   "coop refs: blind spots -- unaligned or tagged pointers, an object held "
+                   "only as base+offset, and the VRAM/PCM arenas (ours, no game structures). "
+                   "A zero count means no ALIGNED dword in the regions above holds that "
+                   "value.\n");
 }
 
 /* ---- LF2_COOP_TABLE: the object table at this+404, past the eight player slots ----
@@ -212,11 +231,11 @@ void coop_refs_scan(uint32_t self)
  * departure from it is an object that something has touched. */
 int coop_entry_live(uint32_t p)
 {
-    return (int32_t)LD32(p + 0x364) != 0     /* chosen character */
-        || (int32_t)LD32(p + 0x2fc) != 500   /* HP */
-        || (int32_t)LD32(p + 0x10)  != 0     /* x */
-        || (int32_t)LD32(p + 0x18)  != 0     /* y */
-        || (int32_t)LD32(p + 0x354) != 99;
+    return (int32_t)LD32(p + 0x364) != 0      /* chosen character */
+           || (int32_t)LD32(p + 0x2fc) != 500 /* HP */
+           || (int32_t)LD32(p + 0x10) != 0    /* x */
+           || (int32_t)LD32(p + 0x18) != 0    /* y */
+           || (int32_t)LD32(p + 0x354) != 99;
 }
 
 /* LF2_COOP_PAIR=<i>,<j> -- the dwords where table entry i differs from entry j. The existing
@@ -229,26 +248,27 @@ void coop_pair_diff(uint32_t self, int i, int j)
 {
     const uint32_t a = LD32(self + PLAYER_PTRS + 4u * (uint32_t)i);
     const uint32_t b = LD32(self + PLAYER_PTRS + 4u * (uint32_t)j);
-    fprintf(stderr, "coop pair: frame %ld, [%d]=%08x (%s) vs [%d]=%08x (%s)\n",
-            hostwin_frames(), i, a, a && coop_entry_live(a) ? "LIVE" : "idle",
-            j, b, b && coop_entry_live(b) ? "LIVE" : "idle");
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop pair: frame %ld, [%d]=%08x (%s) vs [%d]=%08x (%s)\n",
+                   hostwin_frames(), i, a, a && coop_entry_live(a) ? "LIVE" : "idle", j, b,
+                   b && coop_entry_live(b) ? "LIVE" : "idle");
     if (!a || !b) {
-        fprintf(stderr, "coop pair: REFUSED -- an entry is null, nothing was compared\n");
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop pair: REFUSED -- an entry is null, nothing was compared\n");
         return;
     }
     if (!(a && coop_entry_live(a)) && !(b && coop_entry_live(b)))
-        fprintf(stderr, "coop pair: WARNING -- NEITHER entry is live, so any difference "
-                        "below is between two untouched records and says nothing about "
-                        "being in the world\n");
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop pair: WARNING -- NEITHER entry is live, so any difference "
+                       "below is between two untouched records and says nothing about "
+                       "being in the world\n");
     int n = 0;
     for (uint32_t o = 0; o < 0x420u; o += 4) {
         const uint32_t va = LD32(a + o), vb = LD32(b + o);
         if (va == vb) continue;
         n++;
-        fprintf(stderr, "  +%03x  [%d]=%-11d [%d]=%-11d (%08x / %08x)\n",
-                o, i, (int32_t)va, j, (int32_t)vb, va, vb);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  +%03x  [%d]=%-11d [%d]=%-11d (%08x / %08x)\n", o, i, (int32_t)va,
+                       j, (int32_t)vb, va, vb);
     }
-    fprintf(stderr, "coop pair: %d differing dwords of %d compared\n", n, 0x420 / 4);
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop pair: %d differing dwords of %d compared\n", n, 0x420 / 4);
 }
 
 /* Called every gather once a spawn has been attempted. Reports on a schedule AND on any
@@ -274,24 +294,26 @@ void coop_spawn_watch(uint32_t self)
     const int live = coop_entry_live(spawn_dst_obj);
     if (was_live && !live && !said_reset) {
         said_reset = 1;
-        fprintf(stderr, "coop spawn: entry %d was RESET to the idle default %ld frames after "
-                        "the clone -- the game's own sweep undid it, which is a different "
-                        "answer from the spawn having no effect\n", spawn_dst_idx, age);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop spawn: entry %d was RESET to the idle default %ld frames after "
+                       "the clone -- the game's own sweep undid it, which is a different "
+                       "answer from the spawn having no effect\n",
+                       spawn_dst_idx, age);
     }
     was_live = live;
     if (age == 1 || age == 5 || age == 30 || age == 120 || age == 300)
-        fprintf(stderr, "coop spawn: +%3ld frames  entry %d %s  +000=%d char=%d hp=%d "
-                        "x=%d y=%d +354=%d +418=%d\n",
-                age, spawn_dst_idx, live ? "LIVE" : "idle",
-                (int32_t)LD32(spawn_dst_obj + 0x000), (int32_t)LD32(spawn_dst_obj + 0x364),
-                (int32_t)LD32(spawn_dst_obj + 0x2fc), (int32_t)LD32(spawn_dst_obj + 0x10),
-                (int32_t)LD32(spawn_dst_obj + 0x18),  (int32_t)LD32(spawn_dst_obj + 0x354),
-                (int32_t)LD32(spawn_dst_obj + 0x418));
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop spawn: +%3ld frames  entry %d %s  +000=%d char=%d hp=%d "
+                       "x=%d y=%d +354=%d +418=%d\n",
+                       age, spawn_dst_idx, live ? "LIVE" : "idle", (int32_t)LD32(spawn_dst_obj + 0x000),
+                       (int32_t)LD32(spawn_dst_obj + 0x364), (int32_t)LD32(spawn_dst_obj + 0x2fc),
+                       (int32_t)LD32(spawn_dst_obj + 0x10), (int32_t)LD32(spawn_dst_obj + 0x18),
+                       (int32_t)LD32(spawn_dst_obj + 0x354), (int32_t)LD32(spawn_dst_obj + 0x418));
     if (age == 1 || age == 5 || age == 30 || age == 120 || age == 300)
-        fprintf(stderr, "coop spawn: +%3ld frames  entry %d buttons seen: "
-                        "up=%d down=%d left=%d right=%d attack=%d jump=%d defend=%d\n",
-                age, spawn_dst_idx, seen[0], seen[1], seen[2], seen[3], seen[4], seen[5],
-                seen[6]);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop spawn: +%3ld frames  entry %d buttons seen: "
+                       "up=%d down=%d left=%d right=%d attack=%d jump=%d defend=%d\n",
+                       age, spawn_dst_idx, seen[0], seen[1], seen[2], seen[3], seen[4], seen[5], seen[6]);
 
     /* The spawned fighter draws and fights, but its HUD PORTRAIT is not its character. So
      * something reads identity from a field the spawn does not set. The shortest way to
@@ -304,9 +326,9 @@ void coop_spawn_watch(uint32_t self)
     /* LF2_COOP_SHOT=<n>: capture the frame n frames after the spawn, so the picture is of
      * the spawn rather than of whatever the run happened to be showing at a chosen frame. */
     {
-        const char *shot = getenv("LF2_COOP_SHOT");
+        const char *shot = lf2_environment_get(LF2_ENV_COOP_SHOT);
         if (shot && age == atol(shot)) {
-            fprintf(stderr, "coop spawn: requesting a frame capture at +%ld frames\n", age);
+            lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop spawn: requesting a frame capture at +%ld frames\n", age);
             gfx_request_frame_dump();
         }
     }
@@ -314,14 +336,19 @@ void coop_spawn_watch(uint32_t self)
     if (age == 90) {
         int other = -1;
         for (int k = 0; k < TABLE_N; k++)
-            if (k != spawn_dst_idx && LD8(EXISTS + (uint32_t)k)) { other = k; break; }
+            if (k != spawn_dst_idx && LD8(EXISTS + (uint32_t)k)) {
+                other = k;
+                break;
+            }
         if (other < 0)
-            fprintf(stderr, "coop spawn: no other live entry to diff against, so the "
-                            "portrait question is unanswered by this run\n");
+            lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                           "coop spawn: no other live entry to diff against, so the "
+                           "portrait question is unanswered by this run\n");
         else {
-            fprintf(stderr, "coop spawn: spawned entry %d against game-built entry %d --\n"
-                            "  the fields the spawn does not set are in here somewhere\n",
-                    spawn_dst_idx, other);
+            lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                           "coop spawn: spawned entry %d against game-built entry %d --\n"
+                           "  the fields the spawn does not set are in here somewhere\n",
+                           spawn_dst_idx, other);
             coop_pair_diff(self, spawn_dst_idx, other);
         }
     }
@@ -351,27 +378,31 @@ void coop_spawn_watch(uint32_t self)
 void coop_registry_dump(uint32_t self)
 {
     const uint32_t reg = LD32(self + REG_PTR);
-    fprintf(stderr, "coop registry: frame %ld, this+%d = %08x\n",
-            hostwin_frames(), REG_PTR, reg);
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop registry: frame %ld, this+%d = %08x\n", hostwin_frames(), REG_PTR,
+                   reg);
     if (!reg || reg < GUEST_HEAP_BASE || reg >= GUEST_HEAP_END) {
-        fprintf(stderr, "coop registry: REFUSED -- %08x is not a heap pointer, so this is "
-                        "not the registry and nothing was read\n", reg);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop registry: REFUSED -- %08x is not a heap pointer, so this is "
+                       "not the registry and nothing was read\n",
+                       reg);
         return;
     }
     const uint32_t count_at = reg + (uint32_t)REG_COUNT_OFF;
     const int32_t count = (int32_t)LD32(count_at);
-    fprintf(stderr, "coop registry: count at %08x (reg + 0x%x) reads %d\n",
-            count_at, REG_COUNT_OFF, count);
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop registry: count at %08x (reg + 0x%x) reads %d\n", count_at,
+                   REG_COUNT_OFF, count);
     if (count <= 0 || count > 512) {
-        fprintf(stderr, "coop registry: REFUSED -- a count of %d is not plausible for an "
-                        "object table, so the 0x%x offset is being read wrong. Nothing was "
-                        "walked; this is not an empty registry.\n", count, REG_COUNT_OFF);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop registry: REFUSED -- a count of %d is not plausible for an "
+                       "object table, so the 0x%x offset is being read wrong. Nothing was "
+                       "walked; this is not an empty registry.\n",
+                       count, REG_COUNT_OFF);
         return;
     }
 
     /* Which registry entry each LIVE object is using, so the dump can be read against
      * characters whose identity is already known from the table. */
-    fprintf(stderr, "coop registry: live objects and the data block each points at:\n");
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop registry: live objects and the data block each points at:\n");
     for (int k = 0; k < TABLE_N; k++) {
         if (!LD8(EXISTS + (uint32_t)k)) continue;
         const uint32_t o = LD32(self + PLAYER_PTRS + 4u * (uint32_t)k);
@@ -379,9 +410,12 @@ void coop_registry_dump(uint32_t self)
         const uint32_t data = LD32(o + 872);
         int which = -1;
         for (int i = 0; i < count; i++)
-            if (LD32(reg + 4u * (uint32_t)i) == data) { which = i; break; }
-        fprintf(stderr, "  object [%3d] char(+0x364)=%-4d data(+872)=%08x = registry[%d]\n",
-                k, (int32_t)LD32(o + 0x364), data, which);
+            if (LD32(reg + 4u * (uint32_t)i) == data) {
+                which = i;
+                break;
+            }
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  object [%3d] char(+0x364)=%-4d data(+872)=%08x = registry[%d]\n",
+                       k, (int32_t)LD32(o + 0x364), data, which);
     }
 
     /* LF2_COOP_REGDUMP=<file> -- the head of every data block, for finding a field whose
@@ -390,11 +424,11 @@ void coop_registry_dump(uint32_t self)
      * candidate offset can be required to match ALL 65 entries rather than a sample. That
      * is the difference between locating a field and guessing one. */
     {
-        const char *dump = getenv("LF2_COOP_REGDUMP");
+        const char *dump = lf2_environment_get(LF2_ENV_COOP_REGDUMP);
         if (dump) {
             FILE *f = fopen(dump, "wb");
             if (!f) {
-                fprintf(stderr, "coop registry: cannot write %s -- nothing dumped\n", dump);
+                lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop registry: cannot write %s -- nothing dumped\n", dump);
             } else {
                 enum { HEAD = 2048 };
                 const uint32_t n = (uint32_t)count, head = HEAD;
@@ -412,28 +446,33 @@ void coop_registry_dump(uint32_t self)
                     written++;
                 }
                 fclose(f);
-                fprintf(stderr, "coop registry: wrote %s -- %d entries of %d bytes, %d of "
-                                "them real blocks\n", dump, count, HEAD, written);
+                lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                               "coop registry: wrote %s -- %d entries of %d bytes, %d of "
+                               "them real blocks\n",
+                               dump, count, HEAD, written);
             }
         }
     }
 
-    fprintf(stderr, "coop registry: %d entries -- ptr, +1780, +144, and the first printable "
-                    "run in the block:\n", count);
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                   "coop registry: %d entries -- ptr, +1780, +144, and the first printable "
+                   "run in the block:\n",
+                   count);
     for (int i = 0; i < count; i++) {
         const uint32_t d = LD32(reg + 4u * (uint32_t)i);
-        fprintf(stderr, "  [%3d] %08x", i, d);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  [%3d] %08x", i, d);
         if (d < GUEST_HEAP_BASE || d >= GUEST_HEAP_END) {
-            fprintf(stderr, "  NOT A HEAP POINTER -- not read\n");
+            lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  NOT A HEAP POINTER -- not read\n");
             continue;
         }
-        fprintf(stderr, "  id=%-6d type=%-3d +144=%-6d  \"", (int32_t)LD32(d + DATA_ID),
-                (int32_t)LD32(d + DATA_TYPE), (int32_t)LD32(d + 144));
+        char printable[65];
         for (uint32_t o = 0; o < 64; o++) {
             const uint8_t c = LD8(d + o);
-            fputc(c >= 32 && c < 127 ? c : '.', stderr);
+            printable[o] = (char)(c >= 32 && c < 127 ? c : '.');
         }
-        fprintf(stderr, "\"\n");
+        printable[64] = '\0';
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  id=%-6d type=%-3d +144=%-6d  \"%s\"\n",
+                       (int32_t)LD32(d + DATA_ID), (int32_t)LD32(d + DATA_TYPE), (int32_t)LD32(d + 144), printable);
     }
 }
 
@@ -442,12 +481,14 @@ void coop_table_dump(uint32_t self)
     enum { MAXENT = 512 };
     const uint32_t base = LD32(self + PLAYER_PTRS);
 
-    fprintf(stderr, "coop table: frame %ld, this=%08x, table at %08x, grid base %08x "
-                    "stride 0x420\n",
-            hostwin_frames(), self, self + PLAYER_PTRS, base);
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                   "coop table: frame %ld, this=%08x, table at %08x, grid base %08x "
+                   "stride 0x420\n",
+                   hostwin_frames(), self, self + PLAYER_PTRS, base);
     if (!base) {
-        fprintf(stderr, "coop table: REFUSED -- entry 0 is null, so there is no grid base to "
-                        "measure against. Not a short table; a wrong frame.\n");
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop table: REFUSED -- entry 0 is null, so there is no grid base to "
+                       "measure against. Not a short table; a wrong frame.\n");
         return;
     }
 
@@ -456,14 +497,18 @@ void coop_table_dump(uint32_t self)
         const uint32_t p = LD32(self + PLAYER_PTRS + 4u * (uint32_t)i);
         if (!p) {
             nullrun++;
-            if (nullrun >= 8) { i++; break; }
+            if (nullrun >= 8) {
+                i++;
+                break;
+            }
             continue;
         }
         nullrun = 0;
         nonnull++;
         const int32_t delta = (int32_t)(p - base);
         const int grid = (delta % 0x420) == 0;
-        if (grid) ongrid++; else offgrid++;
+        if (grid) ongrid++;
+        else offgrid++;
 
         const int inheap = p >= GUEST_HEAP_BASE && p + 0x420 <= GUEST_HEAP_END;
         const int is_live = inheap && coop_entry_live(p);
@@ -474,49 +519,48 @@ void coop_table_dump(uint32_t self)
          * are not untouched defaults are printed, or the dump is 400 identical lines. */
         if (i >= 8 && !is_live && grid && inheap && !LD8(EXISTS + (uint32_t)i)) continue;
 
-        fprintf(stderr, "  [%3d] %08x gate=%-3d %s%s", i, p, LD8(EXISTS + (uint32_t)i),
-                grid ? "" : "OFF-GRID ", is_live ? "LIVE " : "     ");
-        if (grid) fprintf(stderr, "idx %-4d ", delta / 0x420);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  [%3d] %08x gate=%-3d %s%s", i, p, LD8(EXISTS + (uint32_t)i),
+                       grid ? "" : "OFF-GRID ", is_live ? "LIVE " : "     ");
+        if (grid) lf2_log_writef(LF2_LOG_INFO, "coop-debug", "idx %-4d ", delta / 0x420);
         if (inheap)
             /* +0x338 is printed because the read profile says it is the ONLY dword the
              * per-frame sweep reads on an idle object -- 300 reads in 300 frames and
              * nothing else in the record. Whatever gates an object into the world is
              * decided from it. */
-            fprintf(stderr, "+338=%-10d +000=%-4d char=%-4d hp=%-5d x=%-6d y=%-6d "
-                            "+354=%-4d +418=%-4d +368=%08x",
-                    (int32_t)LD32(p + 0x338),
-                    (int32_t)LD32(p + 0x000),
-                    (int32_t)LD32(p + 0x364), (int32_t)LD32(p + 0x2fc),
-                    (int32_t)LD32(p + 0x10), (int32_t)LD32(p + 0x18),
-                    (int32_t)LD32(p + 0x354), (int32_t)LD32(p + 0x418),
-                    LD32(p + 0x368));
-        else
-            fprintf(stderr, "NOT IN THE HEAP -- not an object of this kind");
-        fprintf(stderr, "\n");
+            lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                           "+338=%-10d +000=%-4d char=%-4d hp=%-5d x=%-6d y=%-6d "
+                           "+354=%-4d +418=%-4d +368=%08x",
+                           (int32_t)LD32(p + 0x338), (int32_t)LD32(p + 0x000), (int32_t)LD32(p + 0x364),
+                           (int32_t)LD32(p + 0x2fc), (int32_t)LD32(p + 0x10), (int32_t)LD32(p + 0x18),
+                           (int32_t)LD32(p + 0x354), (int32_t)LD32(p + 0x418), LD32(p + 0x368));
+        else lf2_log_writef(LF2_LOG_INFO, "coop-debug", "NOT IN THE HEAP -- not an object of this kind");
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "\n");
     }
-    fprintf(stderr, "coop table: %d entries examined, %d non-null (%d on the 0x420 grid, %d "
-                    "off it), %d LIVE; stopped %s\n",
-            i, nonnull, ongrid, offgrid, live,
-            i >= MAXENT ? "at the MAXENT cap, so the table may be longer than this"
-                        : "after 8 consecutive nulls");
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                   "coop table: %d entries examined, %d non-null (%d on the 0x420 grid, %d "
+                   "off it), %d LIVE; stopped %s\n",
+                   i, nonnull, ongrid, offgrid, live,
+                   i >= MAXENT ? "at the MAXENT cap, so the table may be longer than this"
+                               : "after 8 consecutive nulls");
     /* What follows the 400 pointers. The per-byte read profile of `this` puts a hot dword
      * at +0x7d4 -- immediately past the table -- read about 94 times a frame during a
      * match, which is the profile of a count or a list head rather than a stored setting.
      * Printed raw, with no interpretation, because naming it before seeing it is how a
      * reading gets fixed in place. */
-    fprintf(stderr, "coop table: the 64 dwords after the table (this+0x7d4 onwards):\n");
+    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop table: the 64 dwords after the table (this+0x7d4 onwards):\n");
     for (int k = 0; k < 64; k += 8) {
-        fprintf(stderr, "  +%03x:", 0x7d4 + k * 4);
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  +%03x:", 0x7d4 + k * 4);
         for (int j = 0; j < 8; j++)
-            fprintf(stderr, " %11d", (int32_t)LD32(self + 0x7d4u + 4u * (uint32_t)(k + j)));
-        fprintf(stderr, "\n");
+            lf2_log_writef(LF2_LOG_INFO, "coop-debug", " %11d", (int32_t)LD32(self + 0x7d4u + 4u * (uint32_t)(k + j)));
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "\n");
     }
 
     if (live == 0)
-        fprintf(stderr, "coop table: NOT A MATCH -- every entry is still at its initialised "
-                        "default (no character, 500 HP, the origin, 99 at +0x354), so no "
-                        "fighter exists on this frame. This dump says NOTHING about how "
-                        "fighters are registered; the run did not reach a match.\n");
+        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                       "coop table: NOT A MATCH -- every entry is still at its initialised "
+                       "default (no character, 500 HP, the origin, 99 at +0x354), so no "
+                       "fighter exists on this frame. This dump says NOTHING about how "
+                       "fighters are registered; the run did not reach a match.\n");
 }
 
 /* Counters, not a hit log: the interesting failure is that this never merges anything, and
@@ -540,7 +584,7 @@ void coop_debug_tick(uint32_t self)
      * LF2_COOP_DEBUG block on purpose: it is a one-shot scan and does not want the slot
      * table wall alongside it. */
     {
-        const char *rf = getenv("LF2_COOP_REFS");
+        const char *rf = lf2_environment_get(LF2_ENV_COOP_REFS);
         if (rf && hostwin_frames() == atol(rf)) coop_refs_scan(self);
         /* LF2_COOP_TABLE=<frame> | live[+<n>]. The frame form is exact but brittle: the
          * data load does not take the same number of frames every run, so a scripted route
@@ -549,7 +593,7 @@ void coop_debug_tick(uint32_t self)
          * `live` form fires <n> frames after the first frame on which any entry is not an
          * untouched default, so it lands in a match or does not fire at all. */
         {
-            const char *tf2 = getenv("LF2_COOP_TABLE");
+            const char *tf2 = lf2_environment_get(LF2_ENV_COOP_TABLE);
             static long live_at = -1, fired = -1;
             if (tf2 && *tf2) {
                 if (strncmp(tf2, "live", 4) == 0) {
@@ -560,25 +604,30 @@ void coop_debug_tick(uint32_t self)
                     }
                     if (live_at >= 0 && fired < 0 && hostwin_frames() >= live_at + after) {
                         fired = hostwin_frames();
-                        fprintf(stderr, "coop table: slot 0 first became live at frame %ld\n",
-                                live_at);
+                        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                                       "coop table: slot 0 first became live at frame %ld\n", live_at);
                         coop_table_dump(self);
-                        if (getenv("LF2_COOP_REGISTRY")) coop_registry_dump(self);
+                        if (lf2_environment_get(LF2_ENV_COOP_REGISTRY)) coop_registry_dump(self);
                         /* `auto` picks the first LIVE entry past the eight player slots --
                          * the fighter the game put in the table itself -- against its next
                          * neighbour. Which index that is varies between runs, so naming it
                          * by number would silently compare two idle records on a run where
                          * it landed elsewhere. */
-                        const char *pr = getenv("LF2_COOP_PAIR");
+                        const char *pr = lf2_environment_get(LF2_ENV_COOP_PAIR);
                         int pi = -1, pj = -1;
                         if (pr && strcmp(pr, "auto") == 0) {
                             for (int k = 8; k < 400; k++) {
                                 const uint32_t p = LD32(self + PLAYER_PTRS + 4u * (uint32_t)k);
-                                if (p && coop_entry_live(p)) { pi = k; pj = k + 1; break; }
+                                if (p && coop_entry_live(p)) {
+                                    pi = k;
+                                    pj = k + 1;
+                                    break;
+                                }
                             }
                             if (pi < 0)
-                                fprintf(stderr, "coop pair: auto found no live entry past the "
-                                                "player slots, so nothing was compared\n");
+                                lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                                               "coop pair: auto found no live entry past the "
+                                               "player slots, so nothing was compared\n");
                         } else if (pr) {
                             if (sscanf(pr, "%d,%d", &pi, &pj) != 2) pi = -1;
                         }
@@ -594,31 +643,38 @@ void coop_debug_tick(uint32_t self)
                          * The id defaults to 1 (Bandit), which every copy of the game has,
                          * and the spawn position comes from whichever entry is live, found
                          * here rather than assumed to be slot 0. */
-                        const char *sp = getenv("LF2_COOP_SPAWN");
-                        for (const char *c = sp; c && *c; ) {
+                        const char *sp = lf2_environment_get(LF2_ENV_COOP_SPAWN);
+                        for (const char *c = sp; c && *c;) {
                             int sd = -1, sid = 1, ssel = -1;
                             const int got = sscanf(c, "%d,%d,%d", &sd, &sid, &ssel);
                             if (got >= 1 && sd >= 0) {
                                 int posref = -1;
                                 for (int k = 0; k < TABLE_N; k++)
-                                    if (LD8(EXISTS + (uint32_t)k)) { posref = k; break; }
+                                    if (LD8(EXISTS + (uint32_t)k)) {
+                                        posref = k;
+                                        break;
+                                    }
                                 coop_spawn(self, sd, sid, posref, ssel);
                             } else {
-                                fprintf(stderr, "coop spawn: REFUSED -- each item must be "
-                                                "<index>[,<object id>[,<+0x364>]], got "
-                                                "\"%s\"\n", c);
+                                lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                                               "coop spawn: REFUSED -- each item must be "
+                                               "<index>[,<object id>[,<+0x364>]], got "
+                                               "\"%s\"\n",
+                                               c);
                             }
                             const char *semi = strchr(c, ';');
                             c = semi ? semi + 1 : NULL;
                         }
 
-                        const char *jn = getenv("LF2_COOP_JOIN");
+                        const char *jn = lf2_environment_get(LF2_ENV_COOP_JOIN);
                         if (jn) {
                             int js = -1, jid = 1;
-                            if (sscanf(jn, "%d,%d", &js, &jid) >= 1)
-                                coop_join(self, js, jid, NULL, 1);
-                            else fprintf(stderr, "coop join: REFUSED -- LF2_COOP_JOIN must be "
-                                                 "<slot>[,<object id>], got \"%s\"\n", jn);
+                            if (sscanf(jn, "%d,%d", &js, &jid) >= 1) coop_join(self, js, jid, NULL, 1);
+                            else
+                                lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                                               "coop join: REFUSED -- LF2_COOP_JOIN must be "
+                                               "<slot>[,<object id>], got \"%s\"\n",
+                                               jn);
                         }
                     }
                 } else if (hostwin_frames() == atol(tf2)) {
@@ -639,7 +695,7 @@ void coop_debug_tick(uint32_t self)
      * silence would otherwise be indistinguishable from a run that never reached a match,
      * which is the exact confusion a movement assertion must not inherit. */
     {
-        const char *tr = getenv("LF2_COOP_TRACK");
+        const char *tr = lf2_environment_get(LF2_ENV_COOP_TRACK);
         if (tr) {
             const int k = atoi(tr);
             static long last_print;
@@ -661,12 +717,13 @@ void coop_debug_tick(uint32_t self)
                      *
                      * The old label mattered: fn_0041a5a0 depth-sorts the world on this
                      * word, and a renderer told it was `y` would sort on the jump height. */
-                    fprintf(stderr, "coop track: frame %ld entry %d x=%d y=%d z=%d +000=%d\n",
-                            f, k, (int32_t)LD32(o + 0x10), (int32_t)LD32(o + 0x14),
-                            (int32_t)LD32(o + 0x18), (int32_t)LD32(o + 0x000));
+                    lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                                   "coop track: frame %ld entry %d x=%d y=%d z=%d +000=%d\n", f, k,
+                                   (int32_t)LD32(o + 0x10), (int32_t)LD32(o + 0x14), (int32_t)LD32(o + 0x18),
+                                   (int32_t)LD32(o + 0x000));
                 else
-                    fprintf(stderr, "coop track: frame %ld entry %d is NOT in the world\n",
-                            f, k);
+                    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop track: frame %ld entry %d is NOT in the world\n",
+                                   f, k);
             }
         }
     }
@@ -676,16 +733,17 @@ void coop_debug_tick(uint32_t self)
      * ground truth for "can a player join after the stage started" -- a slot going live
      * mid-match would show up here as a selector and a pointer appearing together. Printing
      * on CHANGE only, with the frame, so the log is the transitions rather than a wall. */
-    if (getenv("LF2_COOP_DEBUG")) {
+    if (lf2_environment_get(LF2_ENV_COOP_DEBUG)) {
         static uint32_t last_sel[8], last_obj[8];
         static int first = 1;
         for (int i = 0; i < 8; i++) {
             const uint32_t sv = LD32(DEVSEL + 4u * (uint32_t)i);
             const uint32_t ov = LD32(self + PLAYER_PTRS + 4u * (uint32_t)i);
             if (!first && sv == last_sel[i] && ov == last_obj[i]) continue;
-            last_sel[i] = sv; last_obj[i] = ov;
-            fprintf(stderr, "coop f%ld slot %d: devsel=%d obj=%08x\n",
-                    hostwin_frames(), i, (int32_t)sv, ov);
+            last_sel[i] = sv;
+            last_obj[i] = ov;
+            lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop f%ld slot %d: devsel=%d obj=%08x\n", hostwin_frames(), i,
+                           (int32_t)sv, ov);
         }
         first = 0;
 
@@ -703,7 +761,7 @@ void coop_debug_tick(uint32_t self)
             enum { SNAP_N = 0x800 / 4 };
             static uint32_t snap[SNAP_N];
             static int have;
-            const char *spec = getenv("LF2_COOP_SNAP");
+            const char *spec = lf2_environment_get(LF2_ENV_COOP_SNAP);
             long fa = 0, fb = 0;
             if (spec && sscanf(spec, "%ld,%ld", &fa, &fb) == 2) {
                 const uint32_t o = LD32(self + PLAYER_PTRS);
@@ -711,22 +769,26 @@ void coop_debug_tick(uint32_t self)
                 if (o && f == fa && !have) {
                     for (int k = 0; k < SNAP_N; k++) snap[k] = LD32(o + 4u * (uint32_t)k);
                     have = 1;
-                    fprintf(stderr, "coop snap: slot 0 object %08x captured at frame %ld\n", o, f);
+                    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop snap: slot 0 object %08x captured at frame %ld\n",
+                                   o, f);
                 } else if (o && f == fb) {
                     if (!have) {
-                        fprintf(stderr, "coop snap: NOTHING was captured at frame %ld, so this "
-                                        "diff compares against zeros -- ignore it\n", fa);
+                        lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                                       "coop snap: NOTHING was captured at frame %ld, so this "
+                                       "diff compares against zeros -- ignore it\n",
+                                       fa);
                     } else {
                         int n = 0;
                         for (int k = 0; k < SNAP_N; k++) {
                             const uint32_t v = LD32(o + 4u * (uint32_t)k);
                             if (v == snap[k]) continue;
                             if (++n <= 80)
-                                fprintf(stderr, "  +%03x  before=%-11d after=%-11d "
-                                                "(%08x / %08x)\n",
-                                        k * 4, (int32_t)snap[k], (int32_t)v, snap[k], v);
+                                lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                                               "  +%03x  before=%-11d after=%-11d "
+                                               "(%08x / %08x)\n",
+                                               k * 4, (int32_t)snap[k], (int32_t)v, snap[k], v);
                         }
-                        fprintf(stderr, "coop snap: %d differing dwords of %d\n", n, SNAP_N);
+                        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop snap: %d differing dwords of %d\n", n, SNAP_N);
                     }
                 }
             }
@@ -739,7 +801,7 @@ void coop_debug_tick(uint32_t self)
          * count. Whether flipping it mid-match is enough -- whether a fighter follows -- is
          * exactly what this answers, and it is the whole question for drop-in. */
         {
-            const char *tf = getenv("LF2_COOP_TEST");
+            const char *tf = lf2_environment_get(LF2_ENV_COOP_TEST);
             if (tf && hostwin_frames() == atol(tf)) {
                 const uint32_t m = LD32(JOINED_MASK);
                 int bit = 0;
@@ -761,37 +823,38 @@ void coop_debug_tick(uint32_t self)
                     const uint32_t dst = LD32(self + PLAYER_PTRS + 4u * (uint32_t)bit);
                     if (src && dst) {
                         const uint32_t keep368 = LD32(dst + 0x368);
-                        for (uint32_t o = 0; o < 0x420u; o += 4)
-                            ST32(dst + o, LD32(src + o));
+                        for (uint32_t o = 0; o < 0x420u; o += 4) ST32(dst + o, LD32(src + o));
                         ST32(dst + 0x368, keep368);
                         ST32(dst + 0x10, LD32(src + 0x10) + 120u);   /* x, in ints   */
                         ST32(dst + 0x5c, LD32(src + 0x5c) + 0x400u); /* x, the float */
                     }
                     ST32(JOINED_MASK, m | (1u << bit));
-                    fprintf(stderr, "coop test: joined mask %08x -> %08x (set bit %d), "
-                                    "record %08x cloned from %08x\n",
-                            m, m | (1u << bit), bit, dst, src);
+                    lf2_log_writef(LF2_LOG_INFO, "coop-debug",
+                                   "coop test: joined mask %08x -> %08x (set bit %d), "
+                                   "record %08x cloned from %08x\n",
+                                   m, m | (1u << bit), bit, dst, src);
                 } else {
-                    fprintf(stderr, "coop test: mask %08x is already full, nothing set\n", m);
+                    lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop test: mask %08x is already full, nothing set\n",
+                                   m);
                 }
             }
         }
 
-        const char *at = getenv("LF2_COOP_DIFF");
+        const char *at = lf2_environment_get(LF2_ENV_COOP_DIFF);
         if (at && hostwin_frames() == atol(at)) {
             const uint32_t a = LD32(self + PLAYER_PTRS + 0);
             const uint32_t b = LD32(self + PLAYER_PTRS + 4u * 4u);
-            fprintf(stderr, "coop diff: playing=%08x idle=%08x\n", a, b);
+            lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop diff: playing=%08x idle=%08x\n", a, b);
             if (a && b) {
                 int n = 0;
                 for (uint32_t o = 0; o < 0x420u; o += 4) {
                     const uint32_t va = LD32(a + o), vb = LD32(b + o);
                     if (va == vb) continue;
                     if (++n <= 60)
-                        fprintf(stderr, "  +%03x  playing=%-11d idle=%-11d (%08x / %08x)\n",
-                                o, (int32_t)va, (int32_t)vb, va, vb);
+                        lf2_log_writef(LF2_LOG_INFO, "coop-debug", "  +%03x  playing=%-11d idle=%-11d (%08x / %08x)\n",
+                                       o, (int32_t)va, (int32_t)vb, va, vb);
                 }
-                fprintf(stderr, "coop diff: %d differing dwords of %d\n", n, 0x420 / 4);
+                lf2_log_writef(LF2_LOG_INFO, "coop-debug", "coop diff: %d differing dwords of %d\n", n, 0x420 / 4);
             }
         }
     }

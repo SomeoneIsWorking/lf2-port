@@ -1,10 +1,5 @@
 #include "lf2_log.h"
 
-#undef fprintf
-#undef printf
-#undef fputs
-#undef perror
-
 #include <lucent/log.h>
 
 #include <cctype>
@@ -38,23 +33,15 @@ std::string without_timestamp(std::string_view line)
     return shape && digits ? std::string(line.substr(kTimestampLength)) : std::string(line);
 }
 
-void test_fragments_and_embedded_newlines_are_complete_lucent_records()
+void test_formatted_messages_are_complete_lucent_records()
 {
     std::vector<std::string> lines;
     lucent::set_sink([&lines](lucent::Level, std::string_view line) { lines.emplace_back(line); });
 
-    lf2_log_fprintf(stderr, "/runtime/win32/com.c", "com releases:");
-    lf2_log_fprintf(stderr, "/runtime/win32/com.c", " none");
-    lf2_log_fputs("/runtime/win32/com.c", "\nsecond\nthird", stderr);
-    lf2_log_fprintf(stderr, "/runtime/win32/com.c", " tail\n");
-    lf2_log_fputs("/runtime/win32/com.c", "\n", stderr);
+    lf2_log_writef(LF2_LOG_INFO, "com", "objects=%d", 3);
 
-    CHECK(lines.size() == 3);
-    if (lines.size() == 3) {
-        CHECK(without_timestamp(lines[0]) == "[com] com releases: none");
-        CHECK(without_timestamp(lines[1]) == "[com] second");
-        CHECK(without_timestamp(lines[2]) == "[com] third tail");
-    }
+    CHECK(lines.size() == 1);
+    if (lines.size() == 1) CHECK(without_timestamp(lines[0]) == "[com] objects=3");
     lucent::set_sink(nullptr);
 }
 
@@ -73,26 +60,11 @@ void test_complete_messages_split_lines_and_preserve_severity()
     lucent::set_sink(nullptr);
 }
 
-void test_non_log_file_output_is_unchanged()
-{
-    FILE *file = std::tmpfile();
-    CHECK(file != nullptr);
-    if (!file) return;
-    CHECK(lf2_log_fprintf(file, "/runtime/app/config.c", "width %d\n", 800) == 10);
-    std::rewind(file);
-    char text[32] = {};
-    CHECK(std::fread(text, 1, sizeof(text) - 1, file) == 10);
-    CHECK(std::string(text) == "width 800\n");
-    std::fclose(file);
-}
-
 } // namespace
 
 int main()
 {
-    test_fragments_and_embedded_newlines_are_complete_lucent_records();
+    test_formatted_messages_are_complete_lucent_records();
     test_complete_messages_split_lines_and_preserve_severity();
-    test_non_log_file_output_is_unchanged();
-    lf2_log_flush();
     return failures == 0 ? 0 : 1;
 }

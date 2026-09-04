@@ -34,7 +34,7 @@ overrides.h) and that path is what should be driven. Reproducing the transition 
 would leave the game's own state half-wound and is exactly the kind of thing that looks
 right until a second match starts.
 
-Note that pause works by declining to call fn_004246b0__orig, which freezes the world with
+Note that pause works by declining to call original guest routine 0x004246b0, which freezes the world with
 nothing to save or restore -- so whatever drives the exit has to happen with the game
 UNFROZEN, i.e. unpause first, then drive the transition.
 
@@ -63,7 +63,7 @@ WHAT SHIPPED
   overlay's mouse handling already uses.
 
   Both items UNPAUSE FIRST, as this entry required: pausing works by declining to call
-  fn_004246b0__orig, so a transition driven while frozen would be delivered to a game that
+  original guest routine 0x004246b0, so a transition driven while frozen would be delivered to a game that
   never runs another frame.
 
 WHAT THE SECOND STEP ACTUALLY REACHES, and why the item is not called EXIT TO MENU: the
@@ -95,8 +95,8 @@ any_playing_device() and says which device it used and why.
 ### Note (2026-08-06)
 RE, 2026-08-06: the top-level mode NEVER goes back -- and the front end was the wrong target anyway.
 
-WHAT THE MODE WORD IS. fn_004246b0 is called with ECX = 0x00458b00 (lf2_recomp.c, the call
-at guest 0x0043ecb2), and the mode it switches on is [ECX] -- so the top-level mode is the
+WHAT THE MODE WORD IS. The retail call at guest 0x0043ecb2 invokes fn_004246b0 with
+ECX = 0x00458b00, and the mode it switches on is [ECX] -- so the top-level mode is the
 FIRST DWORD OF THE WORLD OBJECT, the same object coop.c calls `this`. Values: 0 = the
 launcher, 1 = loading, 2 = the game proper.
 
@@ -544,7 +544,7 @@ the positive -- the exact failure mode the global rules describe.
 records 0x0044d020 and `synth_active()` drops the remaining gathers the moment it moves, saying
 so out loud. That is the game's own rule (`fn_00431c70`), not a shorter frame count.
 
-**Verified**, `tools/e2e.sh exit_to_menu` (new): LANDED on screen 10, the mode menu, with
+**Verified**, `tools/e2e.py exit_to_menu` (new): LANDED on screen 10, the mode menu, with
 "1 gather(s) left when the game moved from screen 1 to screen 10 -- dropped". Run against BOTH
 classes: with the scope check compiled out the same route lands on screen 1, character
 selection, and the route FAILS. `ctest` 10/10.
@@ -554,10 +554,10 @@ it existed for was answered by one decompilation. `SCREEN_WORD`, `MENU_CURSOR` a
 numbering are recorded in `runtime/overrides/world.h`.
 
 ### Resolution (2026-08-12)
-The exit reached the mode menu (screen word 0x0044d020 = 10) and was pushed off it by its own synthetic confirm: input_synth_confirm held the attack for two gathers, and fn_00431c70 clears the held-button latch across a screen change, so the leftover gather read as a fresh press to fn_00431b70 and fn_00431d10 confirmed cursor 0. The press is now scoped to the screen it was issued on. Verified by tools/e2e.sh exit_to_menu, which lands on 10 and fails on 1 with the scope compiled out.
+The exit reached the mode menu (screen word 0x0044d020 = 10) and was pushed off it by its own synthetic confirm: input_synth_confirm held the attack for two gathers, and fn_00431c70 clears the held-button latch across a screen change, so the leftover gather read as a fresh press to fn_00431b70 and fn_00431d10 confirmed cursor 0. The press is now scoped to the screen it was issued on. Verified by tools/e2e.py exit_to_menu, which lands on 10 and fails on 1 with the scope compiled out.
 
 ### Note (2026-08-17)
-SUPERSEDED (2026-08-17): the synthetic-press mechanism this entry describes was itself replaced. LEAVE MATCH now calls the game's own exit code directly (screens.c's guest_end_match / guest_overlay_exit, read off fn_0041bc90 and fn_00429730): fn_00416cd0(0x44d020,0x451160) + fn_00431c70(this) to end the match, then fn_00401a30(0x455610,0) + screen=10 + 0x457580=0 + fn_00431c70(this) for the overlay Exit. input_synth_confirm and any_playing_device are DELETED -- no keystroke or button is injected, so the 'second gather confirms the mode menu' bug class cannot recur because there is no press. tools/e2e.sh exit_to_menu (updated for the native flow) still lands on screen 10.
+SUPERSEDED (2026-08-17): the synthetic-press mechanism this entry describes was itself replaced. LEAVE MATCH now calls the game's own exit code directly (screens.c's guest_end_match / guest_overlay_exit, read off fn_0041bc90 and fn_00429730): fn_00416cd0(0x44d020,0x451160) + fn_00431c70(this) to end the match, then fn_00401a30(0x455610,0) + screen=10 + 0x457580=0 + fn_00431c70(this) for the overlay Exit. input_synth_confirm and any_playing_device are DELETED -- no keystroke or button is injected, so the 'second gather confirms the mode menu' bug class cannot recur because there is no press. tools/e2e.py exit_to_menu (updated for the native flow) still lands on screen 10.
 
 ### Reopened (2026-08-22)
 USER 2026-08-22: Leave Match should just do what F4 does. Replace the direct/native exit-to-menu call with the same guest input path as a real F4 press so the game owns all resulting state transitions and cleanup. Reuse the authoritative keyboard/message route; do not duplicate F4 behavior in the UI layer.

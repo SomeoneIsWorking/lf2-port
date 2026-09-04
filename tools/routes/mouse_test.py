@@ -42,7 +42,7 @@ def read_difficulty(path: Path) -> int:
 
 
 def main() -> int:
-    build = Path(os.environ.get("BUILD", ROOT / "scratch" / "build-clang")).resolve()
+    build = Path(os.environ.get("BUILD", ROOT / "build" / "clang")).resolve()
     game = Path(os.environ.get("GAME", ROOT / "game")).resolve()
     binary = build / "lf2"
     require_input(binary, "LF2 binary", executable=True)

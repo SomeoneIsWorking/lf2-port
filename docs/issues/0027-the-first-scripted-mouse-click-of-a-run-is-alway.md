@@ -23,8 +23,8 @@ So it is NOT "too early": a lone click at 1200 does nothing, and a click at 1000
 one preceded it. THE FIRST CLICK OF A RUN IS SWALLOWED, whatever frame it lands on, and
 fifteen frames is enough of a gap for the second to work.
 
-This is the root cause behind the dead first click in both mouse routes -- tools/routes/smoke_test.sh
-(where the KEY at 960 turned out to be what starts the game) and tools/routes/mouse_test.sh (where
+This is the root cause behind the dead first click in both mouse routes -- the recorded smoke runtime scenario
+(where the KEY at 960 turned out to be what starts the game) and the recorded mouse runtime scenario (where
 the click at 1350 does, one frame before charselect@1352, so every later click is doing the
 job its comment gives the one before it, and the run never reaches a match at all -- #26).
 
@@ -176,8 +176,8 @@ never fires at all. Both end in the same place; only one draws the panel this po
 That is worth understanding, and it is what the `charselect` signal's name already overstates
 (see docs/running.md — the signal is the post-load panel, not character selection).
 
-ALSO RETRACTED, downstream of this: "tools/routes/mouse_test.sh's FIRST CLICK IS DEAD" (issue #25's
-note, and a comment I wrote into tools/routes/smoke_test.sh). The first click starts the game; the
+ALSO RETRACTED, downstream of this: "the recorded mouse runtime scenario's FIRST CLICK IS DEAD" (issue #25's
+note, and a comment I wrote into the recorded smoke runtime scenario). The first click starts the game; the
 second lands on the mode menu and picks VS mode. Its original comments were close to right
 and mine were wrong. Issue #26 is NOT affected — mouse_test still reaches only charselect@1352
 with no overlay and no match, and its assertions still pass regardless, which stands on its

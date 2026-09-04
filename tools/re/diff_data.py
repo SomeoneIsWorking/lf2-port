@@ -10,7 +10,8 @@ none of which could be ruled out on sight.
     tools/re/diff_data.py scratch/frames/data_002300.bin scratch/frames/data_002400.bin
     tools/re/diff_data.py before.bin after.bin --max 8      # values that stay small
 
-Prints guest addresses, so a hit can go straight into a grep of the generated C.
+Prints guest addresses so a hit can be inspected in the executable disassembly,
+live JIT trace, or the native address registry.
 
 Reports the denominator either way: how many dwords were compared, how many differed, and
 how many survived each filter. "No candidates" from a run that compared nothing looks

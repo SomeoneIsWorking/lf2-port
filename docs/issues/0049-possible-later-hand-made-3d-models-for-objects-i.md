@@ -104,7 +104,7 @@ SDL_Render exactly as it does. Hand-woven geometry is rendered by a SEPARATE SDL
 the SAME device, into its own colour target with its own depth attachment, depth-tested
 properly against itself -- and the finished texture is then handed to the display list as an
 ordinary quad. No rewrite of render.c, no second device, no change to the software fallback,
-and `tools/e2e.sh background`'s byte-identity arm is untouched because a stage with no geometry
+and the recorded background identity arm is untouched because a stage with no geometry
 submits no pass.
 
 WHY THAT IS ENOUGH FOR WHAT WAS ACTUALLY ASKED FOR, and this is the part the estimate did not

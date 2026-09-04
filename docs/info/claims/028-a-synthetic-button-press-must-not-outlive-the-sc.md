@@ -15,7 +15,7 @@ A synthetic button press must not outlive the screen it was issued on: fn_00431c
 
 ## Evidence
 
-fn_00431b70 and fn_00431c70 decompiled; issue #22 is the observed consequence. tools/e2e.sh exit_to_menu passes with the screen scope in input_synth_confirm/synth_active and FAILS (lands on character selection) with the check compiled out -- run against both classes.
+fn_00431b70 and fn_00431c70 decompiled; issue #22 is the observed consequence. tools/e2e.py exit_to_menu passes with the screen scope in input_synth_confirm/synth_active and FAILS (lands on character selection) with the check compiled out -- run against both classes.
 
 ## What would falsify it
 

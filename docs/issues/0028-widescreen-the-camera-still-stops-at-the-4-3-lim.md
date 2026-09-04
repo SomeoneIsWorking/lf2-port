@@ -22,7 +22,7 @@ draw, 828 bytes, read end to end this session) computes
 
     offset = -(camera * (layer_span - 794)) / (stage_width - 794)
 
-with 794 as a LITERAL in the recompiled code -- not one of the three .data words menu.c
+with 794 as a literal in the retail routine -- not one of the three `.data` words `menu.c`
 rewrites, so it cannot be widened the way the viewport words were. Every stage's layers are
 authored so that span - 794 is exactly the scroll range: each layer covers the screen at
 every camera position with no margin. Widening the view without widening the camera clamp is

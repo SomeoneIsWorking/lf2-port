@@ -3,10 +3,12 @@
  * Buffers live in guest memory so Lock() returns a plain address and the game writes
  * PCM straight into it, which is what it does. Mixing is a simple additive S16 mix of
  * every playing buffer, driven from an SDL audio stream callback. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "com.h"
 #include "dsound.h"
 #include "guest_map.h"
-#include "guest_ops.h"
+#include "guest.h"
 #include "music_decode.h"
 
 #include <SDL3/SDL.h>
@@ -67,7 +69,7 @@ static long mix_dump_frames;
  * reads to EOF, but the sizes will read as zero -- so it says so rather than pretending. */
 static void mix_dump_open(void)
 {
-    const char *path = getenv("LF2_AUDIO_DUMP_MIX");
+    const char *path = lf2_environment_get(LF2_ENV_AUDIO_DUMP_MIX);
     if (!path || !*path || mix_dump) return;
     /* Create the parent directories. A relative path here is resolved against the game
      * tree, because run.sh chdirs into it before exec -- so the obvious invocation
@@ -88,12 +90,12 @@ static void mix_dump_open(void)
         char cwd[512];
         /* Loud, and it names the resolved location -- "cannot write" without saying where
          * it tried is what made this look like a recording that simply came out empty. */
-        fprintf(stderr,
-                "\n*** audio dump FAILED: cannot open \"%s\"\n"
-                "*** working directory is %s\n"
-                "*** a relative path lands inside the game tree; use an absolute one.\n"
-                "*** NOTHING WILL BE RECORDED.\n\n",
-                path, getcwd(cwd, sizeof cwd) ? cwd : "?");
+        lf2_log_writef(LF2_LOG_INFO, "dsound",
+                       "\n*** audio dump FAILED: cannot open \"%s\"\n"
+                       "*** working directory is %s\n"
+                       "*** a relative path lands inside the game tree; use an absolute one.\n"
+                       "*** NOTHING WILL BE RECORDED.\n\n",
+                       path, getcwd(cwd, sizeof cwd) ? cwd : "?");
         return;
     }
     unsigned char hdr[44] = {0};
@@ -113,7 +115,7 @@ static void mix_dump_open(void)
     hdr[32] = MIX_CHANNELS * 2;
     hdr[34] = 16;
     fwrite(hdr, 1, sizeof hdr, mix_dump);
-    fprintf(stderr, "audio dump: recording the mix to %s\n", path);
+    lf2_log_writef(LF2_LOG_INFO, "dsound", "audio dump: recording the mix to %s\n", path);
 }
 
 void mix_dump_close(void)
@@ -127,8 +129,8 @@ void mix_dump_close(void)
     fwrite(&data, 4, 1, mix_dump);
     fclose(mix_dump);
     mix_dump = NULL;
-    fprintf(stderr, "audio dump: wrote %ld frames (%.1f s)\n", mix_dump_frames,
-            (double)mix_dump_frames / (double)MIX_RATE);
+    lf2_log_writef(LF2_LOG_INFO, "dsound", "audio dump: wrote %ld frames (%.1f s)\n", mix_dump_frames,
+                   (double)mix_dump_frames / (double)MIX_RATE);
 }
 
 /* ---- background music ----
@@ -214,7 +216,8 @@ int music_load(const char *path)
         SDL_UnlockMutex(mix_lock);
         free(stale);
         au_music_frames = 0;
-        fprintf(stderr, "music: %s\n", decode_error[0] ? decode_error : "decoder returned no audio");
+        lf2_log_writef(LF2_LOG_INFO, "dsound", "music: %s\n",
+                       decode_error[0] ? decode_error : "decoder returned no audio");
         return 0;
     }
     /* Publish pointer, length and cursor together, with the mixer excluded. Assigning
@@ -429,8 +432,8 @@ static void sb_Unlock(uint32_t self)
     if (b) {
         b->sum = pcm_sum(b);
         b->summed = 1;
-        if (getenv("LF2_PCM_DEBUG"))
-            fprintf(stderr, "unlock pcm=%08x bytes=%u sum=%08x\n", b->pixels, b->bytes, b->sum);
+        if (lf2_environment_get(LF2_ENV_PCM_DEBUG))
+            lf2_log_writef(LF2_LOG_INFO, "dsound", "unlock pcm=%08x bytes=%u sum=%08x\n", b->pixels, b->bytes, b->sum);
     }
     com_ret(5, DD_OK);
 }
@@ -444,14 +447,14 @@ static void sb_Unlock(uint32_t self)
  * do not, the fault is upstream in mmio/Lock and the mixer was never involved. */
 static void dump_src(const SBuf *b)
 {
-    const char *dir = getenv("LF2_AUDIO_DUMP_SRC");
+    const char *dir = lf2_environment_get(LF2_ENV_AUDIO_DUMP_SRC);
     if (!dir || !*dir || !b->bytes) return;
     static int n;
     char path[512];
     snprintf(path, sizeof path, "%s/buf_%03d_%dHz_%dch_%dbit.wav", dir, n++, b->rate, b->channels, b->bits);
     FILE *f = fopen(path, "wb");
     if (!f) {
-        fprintf(stderr, "audio dump: cannot write %s\n", path);
+        lf2_log_writef(LF2_LOG_INFO, "dsound", "audio dump: cannot write %s\n", path);
         return;
     }
 
@@ -492,23 +495,23 @@ static void sb_Play(uint32_t self)
         if (now != b->sum) {
             static long n;
             if (++n <= 20 || n % 100 == 0)
-                fprintf(stderr,
-                        "*** PCM CLOBBERED before play: buf bytes=%u at %08x "
-                        "(sum %08x -> %08x), occurrence %ld\n",
-                        b->bytes, b->pixels, b->sum, now, n);
+                lf2_log_writef(LF2_LOG_INFO, "dsound",
+                               "*** PCM CLOBBERED before play: buf bytes=%u at %08x "
+                               "(sum %08x -> %08x), occurrence %ld\n",
+                               b->bytes, b->pixels, b->sum, now, n);
             b->sum = now;
         }
     }
-    if (getenv("LF2_PLAY_DEBUG")) {
+    if (lf2_environment_get(LF2_ENV_PLAY_DEBUG)) {
         int idx = -1;
         for (int k = 0; k < nbufs; k++)
             if (bufs[k] == b) {
                 idx = k;
                 break;
             }
-        fprintf(stderr, "play buf=%d t=%.2fs rate=%d bits=%d ch=%d bytes=%u vol=%d dumped=%d\n", idx,
-                (double)mix_dump_frames / (double)MIX_RATE, b->rate, b->bits, b->channels, b->bytes, b->volume,
-                b->dumped);
+        lf2_log_writef(LF2_LOG_INFO, "dsound", "play buf=%d t=%.2fs rate=%d bits=%d ch=%d bytes=%u vol=%d dumped=%d\n",
+                       idx, (double)mix_dump_frames / (double)MIX_RATE, b->rate, b->bits, b->channels, b->bytes,
+                       b->volume, b->dumped);
     }
     SDL_LockMutex(mix_lock);
     b->looping = (ARG(3) & 1) != 0; /* DSBPLAY_LOOPING */
@@ -642,10 +645,10 @@ static void ds_CreateSoundBuffer(uint32_t self)
     SBuf *b = SDL_calloc(1, sizeof *b);
     b->bytes = bytes ? bytes : 4;
     if (pcm_next + b->bytes > GUEST_PCM_END) {
-        fprintf(stderr,
-                "pcm arena exhausted: %u bytes at %08x, reservation ends at %08x. "
-                "Raise GUEST_PCM_SIZE in guest_map.h.\n",
-                b->bytes, pcm_next, (unsigned)GUEST_PCM_END);
+        lf2_log_writef(LF2_LOG_INFO, "dsound",
+                       "pcm arena exhausted: %u bytes at %08x, reservation ends at %08x. "
+                       "Raise GUEST_PCM_SIZE in guest_map.h.\n",
+                       b->bytes, pcm_next, (unsigned)GUEST_PCM_END);
         abort();
     }
     b->pixels = pcm_next;
@@ -669,8 +672,9 @@ static void ds_CreateSoundBuffer(uint32_t self)
         au_bufs++;
     } else au_unregistered++; /* created but never mixed: it plays as silence */
     SDL_UnlockMutex(mix_lock);
-    if (getenv("LF2_AUDIO_DEBUG"))
-        fprintf(stderr, "buffer created: %u bytes, %d Hz %dch %dbit\n", b->bytes, b->rate, b->channels, b->bits);
+    if (lf2_environment_get(LF2_ENV_AUDIO_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "dsound", "buffer created: %u bytes, %d Hz %dch %dbit\n", b->bytes, b->rate,
+                       b->channels, b->bits);
     ST32(out, com_create(IF_DSBUFFER, b));
     com_ret(4, DD_OK);
 }
@@ -700,8 +704,9 @@ static void ds_DuplicateSoundBuffer(uint32_t self)
         au_bufs++;
     } else au_unregistered++; /* created but never mixed: it plays as silence */
     SDL_UnlockMutex(mix_lock);
-    if (getenv("LF2_AUDIO_DEBUG"))
-        fprintf(stderr, "buffer created: %u bytes, %d Hz %dch %dbit\n", b->bytes, b->rate, b->channels, b->bits);
+    if (lf2_environment_get(LF2_ENV_AUDIO_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "dsound", "buffer created: %u bytes, %d Hz %dch %dbit\n", b->bytes, b->rate,
+                       b->channels, b->bits);
     ST32(out, com_create(IF_DSBUFFER, b));
     com_ret(3, DD_OK);
 }
@@ -719,28 +724,32 @@ static void ds_ret_ok3(uint32_t self)
 
 void audio_report(void)
 {
-    fprintf(stderr,
-            "audio: buffers=%ld plays=%ld device-pulls=%ld peak=%ld/32767 "
-            "clipped=%ld/%ld (%.3f%%) music-frames=%ld\n",
-            au_bufs, au_plays, au_pulls, au_peak, au_clipped, au_samples,
-            au_samples ? 100.0 * (double)au_clipped / (double)au_samples : 0.0, au_music_frames);
+    lf2_log_writef(LF2_LOG_INFO, "dsound",
+                   "audio: buffers=%ld plays=%ld device-pulls=%ld peak=%ld/32767 "
+                   "clipped=%ld/%ld (%.3f%%) music-frames=%ld\n",
+                   au_bufs, au_plays, au_pulls, au_peak, au_clipped, au_samples,
+                   au_samples ? 100.0 * (double)au_clipped / (double)au_samples : 0.0, au_music_frames);
     /* Deliberately NOT prefixed "audio:" -- tools/routes/smoke_test.py takes the last line with
      * that prefix, so a second one silently blanked every audio assertion. */
-    fprintf(stderr,
-            "mixer: multi-slice pulls=%ld (%ld frames the old single-slice mixer "
-            "would have dropped), max request=%ld frames, slice=%d\n",
-            au_multislice_pulls, au_would_drop_frames, au_max_req, MIX_SLICE);
-    fprintf(stderr, "mixer: buffers unregistered past MAX_BUFS=%d: %ld (each one plays as silence)\n", MAX_BUFS,
-            au_unregistered);
-    if (!au_multislice_pulls && au_pulls) fprintf(stderr, "  no under-delivery: every pull was satisfied in full\n");
-    if (!au_bufs) fprintf(stderr, "  the game never created a sound buffer\n");
-    else if (!au_plays) fprintf(stderr, "  buffers exist but none was ever started\n");
+    lf2_log_writef(LF2_LOG_INFO, "dsound",
+                   "mixer: multi-slice pulls=%ld (%ld frames the old single-slice mixer "
+                   "would have dropped), max request=%ld frames, slice=%d\n",
+                   au_multislice_pulls, au_would_drop_frames, au_max_req, MIX_SLICE);
+    lf2_log_writef(LF2_LOG_INFO, "dsound",
+                   "mixer: buffers unregistered past MAX_BUFS=%d: %ld (each one plays as silence)\n", MAX_BUFS,
+                   au_unregistered);
+    if (!au_multislice_pulls && au_pulls)
+        lf2_log_writef(LF2_LOG_INFO, "dsound", "  no under-delivery: every pull was satisfied in full\n");
+    if (!au_bufs) lf2_log_writef(LF2_LOG_INFO, "dsound", "  the game never created a sound buffer\n");
+    else if (!au_plays) lf2_log_writef(LF2_LOG_INFO, "dsound", "  buffers exist but none was ever started\n");
     else if (!au_pulls)
-        fprintf(stderr, "  buffers played but the device never pulled -- "
-                        "the mixer callback is not running\n");
+        lf2_log_writef(LF2_LOG_INFO, "dsound",
+                       "  buffers played but the device never pulled -- "
+                       "the mixer callback is not running\n");
     else if (!au_peak)
-        fprintf(stderr, "  the mixer ran but produced pure silence, so "
-                        "nothing would be heard\n");
+        lf2_log_writef(LF2_LOG_INFO, "dsound",
+                       "  the mixer ran but produced pure silence, so "
+                       "nothing would be heard\n");
 }
 
 void dsound_register(void)

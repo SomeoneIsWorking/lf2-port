@@ -5,10 +5,12 @@ from pathlib import Path
 import importlib.util
 import os
 import tempfile
+import sys
 from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools" / "build"))
 SPEC = importlib.util.spec_from_file_location(
     "lf2_build", ROOT / "tools" / "build" / "build.py"
 )

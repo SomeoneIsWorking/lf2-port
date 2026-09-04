@@ -33,7 +33,7 @@ and what binds it to a player index.
 ALSO NOTED, unverified: the device selector table spans eight entries
 (0x00450b4c..0x00450b6c) but the ported gather loops `i < 4`. If the game really supports
 eight players, that cap is a port limitation -- but changing it without evidence would risk
-the two-player path that `tools/routes/controller_2p_test.sh` covers, so it is left alone.
+the two-player path that `the recorded controller_2p runtime scenario` covers, so it is left alone.
 
 DEAD END TO AVOID: watching 0x00450b50 for the write that makes a slot live. The device
 selector is the CONTROL CONFIG index (slots 0..3 read 1,2,3,4 from character selection
@@ -155,8 +155,8 @@ HOW IT WAS FOUND, in order, because each step ruled out the next-most-likely sto
    per frame, and nothing else in 1056 bytes. That is the countdown above, not the gate,
    and its value is 0 on live and idle alike -- which is why the gate is not in the object.
 4. The profile over `this` puts the hot region at this+0x04..0x193, ~28 reads per byte per
-   frame. Grepping the lifted C for the +824 (0x338) countdown lands in fn_004064d0 and
-   shows the byte test one instruction later.
+   frame. The disassembly for the +824 (0x338) countdown lands in fn_004064d0
+   and shows the byte test one instruction later.
 
 WHAT REMAINS for drop-in coop proper, none of it blocked: pick a free index (the game gave
 its computer opponent 11, so the choice is not "the next player slot"), build the record

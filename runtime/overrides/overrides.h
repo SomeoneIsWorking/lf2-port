@@ -1,10 +1,10 @@
 /* The native overrides, as one subsystem: what its files share with each other.
  *
- * Each .c here provides the fn_<addr> symbols the lifter would otherwise have generated,
- * for the addresses listed in re/overrides.txt. They run in the guest ABI: the caller's
- * arguments are on the guest stack, and a stdcall callee pops them.
+ * Each .c here provides native behavior registered by guest address in native_override.c.
+ * They run in the guest ABI: the caller's arguments are on the guest stack, and a stdcall
+ * callee pops them.
  *
- * The split is by what the code is ABOUT, not by which recompiled function it happens to
+ * The split is by what the code is ABOUT, not by which guest function it happens to
  * replace -- one screen's behaviour is usually spread over several overrides, and one
  * override (fn_0043f010 draws everything) serves several screens:
  *
@@ -32,7 +32,7 @@
  * been in coop.c.
  */
 
-/* Which recompiled function each file provides, so a reader looking for one address does
+/* Which guest function each file provides, so a reader looking for one address does
  * not have to open seven files:
  *
  *   fn_00419e40  boot_guest.c  world construction

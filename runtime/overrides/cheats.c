@@ -9,8 +9,9 @@
 #include "cheats.h"
 
 #include "function_keys.h"
-#include "guest_ops.h"
+#include "guest.h"
 #include "hostwin.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -83,8 +84,9 @@ void cheats_report(void)
     for (size_t i = 0; i < sizeof(DESCRIPTORS) / sizeof(DESCRIPTORS[0]); ++i) {
         const CheatDescriptor *entry = &DESCRIPTORS[i];
         if (!activations[entry->action]) continue;
-        fprintf(stderr, "cheat: %s %s, %u activation(s), key %s\n", entry->key, entry->label,
-                activations[entry->action], !entry->vk || !hostwin_injected_key(entry->vk) ? "released" : "DOWN");
+        lf2_log_writef(LF2_LOG_INFO, "cheats", "cheat: %s %s, %u activation(s), key %s\n", entry->key, entry->label,
+                       activations[entry->action],
+                       !entry->vk || !hostwin_injected_key(entry->vk) ? "released" : "DOWN");
     }
 }
 

@@ -7,6 +7,8 @@
  *
  * RMLUI_SDL_VERSION_MAJOR is set by CMakeLists.txt (third-party/RmlUi/Backends expects it).
  */
+#include "lf2_log.h"
+#include "environment.h"
 #include "rmlui.h"
 
 #include <RmlUi/Core.h>
@@ -53,10 +55,9 @@ extern const unsigned int lf2_font_sans_len;
  * options.c every frame the screen is up, and each key row shows the config's current binding
  * and starts a rebind when clicked (its next key press is the binding).
  */
-/* Dusklight's window.rcss and SettingsWindow structure, adapted to LF2's smaller set of
- * settings. The important parts are copied rather than approximated: a flex body centres one
- * modal window, the window owns a tab strip and scrollable content pane, and every interactive
- * element is a focusable RmlUi control. */
+/* A flex body centres one modal window. The window owns a tab strip and
+ * scrollable content pane, and every interactive element is a focusable
+ * RmlUi control. */
 static const char SETTINGS_RML[] = R"RML(
 <rml>
 <head>
@@ -288,7 +289,8 @@ static float content_scale()
     static bool reported;
     if (!reported) {
         reported = true;
-        fprintf(stderr, "rmlui: SDL_GetWindowDisplayScale failed: %s; using 1.0 for UI layout\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "settings_ui",
+                       "rmlui: SDL_GetWindowDisplayScale failed: %s; using 1.0 for UI layout\n", SDL_GetError());
     }
     return 1.0f;
 }
@@ -451,7 +453,7 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     Rml::SetSystemInterface(&rmlui_system_interface());
     Rml::SetRenderInterface(g_render);
     if (!Rml::Initialise()) {
-        fprintf(stderr, "rmlui: Rml::Initialise failed\n");
+        lf2_log_writef(LF2_LOG_INFO, "settings_ui", "rmlui: Rml::Initialise failed\n");
         return 0;
     }
     Rml::LoadFontFace(Rml::Span<const Rml::byte>((const Rml::byte *)lf2_font_sans, lf2_font_sans_len), "lf2",
@@ -459,17 +461,17 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
 
     g_ctx = Rml::CreateContext("settings", Rml::Vector2i(640, 480));
     if (!g_ctx) {
-        fprintf(stderr, "rmlui: CreateContext failed\n");
+        lf2_log_writef(LF2_LOG_INFO, "settings_ui", "rmlui: CreateContext failed\n");
         return 0;
     }
-    /* Dusklight uses the display's expected CONTENT scale for dp layout and FreeType raster
-     * size. Pixel density only maps window points to drawable pixels and can be 1 on an X11
+    /* Use the display's expected content scale for dp layout and FreeType
+     * raster size. Pixel density only maps window points to drawable pixels and can be 1 on an X11
      * desktop whose content scale is 2. */
     g_ctx->SetDensityIndependentPixelRatio(content_scale());
 
     auto ctor = g_ctx->CreateDataModel("settings");
     if (!ctor) {
-        fprintf(stderr, "rmlui: CreateDataModel failed\n");
+        lf2_log_writef(LF2_LOG_INFO, "settings_ui", "rmlui: CreateDataModel failed\n");
         return 0;
     }
     data_model() = ctor.GetModelHandle();
@@ -521,7 +523,8 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
         if (args.empty()) return;
         M.page = args[0].Get<Rml::String>();
         data_model().DirtyVariable("page");
-        if (getenv("LF2_RMLUI_DEBUG")) fprintf(stderr, "rmlui page: %s\n", M.page.c_str());
+        if (lf2_environment_get(LF2_ENV_RMLUI_DEBUG))
+            lf2_log_writef(LF2_LOG_INFO, "settings_ui", "rmlui page: %s\n", M.page.c_str());
     });
     ctor.BindEventCallback("toggle_engine", [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) {
         M.engine = !M.engine;
@@ -580,7 +583,8 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
         for (size_t i = 0; i < count; ++i)
             if (descriptors[i].action == action && descriptors[i].match_only && !M.in_match) return;
         pause_menu_close();
-        if (!cheats_request(action)) fprintf(stderr, "cheat command: another function-key pulse is active\n");
+        if (!cheats_request(action))
+            lf2_log_writef(LF2_LOG_INFO, "settings_ui", "cheat command: another function-key pulse is active\n");
     });
     ctor.BindEventCallback("close",
                            [](Rml::DataModelHandle, Rml::Event &, const Rml::VariantList &) { pause_menu_close(); });
@@ -596,7 +600,7 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     const std::string document = settings_document();
     g_doc = g_ctx->LoadDocumentFromMemory(document, "settings");
     if (!g_doc) {
-        fprintf(stderr, "rmlui: LoadDocumentFromMemory failed\n");
+        lf2_log_writef(LF2_LOG_INFO, "settings_ui", "rmlui: LoadDocumentFromMemory failed\n");
         return 0;
     }
     g_doc->Hide();
@@ -607,11 +611,11 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
 void rmlui_shutdown(void)
 {
     const int shared_textures = g_render ? g_render->SharedDeviceTexturesLoaded() : 0;
-    if (getenv("LF2_RMLUI_DEBUG"))
-        fprintf(stderr,
-                "rmlui: %ld settings open(s), %ld rendered frame(s), %d shared SVG "
-                "device texture(s) loaded\n",
-                g_open_count, g_render_frames, shared_textures);
+    if (lf2_environment_get(LF2_ENV_RMLUI_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "settings_ui",
+                       "rmlui: %ld settings open(s), %ld rendered frame(s), %d shared SVG "
+                       "device texture(s) loaded\n",
+                       g_open_count, g_render_frames, shared_textures);
     if (g_ctx) {
         Rml::Shutdown();
         g_ctx = nullptr;
@@ -687,16 +691,16 @@ void rmlui_render(void)
     if (!rmlui_lifecycle_frame_continues(&g_lifecycle, frame)) return;
     g_render_frames++;
     g_render->BeginFrame();
-    if (!g_metrics_reported && getenv("LF2_RMLUI_DEBUG")) {
+    if (!g_metrics_reported && lf2_environment_get(LF2_ENV_RMLUI_DEBUG)) {
         int window_w = 0, window_h = 0;
         int pixel_w = 0, pixel_h = 0;
         SDL_GetWindowSize(g_W, &window_w, &window_h);
         SDL_GetRenderOutputSize(g_R, &pixel_w, &pixel_h);
-        fprintf(stderr,
-                "rmlui metrics: %dx%d window points -> %dx%d drawable pixels, content scale "
-                "%.2f, body font %.1fpx\n",
-                window_w, window_h, pixel_w, pixel_h, display_scale,
-                g_doc ? static_cast<double>(g_doc->GetComputedValues().font_size()) : 0.0);
+        lf2_log_writef(LF2_LOG_INFO, "settings_ui",
+                       "rmlui metrics: %dx%d window points -> %dx%d drawable pixels, content scale "
+                       "%.2f, body font %.1fpx\n",
+                       window_w, window_h, pixel_w, pixel_h, display_scale,
+                       g_doc ? static_cast<double>(g_doc->GetComputedValues().font_size()) : 0.0);
         g_metrics_reported = 1;
     }
     g_ctx->Render();
@@ -772,7 +776,7 @@ int rmlui_event(SDL_Event *e)
 
     SDL_Event copy = *e;
     RmlSDL::InputEventHandler(g_ctx, g_W, copy);
-    /* Dusklight blocks the game whenever any active document is visible. The SDL adapter's
+    /* Block the game whenever any active document is visible. The SDL adapter's
      * propagation result only describes RmlUi's DOM, not whether the guest should also see
      * the physical input, so every input event is consumed at this boundary. */
     switch (e->type) {

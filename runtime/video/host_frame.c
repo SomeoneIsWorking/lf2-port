@@ -1,6 +1,8 @@
 /* Host-side frame lifecycle: presentation, capture/readback coordination, pacing, and
  * orderly SDL teardown. DirectDraw records the frame; this module owns what the host does
  * with that completed frame. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "hostwin.h"
 
 #include "com.h"
@@ -54,7 +56,8 @@ void hostwin_shutdown(void)
     menu_click_report();
     clock_sites_report();
     window_resize_report();
-    if (getenv("LF2_SHUTDOWN_DEBUG")) fprintf(stderr, "shutdown: releasing SDL\n");
+    if (lf2_environment_get(LF2_ENV_SHUTDOWN_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "host_frame", "shutdown: releasing SDL\n");
     dsound_shutdown();
     render_shutdown();
     device_icons_shutdown();
@@ -94,11 +97,12 @@ static int frame_unpaced(void)
 {
     static int on = -1;
     if (on < 0) {
-        on = getenv("LF2_UNPACED") != NULL;
+        on = lf2_environment_get(LF2_ENV_UNPACED) != NULL;
         if (on)
-            fprintf(stderr, "pacing: LF2_UNPACED -- frames run as fast as the machine allows. "
-                            "Every route key is a frame count, so this changes how long the "
-                            "run takes and nothing about what happens in it.\n");
+            lf2_log_writef(LF2_LOG_INFO, "host_frame",
+                           "pacing: LF2_UNPACED -- frames run as fast as the machine allows. "
+                           "Every route key is a frame count, so this changes how long the "
+                           "run takes and nothing about what happens in it.\n");
     }
     return on;
 }
@@ -141,7 +145,9 @@ static void frame_pace(void)
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
 {
     rwatch_frame();
-    if (++frames % 60 == 1) fprintf(stderr, "present #%ld %dx%d renderer=%p\n", frames, w, h, (void *)hw.renderer);
+    if (++frames % 60 == 1)
+        lf2_log_writef(LF2_LOG_INFO, "host_frame", "present #%ld %dx%d renderer=%p\n", frames, w, h,
+                       (void *)hw.renderer);
 
     /* Draw before readback. Reading first returns the previous GPU frame, which masquerades
      * as a clean one-pixel camera or sampling error. */

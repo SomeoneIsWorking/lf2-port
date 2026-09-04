@@ -1,3 +1,4 @@
+#include "lf2_log.h"
 #include "device_icons.h"
 
 #include "device_assets.h"
@@ -30,8 +31,8 @@ static SDL_Surface *icon_surface(DeviceAsset asset)
         icons[asset] = device_asset_rasterize(asset, DEVICE_ICON_SIZE, DEVICE_ICON_SIZE);
         if (!icons[asset]) {
             load_failed[asset] = 1;
-            fprintf(stderr, "device icons: could not rasterise embedded %s SVG: %s\n",
-                    asset == DEVICE_ASSET_KEYBOARD ? "keyboard" : "gamepad", SDL_GetError());
+            lf2_log_writef(LF2_LOG_INFO, "device_icons", "device icons: could not rasterise embedded %s SVG: %s\n",
+                           asset == DEVICE_ASSET_KEYBOARD ? "keyboard" : "gamepad", SDL_GetError());
         }
     }
     return icons[asset];

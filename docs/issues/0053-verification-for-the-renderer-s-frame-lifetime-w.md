@@ -2,7 +2,7 @@
 id: 53
 title: Verification for the renderer's frame lifetime was put in a route script instead of offline, doubling a 300-second test
 status: resolved
-symptom: reported. The retained-frame bookkeeping added for issue #52 is pure state -- list lengths, a rewind, a tile-pool high-water mark -- and none of it needs a running game, but it was verified by adding a SECOND full game run to tools/routes/pause_dropout_test.sh as a negative control. That is a slow test made twice as slow to check something a millisecond of arithmetic can check
+symptom: reported. The retained-frame bookkeeping added for issue #52 is pure state -- list lengths, a rewind, a tile-pool high-water mark -- and none of it needs a running game, but it was verified by adding a SECOND full game run to the recorded pause_dropout runtime scenario as a negative control. That is a slow test made twice as slow to check something a millisecond of arithmetic can check
 tags: reported,testing,verification,renderer
 created: 2026-08-11
 updated: 2026-08-11
@@ -38,7 +38,7 @@ plain integers and can live in a header with no SDL in it, which render.c includ
 WHAT MUST NOT HAPPEN, because it is the tempting cheap version: leaving the assertions in the
 route script and merely deleting the second run. That removes the negative control and leaves
 the positive, which is the thing this project has already been bitten by -- a check that cannot
-fail (issue #26, instrument I010). The control has to survive; it has to move offline with the
+fail (issue #26 and the retired renderer comparison). The control has to survive; it has to move offline with the
 thing it controls.
 
 WHAT A ROUTE SCRIPT IS STILL FOR, so this does not swing too far: whether the pause menu is

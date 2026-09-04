@@ -1,45 +1,44 @@
 # LF2 native/JIT migration
 
-This is the LF2-specific execution plan under
-`shared/jit-common/docs/migration.md`. It replaces the offline x86-to-C plan;
-there is no static gameplay alternative.
+This document is the LF2 execution plan. The product consumes the player's
+authenticated executable as runtime data and has one title-owned adapter to
+`shared/x86port`.
 
 ## Product contract
 
-The shipped process has two cooperating execution owners:
+The shipped process has two cooperating owners:
 
 1. LF2-native code owns the process shell, bounded startup, title policy,
-   selected game behavior, and every established Win32/DirectX/SDL host seam.
-2. `shared/x86port` dynamically translates all remaining x86-32 guest code from
-   the authenticated LF2 image and caches host blocks at runtime.
+   selected game behavior, and established Win32/DirectX/SDL host seams.
+2. `shared/x86port` discovers, translates, and caches all remaining x86-32
+   guest code while the game runs.
 
-The executable remains player-owned data. No build, installer, launcher, or
-release stage emits guest C/C++, guest object files, or a precompiled title
-substrate. A persistent runtime cache, if later justified, is disposable OS
-user data keyed to the exact image, core, host, and configuration; a fresh
-installation never requires it.
+JIT execution is the gameplay default. A bounded interpreter fallback may run
+only after a failed or unsupported compilation or an unsafe translated exit.
+Each fallback must preserve architectural progress, report a reason, and
+increment denominated coverage counters. An explicit interpreter mode belongs
+only to separately built diagnostics. Fallback coverage cannot satisfy a
+gameplay, conformance, or performance gate.
 
-An interpreter is permitted only in a separately built test target, including
-diagnostic tests. The gameplay library/executable must not link interpreter
-execution, interpreter-backed instruction helpers, an engine selector, or a
-fallback route. Build-graph, link-map/symbol, and selector inspection must prove
-that absence; runtime counters cannot prove code was not linked.
+The executable remains player-owned data. A persistent block cache, if later
+justified, is disposable OS user data keyed to the exact image, core, host, and
+configuration; a fresh installation never requires it.
 
-## Migration freeze
+## Current boundary
 
-Until S005 is implemented, do not build, launch, regenerate, profile, or derive
-new evidence from the current generated-C product. Preserve the checked-in
-source only long enough to migrate its verified ABI, address, behavior, and
-service-boundary facts. New evidence comes from:
+The x86-64 target compiles `runtime/cpu/jit_executor.c` against
+`x86port_runtime`. Unsupported instructions currently stop with their guest PC
+because the pinned shared runtime does not yet expose the bounded fallback
+contract. The first reached gap is `MUL EDX` at `0x00401E27`.
+
+New execution evidence comes from:
 
 - the original LF2 v2.0a executable under Wine or another independent oracle;
 - direct binary analysis;
 - focused tests against `x86port`'s production decoder/JIT; or
-- an interpreter in a separately built test target with explicit positive and
-  negative discrimination.
+- the separately built test oracle with an explicit controlled negative.
 
-Do not add another static function, entry seed, lifted-body exception, or
-generated-symbol test during the migration.
+Instruction semantics are fixed in `shared/x86port`, never at one LF2 address.
 
 ## Ownership boundary
 
@@ -47,177 +46,116 @@ generated-symbol test during the migration.
 
 - Exact game identity, game-tree validation, PE mapping, and the existing 4 GiB
   guest memory layout.
-- `runtime/app/port_entry.c` as the native entry. Guest PE entry `0x00445560`
-  and WinMain `0x0043cf40` stay bypassed.
-- The bounded native initialization phases and every native override whose
-  behavior is still grounded in `docs/re-frontier.md`.
-- The current Win32/CRT/GDI/DirectDraw/DirectShow/DirectSound/input/socket HLE
-  and COM-vtable callbacks.
+- `runtime/app/port_entry.c` as native entry. Guest PE entry `0x00445560` and
+  WinMain `0x0043cf40` stay bypassed.
+- Bounded native initialization and every native override still grounded in
+  `docs/re-frontier.md`.
+- Win32/CRT/GDI/DirectDraw/DirectShow/DirectSound/input/socket HLE and COM
+  callbacks.
 - Renderer, audio, input, UI, configuration, packaging, and platform modules.
 
 ### Consume from x86port
 
-- The canonical x86 architectural state, decode, flags, x87/SSE semantics,
-  control flow, exceptions, and product JIT backends.
-- Executable-memory publication, translated-block cache/lifetime, invalidation,
-  runtime interception, bounded exits, and denominated execution statistics.
-- A separate interpreter library consumed only by separately built test
-  targets, including diagnostic tests.
+- Canonical x86 architectural state, decode, flags, x87/SSE semantics, control
+  flow, exceptions, and product JIT backends.
+- Executable-memory publication, block-cache lifetime, invalidation, runtime
+  interception, bounded exits, and denominated execution statistics.
+- The bounded fallback policy and implementation when that product contract is
+  available.
+- A separate oracle library visible only to separately built tests.
 
 LF2 adds one narrow adapter between these owners. It does not duplicate CPU
-state or memory semantics. During transition, one explicit conversion boundary
-may bridge the established LF2 state to `x86port`; the final product must have
-one authoritative register/flag/x87/SSE representation, not two synchronized
-copies.
+state or memory semantics.
 
 ## Runtime calls and overrides
 
-Replace direct generated symbols with one address-based executor interface:
-
 - Native code calls a guest address with an explicit calling convention,
-  arguments/register setup, and bounded return sentinel.
+  register/argument setup, and bounded return sentinel.
 - The JIT stops at import/HLE thunks, native override addresses, explicit
   executor exits, and the caller's return sentinel.
-- LF2's dispatcher handles the intercepted address and either updates CPU state
-  and continues or returns the declared bounded exit.
-- A scoped original call disables only the currently selected override, enters
-  the same guest address through the JIT, and restores override state on every
-  exit. It never resolves to a generated `__orig` function.
-- Installing, removing, disabling, or restoring an override invalidates any
-  translated call path that captured the former decision.
+- LF2 dispatches the intercepted address, updates CPU state, and either
+  continues or returns the declared bounded exit.
+- A scoped original call disables only the selected override, enters the same
+  guest address through the JIT, and restores override state on every exit.
+- Changing override state invalidates any translated call path that captured
+  the former decision.
 
-The existing `re/overrides.txt` and `fn_<address>` link convention are not the
-runtime registry. Migrate still-valid address/ABI facts into the typed native
-override owner, then remove generation-only lists with the static pipeline.
+Still-valid address and ABI facts live in the typed native-override owner.
 
 ## First bounded JIT discriminator
 
-The first executable work is a separately built test target, including its
-diagnostic modes, not a gameplay build.
-It must:
+A separately built test target must:
 
 1. Validate and map the player's LF2 v2.0a executable through the production
    PE/memory owner.
-2. Initialize independent but identical CPU/memory instances for the JIT and
-   test interpreter.
-3. Execute guest constructor `0x004031b0`, the first non-overridden function
-   called by the native entry, with `ECX=0x00458440`, the established guest
+2. Initialize independent but identical CPU/memory instances for JIT and
+   oracle execution.
+3. Execute guest constructor `0x004031b0` with `ECX=0x00458440`, the established
    stack contract, and return sentinel `0x004462e0`.
-4. Stop on that sentinel through a named bounded executor exit.
-5. Compare EIP, all general registers, EFLAGS/lazy-flag meaning, x87/SSE state,
-   stack balance, and every guest-memory write.
-6. Report blocks entered/translated and instructions translated with their
-   denominators. Zero fallback/helper counters are useful test telemetry but do
-   not prove the gameplay target excludes interpreter code.
-7. Independently inspect the gameplay build graph, link map/symbols, and
-   selector surface to prove no interpreter execution, interpreter-backed
-   helper, or fallback machinery is present.
-8. Run a controlled negative that alters one post-state or translated semantic
-   and proves the comparison fails at the first differing field/address.
+4. Compare EIP, general registers, EFLAGS/lazy-flag meaning, x87/SSE state,
+   stack balance, return reason, and every guest-memory write.
+5. Report translated blocks/instructions and any fallback entries with
+   denominators and reason categories.
+6. Run a controlled negative that changes one post-state or semantic and proves
+   the comparison fails at the first differing field/address.
 
-This proves the real image, LF2 memory adapter, x86port product translation,
-native caller, and return boundary agree. It does not prove gameplay and does
-not authorize a mixed generated-C/JIT product run.
+Build and selector inspection separately prove that gameplay defaults to JIT
+and exposes no explicit interpreter mode.
 
 ## Expansion order
 
-1. Route every non-overridden call made by the native entry through the same
-   address-based executor, using the separately built test target (including
-   its diagnostic modes) until each boundary agrees with the interpreter or
-   original executable.
+1. Route every non-overridden call made by native entry through the same
+   address-based executor and compare each new boundary with the oracle.
 2. Register HLE/import and COM sentinels as runtime interception points and
-   preserve their existing guest ABI and memory effects. Prove at least one
-   CRT import and one DirectDraw COM call in both positive and controlled-
-   negative cases.
-3. Convert native override entry to the typed address registry. Replace every
-   `__orig` reference with the scoped original-call operation and prove one
-   disabled/enabled/original sequence without recursion.
+   preserve their guest ABI and memory effects.
+3. Prove native override enabled/disabled/scoped-original sequences without
+   recursion.
 4. Expand reached JIT coverage through native initialization, the mode menu,
-   character selection, VS Mode, and Stage Mode. Unsupported instructions fail
-   by name and guest PC; fix semantics in `x86port`, never at an LF2 address.
+   character selection, VS Mode, and Stage Mode.
 5. Wire executable-write notification and override-table changes into block
-   invalidation. LF2 has no established overlay system; prove the generic
-   positive mutation case and report the number of executable writes observed
-   in the representative run rather than assuming it is zero.
-6. Only after the gameplay target is composed entirely from native owners and a
-   no-interpreter `x86port` product library may the product be launched.
+   invalidation; verify mutation and no-mutation cases.
+6. Integrate the shared bounded fallback only through the JIT engine's failure
+   exits, never through a title configuration or engine selector.
 
-The existing renderer and DirectDraw adapter remain in place throughout these
-steps. No shader, scene, widescreen, or renderer rearchitecture is a CPU
-dependency. A visual mismatch is assigned to graphics only after the JIT and
-HLE legs agree on the draw/service inputs that reach the current boundary.
+The existing renderer and DirectDraw adapter remain in place. A visual mismatch
+is assigned to graphics only after CPU and HLE legs agree on the draw/service
+inputs reaching that boundary.
 
-## Representative-gameplay retirement gate
+## Representative-gameplay restoration gate
 
-Use a bounded Stage Mode scenario because it exercises the title's front end,
-world updates, player input, enemy/object processing, camera/stage rules,
-native rendering, sound effects, music, and timing. Reuse the existing
-state-anchored Stage Mode route after it is adapted to the JIT product; do not
-restore frame-number-only scripts.
+Use a bounded Stage Mode fight because it exercises the front end, world
+updates, player input, enemy/object processing, camera/stage rules, rendering,
+sound effects, music, and timing. The gate passes only when one frozen semantic
+tree:
 
-The gate passes only when all of these are true in one frozen semantic tree:
+- provisions from the player's authenticated asset without maintainer-only
+  tools or a pre-populated cache;
+- builds and launches the JIT-default product with no explicit interpreter
+  selector;
+- reaches native entry, bounded initialization, mode menu, character select,
+  pre-fight overlay, and an active Stage Mode fight;
+- observes player movement/attack and an enemy/world response through
+  state-anchored input;
+- exercises DirectDraw/GDI presentation, sound effects, music, guest time, and
+  normal quit through their preserved owners;
+- reports nonzero JIT, HLE, native-override, and scoped-original work with
+  denominators;
+- reports every fallback entry by reason and coverage, while requiring the
+  gameplay/performance assertions to be proven on JIT-executed regions;
+- proves executable-write invalidation and override transition positives and
+  negatives; and
+- compares CPU, memory, timing, service events, audio, and frame checkpoints
+  against an independent oracle on each released host architecture.
 
-### Provisioning and composition
+Boot, a logo, a menu, a clean trace, fallback-only coverage, or a single frame
+does not pass this gate.
 
-- A fresh checkout provisions from the player's authenticated installer,
-  executable/tree, or supported bounded ZIP without Ghidra, Wine, an offline
-  translator, generated guest source, or a pre-populated runtime cache.
-- Gameplay link and symbol inspection proves that no interpreter, interpreter-
-  backed helper, generated guest body, `__orig` generated function, or engine
-  selector is present.
-- The zero-argument launcher selects only this product. Unsupported host
-  backends refuse by name; they do not select an interpreter.
+## Host qualification
 
-### Reached behavior
-
-- The run reaches the native entry, bounded initialization, mode menu,
-  character selection, pre-fight overlay, and an active Stage Mode fight.
-- A state-anchored input sequence moves/attacks with the player and observes an
-  enemy/world response. The route reports every requested action and every
-  reached screen so silence cannot pass.
-- DirectDraw and GDI presentation, sound effects, background music, guest time,
-  interrupt/exit handling, and normal quit all occur through their preserved
-  owners.
-- The shipping dispatcher executes nonzero HLE calls and native overrides. The
-  existing background override/original A/B at `0x0041a250` is migrated to the
-  scoped JIT original-call path and retains its established native-width
-  identity/negative discriminator without modifying graphics architecture.
-
-### Conformance and performance
-
-- Denominated telemetry reports nonzero JIT block entries/translations and
-  native/HLE/original-call entries plus counts for invalidations and executable
-  writes. Zero fallback/helper counters are supplementary; only build-graph,
-  link-map/symbol, and selector inspection establishes interpreter absence.
-- Deterministic checkpoints compare CPU registers/flags/x87/SSE state, relevant
-  guest memory, timing/interrupt exits, ordered service events, audio events,
-  and presented frames against an independent Wine/hardware or test-interpreter
-  oracle. Every tolerance is stated by field; no blanket pixel or float fudge
-  is allowed.
-- The separately built test target demonstrates both a passing case and a
-  deliberately differing diagnostic case. Every sampled/compared class reports
-  its denominator.
-- Frame-time percentiles, sustained behavior, memory, loading, rendering, and
-  audio meet a declared budget on every released host class. Desktop evidence
-  does not qualify Android.
-
-Boot, a logo, menu entry, attract mode, a single screenshot, or an internal
-trace is only a checkpoint. It cannot retire the old path.
-
-## Removal milestone
-
-When the representative gate passes, remove in the same milestone:
-
-- `recompiler/` and every CMake/bootstrap/package invocation of it;
-- generated `lf2_recomp.c` inputs and outputs;
-- the generated-symbol dispatcher and direct `fn_<address>`/`__orig` contract;
-- `re/entries.tsv`, `re/overrides.txt`, and other metadata used only to seed
-  generation, after moving independently useful address/ABI facts to their
-  living runtime or RE owner;
-- decoder/lifter/static-differential tests that do not exercise `x86port`'s
-  shipping implementation; and
-- static methodology in active documentation.
-
-Do not retain these under `legacy`, behind a compatibility flag, or as a
-permanent oracle. Update project state, codemap, launcher docs, and the public
-feature catalogue from the landed native/JIT result.
+- x86-64 and ARM64 are qualified separately.
+- ARM64 requires W^X publication, instruction-cache coherence, ABI transition,
+  invalidation, Android lifecycle, and sustained-device evidence.
+- Unsupported hosts refuse by name; they do not expose a gameplay interpreter
+  mode.
+- Fallback counts are reported separately and never substitute for native JIT
+  correctness or performance.

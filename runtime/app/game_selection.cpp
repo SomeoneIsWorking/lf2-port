@@ -1,3 +1,4 @@
+#include "lf2_log.h"
 #include "game_selection.h"
 #include "game_data.h"
 #include "installer_extract.h"
@@ -157,8 +158,9 @@ bool commit_import(const std::filesystem::path &preparing, const std::filesystem
     if (moved_previous) {
         std::filesystem::remove_all(previous, status_error);
         if (status_error)
-            fprintf(stderr, "setup: accepted %s but could not remove its previous import: %s\n", kind_name(kind),
-                    status_error.message().c_str());
+            lf2_log_writef(LF2_LOG_INFO, "game_selection",
+                           "setup: accepted %s but could not remove its previous import: %s\n", kind_name(kind),
+                           status_error.message().c_str());
     }
     return true;
 }

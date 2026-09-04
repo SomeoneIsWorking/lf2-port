@@ -5,7 +5,10 @@
  * the nine route tests were still stopwatches aimed at a moving target, and nothing told
  * anyone when one of their presses missed. Issue #25.
  */
+#include "lf2_log.h"
+#include "environment.h"
 #include "script.h"
+#include "environment.h"
 #include "hostwin.h"
 
 #include <SDL3/SDL.h>
@@ -36,7 +39,8 @@ void script_observe_screens(long frame)
     for (int i = 0; i < SCREEN_N; i++)
         if (up[i] && screen_first[i] < 0) {
             screen_first[i] = frame;
-            fprintf(stderr, "scripted input: screen %s first up at frame %ld\n", SCREEN_NAME[i], frame);
+            lf2_log_writef(LF2_LOG_INFO, "script", "scripted input: screen %s first up at frame %ld\n", SCREEN_NAME[i],
+                           frame);
         }
 }
 
@@ -75,11 +79,11 @@ static int item_count[SCRIPT_STREAMS];
 static int item_overflow[SCRIPT_STREAMS];
 
 static const struct {
-    const char *env;
+    Lf2EnvironmentKey env;
     char sep;
 } STREAM[SCRIPT_STREAMS] = {
-    {"LF2_VIRTUAL_PAD", ','},  {"LF2_VIRTUAL_PAD2", ','}, {"LF2_VIRTUAL_PAD3", ','},
-    {"LF2_VIRTUAL_PAD4", ','}, {"LF2_KEY_SCRIPT", ','},   {"LF2_CLICK_SCRIPT", ';'},
+    {LF2_ENV_VIRTUAL_PAD, ','},  {LF2_ENV_VIRTUAL_PAD2, ','}, {LF2_ENV_VIRTUAL_PAD3, ','},
+    {LF2_ENV_VIRTUAL_PAD4, ','}, {LF2_ENV_KEY_SCRIPT, ','},   {LF2_ENV_CLICK_SCRIPT, ';'},
 };
 
 static int in_range(int stream, int idx)
@@ -116,34 +120,35 @@ void script_report(void)
 {
     int configured = 0;
     for (int s = 0; s < SCRIPT_STREAMS; s++)
-        if (getenv(STREAM[s].env)) configured = 1;
+        if (lf2_environment_enabled(STREAM[s].env)) configured = 1;
     if (!configured) return;
-    fprintf(stderr, "scripted input: screens reached --");
+    lf2_log_writef(LF2_LOG_INFO, "script", "scripted input: screens reached --");
     int any = 0;
     for (int i = 0; i < SCREEN_N; i++) {
         if (screen_first[i] < 0) continue;
-        fprintf(stderr, " %s@%ld", SCREEN_NAME[i], screen_first[i]);
+        lf2_log_writef(LF2_LOG_INFO, "script", " %s@%ld", SCREEN_NAME[i], screen_first[i]);
         any = 1;
     }
-    if (!any) fprintf(stderr, " NONE");
-    fprintf(stderr, "\n");
+    if (!any) lf2_log_writef(LF2_LOG_INFO, "script", " NONE");
+    lf2_log_writef(LF2_LOG_INFO, "script", "\n");
 
     /* One line per configured script, ALWAYS, with its denominator. "15 of 15 items fired"
      * is the negative this report has to be able to print: without it, silence is
      * indistinguishable from a report that was never reached. */
     for (int s = 0; s < SCRIPT_STREAMS; s++) {
-        const char *script = getenv(STREAM[s].env);
+        const char *script = lf2_environment_get(STREAM[s].env);
         if (!script) continue;
 
         int fired = 0;
         for (int i = 0; i < item_count[s]; i++)
             if (item_state[s][i] == ITEM_FIRED) fired++;
-        fprintf(stderr, "%s: %d of %d items fired\n", STREAM[s].env, fired, item_count[s]);
+        lf2_log_writef(LF2_LOG_INFO, "script", "%s: %d of %d items fired\n", lf2_environment_name(STREAM[s].env), fired,
+                       item_count[s]);
         if (item_overflow[s])
-            fprintf(stderr,
-                    "%s: route longer than %d items -- the ones past that were "
-                    "NEVER PLAYED and are not counted above\n",
-                    STREAM[s].env, MAX_ITEMS);
+            lf2_log_writef(LF2_LOG_INFO, "script",
+                           "%s: route longer than %d items -- the ones past that were "
+                           "NEVER PLAYED and are not counted above\n",
+                           lf2_environment_name(STREAM[s].env), MAX_ITEMS);
         if (fired == item_count[s] && !item_overflow[s]) continue;
 
         /* Name them. "Something did not fire" makes the next person bisect the route to
@@ -157,10 +162,11 @@ void script_report(void)
             const int i = idx++;
             if (i >= item_count[s]) break;
             if (item_state[s][i] == ITEM_FIRED) continue;
-            fprintf(stderr, "%s: item %d `%.*s' %s\n", STREAM[s].env, i, n, item,
-                    item_state[s][i] == ITEM_BAD ? "NEVER FIRED -- this build could not parse that"
-                                                 : "NEVER FIRED -- its screen never appeared, so any assertion about "
-                                                   "what it should have done is about an input that did not happen");
+            lf2_log_writef(
+                LF2_LOG_INFO, "script", "%s: item %d `%.*s' %s\n", lf2_environment_name(STREAM[s].env), i, n, item,
+                item_state[s][i] == ITEM_BAD ? "NEVER FIRED -- this build could not parse that"
+                                             : "NEVER FIRED -- its screen never appeared, so any assertion about "
+                                               "what it should have done is about an input that did not happen");
         }
     }
 }
@@ -212,7 +218,9 @@ static int key_script_parse(const char *script, struct ScriptItem *items, int ca
 int input_script_key_configured(void)
 {
     static int configured = -1;
-    if (configured < 0) { configured = getenv("LF2_KEY_SCRIPT") != NULL || getenv("LF2_AUTOKEY") != NULL; }
+    if (configured < 0) {
+        configured = lf2_environment_get(LF2_ENV_KEY_SCRIPT) != NULL || lf2_environment_get(LF2_ENV_AUTOKEY) != NULL;
+    }
     return configured;
 }
 
@@ -235,23 +243,23 @@ static void parse_key_scripts_once(void)
     if (done) return;
     done = 1;
 
-    const char *script = getenv("LF2_KEY_SCRIPT");
+    const char *script = lf2_environment_get(LF2_ENV_KEY_SCRIPT);
     nkey_items = script ? key_script_parse(script, key_items, PARSED_ITEMS) : 0;
     if (nkey_items < 0) nkey_items = 0;
 
-    autokey.script = getenv("LF2_AUTOKEY");
+    autokey.script = lf2_environment_get(LF2_ENV_AUTOKEY);
     autokey.begin = 6000;
     autokey.every = 1200;
     autokey.hold = 150;
-    const char *s_env = getenv("LF2_AUTOKEY_START");
-    const char *e_env = getenv("LF2_AUTOKEY_EVERY");
-    const char *h_env = getenv("LF2_AUTOKEY_HOLD");
+    const char *s_env = lf2_environment_get(LF2_ENV_AUTOKEY_START);
+    const char *e_env = lf2_environment_get(LF2_ENV_AUTOKEY_EVERY);
+    const char *h_env = lf2_environment_get(LF2_ENV_AUTOKEY_HOLD);
     if (s_env) autokey.begin = strtoull(s_env, NULL, 10);
     if (e_env) autokey.every = strtoull(e_env, NULL, 10);
     if (h_env) autokey.hold = strtoull(h_env, NULL, 10);
     if (!autokey.every) autokey.every = 1; /* a zero period would trap the modulo below */
-    autokey.after_first_poll = getenv("LF2_AUTOKEY_AFTER") != NULL;
-    autokey.once = getenv("LF2_AUTOKEY_ONCE") != NULL;
+    autokey.after_first_poll = lf2_environment_get(LF2_ENV_AUTOKEY_AFTER) != NULL;
+    autokey.once = lf2_environment_get(LF2_ENV_AUTOKEY_ONCE) != NULL;
     for (const char *c = autokey.script; c && *c && autokey.count < PARSED_ITEMS;) {
         autokey.keys[autokey.count++] = (uint32_t)strtoul(c, (char **)&c, 16);
         while (*c == ',' || *c == ' ') c++;
@@ -337,7 +345,7 @@ static void parse_click_scripts_once(void)
     if (done) return;
     done = 1;
 
-    const char *script = getenv("LF2_CLICK_SCRIPT");
+    const char *script = lf2_environment_get(LF2_ENV_CLICK_SCRIPT);
     if (script)
         for (const char *c = script; *c && nclick_items < PARSED_ITEMS;) {
             struct ClickItem *it = &click_items[nclick_items];
@@ -357,17 +365,17 @@ static void parse_click_scripts_once(void)
             nclick_items++;
         }
 
-    const char *spec = getenv("LF2_AUTOCLICK");
+    const char *spec = lf2_environment_get(LF2_ENV_AUTOCLICK);
     autoclick.begin = 6000;
     autoclick.every = 2500;
-    autoclick.once = getenv("LF2_AUTOCLICK_ONCE") != NULL;
-    const char *s_env = getenv("LF2_AUTOCLICK_START");
-    const char *e_env = getenv("LF2_AUTOCLICK_EVERY");
+    autoclick.once = lf2_environment_get(LF2_ENV_AUTOCLICK_ONCE) != NULL;
+    const char *s_env = lf2_environment_get(LF2_ENV_AUTOCLICK_START);
+    const char *e_env = lf2_environment_get(LF2_ENV_AUTOCLICK_EVERY);
     /* Clicks default to the key schedule but can be given their own. They have to be
      * separable: reaching the game means one click on "game start", then a ~25 s data
      * load, then keys -- on a shared clock the keys are all consumed during the load. */
-    if (!s_env) s_env = getenv("LF2_AUTOKEY_START");
-    if (!e_env) e_env = getenv("LF2_AUTOKEY_EVERY");
+    if (!s_env) s_env = lf2_environment_get(LF2_ENV_AUTOKEY_START);
+    if (!e_env) e_env = lf2_environment_get(LF2_ENV_AUTOKEY_EVERY);
     if (s_env) autoclick.begin = strtoul(s_env, NULL, 10);
     if (e_env) autoclick.every = strtoul(e_env, NULL, 10);
     if (!autoclick.every) autoclick.every = 1; /* a zero period would trap the modulo below */
@@ -383,7 +391,9 @@ static void parse_click_scripts_once(void)
 int input_script_click_configured(void)
 {
     static int configured = -1;
-    if (configured < 0) configured = getenv("LF2_CLICK_SCRIPT") != NULL || getenv("LF2_AUTOCLICK") != NULL;
+    if (configured < 0)
+        configured =
+            lf2_environment_get(LF2_ENV_CLICK_SCRIPT) != NULL || lf2_environment_get(LF2_ENV_AUTOCLICK) != NULL;
     return configured;
 }
 

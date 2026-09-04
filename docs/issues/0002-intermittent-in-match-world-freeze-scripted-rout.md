@@ -8,7 +8,7 @@ created: 2026-07-30
 updated: 2026-07-30
 ---
 
-**Instrument:** scratch/bin/freeze_probe.sh — drives the smoke route to a match, dumps frames 2250/2400, compares the P1 HP-bar crop (130x10+57+18); zero differing pixels = frozen (Difficult CPU always attacks in a live match).
+**Instrument:** the recorded freeze probe drove the smoke scenario to a match, dumped frames 2250/2400, and compared the P1 HP-bar crop (130x10+57+18); zero differing pixels meant frozen because the Difficult CPU always attacks in a live match.
 
 **Established:** occurs with the ad-loader override active AND with LF2_ADS_ON=1 restoring the original ad path (3/4 frozen either way), so fn_0043c4a0's override is NOT the cause. Also not stage-specific (frozen on moon stage and Forbidden Tower; live runs on plaza/volcano/tower).
 

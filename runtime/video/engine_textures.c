@@ -9,6 +9,7 @@
  * exceeds 512 distinct lifetime keys, so a full cache reuses the least-recently-used entry
  * that the current frame has not referenced. A replacement is uploaded before the old entry
  * is released, leaving the last valid cache state intact if allocation or upload fails. */
+#include "lf2_log.h"
 #include "engine_textures.h"
 
 #include <SDL3/SDL.h>
@@ -103,7 +104,8 @@ static int upload(EngineTexture *entry, const EngineQuad *quad)
     SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(device, &transfer_info);
     void *mapped = transfer ? SDL_MapGPUTransferBuffer(device, transfer, false) : NULL;
     if (!mapped) {
-        fprintf(stderr, "engine textures: a %dx%d upload could not be mapped: %s\n", w, h, SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine_textures", "engine textures: a %dx%d upload could not be mapped: %s\n", w,
+                       h, SDL_GetError());
         if (transfer) SDL_ReleaseGPUTransferBuffer(device, transfer);
         return 0;
     }
@@ -112,13 +114,14 @@ static int upload(EngineTexture *entry, const EngineQuad *quad)
 
     SDL_GPUCommandBuffer *commands = SDL_AcquireGPUCommandBuffer(device);
     if (!commands) {
-        fprintf(stderr, "engine textures: no upload command buffer: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine_textures", "engine textures: no upload command buffer: %s\n",
+                       SDL_GetError());
         SDL_ReleaseGPUTransferBuffer(device, transfer);
         return 0;
     }
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(commands);
     if (!copy) {
-        fprintf(stderr, "engine textures: no upload copy pass: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine_textures", "engine textures: no upload copy pass: %s\n", SDL_GetError());
         SDL_CancelGPUCommandBuffer(commands);
         SDL_ReleaseGPUTransferBuffer(device, transfer);
         return 0;
@@ -135,7 +138,8 @@ static int upload(EngineTexture *entry, const EngineQuad *quad)
     const int submitted = SDL_SubmitGPUCommandBuffer(commands);
     SDL_ReleaseGPUTransferBuffer(device, transfer);
     if (!submitted) {
-        fprintf(stderr, "engine textures: a %dx%d upload could not be submitted: %s\n", w, h, SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine_textures", "engine textures: a %dx%d upload could not be submitted: %s\n",
+                       w, h, SDL_GetError());
         return 0;
     }
     upload_count++;
@@ -173,7 +177,10 @@ static SDL_GPUTexture *make_texture(int w, int h)
     return SDL_CreateGPUTexture(device, &info);
 }
 
-void engine_textures_init(SDL_GPUDevice *gpu_device) { device = gpu_device; }
+void engine_textures_init(SDL_GPUDevice *gpu_device)
+{
+    device = gpu_device;
+}
 
 void engine_textures_begin_frame(void)
 {
@@ -213,10 +220,10 @@ SDL_GPUTexture *engine_texture_for(const EngineQuad *quad)
         slot = texture_lru_choose(usage, texture_count, frame_id);
         if (slot < 0) {
             failure_count++;
-            fprintf(stderr,
-                    "engine textures: all %d entries are live in one frame; art is "
-                    "missing from this frame\n",
-                    TEXTURE_CAPACITY);
+            lf2_log_writef(LF2_LOG_INFO, "engine_textures",
+                           "engine textures: all %d entries are live in one frame; art is "
+                           "missing from this frame\n",
+                           TEXTURE_CAPACITY);
             return NULL;
         }
     }
@@ -235,7 +242,8 @@ SDL_GPUTexture *engine_texture_for(const EngineQuad *quad)
     };
     if (!replacement.texture) {
         failure_count++;
-        fprintf(stderr, "engine textures: could not create a %dx%d texture: %s\n", w, h, SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine_textures", "engine textures: could not create a %dx%d texture: %s\n", w, h,
+                       SDL_GetError());
         return NULL;
     }
     if (!upload(&replacement, quad)) {
@@ -265,10 +273,10 @@ void engine_textures_surface_dirty(uint32_t pixels)
 
 void engine_textures_report(void)
 {
-    fprintf(stderr,
-            "engine textures: %d resident, %ld upload(s), %ld eviction(s), %d peak live/frame, "
-            "%ld request(s) failed\n",
-            texture_count, upload_count, eviction_count, peak_frame_live, failure_count);
+    lf2_log_writef(LF2_LOG_INFO, "engine_textures",
+                   "engine textures: %d resident, %ld upload(s), %ld eviction(s), %d peak live/frame, "
+                   "%ld request(s) failed\n",
+                   texture_count, upload_count, eviction_count, peak_frame_live, failure_count);
 }
 
 void engine_textures_shutdown(void)

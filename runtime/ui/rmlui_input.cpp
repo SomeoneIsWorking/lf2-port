@@ -1,3 +1,5 @@
+#include "lf2_log.h"
+#include "environment.h"
 #include "rmlui_input.h"
 
 extern "C" {
@@ -56,7 +58,7 @@ void latch_action(int action, bool controller)
 
 int fallback_pad_action(SDL_GamepadButton button)
 {
-    /* Dusklight keeps conventional UI aliases for unbound native buttons. A button already
+    /* Keep conventional UI aliases for unbound native buttons. A button already
      * assigned to a game action follows that assignment instead of producing two commands. */
     switch (button) {
     case SDL_GAMEPAD_BUTTON_DPAD_UP: return B_UP;
@@ -90,8 +92,9 @@ void key_tap(Rml::Context &context, Rml::Input::KeyIdentifier key)
 void dispatch_action(int action, bool controller, Rml::Context &context, Rml::ElementDocument &document,
                      const RmlUiInputCallbacks &callbacks)
 {
-    if (getenv("LF2_RMLUI_DEBUG"))
-        fprintf(stderr, "rmlui input: %s %s\n", controller ? "controller" : "keyboard", binding_action_id(action));
+    if (lf2_environment_get(LF2_ENV_RMLUI_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "rmlui_input", "rmlui input: %s %s\n", controller ? "controller" : "keyboard",
+                       binding_action_id(action));
 
     switch (action) {
     case B_UP: move_focus(context, document, false); break;
@@ -182,7 +185,8 @@ bool rmlui_input_pointer_event(Rml::Context &context, SDL_Renderer &renderer, co
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP:
         if (!SDL_ConvertEventToRenderCoordinates(&renderer, &mapped)) {
-            fprintf(stderr, "rmlui: pointer coordinate conversion failed: %s\n", SDL_GetError());
+            lf2_log_writef(LF2_LOG_INFO, "rmlui_input", "rmlui: pointer coordinate conversion failed: %s\n",
+                           SDL_GetError());
             return true;
         }
         break;
