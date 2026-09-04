@@ -60,6 +60,7 @@ CPU-migration prerequisite.
 | Packaging | AppImage and Android assembly, inspection, signing interface, updater metadata, and asset-exclusion gates | `tools/build/`, `platforms/`, `CMakeLists.txt` | `appimage.py`, `android.py` | `docs/running.md` |
 | Runtime route verification | State-anchored interactive scenarios, capture/analyzer helpers, and positive/negative reachability evidence | `tools/e2e.py`, `tools/routes/` | `tools/e2e.py` | `docs/migration.md` |
 | Offline verification | Unit, format, lint, structure, asset, package, and pure production-seam checks | `tests/`, `tools/build/` | CTest and repository Python verifier | `AGENTS.md` |
+| Asset-free CI | Build the Linux x86-64 native/JIT product and run focused boundary/quality tests from exact full-history inputs without `lf2.exe` or other game assets | `.github/workflows/ci.yml` | GitHub Actions -> `tools/build/build.py` and focused CTest | `docs/project-state.md` |
 | Reverse engineering | Shared Python/Jython Ghidra automation, address/name metadata, traces, and binary-derived evidence | `tools/re/`, `re/`, `docs/info/`, `docs/re-frontier.md` | `tools/re/ghidra_scripts/DecompDump.py` and project information tools | `docs/isa-scope.md` |
 
 ## Where does new work go?

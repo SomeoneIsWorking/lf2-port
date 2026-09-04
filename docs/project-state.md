@@ -43,6 +43,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S017 | Retired title-specific execution interfaces and toolchains remain absent | verified | — | G001 |
 | S018 | `shared/x86port` supplies the x86-64 product JIT and bounded fallback contract | partial | — | G001, G003 |
 | S019 | `shared/x86port` supplies a qualified ARM64 product JIT backend for macOS and Android | missing | — | G001, G003 |
+| S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
 
 ## Capability details
 
@@ -193,3 +194,16 @@ Missing capability: `x86port` needs an ARM64 backend with W^X publication,
 instruction-cache coherence, ABI transitions, invalidation, and representative
 LF2 gameplay qualification before macOS ARM64 or Android can ship the new
 product. Bounded fallback coverage cannot qualify the backend.
+
+### S020 — Asset-free CI
+
+The workflow builds LF2's real Linux x86-64 native/JIT product and runs focused
+execution-boundary, product-symbol, configuration, structure, format, and lint
+tests from exact full-history source inputs with read-only repository
+permissions and no `lf2.exe`.
+
+Gap: the first remote run is pending landing. macOS ARM64 and Android product
+jobs remain unavailable because `x86port` has no ARM64 JIT backend; their
+missing release capabilities are recorded in S012, S013, and S019. Windows is
+the comparison baseline rather than an intended shipping host and is therefore
+inapplicable to this port's current delivery goals.
