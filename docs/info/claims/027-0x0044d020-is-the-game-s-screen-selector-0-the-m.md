@@ -14,7 +14,7 @@ falsified_on: 2026-08-21
 
 ## Evidence
 
-Read from Ghidra decompilations of fn_0041bc90 (hands the word by address to fn_00429730), fn_00429730 (the dispatch chain) and fn_00431d10 (the confirm branch, which writes 3). Confirmed on a run: tools/e2e.sh exit_to_menu reports LANDED on screen 10 -- the FRONT-END MENU, and lands on 1 when the fix under test is compiled out.
+Read from Ghidra decompilations of fn_0041bc90 (hands the word by address to fn_00429730), fn_00429730 (the dispatch chain) and fn_00431d10 (the confirm branch, which writes 3). Confirmed on a run: tools/e2e.py exit_to_menu reports LANDED on screen 10 -- the FRONT-END MENU, and lands on 1 when the fix under test is compiled out.
 
 ## What would falsify it
 

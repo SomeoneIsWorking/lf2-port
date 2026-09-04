@@ -1,5 +1,7 @@
 /* Isometric lighting and sprite-cast shadows -- see runtime/video/hd2d.h for the scope. */
 
+#include "lf2_log.h"
+#include "environment.h"
 #include "hd2d.h"
 #include "stagelight.h"
 #include "options.h"
@@ -45,20 +47,20 @@ static void light_ensure(void)
      * init function because the port no longer has an hd2d init for this to hang off -- the
      * light is the part that outlived the SDL_Render chain, and any reader may be the first. */
     {
-        const char *v = getenv("LF2_HD2D_LIGHT");
+        const char *v = lf2_environment_get(LF2_ENV_HD2D_LIGHT);
         if (v) {
             float az = light_az, el = light_el;
             if (sscanf(v, "%f,%f", &az, &el) == 2) {
                 hd2d_light_set_angles(az, el);
-                fprintf(stderr,
-                        "hd2d: LF2_HD2D_LIGHT put the key at azimuth %.0f, elevation "
-                        "%.0f\n",
-                        (double)light_az, (double)light_el);
+                lf2_log_writef(LF2_LOG_INFO, "hd2d",
+                               "hd2d: LF2_HD2D_LIGHT put the key at azimuth %.0f, elevation "
+                               "%.0f\n",
+                               (double)light_az, (double)light_el);
             } else {
-                fprintf(stderr,
-                        "hd2d: LF2_HD2D_LIGHT=%s is not <azimuth>,<elevation> -- the "
-                        "light is UNCHANGED at %.0f,%.0f\n",
-                        v, (double)light_az, (double)light_el);
+                lf2_log_writef(LF2_LOG_INFO, "hd2d",
+                               "hd2d: LF2_HD2D_LIGHT=%s is not <azimuth>,<elevation> -- the "
+                               "light is UNCHANGED at %.0f,%.0f\n",
+                               v, (double)light_az, (double)light_el);
             }
         }
     }
@@ -113,9 +115,9 @@ void hd2d_shadow_project(float *across, float *up)
  * the key's STRENGTH is the player's light-intensity option (issue #111), which this reads
  * from options.c every frame so a menu change is live. The env knob remains the route pin
  * that options.c resolves first. */
-static float knob(const char *name, float dflt)
+static float knob(Lf2EnvironmentKey key, float dflt)
 {
-    const char *v = getenv(name);
+    const char *v = lf2_environment_get(key);
     return v ? (float)atof(v) : dflt;
 }
 
@@ -124,7 +126,10 @@ void hd2d_light_intensity(float *intensity)
     if (intensity) *intensity = opt_light_intensity();
 }
 
-void hd2d_light_set_intensity(float intensity) { opt_set_light_intensity(intensity); }
+void hd2d_light_set_intensity(float intensity)
+{
+    opt_set_light_intensity(intensity);
+}
 
 void hd2d_light_uniforms(float out[20], int w, int h)
 {
@@ -145,20 +150,20 @@ void hd2d_light_uniforms(float out[20], int w, int h)
     u[4] = 1.10f;
     u[5] = 1.02f;
     u[6] = 0.90f;
-    u[7] = knob("LF2_HD2D_AMBIENT", 0.66f);
+    u[7] = knob(LF2_ENV_HD2D_AMBIENT, 0.66f);
     /* [2] u_sky -- light from above. w: bevel strength */
     u[8] = 0.62f;
     u[9] = 0.68f;
     u[10] = 0.80f;
-    u[11] = knob("LF2_HD2D_BEVEL", 0.90f);
+    u[11] = knob(LF2_ENV_HD2D_BEVEL, 0.90f);
     /* [3] u_bounce -- light bounced off the floor. w: shadow strength */
     u[12] = 0.55f;
     u[13] = 0.52f;
     u[14] = 0.50f;
-    u[15] = knob("LF2_HD2D_SHADOW", 0.55f);
+    u[15] = knob(LF2_ENV_HD2D_SHADOW, 0.55f);
     /* [4] u_params -- xy: one texel. z: bevel radius in texels. w: height gain */
     u[16] = 1.0f / (float)w;
     u[17] = 1.0f / (float)h;
-    u[18] = knob("LF2_HD2D_BEVEL_PX", 5.0f);
-    u[19] = knob("LF2_HD2D_HEIGHT_GAIN", 0.9f);
+    u[18] = knob(LF2_ENV_HD2D_BEVEL_PX, 5.0f);
+    u[19] = knob(LF2_ENV_HD2D_HEIGHT_GAIN, 0.9f);
 }

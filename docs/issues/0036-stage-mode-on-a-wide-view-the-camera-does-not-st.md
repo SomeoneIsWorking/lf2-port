@@ -40,7 +40,7 @@ that third one is worth a look for whoever picks this up.
 STILL OPEN because nothing has watched it hold a camera in an actual stage. Every scripted
 route this port has reaches VS mode, where the lock reads 0 and the branch never runs, so the
 change is a proven no-op there and unproven where it matters. At view == 794 the term is
-identically `lock`, which is why tools/routes/background_test.sh's byte-identity arm still passes --
+identically `lock`, which is why the recorded background runtime scenario's byte-identity arm still passes --
 that shows it cannot have broken the 4:3 game, and nothing more.
 
 ### Resolution (2026-08-07)
@@ -67,7 +67,7 @@ binary writes it as -794 = 0xfffffce6 in an ADD or a LEA, and there are exactly 
 sites -- 0x0041bba2, 0x0041bc54 (both camera) and 0x004377d1 (a walk-boundary test against a
 player's x at obj+0x10).
 
-VERIFIED by tools/routes/stage_mode_test.sh, three arms:
+VERIFIED by the recorded stage_mode runtime scenario, three arms:
   stage@794   the section lock is SET (1173 frames, reaching 106) -- the run really is in
               stage mode, since nothing else sets that word
   vs@794      the lock is NEVER set -- so the arm above can tell the two modes apart, which

@@ -50,7 +50,7 @@ because the obvious answer is wrong:
   camera - (view - 794)/2, call the original body, restore. The object pass fn_0041a5a0 reads
   the camera itself, so it is the body to wrap; background.c's parallax reads it too and can
   simply subtract the same offset locally. No feedback, no reimplementation of the ease, and
-  at view == 794 the offset is zero so tools/routes/background_test.sh's byte-identity arm still
+  at view == 794 the offset is zero so the recorded background runtime scenario's byte-identity arm still
   holds.
 
   The existing clamps then handle the stage ends by themselves: at camera 0 there is no world
@@ -90,7 +90,7 @@ at the stage's left edge and a correct run can shift nothing:
     1100x550  offset 153  -- 1466 of 1466 frames re-centred; camera 400 draws as 247
     1920x1080 offset 563  -- nothing re-centred, and it says why: Brokeback Clif is 1500 wide,
                              the whole stage already fits, the camera never leaves 0
-tools/routes/background_test.sh's byte-identity arm still passes, which is what shows the 4:3 game is
+the recorded background runtime scenario's byte-identity arm still passes, which is what shows the 4:3 game is
 untouched.
 
 THE AUDIO. fn_00416fb0 and fn_00417090 (211 bytes each, identical but for their tables) pan a
@@ -114,7 +114,7 @@ EXACTLY 200 and 600; every on-screen x at 794 and at 1920 is audible, WALKED rat
 sampled; and the unscaled constants silence a 1920 picture from x 999. Without that third arm
 the second would pass on a build whose span was simply always enormous.
 
-This was tools/audio_pan_test.sh, three headless runs and 270 seconds. The falloff moved into
+This was tools/the recorded audio_pan runtime scenario, three headless runs and 270 seconds. The falloff moved into
 runtime/overrides/geom.h -- which runtime/overrides/audio_pan.c includes, so the test is not
 exercising a copy -- and the same three arms now run in a millisecond, with the pixel walk the
 script never did.

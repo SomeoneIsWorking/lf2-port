@@ -34,7 +34,7 @@ for it -- find that out before spending anything on the fix.
 
 THE FIX, WHEN IT IS WANTED, is the substitution this port has made four times already: 794 is
 the view, not a constant. The difference here is that these are the game's own literals inside
-a recompiled function, so it means an override for fn_0041a050 rather than a value patched
+a retail routine, so it means an override for fn_0041a050 rather than a value patched
 somewhere -- 502 bytes, and the decompile above is the whole of it.
 
 RELATED: issue #23 is the same SHAPE for a real stage's sky layer (a layer with less picture
@@ -73,7 +73,7 @@ stopped it.
 
 The frame counts said 0 of 1464 (VS) and 0 of 2346 (stage), and the background table has THIRTEEN
 records, indices 0..12 -- so 99 is nowhere in the shipped data and looked like a sentinel for a
-path nothing takes. That reasoning was wrong, and one grep of re/instructions.tsv settles it:
+path nothing takes. That reasoning was wrong, and the retail disassembly settles it:
 FIVE sites write 99 straight into the background index word [0x0044d024]:
 
     0042d253 / 0042d7f6 / 0042df26   FUN_00429730   (18823 bytes -- one of the game's monoliths)
@@ -90,7 +90,7 @@ not reach it.' Had it printed a bare 0, the table's 13 entries would have made '
 proven from two facts that are both true and together mean nothing.
 
 WHAT IS LEFT: name the three screens. FUN_00429730 is the pre-fight overlay's own function
-(tools/routes/mouse_test.sh reads its row geometry from it), which suggests these are the
+(the recorded mouse runtime scenario reads its row geometry from it), which suggests these are the
 non-match screens rather than a stage -- but that is a guess and the entry has been burned once
 already. Read the three call sites before assuming; the fix itself is unchanged and small, an
 override for fn_0041a050 with its five band widths reading bg_view_width().
@@ -119,8 +119,8 @@ every route takes the default and never touches the chooser.
 
 CONCLUSION: the fix is worth doing. fn_0041a050 (502 bytes) becomes an override with its five
 band widths reading bg_view_width(), the same substitution made for the layer pass and now for
-the object pass. It should be accepted the same way -- byte-identity against the recompiled body
-at a 794 view, in pixels and state, which tools/routes/objects_test.sh is now the template for.
+the object pass. It should be accepted the same way -- identity against the retail behavior
+at a 794 view, in pixels and state, which the recorded objects runtime scenario is now the template for.
 A route that reaches it needs to drive the background chooser, which nothing does yet.
 
 ### Note (2026-08-12)
@@ -130,7 +130,7 @@ runtime/overrides/background.c now carries fn_0041a050 as a hand-port: __thiscal
 RET 4, its three clip receivers read from the background record ([[this+0x7d4]+0x4d81978 /
 +0x4d8197c / +0x4d81974], all elided by Ghidra), its fills through the same cdecl helper the layer
 pass uses and marked as world bands. Every 0x31a is bg_view_width() and the fence loop's 0x319 is
-one less than it, exactly as the game wrote them. LF2_ALTBG_ORIG=1 runs the recompiled body.
+one less than it, exactly as the game wrote them. The historical A/B ran the retail routine.
 
 WHAT IS VERIFIED: it compiles, ctest is 10/10, and background + objects are green -- which says
 only that nothing ELSE regressed. That is a real result but a narrow one, and it is guaranteed by
@@ -141,8 +141,8 @@ WHAT IS NOT VERIFIED: the port itself. Not one pixel of it has been drawn. There
 reaches background 99, which is the same gap that made this entry's reachability an open question
 in the first place.
 
-WHAT IT NEEDS, and it is small: a way to select background 99 so the objects_test.sh treatment can
-be applied -- byte-identity against LF2_ALTBG_ORIG=1 at a 794 view, in pixels and state, where
+WHAT IT NEEDS, and it is small: a way to select background 99 so the the recorded objects runtime scenario treatment can
+be applied -- identity against the retail routine at a 794 view, in pixels and state, where
 bg_view_width() is 794 and the two must agree exactly. The port already has the right precedent
 for that in LF2_MODE (runtime/overrides/menu.c), which writes the mode menu's OWN selection word
 and lets the route's confirm dispatch it rather than faking the screen. The background index at
@@ -156,7 +156,7 @@ FIXED AND VERIFIED. fn_0041a050 is an override in runtime/overrides/background.c
 0x31a reading bg_view_width() (and the fence loop's 0x319 one less than it, as the game wrote
 the pair).
 
-THE A/B, port against the recompiled body, at two widths:
+THE A/B, native override against the retail routine, at two widths:
 
     794x550     composition 794:      0 differing px
     1920x1080   composition 978:  32857 differing px, x 794..977
@@ -173,7 +173,7 @@ the chooser lands there, so it takes the game's branch rather than faking a scre
 
 AND THE FIRST VERSION OF THAT FORCE WAS VACUOUS, which is worth recording because it produced a
 clean-looking pass. It set only the override's LOCAL copy of the index; the alt branch hands off
-to fn_0041a250__orig, which reads the index out of 0x0044d024 itself. So both arms drew the
+to original guest routine 0x0041a250, which reads the index out of 0x0044d024 itself. So both arms drew the
 ordinary stage and came out identical at 794 AND at 1920 -- and the 794 identity was reported as
 'the port matches the body it replaces' when neither arm had ever called the ported function. The
 tell was the 1920 arm: it was supposed to DIFFER and did not. A one-sided check would have shipped

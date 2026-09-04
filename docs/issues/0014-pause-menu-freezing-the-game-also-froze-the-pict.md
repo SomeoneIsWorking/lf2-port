@@ -9,7 +9,7 @@ updated: 2026-08-05
 ---
 
 The port has no way to ask the game to pause, so the pause menu is built on declining to
-call `fn_004246b0__orig` -- the function the main loop calls to advance and draw everything.
+call `original guest routine 0x004246b0` -- the function the main loop calls to advance and draw everything.
 Nothing to save, nothing to restore, and no half-advanced frame.
 
 Two things had to be found by running it rather than by reasoning:

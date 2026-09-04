@@ -22,8 +22,8 @@ DEAD END -- do not retry throttling repaints:
 FOURTH DEAD END -- driving the load to completion in one tick. RESOLVED as impossible by
 this route, with the ABI mistake fixed and the idea then falsified on its own terms.
 
-  The ABI part is worth keeping: the stack contract of a recompiled body is readable
-  straight out of the generated C -- `R(ESP) += n` at its return. Measured for every
+  The ABI part is worth keeping: the stack contract is recoverable from the retail
+  routine's epilogue. Measured for every
   override: fn_00423b00 +4, fn_004246b0 +8, fn_0043f010 +28, fn_00419a60 +16,
   fn_0043c4a0 +4, fn_00423940 +4. The comment on fn_004246b0 claimed "no arguments,
   RET c3" and is WRONG -- it is RET 4 -- which is what made the first drive leak four
@@ -44,16 +44,16 @@ ORIGINAL NOTE ON THE FOURTH ATTEMPT: The load is a state
 machine advancing one step per call to fn_004246b0, so the port (which already overrides
 that function) can call the original body in a loop until the game stops opening files,
 loading everything inside a single frame. That removes the repaint problem entirely --
-there is no frame between steps. It CRASHES: the recompiled body ends in RET, so each
+there is no frame between steps. It CRASHES: the guest routine ends in RET, so each
 extra call needs the guest return address pushed back and ECX restored, and even with
 that the guest ESP drifts across iterations and the game aborts. Either the body does not
 unwind identically on every path, or something in it assumes one call per frame. The idea
 is sound and is the right shape for a real port of the loading screen; making it work
-needs the exact stack contract of the recompiled body established first, not assumed.
+needs the exact stack contract of the retail routine established first, not assumed.
 
 REMAINING: ~4-6 s, and sampling says it is drawing, not parsing (parsing is 0.34 s). A safe throttle would have to target only the loading screen's own full-screen repaint, identified specifically, leaving composition blits alone. Not attempted.
 
-Also: a faster load shifts the frame-scheduled input in tools/*_test.sh, so controller_2p may flake more often.
+Also: a faster load shifted the retired frame-scheduled scenarios, so their controller timing was not reliable evidence.
 
 ### Resolution (2026-08-05)
 RESOLVED: 8.4-10.5 s -> 1.2 s of active loading. The cause was NOT drawing.
@@ -66,7 +66,7 @@ against the active loading time. It measured drawing at 0.48 s of 3.35 s -- 14%.
 
 THE REAL COST: the game decrypts every data file ONE BYTE AT A TIME through the C runtime.
 FUN_004148a0 is fscanf(in,"%c",&c) / fprintf(out,"%c",c-key[i]) in a loop, which is fine
-natively and is not fine through a recompiled CPU where each is a guest->host import call.
+natively and is not fine through guest execution where each is a guest-to-host import call.
 2,546,141 fscanf calls per load; after the port 466,509.
 
 It is now a native override (`fn_004148a0` in `runtime/overrides/assets.c`):
@@ -101,7 +101,7 @@ come in pairs with matching counts (77/77, 65/65, 12/12).
 
 CURRENT (issue #107): the native entry no longer draws a loading screen, and the native frame
 parser reduces scanner calls from 466,462 to 17,661. Active data loading remains 1.22 s, but only
-9 ms is scanning; the remainder is actual image/resource construction and recompiled control
+9 ms is scanning; the remainder is actual image/resource construction and guest control
 flow. The old 74% drawing breakdown described the retired guest loading sequence, not the current
 entry path.
 

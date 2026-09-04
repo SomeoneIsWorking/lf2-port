@@ -88,7 +88,7 @@ answered for the in-match frame, and the answer is much better than the entry as
 
 METHOD: LF2_BLT_FRAME=2250 on a VS match at 1600x550 (Brokeback Clif), which logs every blit
 composing that presented frame together with the guest return address that issued it. Each
-address resolved against re/functions.tsv. 137 blits, all of them accounted for:
+address resolved against the retail function map. 137 blits, all of them accounted for:
 
     105 + 22 = 127   fn_0043f010   the clip draw -- ALREADY AN OVERRIDE (text.c)
               8      fn_0043f310   109 bytes; hud.c already names it as the HUD's two bars
@@ -281,7 +281,7 @@ the wrong answer that came first -- a pointer at record offset -1128 that looks 
 handle and matched 0 of 40000 clip draws, because the records are contiguous and it belongs to
 the previous background.
 
-VERIFIED, tools/e2e.sh render, four arms: with the effect off the GPU frame matches the software
+VERIFIED by the recorded four-arm renderer comparison: with the effect off the GPU frame matches the software
 compositor to a MAX of 1-2 levels of 255 (antialiased glyph edges only); dropping every 7th
 draw changes 134928 px, so the match can fail; the HD2D arm differs. 2778 ground markers
 produced 2778 cast shadows in one run -- every marker consumed.
@@ -353,11 +353,11 @@ THREE THINGS THAT WENT WRONG IN THE BUILDING, all worth not repeating:
 INFRASTRUCTURE THIS NEEDED. SDL's default renderer order picks the OpenGL backend, which has
 no SDL_GPUDevice and therefore no SDL_GPURenderState -- no shaders at all. The renderer is now
 created as SDL_GPU_RENDERER by name, with a checked fallback. GLSL is authoritative and
-`tools/build/build_shaders.py` commits both SPIR-V and MSL payloads; ctest recompiles and compares
+`tools/build/build_shaders.py` commits both SPIR-V and MSL payloads; ctest rebuilds and compares
 every format for which the official tools are present, and was proven to fail on a stale blob.
 The runtime build therefore still needs only a C compiler and SDL.
 
-VERIFIED, tools/e2e.sh render, four arms: the GPU frame matches the software compositor to max 1-2
+VERIFIED by the recorded four-arm renderer comparison: the GPU frame matches the software compositor to max 1-2
 levels of 255 on antialiased glyph edges only; dropping every 7th draw changes 134928 px, so
 the match can fail; the light changes 8613 px on the MATCH frame; and the light changes ZERO
 pixels on the character-select frame. That last arm is the one worth having -- "the effect
@@ -390,7 +390,7 @@ STILL OPEN ON THIS ISSUE:
 ### Note (2026-08-12)
 STATUS RE-VERIFIED THIS SESSION, on the GPU, after two hand-ports touched the draw path.
 
-tools/e2e.sh render, run today with the object pass now hand-ported (issue #55) and the
+The recorded renderer comparison ran with the object pass hand-ported (issue #55) and the
 built-in background ported (issue #58):
 
     ok  frame_000401  gpu matches software (max channel diff 1, 251/436700 px differ)
@@ -400,11 +400,11 @@ built-in background ported (issue #58):
     ok  frame_001351  dropping every 7th draw changes 134928 px by up to 251
     ok  frame_001351  the light changes 182635 px by up to 152 on a frame WITH fighters
 
-and tools/e2e.sh pause_dropout: the native renderer drew 120 paused frames over its retained
+and tools/e2e.py pause_dropout: the native renderer drew 120 paused frames over its retained
 list. 0 amdgpu faults in the boot afterwards.
 
 WHY THAT IS WORTH RECORDING RATHER THAN ASSUMED: fn_0041a5a0 is the pass that draws every
-fighter, their shadows and their tags, and it is now the port's own code rather than recompiled
+fighter, their shadows and their tags, and it is now the port's own native code rather than guest
 output. The renderer's whole character-identification rests on the game drawing a shadow ellipse
 at an object's feet immediately before the object (claim C019) -- which is a property of THAT
 pass. A port that got the ordering subtly wrong would have broken the lighting's subject
@@ -462,7 +462,7 @@ left buried in a resolved entry.
 
   1. A NATIVE RENDERER. Done. The game's draws are GPU geometry through a display list, scaled
      per quad into a full-resolution target, with the software compositor as the fallback.
-     tools/e2e.sh render holds it: the GPU frame matches the software one to a max of 1-2 levels
+     the recorded renderer comparison holds it: the GPU frame matches the software one to a max of 1-2 levels
      of 255, dropping every 7th draw changes 134928 px so the match can fail, and the light
      changes 182635 px on a frame with fighters and NOTHING on one without.
   2. HD2D LOOK. The lighting is done -- one key light as a direction in the stage's own axes,

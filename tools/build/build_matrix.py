@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from source_dependencies import DependencyError, resolve_runtime_dependencies
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -41,6 +43,10 @@ def run_build(directory: Path, compiler: str, optimisation: str) -> None:
 
 
 def main(arguments: list[str]) -> int:
+    try:
+        dependencies = resolve_runtime_dependencies(ROOT)
+    except DependencyError as error:
+        raise SystemExit(f"runtime dependencies: {error}") from error
     failures = 0
     ran = 0
     for compiler in ("gcc", "clang"):
@@ -54,7 +60,15 @@ def main(arguments: list[str]) -> int:
             directory = ROOT / "build" / f"matrix-{compiler}{suffix}"
             print(f"== {tag}: configuring in {directory.relative_to(ROOT)}")
             subprocess.run(
-                ["cmake", "-S", str(ROOT), "-B", str(directory)],
+                [
+                    "cmake",
+                    "-S",
+                    str(ROOT),
+                    "-B",
+                    str(directory),
+                    f"-DX86PORT_DIR={dependencies['x86port']}",
+                    f"-DX86PORT_JITCOMMON_DIR={dependencies['jit-common']}",
+                ],
                 cwd=ROOT,
                 env=environment(compiler, optimisation),
                 check=True,

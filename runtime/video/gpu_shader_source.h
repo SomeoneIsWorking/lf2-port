@@ -1,6 +1,7 @@
 #ifndef LF2_GPU_SHADER_SOURCE_H
 #define LF2_GPU_SHADER_SOURCE_H
 
+#include "lf2_log.h"
 #include <SDL3/SDL_gpu.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -47,15 +48,14 @@ static inline const char *gpu_shader_format_name(SDL_GPUShaderFormat format)
 /* Compile one shader from the committed payloads. Shared by the engine's pipelines and the
  * lighting chain so the error text and the payload selection cannot drift apart. */
 static inline SDL_GPUShader *gpu_shader_make(SDL_GPUDevice *dev, SDL_GPUShaderFormat supported,
-                                             const unsigned char *spirv, size_t spirv_size,
-                                             const unsigned char *msl, size_t msl_size,
-                                             SDL_GPUShaderStage stage, int samplers, int uniforms,
+                                             const unsigned char *spirv, size_t spirv_size, const unsigned char *msl,
+                                             size_t msl_size, SDL_GPUShaderStage stage, int samplers, int uniforms,
                                              const char *what)
 {
     GPUShaderSource source;
     if (!gpu_shader_source_select(supported, spirv, spirv_size, msl, msl_size, &source)) {
-        fprintf(stderr, "engine: no shader payload matches the %s backend for %s\n",
-                SDL_GetGPUDeviceDriver(dev), what);
+        lf2_log_writef(LF2_LOG_INFO, "gpu_shader_source", "engine: no shader payload matches the %s backend for %s\n",
+                       SDL_GetGPUDeviceDriver(dev), what);
         return NULL;
     }
     SDL_GPUShaderCreateInfo info;
@@ -68,7 +68,8 @@ static inline SDL_GPUShader *gpu_shader_make(SDL_GPUDevice *dev, SDL_GPUShaderFo
     info.num_samplers = (Uint32)samplers;
     info.num_uniform_buffers = (Uint32)uniforms;
     SDL_GPUShader *s = SDL_CreateGPUShader(dev, &info);
-    if (!s) fprintf(stderr, "engine: the %s shader failed: %s\n", what, SDL_GetError());
+    if (!s)
+        lf2_log_writef(LF2_LOG_INFO, "gpu_shader_source", "engine: the %s shader failed: %s\n", what, SDL_GetError());
     return s;
 }
 

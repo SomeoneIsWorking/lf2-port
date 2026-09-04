@@ -34,7 +34,7 @@ row, already resolved via a GDI text band).
 
 Both draws are the stage-mode intro in **`FUN_00437860`** (the world/status function the
 game calls once per frame from `fn_0041bc90` at `0041f4bd`), which is NOT overridable -- it
-is an ordinary lifted function, not in `re/overrides.txt` -- so the fix belongs in the
+is an ordinary guest function rather than a native override -- so the fix belongs in the
 port's framing layer (`runtime/video/ddraw.c`), exactly where issue #42/#44 put the other
 per-screen framing.
 
@@ -74,9 +74,9 @@ surface.
 ### Verified
 
 - `ctest` 13/13.
-- `tools/e2e.sh` background, objects, render, widescreen, resize, stage_mode, coop_dropin,
+- `tools/e2e.py` background, objects, render, widescreen, resize, stage_mode, coop_dropin,
   smoke all pass (the stage fill and object byte-identity arms are unchanged at 794).
-- `tools/e2e.sh stage_mode` still passes (stage reached, camera lock).
+- The recorded Stage Mode scenario passed (stage reached, camera lock).
 - At 794 the banner frames 628/630/632 are byte-identical to the pre-change build.
 - Banner x: at 794 the logo spans 268..544 (centre 406); at 1100 it spans 421..697 (centre
   559 = 406 + (1100-794)/2); at 1920x1080 (978 composition) it spans 360..636 (centre 498 =

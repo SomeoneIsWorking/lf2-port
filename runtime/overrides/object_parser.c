@@ -8,10 +8,13 @@
  * in LF2's code; only its hot text parser is replaced.
  */
 
+#include "environment.h"
 #include "object_parser.h"
 
-#include "guest_ops.h"
+#include "guest.h"
+#include "jit_executor.h"
 #include "paths.h"
+#include "lf2_log.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -19,9 +22,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-void fn_0040ef70__orig(void);
-void fn_004148a0(void);
 
 enum {
     TEMP_PATH_GUEST = 0x00447b1c,
@@ -90,7 +90,7 @@ static void call_decrypt(uint32_t path)
 {
     PUSH32(path);
     PUSH32(0x0040ef70);
-    fn_004148a0();
+    lf2_jit_call(0x004148a0);
     R(ESP) += 4;
 }
 
@@ -102,7 +102,7 @@ static void call_prefix_super(uint32_t object, uint32_t id, uint32_t type, uint3
     PUSH32(id);
     R(ECX) = object;
     PUSH32(0x0040ef71);
-    fn_0040ef70__orig();
+    lf2_jit_call_original(0x0040ef70);
 }
 
 void object_parser_checksum_token(const char *token)
@@ -142,14 +142,14 @@ static void correct_prefix_eof_checksum(const char *text, const char *frames, si
 
 static void dump_object(uint32_t object)
 {
-    const char *directory = getenv("LF2_OBJECT_PARSER_DUMP");
+    const char *directory = lf2_environment_get(LF2_ENV_OBJECT_PARSER_DUMP);
     if (!directory || !*directory) return;
     static unsigned ordinal;
     char path[1024];
     snprintf(path, sizeof path, "%s/%03u.bin", directory, ordinal++);
     FILE *file = fopen(path, "wb");
     if (!file) {
-        fprintf(stderr, "object parser: cannot write %s\n", path);
+        lf2_log_writef(LF2_LOG_INFO, "object-parser", "object parser: cannot write %s\n", path);
         return;
     }
     fwrite(g_mem + object, 1, OBJECT_BYTES, file);
@@ -176,12 +176,6 @@ void fn_0040ef70(void)
     const uint32_t path = LD32(entry_esp + 12);
     const uint32_t presenter = LD32(entry_esp + 16);
 
-    if (getenv("LF2_SLOW_OBJECT_PARSER")) {
-        fn_0040ef70__orig();
-        dump_object(object);
-        return;
-    }
-
     call_decrypt(path);
     size_t size = 0;
     char *text = lf2_read_text(lf2_host_path("data\\temporary.txt"), &size);
@@ -189,7 +183,7 @@ void fn_0040ef70(void)
     if (!text || !frames || !write_prefix(text, frames)) {
         free(text);
         R(ESP) = entry_esp;
-        fn_0040ef70__orig();
+        lf2_jit_call_original(0x0040ef70);
         dump_object(object);
         return;
     }
@@ -197,7 +191,7 @@ void fn_0040ef70(void)
     call_prefix_super(object, id, type, presenter);
     correct_prefix_eof_checksum(text, frames, size);
     if (!object_parser_load_frames(object, frames, (size_t)((text + size) - frames))) {
-        fprintf(stderr, "object parser: malformed frame data in %s\n", g_mem + path);
+        lf2_log_writef(LF2_LOG_INFO, "object-parser", "object parser: malformed frame data in %s\n", g_mem + path);
         abort();
     }
     free(text);

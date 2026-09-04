@@ -1,25 +1,25 @@
 /* fn_00419a60 -- the per-frame gather that turns devices into a fighter's buttons.
  *
- * One of the hand-written native replacements for recompiled functions; see
+ * One of the hand-written native replacements for guest routines; see
  * runtime/overrides/overrides.h for how the set is divided and why.
  */
 
 #include "overrides.h"
 #include "world.h"
 
-#include "guest_ops.h"
+#include "guest.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "jit_executor.h"
 #include "gamepad.h"
 #include "keyboard.h"
 #include "bindings.h"
 #include "rmlui.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-void fn_00419a60__orig(void);
 
 /* Set when a mouse click should read as the attack button for one gather; see
  * overrides.h. Defined here, where it is spent. */
@@ -37,10 +37,10 @@ static long in_frames, in_live, in_padded, in_presses;
 
 void input_report(void)
 {
-    fprintf(stderr,
-            "input: %ld gathers, %ld live player-slots, %ld of them with a pad, "
-            "%ld button presses merged\n",
-            in_frames, in_live, in_padded, in_presses);
+    lf2_log_writef(LF2_LOG_INFO, "input",
+                   "input: %ld gathers, %ld live player-slots, %ld of them with a pad, "
+                   "%ld button presses merged\n",
+                   in_frames, in_live, in_padded, in_presses);
 }
 
 /* ---- devices, first come first served ----
@@ -117,7 +117,7 @@ void fn_00419a60(void)
     const uint32_t self = R(ECX); /* __thiscall */
     const uint32_t mask_buf = LD32(R(ESP) + 12);
 
-    fn_00419a60__orig(); /* slots, recording, masks, unchanged */
+    lf2_jit_call_original(0x00419a60); /* slots, recording, masks, unchanged */
 
     const int want_mask = LD32(NET_OR_RECORD) != 0;
     const int want_mirror = (int8_t)LD8(RECORDING) > 0;
@@ -220,20 +220,20 @@ void fn_00419a60(void)
                          * skips slots another device holds, so it can land on one that has
                          * a fighter standing in it. This is the lowest slot that is
                          * genuinely empty, which is above it in exactly that case. */
-                        fprintf(stderr,
-                                "coop: slot %d is the lowest with no fighter in it, "
-                                "so device %d takes it instead of slot %d\n",
-                                low, d, p);
+                        lf2_log_writef(LF2_LOG_INFO, "input",
+                                       "coop: slot %d is the lowest with no fighter in it, "
+                                       "so device %d takes it instead of slot %d\n",
+                                       low, d, p);
                         dev_player[d] = low;
                         p = low;
                     }
                     if ((int32_t)LD32(DEVSEL + 4u * (uint32_t)p) != 0)
-                        fprintf(stderr,
-                                "coop: slot %d carries selector %d, so character "
-                                "selection listed a computer there -- its fighter "
-                                "is at its own index and stays; the match gains a "
-                                "fighter rather than swapping one\n",
-                                p, (int32_t)LD32(DEVSEL + 4u * (uint32_t)p));
+                        lf2_log_writef(LF2_LOG_INFO, "input",
+                                       "coop: slot %d carries selector %d, so character "
+                                       "selection listed a computer there -- its fighter "
+                                       "is at its own index and stays; the match gains a "
+                                       "fighter rather than swapping one\n",
+                                       p, (int32_t)LD32(DEVSEL + 4u * (uint32_t)p));
                     /* The joiner CHOOSES: a fighter appears flashing and its device
                      * cycles the game's roster with left/right and confirms with attack.
                      * See coop_select_begin.
@@ -241,10 +241,10 @@ void fn_00419a60(void)
                      * No early exit here: this sits inside the per-device loop, and leaving
                      * it would skip the remaining devices' button bookkeeping for the
                      * frame. */
-                    fprintf(stderr,
-                            "coop: device %d claimed player slot %d mid-match, "
-                            "opening its character selection\n",
-                            d, p);
+                    lf2_log_writef(LF2_LOG_INFO, "input",
+                                   "coop: device %d claimed player slot %d mid-match, "
+                                   "opening its character selection\n",
+                                   d, p);
                     coop_select_begin(self, p, d);
                 }
             }
@@ -268,7 +268,7 @@ void fn_00419a60(void)
      * joined-mask bit set is drawn by the game's OWN name plate as "5". A slot with no
      * device bound to it contributes nothing here, because `fed` stays 0 and the loop
      * writes an all-zero button set exactly as it did before -- which is what the slots
-     * beyond the first two in tools/routes/controller_2p_test.sh have always been. */
+     * beyond the first two in the recorded controller_2p runtime scenario have always been. */
     for (uint32_t sel = DEVSEL, i = 0; sel < DEVSEL_END && i < PLAYER_SLOTS; sel += 4, i++) {
         if ((int32_t)LD32(sel) <= 0) continue; /* recording or demo: not ours */
         in_live++;
@@ -277,7 +277,7 @@ void fn_00419a60(void)
          * to the first slot; inside it, whatever claimed this player. A slot the game
          * has filled with a computer is still a live slot and its AI writes its buttons
          * after this gather, so writing here is harmless -- measured back when pads
-         * merged by slot order (see tools/routes/controller_2p_test.sh). */
+         * merged by slot order (see the recorded controller_2p runtime scenario). */
         unsigned char out[7] = {0, 0, 0, 0, 0, 0, 0};
         int fed = 0;
         for (int d = 0; d < MAX_DEV; d++) {

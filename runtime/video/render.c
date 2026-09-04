@@ -1,4 +1,6 @@
 /* The native renderer; render.h states why it exists and hd2d.h owns its lighting geometry. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "render.h"
 #include "mesh.h"
 #include "engine.h"
@@ -128,7 +130,7 @@ int render_gpu_enabled(void)
 {
     static int on = -1;
     if (on < 0) {
-        const char *v = getenv("LF2_RENDERER");
+        const char *v = lf2_environment_get(LF2_ENV_RENDERER);
         on = !(v && (strcmp(v, "soft") == 0 || strcmp(v, "software") == 0));
     }
     return on;
@@ -140,7 +142,8 @@ void render_init(SDL_Renderer *r)
     fl_init(&FL);
     /* RmlUi is the global shell, not a native-renderer feature. Its backend uses the shared
      * SDL_Renderer and also composites over the software fallback. */
-    if (!rmlui_init(r, hw.window)) fprintf(stderr, "render: the global RmlUi shell is not available\n");
+    if (!rmlui_init(r, hw.window))
+        lf2_log_writef(LF2_LOG_INFO, "render", "render: the global RmlUi shell is not available\n");
     if (!render_gpu_enabled()) return;
     if (!tile_arena) tile_arena = malloc(TILE_BYTES_MAX);
     /* The depth-tested geometry pass shares this renderer's device (issues #49, #62). It
@@ -547,7 +550,7 @@ static SDL_Texture *tile_texture(Entry *e)
 }
 
 /* LF2_RENDER_SKIP=<n> drops every nth entry. It is the negative arm of
- * tools/routes/render_test.sh: "the GPU frame matches the software frame" would pass just as
+ * the recorded render runtime scenario: "the GPU frame matches the software frame" would pass just as
  * happily on a comparison that was reading the same buffer twice, which is exactly the bug
  * that hid here once already -- the readback ran before the draw and dumped the previous
  * frame. An arm that deliberately draws the frame WRONG has to come out different, or the
@@ -556,7 +559,7 @@ static int render_skip(void)
 {
     static int n = -1;
     if (n < 0) {
-        const char *v = getenv("LF2_RENDER_SKIP");
+        const char *v = lf2_environment_get(LF2_ENV_RENDER_SKIP);
         n = v ? atoi(v) : 0;
     }
     return n;
@@ -568,7 +571,7 @@ static int render_skip(void)
 static float entry_output_x(const Entry *e, float world, float scale, float output_x)
 {
     static int integer_background = -1;
-    if (integer_background < 0) integer_background = getenv("LF2_BG_INTEGER_RASTER") != NULL;
+    if (integer_background < 0) integer_background = lf2_environment_get(LF2_ENV_BG_INTEGER_RASTER) != NULL;
     const float phase = integer_background ? 0.0f : e->background_phase;
     return raster_place_x(e->dst.x, phase, world, scale, output_x);
 }
@@ -587,7 +590,7 @@ static void draw_texture_quad(Tex *t, const SDL_FRect *src, const SDL_FRect *dst
     /* Restore the complete old run.sh path, not merely its UV values. SDL_RenderTexture
      * constructs its own quad internally, so an injector that kept this function and only
      * selected edge UVs did not actually reproduce the reported renderer. */
-    if (getenv("LF2_TEXRECT_EDGE")) {
+    if (lf2_environment_get(LF2_ENV_TEXRECT_EDGE)) {
         SDL_RenderTexture(R, t->tex, src, dst);
         return;
     }
@@ -595,7 +598,7 @@ static void draw_texture_quad(Tex *t, const SDL_FRect *src, const SDL_FRect *dst
     /* DirectDraw's logical extents decide whether each axis is 1:1 or stretched; the output
      * rectangle decides the sampling rate only for a true stretch. The negative restores the
      * old unit confusion by treating every magnified 1:1 copy as a StretchBlt. */
-    if (getenv("LF2_TEXRECT_RASTER_DEST"))
+    if (lf2_environment_get(LF2_ENV_TEXRECT_RASTER_DEST))
         texrect_for_blit(src->x, src->y, src->w, src->h, (int)dst->w, (int)dst->h, t->w, t->h, 0, &u0, &v0, &u1, &v1);
     else
         texrect_for_output_blit(src->x, src->y, src->w, src->h, logical_w, logical_h, dst->x, dst->y, dst->w, dst->h,
@@ -924,7 +927,8 @@ static int engine_colour_pass(List *l, int li, int ov, float world, float ox, fl
          * discriminator, where it produces issue #67's green line and issue #68's adjacent
          * Bandit eye. */
         texrect_for_output_blit(e->src.x, e->src.y, e->src.w, e->src.h, (int)e->dst.w, (int)e->dst.h, q->x, q->y, q->w,
-                                q->h, e->sw, e->sh, getenv("LF2_TEXRECT_EDGE") != NULL, &q->u0, &q->v0, &q->u1, &q->v1);
+                                q->h, e->sw, e->sh, lf2_environment_get(LF2_ENV_TEXRECT_EDGE) != NULL, &q->u0, &q->v0,
+                                &q->u1, &q->v1);
         if (e->mirror_x) {
             const float swap = q->u0;
             q->u0 = q->u1;
@@ -963,11 +967,11 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         static int said;
         if (!said) {
             said = 1;
-            fprintf(stderr,
-                    "render: no display list for the composition at %08x -- the "
-                    "software compositor is presenting this frame. The GPU path "
-                    "records draws per destination surface and this one had none.\n",
-                    src_pixels);
+            lf2_log_writef(LF2_LOG_INFO, "render",
+                           "render: no display list for the composition at %08x -- the "
+                           "software compositor is presenting this frame. The GPU path "
+                           "records draws per destination surface and this one had none.\n",
+                           src_pixels);
         }
         stat_soft_frames++;
         return 0;
@@ -1002,10 +1006,10 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
         SDL_SetRenderLogicalPresentation(R, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
 
     if (!target_ensure(ow, oh)) {
-        fprintf(stderr,
-                "render: could not create the %dx%d render target (%s) -- the "
-                "software compositor is presenting\n",
-                ow, oh, SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "render",
+                       "render: could not create the %dx%d render target (%s) -- the "
+                       "software compositor is presenting\n",
+                       ow, oh, SDL_GetError());
         if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED) SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
         stat_soft_frames++;
         return 0;
@@ -1027,7 +1031,7 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
      *    lighting chain: the character mask, the cast-shadow mask and the light pass run over
      *    this same frame before it is presented (engine.c's lighting_passes). With the light
      *    off the engine returns the unlit picture and the frame IS what the game drew, which
-     *    is what tools/routes/render_test.sh compares against the software compositor byte for
+     *    is what the recorded render runtime scenario compares against the software compositor byte for
      *    byte. */
     /* WHERE THE GAME'S PICTURE ENDS AND RECORDED PORT UI BEGINS. The controls hint is in this
      * list so it follows the native renderer, but it must not be lit. RmlUi is a separate
@@ -1065,11 +1069,11 @@ int render_present(uint32_t src_pixels, int off, int w, int h)
     if (lp_mode != SDL_LOGICAL_PRESENTATION_DISABLED) SDL_SetRenderLogicalPresentation(R, lp_w, lp_h, lp_mode);
     stat_frames++;
     if (stat_frames == 1)
-        fprintf(stderr,
-                "render: %dx%d of game scaled x%.3f per quad into a %dx%d target, "
-                "filling %.0fx%.0f at (%.0f,%.0f), lighting %s\n",
-                w, h, (double)scale, ow, oh, (double)place.w, (double)place.h, (double)ox, (double)oy,
-                (engine_enabled() && opt_lighting()) ? "on" : "OFF");
+        lf2_log_writef(LF2_LOG_INFO, "render",
+                       "render: %dx%d of game scaled x%.3f per quad into a %dx%d target, "
+                       "filling %.0fx%.0f at (%.0f,%.0f), lighting %s\n",
+                       w, h, (double)scale, ow, oh, (double)place.w, (double)place.h, (double)ox, (double)oy,
+                       (engine_enabled() && opt_lighting()) ? "on" : "OFF");
     return 1;
 }
 
@@ -1127,65 +1131,69 @@ void render_overlay_mark(uint32_t dst_pixels)
  * called" are different faults with the same look. */
 void render_report(void)
 {
-    if (!getenv("LF2_RENDER_DEBUG")) return;
-    fprintf(stderr,
-            "render: gpu=%s frames=%ld (software fallbacks=%ld) quads=%ld fills=%ld "
-            "tiles=%ld textures=%d uploads=%ld dropped=%ld mesh=%ld\n",
-            render_gpu_enabled() ? "on" : "off", stat_frames, stat_soft_frames, stat_tex, stat_fill, stat_tile, ntexes,
-            stat_uploads, stat_dropped, stat_mesh);
+    if (!lf2_environment_get(LF2_ENV_RENDER_DEBUG)) return;
+    lf2_log_writef(LF2_LOG_INFO, "render",
+                   "render: gpu=%s frames=%ld (software fallbacks=%ld) quads=%ld fills=%ld "
+                   "tiles=%ld textures=%d uploads=%ld dropped=%ld mesh=%ld\n",
+                   render_gpu_enabled() ? "on" : "off", stat_frames, stat_soft_frames, stat_tex, stat_fill, stat_tile,
+                   ntexes, stat_uploads, stat_dropped, stat_mesh);
     /* The allocation count is the number that matters: it must go FLAT once the pool is warm.
      * A count that keeps climbing with the frame count means tiles of ever-changing sizes and
      * the GPU allocator is being churned again, which is what wedged a GPU once. */
-    fprintf(stderr,
-            "render: %ld tile draws served by %d pooled textures, %ld allocations "
-            "(%.3f per frame -- this must be near zero once warm); the busiest frame "
-            "drew %d tile(s) against a pool of %d\n",
-            stat_tile, FL.pool_n, stat_tile_allocs, stat_frames ? (double)stat_tile_allocs / (double)stat_frames : 0.0,
-            FL.peak_tiles, TILE_TEX_MAX);
+    lf2_log_writef(LF2_LOG_INFO, "render",
+                   "render: %ld tile draws served by %d pooled textures, %ld allocations "
+                   "(%.3f per frame -- this must be near zero once warm); the busiest frame "
+                   "drew %d tile(s) against a pool of %d\n",
+                   stat_tile, FL.pool_n, stat_tile_allocs,
+                   stat_frames ? (double)stat_tile_allocs / (double)stat_frames : 0.0, FL.peak_tiles, TILE_TEX_MAX);
     if (FL.pool_exhausted)
-        fprintf(stderr,
-                "render: %ld tiles were NOT DRAWN -- the %d-texture pool was full, so "
-                "text is MISSING from those frames\n",
-                FL.pool_exhausted, TILE_TEX_MAX);
-    fprintf(stderr,
-            "render: the light ran on %ld frame(s); %ld sprite pieces cast shadows; "
-            "%ld game ground markers were observed\n",
-            stat_post, stat_shadow, stat_ground);
+        lf2_log_writef(LF2_LOG_INFO, "render",
+                       "render: %ld tiles were NOT DRAWN -- the %d-texture pool was full, so "
+                       "text is MISSING from those frames\n",
+                       FL.pool_exhausted, TILE_TEX_MAX);
+    lf2_log_writef(LF2_LOG_INFO, "render",
+                   "render: the light ran on %ld frame(s); %ld sprite pieces cast shadows; "
+                   "%ld game ground markers were observed\n",
+                   stat_post, stat_shadow, stat_ground);
     if (stat_ground)
-        fprintf(stderr,
-                "render: the ground markers seen so far span y %.0f..%.0f in the "
-                "game's own coordinates -- that is the walkable floor, measured from "
-                "where the game put its shadows (issue #32)\n",
-                (double)ground_y_lo, (double)ground_y_hi);
+        lf2_log_writef(LF2_LOG_INFO, "render",
+                       "render: the ground markers seen so far span y %.0f..%.0f in the "
+                       "game's own coordinates -- that is the walkable floor, measured from "
+                       "where the game put its shadows (issue #32)\n",
+                       (double)ground_y_lo, (double)ground_y_hi);
     /* The airborne term is invisible in a run where nobody leaves the floor, and "the shadow
      * never moved" and "nothing ever jumped" look identical on a screenshot. So the highest
      * lift seen is reported: a zero here means the offset was NEVER EXERCISED, not that it
      * does not work. */
     if (stat_shadow)
-        fprintf(stderr, "render: the highest an object got off its ground point was %.0f px%s\n",
-                (double)stat_airborne_max,
-                stat_airborne_max < 1.0f ? " -- so NOTHING jumped in this run and the shadow's airborne offset was "
-                                           "never exercised"
-                                         : ", and its shadow was offset along the light by that much");
+        lf2_log_writef(LF2_LOG_INFO, "render", "render: the highest an object got off its ground point was %.0f px%s\n",
+                       (double)stat_airborne_max,
+                       stat_airborne_max < 1.0f
+                           ? " -- so NOTHING jumped in this run and the shadow's airborne offset was "
+                             "never exercised"
+                           : ", and its shadow was offset along the light by that much");
     else
-        fprintf(stderr, "render: NO shadow-caster sprite pieces were recorded -- this run reached no "
-                        "match, or the world-object pass did not identify a caster\n");
+        lf2_log_writef(LF2_LOG_INFO, "render",
+                       "render: NO shadow-caster sprite pieces were recorded -- this run reached no "
+                       "match, or the world-object pass did not identify a caster\n");
     mesh_report();
     engine_report();
     if (engine_enabled() && opt_lighting() && stat_ground && !stat_shadow)
-        fprintf(stderr,
-                "render: %ld ground markers but NO caster metadata -- the game's ellipse "
-                "evidence reached the renderer without its authoritative world-object scope\n",
-                stat_ground);
+        lf2_log_writef(LF2_LOG_INFO, "render",
+                       "render: %ld ground markers but NO caster metadata -- the game's ellipse "
+                       "evidence reached the renderer without its authoritative world-object scope\n",
+                       stat_ground);
     if (engine_enabled() && opt_lighting() && stat_frames && !stat_ground)
-        fprintf(stderr, "render: NO game ground markers were seen -- ellipse replacement was not "
-                        "exercised, although independently identified physical casters may still cast\n");
+        lf2_log_writef(LF2_LOG_INFO, "render",
+                       "render: NO game ground markers were seen -- ellipse replacement was not "
+                       "exercised, although independently identified physical casters may still cast\n");
     if (render_gpu_enabled() && stat_frames == 0)
-        fprintf(stderr, "render: the GPU path presented NO frames -- every one fell back to "
-                        "the software compositor, so these counters describe nothing\n");
+        lf2_log_writef(LF2_LOG_INFO, "render",
+                       "render: the GPU path presented NO frames -- every one fell back to "
+                       "the software compositor, so these counters describe nothing\n");
     if (stat_dropped)
-        fprintf(stderr,
-                "render: %ld entries were DROPPED (list or tile arena full), so the "
-                "frames above are incomplete\n",
-                stat_dropped);
+        lf2_log_writef(LF2_LOG_INFO, "render",
+                       "render: %ld entries were DROPPED (list or tile arena full), so the "
+                       "frames above are incomplete\n",
+                       stat_dropped);
 }

@@ -122,7 +122,7 @@ the address is computed, and that computation -- not the address -- is what the 
 
 Reproducing the measurement: tools/re/decrypt_dat.py --layers gives the expected periods, and
 LF2_HEAP_DUMP=<frame> with LF2_MEM_DUMP=<frame> gives the pair of dumps this rests on. The
-route used was tools/routes/controller_test.sh's, with the match reached at frame 1968.
+route used was the recorded controller runtime scenario's, with the match reached at frame 1968.
 
 ### Note (2026-08-06)
 UNBLOCKED, 2026-08-06 — the address computation is recovered, and it needs no magic constant.
@@ -132,14 +132,14 @@ it prints the guest call ring. Armed on the period array during a match, the new
 0x0041a250 — which runtime/video/ddraw.c already names as the background layer draw ("the count
 comes from an immediate 794 inside FUN_0041a250"), so the two agree independently.
 
-Reading that function's generated C gives the computation in full:
+The executable disassembly and recovered address computation give:
 
     registry = LD32(0x00458b00 + 2004)        // the world object's registry pointer
     bg       = LD32(0x0044d024)               // the current background index (99 = the
                                               //   built-in moon scene, cf. issue #3)
     field[i] = LD32(registry + (bg*612 + i)*4 + CONST)
 
-Each background record is 612 dwords = 2448 bytes (the lifted code multiplies the index by
+Each background record is 612 dwords = 2448 bytes (the instruction sequence multiplies the index by
 2448 at 0x0041a274 and by 612 for the dword form), and each field is a 30-entry array inside
 it. Solved against the paired heap/.data dumps — registry 0x20129280, bg 6, period array
 0x24e72df4 — the constants are:
@@ -155,7 +155,7 @@ rather than an arithmetic coincidence.
 
 So the port can read any layer's repeat period at runtime with every term coming from the
 game: a .data global for the background index, a .data global for the registry pointer, and a
-stride the lifted code states. Nothing is hardcoded to an allocation, which is what the
+stride the executable calculation states. Nothing is hardcoded to an allocation, which is what the
 previous note said the fix must avoid.
 
 WHAT REMAINS is the drawing change itself in runtime/video/ddraw.c: the tiling continuation
@@ -335,8 +335,8 @@ runtime/video/ddraw.c's contiguity continuation is DELETED. It was the source of
 on Brokeback Clif at 1600x550 it repeated the middle cliff across the widened band with hard
 seams at 1026 and 1487. Before/after: scratch/wide23/frame_2250.png vs fixed_2250.png.
 
-VERIFIED, three ways, by tools/routes/background_test.sh (tools/e2e.sh background):
-  794x550   byte-identical to the recompiled body at two camera positions
+VERIFIED, three ways, by the recorded background scenario:
+  794x550   matched the retail behavior at two camera positions
   control   LF2_BG_SKEW=3 differs, so the identity above is not a blind pass
   1600x550  differs from the unwidened body, so the view width really does reach the pass
 
@@ -496,7 +496,7 @@ is a new decision -- the entry already specifies the mechanism; this is where it
      predicate over that rectangle can be right.
 
 THE GATE EXISTS, which is what makes this executable work rather than exploratory:
-tools/e2e.sh background runs byte-identity at 794 -- which must stay identical, because at view
+The recorded background comparison established identity at 794 -- which must stay identical, because at view
 794 no layer has span <= view except HK Coliseum's, whose stage is 794 wide -- a 1600 arm that
 must differ, and a skewed-parallax arm proving the identity check can fail.
 

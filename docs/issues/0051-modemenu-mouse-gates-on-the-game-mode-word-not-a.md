@@ -55,7 +55,7 @@ once in the binary, and runtime/video/ddraw.c already watches for it (per-screen
 and screens.c gates on that instead of the mode word.
 
 VERIFIED BOTH WAYS, which matters because a gate can fail by being too tight as easily as too
-loose: tools/e2e.sh mouse still reaches charselect, the overlay and a match by pointer alone
+loose: tools/e2e.py mouse still reaches charselect, the overlay and a match by pointer alone
 (7 of 7 clicks fired), and that route drives the mode menu WITH THE MOUSE -- so a gate that had
 become too tight would have stalled it at the front end. The counter above is the other side.
 

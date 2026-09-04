@@ -7,10 +7,12 @@
  * that. Surfaces and the game's BMPs are both 8-bit indexed, so the copy is a plain
  * index copy with no colour conversion.
  */
+#include "lf2_log.h"
+#include "environment.h"
 #include "render.h"
 #include "engine.h"
 #include "com.h"
-#include "guest_ops.h"
+#include "guest.h"
 #include "hostwin.h"
 #include "loadprof.h"
 #include "paths.h"
@@ -119,17 +121,12 @@ static Bitmap *bmp_load(const char *path)
         fclose(fh);
         return NULL;
     }
-    const uint32_t data_off =
-        (uint32_t)hdr[10] | ((uint32_t)hdr[11] << 8) | ((uint32_t)hdr[12] << 16) | ((uint32_t)hdr[13] << 24);
-    const int32_t w =
-        (int32_t)((uint32_t)hdr[18] | ((uint32_t)hdr[19] << 8) | ((uint32_t)hdr[20] << 16) | ((uint32_t)hdr[21] << 24));
-    const int32_t h =
-        (int32_t)((uint32_t)hdr[22] | ((uint32_t)hdr[23] << 8) | ((uint32_t)hdr[24] << 16) | ((uint32_t)hdr[25] << 24));
+    const uint32_t data_off = (uint32_t)hdr[10] | ((uint32_t)hdr[11] << 8) | ((uint32_t)hdr[12] << 16) | ((uint32_t)hdr[13] << 24);
+    const int32_t w = (int32_t)((uint32_t)hdr[18] | ((uint32_t)hdr[19] << 8) | ((uint32_t)hdr[20] << 16) | ((uint32_t)hdr[21] << 24));
+    const int32_t h = (int32_t)((uint32_t)hdr[22] | ((uint32_t)hdr[23] << 8) | ((uint32_t)hdr[24] << 16) | ((uint32_t)hdr[25] << 24));
     const int bpp = (int)((uint32_t)hdr[28] | ((uint32_t)hdr[29] << 8));
-    const uint32_t compression =
-        (uint32_t)hdr[30] | ((uint32_t)hdr[31] << 8) | ((uint32_t)hdr[32] << 16) | ((uint32_t)hdr[33] << 24);
-    const uint32_t clr_used =
-        (uint32_t)hdr[46] | ((uint32_t)hdr[47] << 8) | ((uint32_t)hdr[48] << 16) | ((uint32_t)hdr[49] << 24);
+    const uint32_t compression = (uint32_t)hdr[30] | ((uint32_t)hdr[31] << 8) | ((uint32_t)hdr[32] << 16) | ((uint32_t)hdr[33] << 24);
+    const uint32_t clr_used = (uint32_t)hdr[46] | ((uint32_t)hdr[47] << 8) | ((uint32_t)hdr[48] << 16) | ((uint32_t)hdr[49] << 24);
     if (bpp != 8 || w <= 0) {
         fclose(fh);
         return NULL;
@@ -216,14 +213,13 @@ static uint32_t rsrc_find(const char *name)
     if (!dir_rva) return 0;
     rsrc_base = IMAGE_BASE + dir_rva;
 
-    if (getenv("LF2_RSRC_DEBUG"))
-        fprintf(stderr, "rsrc base=%08x named=%d id=%d\n", rsrc_base, LD16(rsrc_base + 12), LD16(rsrc_base + 14));
+    if (lf2_environment_get(LF2_ENV_RSRC_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "rsrc base=%08x named=%d id=%d\n", rsrc_base, LD16(rsrc_base + 12), LD16(rsrc_base + 14));
 
     /* level 1: type */
     const uint32_t n1 = (uint32_t)LD16(rsrc_base + 12) + LD16(rsrc_base + 14);
     for (uint32_t i = 0; i < n1; i++) {
         const uint32_t e = rsrc_base + 16 + i * 8;
-        if (getenv("LF2_RSRC_DEBUG")) fprintf(stderr, "  type entry %u: name=%08x sub=%08x\n", i, LD32(e), LD32(e + 4));
+        if (lf2_environment_get(LF2_ENV_RSRC_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "  type entry %u: name=%08x sub=%08x\n", i, LD32(e), LD32(e + 4));
         if (LD32(e) != RT_BITMAP) continue;
         const uint32_t sub = LD32(e + 4);
         if (!(sub & 0x80000000u)) continue;
@@ -268,8 +264,7 @@ static Bitmap *dib_load(uint32_t p)
 
     const uint32_t pal = p + hdr;
     const uint32_t ncolours = clr ? clr : 256u;
-    for (uint32_t i = 0; i < ncolours && i < 256; i++)
-        b->pal[i] = ((uint32_t)LD8(pal + i * 4 + 2) << 16) | ((uint32_t)LD8(pal + i * 4 + 1) << 8) | LD8(pal + i * 4);
+    for (uint32_t i = 0; i < ncolours && i < 256; i++) b->pal[i] = ((uint32_t)LD8(pal + i * 4 + 2) << 16) | ((uint32_t)LD8(pal + i * 4 + 1) << 8) | LD8(pal + i * 4);
 
     const uint32_t bits = pal + ncolours * 4;
     const uint32_t compression = LD32(p + 16);
@@ -305,8 +300,7 @@ static void h_LoadImageA(void)
         return;
     }
 
-    if (getenv("LF2_RSRC_DEBUG"))
-        fprintf(stderr, "LoadImage name=%s type=%u flags=%08x\n", (const char *)(g_mem + name), ARG(2), flags);
+    if (lf2_environment_get(LF2_ENV_RSRC_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "LoadImage name=%s type=%u flags=%08x\n", (const char *)(g_mem + name), ARG(2), flags);
 
     Bitmap *b = NULL;
     if (flags & 0x10u) { /* LR_LOADFROMFILE */
@@ -318,7 +312,7 @@ static void h_LoadImageA(void)
     if (!b) {
         /* Expected: the game probes for an override file first so users can replace
          * artwork, then asks for the resource of the same name. Only noisy on request. */
-        if (getenv("LF2_RSRC_DEBUG")) fprintf(stderr, "LoadImage: cannot load %s\n", (const char *)(g_mem + name));
+        if (lf2_environment_get(LF2_ENV_RSRC_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "LoadImage: cannot load %s\n", (const char *)(g_mem + name));
         ret_stdcall(6, 0);
         return;
     }
@@ -350,7 +344,10 @@ int gdi_last_bitmap(int *w, int *h, long *loaded_total)
     return 1;
 }
 
-void gdi_last_bitmap_consume(void) { gdi_loaded_w = gdi_loaded_h = 0; }
+void gdi_last_bitmap_consume(void)
+{
+    gdi_loaded_w = gdi_loaded_h = 0;
+}
 
 static void h_CreateCompatibleDC(void)
 {
@@ -405,7 +402,7 @@ static void h_StretchBlt(void)
     int dwid, dhei, dpitch;
     if (!ddraw_surface_info(hdst, &dpix, &dwid, &dhei, &dpitch) || dw <= 0 || dh <= 0) {
         static long n;
-        if (++n % 200 == 1) fprintf(stderr, "stretchblt: dest %08x is not a surface (#%ld, %dx%d)\n", hdst, n, dw, dh);
+        if (++n % 200 == 1) lf2_log_writef(LF2_LOG_INFO, "gdi", "stretchblt: dest %08x is not a surface (#%ld, %dx%d)\n", hdst, n, dw, dh);
         LOADPROF_END();
         ret_stdcall(11, 0);
         return;
@@ -415,8 +412,7 @@ static void h_StretchBlt(void)
     if (!b || sw <= 0 || sh <= 0) {
         {
             static long f;
-            if (++f % 200 == 1)
-                fprintf(stderr, "stretchblt FAILED #%ld src_dc=%08x bitmap=%s\n", f, hsrc, b ? "ok" : "none");
+            if (++f % 200 == 1) lf2_log_writef(LF2_LOG_INFO, "gdi", "stretchblt FAILED #%ld src_dc=%08x bitmap=%s\n", f, hsrc, b ? "ok" : "none");
         }
         LOADPROF_END();
         ret_stdcall(11, 0);
@@ -444,8 +440,7 @@ static void h_StretchBlt(void)
             if (by < 0 || by >= b->h) continue;
             uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)ty * (size_t)dpitch);
             const uint8_t *row = b->pixels + (size_t)by * (size_t)b->pitch;
-            for (int x = lo; x < hi; x++)
-                dst[dx + x] = b->pal[row[sx + x]]; /* index -> XRGB via the bitmap's palette */
+            for (int x = lo; x < hi; x++) dst[dx + x] = b->pal[row[sx + x]]; /* index -> XRGB via the bitmap's palette */
         }
     } else {
         /* Exact incremental stepping instead of a 64-bit divide per pixel. The pick for
@@ -473,12 +468,12 @@ static void h_StretchBlt(void)
     }
     render_surface_dirty(dpix);
     engine_surface_dirty(dpix);
-    if (getenv("LF2_DUMP_SURF")) {
+    if (lf2_environment_get(LF2_ENV_DUMP_SURF)) {
         static int n;
         char path[128];
         /* Relative, and overridable with LF2_DUMP_DIR -- see runtime/video/ddraw.c. An
          * absolute home path in a committed file is unusable for anyone else. */
-        const char *dir = getenv("LF2_DUMP_DIR");
+        const char *dir = lf2_environment_get(LF2_ENV_DUMP_DIR);
         snprintf(path, sizeof path, "%s/surf_%02d.ppm", (dir && *dir) ? dir : "scratch", n++);
         FILE *f = fopen(path, "wb");
         if (f) {
@@ -498,17 +493,25 @@ static void h_StretchBlt(void)
      * (issue #50) and "which guest call site asked for it" is the first thing wanted next. */
     {
         static long n;
-        if (getenv("LF2_RSRC_DEBUG"))
-            fprintf(stderr, "stretchblt #%ld %dx%d -> %dx%d at (%d,%d) in %dx%d from guest %08x%s\n", ++n, sw, sh, dw,
-                    dh, dx, dy, dwid, dhei, LD32(R(ESP)), (sw == dw && sh == dh) ? "" : "  <== SCALING");
+        if (lf2_environment_get(LF2_ENV_RSRC_DEBUG))
+            lf2_log_writef(LF2_LOG_INFO, "gdi", "stretchblt #%ld %dx%d -> %dx%d at (%d,%d) in %dx%d from guest %08x%s\n", ++n, sw, sh, dw, dh, dx, dy, dwid, dhei, LD32(R(ESP)), (sw == dw && sh == dh) ? "" : "  <== SCALING");
     }
     LOADPROF_END();
     ret_stdcall(11, 1);
 }
 
-static void h_DeleteObject(void) { ret_stdcall(1, 1); }
-static void h_DeleteDC(void) { ret_stdcall(1, 1); }
-static void h_SetBkColor(void) { ret_stdcall(2, 0); }
+static void h_DeleteObject(void)
+{
+    ret_stdcall(1, 1);
+}
+static void h_DeleteDC(void)
+{
+    ret_stdcall(1, 1);
+}
+static void h_SetBkColor(void)
+{
+    ret_stdcall(2, 0);
+}
 static uint32_t text_colour = 0x00ffffffu; /* COLORREF is 0x00BBGGRR */
 
 static void h_SetTextColor(void)
@@ -585,11 +588,11 @@ static TTF_Font *font_at(float pt)
     sized_fonts[sized_fonts_n].pt = key;
     sized_fonts[sized_fonts_n].font = f;
     sized_fonts_n++;
-    if (getenv("LF2_GLYPH_DEBUG"))
-        fprintf(stderr,
-                "text: opened Liberation Sans at %d pt for the window's scale "
-                "(%d size(s) cached)\n",
-                key, sized_fonts_n);
+    if (lf2_environment_get(LF2_ENV_GLYPH_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "gdi",
+                       "text: opened Liberation Sans at %d pt for the window's scale "
+                       "(%d size(s) cached)\n",
+                       key, sized_fonts_n);
     return f;
 }
 
@@ -602,20 +605,19 @@ static TTF_Font *font_open(void)
     ui_font_tried = 1;
 
     if (!TTF_Init()) {
-        fprintf(stderr,
-                "text: TTF_Init failed (%s) -- NO TEXT WILL BE DRAWN. This is not a "
-                "cosmetic fallback; the port has no second way to draw a string.\n",
-                SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "gdi",
+                       "text: TTF_Init failed (%s) -- NO TEXT WILL BE DRAWN. This is not a "
+                       "cosmetic fallback; the port has no second way to draw a string.\n",
+                       SDL_GetError());
         return NULL;
     }
     ui_font = font_from_memory(lf2_font_sans, lf2_font_sans_len, (float)TEXT_PT);
     if (!ui_font)
-        fprintf(stderr,
-                "text: the embedded Liberation Sans (%u bytes) would not open (%s) -- "
-                "NO TEXT WILL BE DRAWN.\n",
-                lf2_font_sans_len, SDL_GetError());
-    else if (getenv("LF2_GLYPH_DEBUG"))
-        fprintf(stderr, "text: embedded Liberation Sans, %u bytes, %d pt\n", lf2_font_sans_len, TEXT_PT);
+        lf2_log_writef(LF2_LOG_INFO, "gdi",
+                       "text: the embedded Liberation Sans (%u bytes) would not open (%s) -- "
+                       "NO TEXT WILL BE DRAWN.\n",
+                       lf2_font_sans_len, SDL_GetError());
+    else if (lf2_environment_get(LF2_ENV_GLYPH_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "text: embedded Liberation Sans, %u bytes, %d pt\n", lf2_font_sans_len, TEXT_PT);
     return ui_font;
 }
 
@@ -673,8 +675,7 @@ static int text_draw_ttf(const char *text, int x, int y, uint32_t dpix, int dwid
             for (int tx = 0; tx < tsrc->w; tx++) {
                 const int a = (int)(src[tx] >> 24);
                 if (!a) continue;
-                tile[ty * tsrc->w + tx] = ((uint32_t)a << 24) | ((uint32_t)(tr * a / 255) << 16) |
-                                          ((uint32_t)(tg * a / 255) << 8) | (uint32_t)(tb * a / 255);
+                tile[ty * tsrc->w + tx] = ((uint32_t)a << 24) | ((uint32_t)(tr * a / 255) << 16) | ((uint32_t)(tg * a / 255) << 8) | (uint32_t)(tb * a / 255);
             }
         }
         render_tile_end();
@@ -749,21 +750,21 @@ static TTF_Font *mono_open(void)
             mono_font = f;
             mono_pt = pt;
             mono_baseline = (GLYPH_H - TTF_GetFontHeight(f)) / 2 + TTF_GetFontAscent(f);
-            if (getenv("LF2_GLYPH_DEBUG"))
-                fprintf(stderr,
-                        "glyph font: embedded Liberation Mono, %d pt, advance %d px, "
-                        "baseline %d\n",
-                        pt, adv, mono_baseline);
+            if (lf2_environment_get(LF2_ENV_GLYPH_DEBUG))
+                lf2_log_writef(LF2_LOG_INFO, "gdi",
+                               "glyph font: embedded Liberation Mono, %d pt, advance %d px, "
+                               "baseline %d\n",
+                               pt, adv, mono_baseline);
             break;
         }
         TTF_CloseFont(f);
     }
     if (!mono_font)
-        fprintf(stderr,
-                "glyph font: the embedded Liberation Mono fits no size into an %d px "
-                "cell, so the game's own bitmap font is drawn instead. That should be "
-                "impossible with a committed face and means this build is broken.\n",
-                (int)GLYPH_W);
+        lf2_log_writef(LF2_LOG_INFO, "gdi",
+                       "glyph font: the embedded Liberation Mono fits no size into an %d px "
+                       "cell, so the game's own bitmap font is drawn instead. That should be "
+                       "impossible with a committed face and means this build is broken.\n",
+                       (int)GLYPH_W);
     return mono_font;
 }
 
@@ -893,23 +894,24 @@ static const GlyphHi *glyph_hi_of(int ch, float scale)
  * nothing. */
 void glyph_scale_report(void)
 {
-    if (!getenv("LF2_GLYPH_DEBUG")) return;
+    if (!lf2_environment_get(LF2_ENV_GLYPH_DEBUG)) return;
     const float s = lf2_world_scale();
     if (!render_gpu_enabled())
-        fprintf(stderr, "glyph scale: the software compositor was presenting, so text is the "
-                        "game's 8x16 cell by definition -- this run says NOTHING about "
-                        "window-resolution text.\n");
+        lf2_log_writef(LF2_LOG_INFO, "gdi",
+                       "glyph scale: the software compositor was presenting, so text is the "
+                       "game's 8x16 cell by definition -- this run says NOTHING about "
+                       "window-resolution text.\n");
     else if (glyph_hi_scale_x100 < 0)
-        fprintf(stderr,
-                "glyph scale: NOTHING was rasterised above the game's 8x16 cell "
-                "(world scale %.3f). At a scale of 1 that is correct; above it, the "
-                "text is not getting sharper and the feature is not working.\n",
-                (double)s);
+        lf2_log_writef(LF2_LOG_INFO, "gdi",
+                       "glyph scale: NOTHING was rasterised above the game's 8x16 cell "
+                       "(world scale %.3f). At a scale of 1 that is correct; above it, the "
+                       "text is not getting sharper and the feature is not working.\n",
+                       (double)s);
     else
-        fprintf(stderr,
-                "glyph scale: %ld glyph(s) rasterised at %.2fx the game's cell, "
-                "%ld cache drop(s) from the window changing size\n",
-                glyph_hi_rasterised, glyph_hi_scale_x100 / 100.0, glyph_hi_dropped);
+        lf2_log_writef(LF2_LOG_INFO, "gdi",
+                       "glyph scale: %ld glyph(s) rasterised at %.2fx the game's cell, "
+                       "%ld cache drop(s) from the window changing size\n",
+                       glyph_hi_rasterised, glyph_hi_scale_x100 / 100.0, glyph_hi_dropped);
 }
 
 static const Glyph *glyph_of(int ch)
@@ -976,8 +978,7 @@ int game_glyph_tile(int ch, int x, int y, uint32_t ink, uint32_t dst_pixels)
         for (int gx = 0; gx < cw; gx++) {
             const int a = cov[gy * cw + gx];
             if (!a) continue;
-            tile[gy * cw + gx] = ((uint32_t)a << 24) | ((uint32_t)(ir * a / 255) << 16) |
-                                 ((uint32_t)(ig * a / 255) << 8) | (uint32_t)(ib * a / 255);
+            tile[gy * cw + gx] = ((uint32_t)a << 24) | ((uint32_t)(ir * a / 255) << 16) | ((uint32_t)(ig * a / 255) << 8) | (uint32_t)(ib * a / 255);
         }
     render_tile_end();
     return 1;
@@ -1010,8 +1011,7 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink, uint32_t dpix, int dwid,
             const uint32_t bg = dst[dx];
             const int br = (int)((bg >> 16) & 0xff), bgc = (int)((bg >> 8) & 0xff);
             const int bb = (int)(bg & 0xff);
-            dst[dx] = ((uint32_t)((ir * a + br * (255 - a)) / 255) << 16) |
-                      ((uint32_t)((ig * a + bgc * (255 - a)) / 255) << 8) | (uint32_t)((ib * a + bb * (255 - a)) / 255);
+            dst[dx] = ((uint32_t)((ir * a + br * (255 - a)) / 255) << 16) | ((uint32_t)((ig * a + bgc * (255 - a)) / 255) << 8) | (uint32_t)((ib * a + bb * (255 - a)) / 255);
         }
     }
     return 1;
@@ -1081,8 +1081,7 @@ static void h_TextOutA(void)
      * decided by it -- hud_offset_x by the band the y falls in, screen_offset_x by whether
      * the surface is wider than 794 -- and a line that prints only the final x cannot show
      * which of them declined and why (issue #54). */
-    if (getenv("LF2_TEXT_DEBUG"))
-        fprintf(stderr, "text (%d,%d) dst %08x %dx%d %d %s\n", x, y, dpix, dwid, dhei, len, text);
+    if (lf2_environment_get(LF2_ENV_TEXT_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "text (%d,%d) dst %08x %dx%d %d %s\n", x, y, dpix, dwid, dhei, len, text);
 
 #ifdef LF2_HAVE_TTF
     if (text_draw_ttf(text, x, y, dpix, dwid, dhei, dpitch)) {
@@ -1127,8 +1126,7 @@ static void h_TextOutA(void)
     for (int i = 0; i < len; i++) {
         int ink_l = cell, ink_r = -1;
         for (int ty = 0; ty < h; ty++) {
-            const uint32_t *row =
-                (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
+            const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
             for (int cx = 0; cx < cell; cx++)
                 if (row[i * cell + cx] & 0x00ffffffu) {
                     if (cx < ink_l) ink_l = cx;
@@ -1144,8 +1142,7 @@ static void h_TextOutA(void)
             const int dy = y + ty;
             if (dy < 0 || dy >= dhei) continue;
             uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
-            const uint32_t *row =
-                (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
+            const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
             for (int cx = ink_l; cx <= ink_r; cx++) {
                 const int dx = pen + (cx - ink_l);
                 if (dx < 0 || dx >= dwid) continue;

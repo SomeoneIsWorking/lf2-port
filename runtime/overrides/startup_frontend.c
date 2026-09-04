@@ -1,15 +1,14 @@
 #include "startup_init.h"
 
-#include "guest_ops.h"
+#include "guest.h"
+#include "jit_executor.h"
+#include "lf2_log.h"
 
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-void fn_0043ee50(void);
-void fn_004450ac(void);
 
 enum {
     FRONTEND_INIT_LATCH = 0x0044d068,
@@ -118,7 +117,7 @@ static uint32_t guest_graphic_create(uint32_t name)
 {
     PUSH32(GRAPHIC_BYTES);
     PUSH32(0x00424784);
-    fn_004450ac();
+    lf2_jit_call(0x004450ac);
     R(ESP) += 4;
     const uint32_t graphic = R(EAX);
     if (!graphic) return 0;
@@ -128,7 +127,7 @@ static uint32_t guest_graphic_create(uint32_t name)
     PUSH32(0x40);
     R(ECX) = graphic;
     PUSH32(0x004247a5);
-    fn_0043ee50();
+    lf2_jit_call(0x0043ee50);
     return R(EAX);
 }
 
@@ -205,7 +204,7 @@ static void load_control_file(void)
 {
     FILE *file = fopen("data/control.txt", "r");
     if (!file) {
-        fprintf(stderr, "startup: required data/control.txt could not be opened\n");
+        lf2_log_writef(LF2_LOG_INFO, "startup", "startup: required data/control.txt could not be opened\n");
         abort();
     }
 
@@ -242,7 +241,8 @@ static void load_control_file(void)
     while (fgets(line, sizeof line, file)) {
         const size_t length = strlen(line);
         if (length > 499 - info_length) {
-            fprintf(stderr, "startup: data/control.txt info text exceeds its 499-byte guest buffer\n");
+            lf2_log_writef(LF2_LOG_INFO, "startup",
+                           "startup: data/control.txt info text exceeds its 499-byte guest buffer\n");
             fclose(file);
             abort();
         }
@@ -255,7 +255,7 @@ static void load_control_file(void)
     return;
 
 malformed:
-    fprintf(stderr, "startup: data/control.txt is malformed or unreadable\n");
+    lf2_log_writef(LF2_LOG_INFO, "startup", "startup: data/control.txt is malformed or unreadable\n");
     fclose(file);
     abort();
 }

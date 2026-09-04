@@ -23,7 +23,7 @@ from RmlUi".
   the quad own UV rect, which means the uniform becomes per-draw and object batches split
   when AA is on. A handful of draws; negligible.
 - Objects only (is_object): backgrounds, HUD and text tiles keep NEAREST.
-- Default OFF: off IS the original picture, and tools/e2e.py render diffs GPU against the
+- Default OFF: off IS the original picture, and the recorded renderer comparison diffs GPU against the
   software compositor. The option lives in config as sprite_aa with an LF2_SPRITE_AA initial
   pin for route arms (the issue #69 pattern).
 

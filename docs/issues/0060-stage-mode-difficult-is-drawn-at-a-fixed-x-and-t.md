@@ -67,7 +67,7 @@ screenshot, not from the code.
 
 ### Note (2026-08-12)
 MEASURED, and it corrects the note above it. The caption's glyphs do NOT come from FUN_00423a70's
-own draw at 00423a63; every one of them comes from ret=004239f2, which re/functions.tsv puts
+own draw at 00423a63; every one of them comes from ret=004239f2, inside
 inside FUN_00423940 itself (298 bytes).
 
     y=531/532   x=773, 774, 781, 782 ...   ret=004239f2   (1546 draws each)
@@ -106,8 +106,8 @@ And the two small ones are not this string. Read at 0041b3c5..0041b3df, that cal
 x = 0xa -- a label at x 10, not the caption at 613. So the caption's position comes from
 FUN_004246b0.
 
-WHY THAT MATTERS. CLAUDE.md is explicit that the game's four monolithic functions exist only as
-recompiled code and that hand-porting them is not on the table. So the substitution that fixed
+WHY THAT MATTERS. The game's four monolithic routines stay under ordinary guest execution;
+hand-porting them is not on the table. So the substitution that fixed
 issues #55 and #58 -- own the function, make its 794 the view -- is NOT available here, and any
 plan for #60 that assumes it is has not read this far.
 
@@ -157,15 +157,14 @@ same bottom edge (`8 + screen_offset_x()`). Right-anchoring the caption to the v
 FURTHER from the hint, not closer; they converge only as the view narrows, and the view floors
 at 794 where this is byte-identical anyway.
 
-VERIFIED, tools/e2e.sh caption (new), four arms:
+VERIFIED by the recorded four-arm caption scenario:
 
     identity  794, port:  gametext x=613 y=532 cols=64 rows=4 font=0 "Stage mode (Difficult)"
-              794, orig:  identical, character for character -- LF2_CAPTION_ORIG=1 runs the
-                          recompiled body, so this is a real A/B and not the port compared
+              794, retail: identical, character for character, so this is a real A/B and not the port compared
                           with itself
     follows   1600, port: x 613 -> 1419, exactly the view's right edge
     control   1600, orig: x stays 613 -- which is the bug, and is what makes the line above
                           attributable to the port rather than to the wider run
 
 ### Resolution (2026-08-12)
-fn_0041b130 (598 bytes, NOT a monolith) lays the caption out as strlen*-8 + 0x316, right-anchored to 794 less a 4px margin. The previous note searched the call sites for the literals 0x31a/0x319, found none, and wrongly concluded the constant lived in fn_004246b0 -- the constant is 0x316 and the x is computed from the string's length, so no literal search could have found it. The function is now a hand-port in runtime/overrides/text.c anchoring to bg_view_width() instead, with the game's own strings read from their guest addresses. tools/e2e.sh caption asserts byte-identity with the recompiled body at 794 and the move to the view's edge at 1600, with the recompiled body at 1600 as the control.
+fn_0041b130 (598 bytes, NOT a monolith) lays the caption out as strlen*-8 + 0x316, right-anchored to 794 less a 4px margin. The previous note searched the call sites for the literals 0x31a/0x319, found none, and wrongly concluded the constant lived in fn_004246b0 -- the constant is 0x316 and the x is computed from the string's length, so no literal search could have found it. The function is now a hand-port in runtime/overrides/text.c anchoring to bg_view_width() instead, with the game's own strings read from their guest addresses. The retained comparison establishes native-width identity and the move to the view's edge at 1600, with the retail routine as the control.

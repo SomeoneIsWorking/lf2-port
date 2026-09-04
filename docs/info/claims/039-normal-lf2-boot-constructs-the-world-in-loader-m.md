@@ -16,7 +16,7 @@ Normal LF2 boot constructs the world in loader mode and reveals the first post-l
 
 ## Evidence
 
-fn_00419e40 override preserves the original constructor then sets initial top mode 1; startup.c suppresses presentation and keeps SDL hidden through the real loader. tools/e2e.sh smoke passes with modemenu as the first script-visible screen, and bounded zero-argument ./run.sh logs constructor loader state, data-loaded mode menu, first menu frame presented, then modemenu@4 with no input script.
+fn_00419e40 override preserves the original constructor then sets initial top mode 1; startup.c suppresses presentation and keeps SDL hidden through the real loader. tools/e2e.py smoke passes with modemenu as the first script-visible screen, and bounded zero-argument ./run.sh logs constructor loader state, data-loaded mode menu, first menu frame presented, then modemenu@4 with no input script.
 
 ## What would falsify it
 

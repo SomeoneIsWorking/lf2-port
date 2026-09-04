@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Greedily extend a click path through LF2's menus.
 
-The menus are mouse-driven and each screen's clickable bands come from tools/re/click_bands.py.
-This tries every candidate as the next click and keeps whichever produces one more screen
+The menus are mouse-driven. This tries every recovered candidate center as the
+next click and keeps whichever produces one more screen
 transition than the current path, which is the only observable that says "something
 happened" -- the key array reads the same on every screen, so it cannot be used here.
 

@@ -29,7 +29,6 @@ that screen.
 - The graphical options already exist as runtime/app/options.{c,h} (renderer/lighting/DOF),
   owned by the pause menu. RmlUi would own them instead, so options.{c,h} becomes the shared
   state the RmlUi document binds to.
-- Dusklight is the prior art to crib from (src/dusk/ui), per the pause.c note.
 
 ## Open questions that decide the shape
 
@@ -44,9 +43,6 @@ RmlUi is no longer the requirement. The user's follow-up: 'You can make a regula
 ### Note (2026-08-20)
 USER 2026-08-20 explicitly restored the RmlUi requirement: 'Add RmlUi with input mapping'. This supersedes the 2026-08-16 note that RmlUi was off the table. RmlUi plus persistent keyboard/controller mapping is the required UI, not the hand-rolled substitute.
 
-### Note (2026-08-20)
-USER 2026-08-20: copy the RmlUi integration from Dusklight. The LF2 implementation must follow Dusklight's current UI ownership/backend/input pattern rather than growing a bespoke monolithic glue file.
-
 ### Resolution (2026-08-20)
 RmlUi now owns a persistent keyboard/controller mapper and graphical settings document. Its SDL backend is a separate UI module, controller capture is release-gated, the shipping input gather consumes the mappings, ctest bindings passes, and the settings route opens and renders the real document.
 
@@ -54,10 +50,10 @@ RmlUi now owns a persistent keyboard/controller mapper and graphical settings do
 USER 2026-08-20 reports the shipped RmlUi is completely broken and is only reachable by opening the legacy Escape menu first. Reproduce through the default launcher; repair rendering and mapped input through the real shipping path, and do not count a scripted texture-load assertion as proof of usability.
 
 ### Resolution (2026-08-21)
-RmlUi was broken for three independent integration reasons: SDL_UpdateTexture's SDL3 bool result was inverted so successful font-atlas uploads were destroyed; the backend leaked viewport/clip state into the shared renderer; and the document used browser-like bindings unsupported by RmlUi. Replaced the legacy pause painter with one global Dusklight-structured RmlUi document, corrected atlas/upload and render-state ownership, used RmlUi data-model syntax and tabbable controls, blocked guest input while modal, and verified mapped pad navigation plus rendering through settings and ui_global routes.
+RmlUi was broken for three independent integration reasons: SDL_UpdateTexture's SDL3 bool result was inverted so successful font-atlas uploads were destroyed; the backend leaked viewport/clip state into the shared renderer; and the document used browser-like bindings unsupported by RmlUi. Replaced the legacy pause painter with one globally owned RmlUi document, corrected atlas/upload and render-state ownership, used RmlUi data-model syntax and tabbable controls, blocked guest input while modal, and verified mapped pad navigation plus rendering through settings and ui_global routes.
 
 ### Reopened (2026-08-21)
 USER 2026-08-21: RmlUi should be controllable via any input device, including keyboard and controller. Re-audit the real navigation path across all connected pads/keyboards; mapped navigation in one scripted path is not sufficient evidence.
 
 ### Resolution (2026-08-21)
-The settings document had bespoke two-pad polling, no mapped keyboard-action translation, manual controller clicks, and no directional repeat. A separate Dusklight-style runtime/ui/rmlui_input.cpp now merges keyboard and all attached-controller action state, latches short event edges, applies accelerated directional repeat, maps Attack/Jump to Confirm/Cancel, and keeps conventional raw controls when unbound. The physical keyboard route activates Continue through mapped Attack; the controller route navigates to and activates Controls.
+The settings document had bespoke two-pad polling, no mapped keyboard-action translation, manual controller clicks, and no directional repeat. A separate runtime/ui/rmlui_input.cpp now merges keyboard and all attached-controller action state, latches short event edges, applies accelerated directional repeat, maps Attack/Jump to Confirm/Cancel, and keeps conventional raw controls when unbound. The physical keyboard route activates Continue through mapped Attack; the controller route navigates to and activates Controls.

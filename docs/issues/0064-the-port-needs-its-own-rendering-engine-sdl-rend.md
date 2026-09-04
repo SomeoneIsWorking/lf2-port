@@ -49,7 +49,7 @@ this port is drawing a lit 3D scene with pixel-art sprites in it.**
 
 ## What the new engine is, and what it is NOT
 
-NOT a rewrite of the port. The recompiler, the runtime, the overrides and the whole Win32/DDraw
+NOT a rewrite of the port. Guest execution, native overrides, and the whole Win32/DDraw
 shim are untouched. Neither is the display-list RECORDING: `ddraw.c` reaches the renderer through
 8 call sites and about ten functions in `render.h`, and that boundary is exactly right -- it is
 what turns the game's blit stream into an ordered scene. What changes is what draws it.
@@ -60,12 +60,12 @@ together with render targets.
 
 ## The constraint that makes this safe
 
-`tools/e2e.sh render` already diffs the GPU renderer against the software compositor frame by
+The recorded renderer comparison diffs the GPU renderer against the software compositor frame by
 frame, with a dropped-draw arm proving the comparison can fail. A new engine has to pass the
 SAME test against the SAME software compositor. That is the acceptance gate and it exists
 already -- this is not a rewrite into the dark.
 
-The old path stays as the A/B control arm, the way `LF2_BG_ORIG` did for the background
+The software path stays as the A/B control arm, matching the earlier background comparison
 override. A reimplementation that cannot be diffed against what it replaces is a rewrite.
 
 ## What is explicitly NOT the plan
@@ -82,7 +82,7 @@ runtime/video/engine.{c,h} + runtime/shaders/quad.{vert,frag}. One SDL_GPU devic
 port's `gpu` renderer is already built on, C029), one D32_FLOAT depth buffer, one texture pool,
 three blend pipelines.
 
-MEASURED against the gate that already existed. `tools/e2e.sh render` dumps two frames -- one on
+MEASURED against the gate that already existed. The recorded renderer comparison dumped two frames -- one on
 character selection, one in a match -- and diffs them against the software compositor. The
 engine:
 
@@ -99,7 +99,7 @@ multiply -- no lighting -- and says so in its own header.
 
 THREE PIPELINES rather than one, because SDL_GPU fixes blend state at pipeline creation. The
 tempting alternative -- premultiply everything on upload so one blend serves all -- would change
-what a keyed sprite's colour IS, and the byte-identity arms of tools/e2e.sh background compare
+what a keyed sprite's colour IS, and the recorded background identity arms compare
 exact pixels against the software blitter.
 
 DEPTH IS THE LIST ORDINAL, and this is the one design decision in the file. The display list is
@@ -142,7 +142,7 @@ WHAT IS NOT IN IT YET, and both are the reason it exists:
 Hand-woven stage geometry is now a draw call in the middle of the quad stream, into the one
 depth buffer, instead of a separate render pass per parallax gap composited back as a texture.
 
-MEASURED, tools/e2e.sh stage_geom, two solids straddling Brokeback Clif's layers:
+MEASURED by the recorded stage-geometry scenario, two solids straddling Brokeback Clif's layers:
 
     1464 geometry draw(s) inside the engine's own pass
     0    separate mesh passes          <- the render target per gap, gone
@@ -184,7 +184,7 @@ THREE THINGS HAD TO MOVE, and each was a small piece of design rather than plumb
 The SDL_Render path still composites per gap, from render.c, because it cannot take geometry at
 all -- kept deliberately so the two paths stay diffable.
 
-NOT REGRESSED: tools/e2e.sh render still green on all ten assertions, engine matching software
+NOT REGRESSED: the recorded renderer comparison was green on all ten assertions, engine matching software
 at max channel diff 1 and 2. ctest 12/12. gpuguard latch clear.
 
 STILL OUT: the lighting. hd2d is a post-process over a finished picture, reconstructing a normal
@@ -229,7 +229,7 @@ load-bearing sentence gets silently lost.
 Prompted by "have you ever checked the work done so far?". Until this point every change had
 been gated on `ctest` plus the ONE render route. Run since:
 
-- **`tools/e2e.sh` full sweep: 19/19, 143 assertions, 0 skipped.** This is what actually clears
+- **`tools/e2e.py` full sweep: 19/19, 143 assertions, 0 skipped.** This is what actually clears
   the ground-marker change in `engine_colour_pass` against mouse, background, stage_geom, coop
   and the rest -- none of which had been run against it.
 - **Frames looked at, not just counted.** The defocus reads as a defocus on the distant cliff
@@ -270,7 +270,7 @@ being an eighth 300-second run.
   cannot even be wrapped. Three more comments described a half-res blur that was deleted.
 - `render`/`background`/`resize` wrote dumps to `/tmp` via `mktemp -d` and **deleted them on
   EXIT**, so a FAILING run destroyed the two frames anyone would want to look at. Now
-  gitignored `scratch/`, cleared at the START of the next run. `objects_test.sh` already had
+  gitignored `scratch/`, cleared at the START of the next run. `the recorded objects runtime scenario` already had
   this fix and its reasoning written down; the other three had missed it.
 - The defocus arm selected its frame by the glob `*000401*`, so it matched nothing whenever the
   frame numbers moved and fell through to assert the OPPOSITE thing -- the exact mistake the

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build LF2's arm64 Android APK locally, without committing generated output."""
+"""Build LF2's arm64 Android APK locally from the native/JIT product."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from release_dependencies import DEPENDENCIES
+from source_dependencies import DependencyError, resolve_runtime_dependencies
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WORK = ROOT / "build" / "android"
@@ -308,23 +309,13 @@ def build_ffmpeg(source: Path, build: Path, prefix: Path, sdk: Path) -> None:
     run(["make", "install"], cwd=build)
 
 
-def generate_recompiled_source(work: Path) -> Path:
-    build = work / "host-tools"
-    run([
-        "cmake", "-S", str(ROOT), "-B", str(build), "-G", "Ninja",
-        "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++",
-        "-DLF2_HOST_TOOLS_ONLY=ON",
-    ])
-    run(["cmake", "--build", str(build), "--target", "lift", "--parallel", str(os.cpu_count() or 1)])
-    generated = work / "generated" / "lf2_recomp.c"
-    generated.parent.mkdir(parents=True, exist_ok=True)
-    run([str(build / "lift"), str(ROOT / "game" / "lf2.exe"), str(ROOT / "re" / "entries.tsv"), str(generated)])
-    return generated
-
-
-def build_native(work: Path, prefix: Path, generated: Path, sdk: Path) -> Path:
+def build_native(work: Path, prefix: Path, sdk: Path) -> Path:
     build = work / "native"
     toolchain = sdk / "ndk" / NDK_VERSION / "build" / "cmake" / "android.toolchain.cmake"
+    try:
+        runtime_dependencies = resolve_runtime_dependencies(ROOT)
+    except DependencyError as error:
+        refuse(f"runtime dependencies: {error}")
     run([
         "cmake", "-S", str(ROOT), "-B", str(build), "-G", "Ninja",
         f"-DCMAKE_TOOLCHAIN_FILE={toolchain}", f"-DANDROID_ABI={ANDROID_ABI}",
@@ -338,7 +329,9 @@ def build_native(work: Path, prefix: Path, generated: Path, sdk: Path) -> Path:
         f"-DFREETYPE_INCLUDE_DIR_freetype2={prefix / 'include' / 'freetype2'}",
         f"-DBZIP2_INCLUDE_DIR={prefix / 'include'}",
         f"-DBZIP2_LIBRARY_RELEASE={prefix / 'lib' / 'libbz2.a'}",
-        f"-DLF2_RECOMP_SOURCE={generated}", f"-DLF2_FFMPEG_ROOT={prefix}",
+        f"-DLF2_FFMPEG_ROOT={prefix}",
+        f"-DX86PORT_DIR={runtime_dependencies['x86port']}",
+        f"-DX86PORT_JITCOMMON_DIR={runtime_dependencies['jit-common']}",
     ])
     run(["cmake", "--build", str(build), "--target", "lf2", "--parallel", str(os.cpu_count() or 1)])
     library = build / "libmain.so"
@@ -460,7 +453,7 @@ def main() -> int:
     ):
         require_program(name, hint)
     if not (ROOT / "game" / "lf2.exe").is_file():
-        refuse("game/lf2.exe is required locally to generate the translated source; it is never packaged or committed")
+        refuse("game/lf2.exe is required locally as the JIT runtime input; it is never packaged or committed")
     sdk = android_sdk()
     java = None if args.native_only else java_home()
     signing = release_signing() if args.release and not args.native_only else None
@@ -471,8 +464,7 @@ def main() -> int:
 
     sources = prepare_sources(work)
     prefix = build_dependencies(work, sources, sdk)
-    generated = generate_recompiled_source(work)
-    native = build_native(work, prefix, generated, sdk)
+    native = build_native(work, prefix, sdk)
     if args.native_only:
         print(f"android build: native library passed entrypoint inspection: {native}")
         return 0

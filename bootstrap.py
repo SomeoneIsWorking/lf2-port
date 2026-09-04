@@ -24,10 +24,13 @@ Order matters and each step needs only the ones before it:
                           The installer is taken from $LF2_INSTALLER, then
                           ./LF2_v2.0a.exe; if neither exists it is downloaded
                           from lf2.net, where the README already points.
-  5. build                tools/build/build.py (cmake; skipped when the
+  5. pinned JIT sources   tools/build/build.py validates the exact clean
+                          x86port and jit-common revisions, or provisions them
+                          below build/deps when no shared checkout exists.
+  6. build                tools/build/build.py (cmake; skipped when the
                           binary is newer than every input -- REBUILD=1
                           forces it).
-  6. run                  the game; the executable validates and enters the
+  7. run                  the game; the executable validates and enters the
                           selected game tree, with your arguments passed through.
 """
 
@@ -39,6 +42,9 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "tools" / "build"))
+from source_dependencies import DependencyError, resolve_runtime_dependencies
 
 ROOT = Path(__file__).resolve().parent
 INSTALLER_URL = "https://lf2.net/LF2_v2.0a.exe"
@@ -229,11 +235,13 @@ def ensure_game_tree() -> None:
 
 
 def build(venv_python: Path, port_assets: Path) -> None:
+    try:
+        runtime_dependencies = resolve_runtime_dependencies(ROOT)
+    except DependencyError as error:
+        refuse(f"runtime dependencies: {error}")
     if BINARY.exists() and not os.environ.get("REBUILD"):
         inputs_newest = newest_mtime(
             ROOT / "runtime",
-            ROOT / "recompiler",
-            ROOT / "re",
             ROOT / "assets",
             ROOT / "stages",
             ROOT / "third_party",
@@ -248,6 +256,8 @@ def build(venv_python: Path, port_assets: Path) -> None:
     env = dict(os.environ)
     env["PATH"] = "{}{}{}".format(venv_python.parent, os.pathsep, env.get("PATH", ""))
     env["PORT_ASSETS_DIR"] = str(port_assets)
+    env["X86PORT_DIR"] = str(runtime_dependencies["x86port"])
+    env["JIT_COMMON_DIR"] = str(runtime_dependencies["jit-common"])
     result = subprocess.run(
         [str(venv_python), str(ROOT / "tools" / "build" / "build.py")],
         cwd=ROOT,

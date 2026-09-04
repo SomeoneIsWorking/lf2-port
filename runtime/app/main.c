@@ -1,3 +1,4 @@
+#include "environment.h"
 #include "guest.h"
 #include "com.h"
 #include "hostwin.h"
@@ -31,10 +32,11 @@ void dshow_register(void);
 static int prepare_game_data(int argc, char **argv, GameData *game)
 {
     const int force_selection = argc > 1 && strcmp(argv[1], "--select-game") == 0;
-    const char *explicit_executable = force_selection ? NULL : (argc > 1 ? argv[1] : getenv("LF2_GAME_EXE"));
+    const char *explicit_executable =
+        force_selection ? NULL : (argc > 1 ? argv[1] : lf2_environment_get(LF2_ENV_GAME_EXE));
     char *working_directory = SDL_GetCurrentDirectory();
     if (!working_directory) {
-        fprintf(stderr, "startup: cannot resolve the working directory: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "main", "startup: cannot resolve the working directory: %s\n", SDL_GetError());
         return 0;
     }
 
@@ -43,8 +45,8 @@ static int prepare_game_data(int argc, char **argv, GameData *game)
     char android_root[GAME_DATA_PATH_CAPACITY];
     if (android_bridge_game_root(android_root, sizeof android_root)) configured_root = android_root;
 #endif
-    if (!force_selection &&
-        game_data_discover(explicit_executable, configured_root, getenv("APPIMAGE"), working_directory, game)) {
+    if (!force_selection && game_data_discover(explicit_executable, configured_root,
+                                               lf2_environment_get(LF2_ENV_APPIMAGE), working_directory, game)) {
         SDL_free(working_directory);
         if (game_data_activate(game)) return 1;
     } else {
@@ -106,11 +108,10 @@ int main(int argc, char **argv)
     dshow_register();
     com_init();
     guest_load_image("lf2.exe");
-    printf("image loaded, %d functions; using native port entry\n", g_nfuncs);
+    lf2_log_write(LF2_LOG_INFO, "startup", "authenticated image loaded; using native entry and x86port JIT");
     /* The game exits through the CRT's exit(), not by returning from its entry point, so
      * teardown has to be an atexit hook -- calling it after dispatch() would never run.
      * Registered here at startup rather than lazily, so it is armed on every path. */
-    atexit(lf2_log_flush);
     atexit(hostwin_shutdown);
     atexit(import_stats_report);
     atexit(scan_prof_report);

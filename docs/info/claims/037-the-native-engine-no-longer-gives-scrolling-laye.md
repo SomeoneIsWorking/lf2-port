@@ -4,7 +4,7 @@ kind: claim
 status: falsified
 created: 2026-08-20
 tags: renderer,background
-depends: runtime/video/render.c#render_present, tools/routes/render_test.sh, tools/routes/background_test.sh
+depends: runtime/video/render.c#render_present, the recorded render runtime scenario, the recorded background runtime scenario
 falsified_on: 2026-08-22
 ---
 
@@ -14,7 +14,7 @@ The native engine no longer gives scrolling layers independent fractional sampli
 
 ## Evidence
 
-tools/e2e.sh render: engine vs software max channel diff 2 on the match frame, while both deliberate skip arms differ over 134942 pixels. tools/e2e.sh background: two native frames are byte-identical to the recompiled background body at native width and both negative arms differ. render.c submits the scene at scale 1 into the native composition target and performs one final nearest copy.
+The recorded renderer comparison measured a maximum channel difference of 2 on the match frame while both deliberate skip arms differed over 134,942 pixels. `render.c` submits the scene at scale 1 into the native composition target and performs one final nearest copy.
 
 ## What would falsify it
 

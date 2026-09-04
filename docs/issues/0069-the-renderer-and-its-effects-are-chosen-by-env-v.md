@@ -19,7 +19,7 @@ the two effects were flag-only, and LF2_ENGINE was even latched at first read.
 
 The pause menu's Options page (runtime/app/pause.c, issue #37) is the port's only own UI and
 already hosts the two light-angle rows; the renderer/effect rows belong beside them, live, over
-the frozen frame. The env vars stay as TEST ARMS -- tools/routes/*.sh pin them to keep the A/B
+the frozen frame. The environment overrides remain diagnostic arms for controlled A/B
 comparisons meaning what they mean -- but unset, the menu state rules.
 
 Effects are SDL3_GPU-specific (the engine), not injected into the game-driven SDL_Render path.
@@ -28,4 +28,4 @@ picture loses its shading; the classic SDL_Render path stays selectable as the p
 fallback and the byte-identity control arm.
 
 ### Resolution (2026-08-16)
-The renderer and its effects are now in-game options. runtime/app/options.{c,h} holds the state (engine/lighting/DOF, default engine); the pause menu's Options page owns it with three rows (RENDERER/LIGHTING/DEPTH OF FIELD) beside the two light-angle rows; engine.c/hd2d.c read the options rather than the env vars, so a change applies to the next frame. The LF2_ENGINE/LF2_HD2D/LF2_DOF env vars remain honoured ONCE as the initial value, so the route scripts' A/B arms keep their meaning. The lighting moved engine-only, which is why the engine became the default renderer. tools/routes/render_test.sh now pins the classic path with LF2_ENGINE=0 explicitly. Unit suite 13/13.
+The renderer and its effects are now in-game options. runtime/app/options.{c,h} holds the state (engine/lighting/DOF, default engine); the pause menu's Options page owns it with three rows (RENDERER/LIGHTING/DEPTH OF FIELD) beside the two light-angle rows; engine.c/hd2d.c read the options rather than the env vars, so a change applies to the next frame. The LF2_ENGINE/LF2_HD2D/LF2_DOF env vars remain honoured ONCE as the initial value, so the route scripts' A/B arms keep their meaning. The lighting moved engine-only, which is why the engine became the default renderer. the recorded render runtime scenario now pins the classic path with LF2_ENGINE=0 explicitly. Unit suite 13/13.

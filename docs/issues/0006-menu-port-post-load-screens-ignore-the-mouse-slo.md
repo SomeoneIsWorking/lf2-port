@@ -35,7 +35,7 @@ byte-identical to each other. Reaching the overlay needs a longer key script fir
 
 ### Resolution (2026-08-05)
 Done. Every screen from the launcher to a running match takes mouse, keyboard and pad, and a
-mouse-only route reaches a match with no key and no pad (tools/routes/mouse_test.sh, ctest -R mouse).
+mouse-only route reaches a match with no key and no pad (the recorded mouse runtime scenario, ctest -R mouse).
 
 Selection variables, all four:
   launcher (0/6/7)  the game's own index, from its hit-test constants

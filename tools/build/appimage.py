@@ -80,8 +80,6 @@ def verify_no_game_content(appdir: Path) -> None:
     forbidden_paths = {
         "lf2_v2.0a.exe",
         "data/data.txt",
-        "re/instructions.tsv",
-        "gen/lf2_recomp.c",
     }
     forbidden_directories = {"game", "data", "sprite", "bg", "music", "sound"}
     failures: list[str] = []

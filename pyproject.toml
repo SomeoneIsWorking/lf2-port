@@ -1,7 +1,7 @@
 [project]
 name = "lf2-port"
 version = "0.1.0"
-description = "Tooling for the Little Fighter 2 static-recompilation port"
+description = "Tooling for the native and dynamically translated Little Fighter 2 port"
 requires-python = ">=3.11"
 dependencies = []
 

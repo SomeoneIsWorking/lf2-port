@@ -1,27 +1,13 @@
+#include "lf2_log.h"
 #include "port_entry.h"
 
 #include "boot_guest.h"
-#include "guest_ops.h"
+#include "guest.h"
 #include "hostwin.h"
+#include "jit_executor.h"
 #include "startup_init.h"
 #include <stdint.h>
 #include <stdio.h>
-
-void fn_004014e0(void);
-void fn_00401970(void);
-void fn_00402020(void);
-void fn_004031b0(void);
-void fn_00419e40(void);
-void fn_0043bec0(void);
-void fn_0043bf10(void);
-void fn_0043c4a0(void);
-void fn_0043c690(void);
-void fn_0043c780(void);
-void fn_0043cc60(void);
-void fn_0043d230(void);
-void fn_0043e890(void);
-void fn_0043e9a0(void);
-void fn_00414440(void);
 
 enum {
     IAT_SLEEP = 0x00447098,
@@ -50,18 +36,16 @@ enum {
     INITIAL_MUSIC = 0x00447744,
 };
 
-typedef void (*GuestFunction)(void);
-
 static void push_arguments(const uint32_t *args, unsigned count)
 {
     while (count) PUSH32(args[--count]);
 }
 
-static uint32_t call_guest_cdecl(GuestFunction function, const uint32_t *args, unsigned count, uint32_t return_address)
+static uint32_t call_guest_cdecl(uint32_t guest_address, const uint32_t *args, unsigned count, uint32_t return_address)
 {
     push_arguments(args, count);
     PUSH32(return_address);
-    function();
+    lf2_jit_call(guest_address);
     R(ESP) += 4 * count;
     return R(EAX);
 }
@@ -76,8 +60,10 @@ static uint32_t call_import(uint32_t iat, const uint32_t *args, unsigned count, 
     return R(EAX);
 }
 
-static uint32_t call_guest_no_args(GuestFunction function, uint32_t return_address)
-{ return call_guest_cdecl(function, NULL, 0, return_address); }
+static uint32_t call_guest_no_args(uint32_t guest_address, uint32_t return_address)
+{
+    return call_guest_cdecl(guest_address, NULL, 0, return_address);
+}
 
 static void construct_guest_globals(void)
 {
@@ -85,14 +71,17 @@ static void construct_guest_globals(void)
      * surrounding MSVC CRT startup is process scaffolding, not game state, and is no longer
      * part of the port's entry path. */
     R(ECX) = 0x00458440;
-    call_guest_no_args(fn_004031b0, 0x004462e0);
+    call_guest_no_args(0x004031b0, 0x004462e0);
     R(ECX) = 0x00458af8;
-    call_guest_no_args(fn_00414440, 0x004462f0);
+    call_guest_no_args(0x00414440, 0x004462f0);
     R(ECX) = WORLD;
-    call_guest_no_args(fn_00419e40, 0x00446300);
+    call_guest_no_args(0x00419e40, 0x00446300);
 }
 
-static uint32_t guest_time_ms(void) { return call_import(IAT_TIME_GET_TIME, NULL, 0, 0, 0x0043d162); }
+static uint32_t guest_time_ms(void)
+{
+    return call_import(IAT_TIME_GET_TIME, NULL, 0, 0, 0x0043d162);
+}
 
 static void guest_sleep(uint32_t milliseconds)
 {
@@ -144,14 +133,14 @@ static int initialise_window(void)
     call_import(IAT_CO_INITIALIZE, co_args, 1, 0, 0x0043cf76);
 
     const uint32_t window_args[] = {0x00400000, 10};
-    return call_guest_cdecl(fn_0043bec0, window_args, 2, 0x0043cf85) != 0;
+    return call_guest_cdecl(0x0043bec0, window_args, 2, 0x0043cf85) != 0;
 }
 
 static void initialise_ad_tables(void)
 {
-    if (!call_guest_no_args(fn_0043c4a0, 0x0043cf99) || !call_guest_no_args(fn_0043c780, 0x0043cfa2) ||
-        !call_guest_no_args(fn_0043cc60, 0x0043cfab))
-        call_guest_no_args(fn_0043c690, 0x0043cfb4);
+    if (!call_guest_no_args(0x0043c4a0, 0x0043cf99) || !call_guest_no_args(0x0043c780, 0x0043cfa2) ||
+        !call_guest_no_args(0x0043cc60, 0x0043cfab))
+        call_guest_no_args(0x0043c690, 0x0043cfb4);
 }
 
 static void initialise_input_and_sound(void)
@@ -162,11 +151,12 @@ static void initialise_input_and_sound(void)
     call_import(IAT_SET_CURSOR, set_cursor_args, 1, 0, 0x0043d078);
 
     for (uint32_t i = 0; i < 0x100; ++i) ST8(KEY_STATE + i, 0x75);
-    call_guest_no_args(fn_0043bf10, 0x0043d08e);
+    call_guest_no_args(0x0043bf10, 0x0043d08e);
 
     const uint32_t sound_args[] = {LD32(WINDOW_HANDLE)};
-    if (!call_guest_cdecl(fn_00401970, sound_args, 1, 0x0043d099))
-        fprintf(stderr, "startup: DirectSound initialization failed; continuing without audio\n");
+    if (!call_guest_cdecl(0x00401970, sound_args, 1, 0x0043d099))
+        lf2_log_writef(LF2_LOG_INFO, "port_entry",
+                       "startup: DirectSound initialization failed; continuing without audio\n");
 }
 
 static void construct_global_sounds(void)
@@ -185,18 +175,21 @@ static void construct_global_sounds(void)
         R(ECX) = sounds[i].object;
         push_arguments(args, 1);
         PUSH32(sounds[i].return_address);
-        fn_004014e0();
+        lf2_jit_call(0x004014e0);
     }
 }
 
 static void run_game_frame(void)
 {
     const uint32_t args[] = {LD32(FRAME_ARGUMENT)};
-    call_guest_cdecl(fn_0043e9a0, args, 1, 0x0043d187);
-    if ((int32_t)R(EAX) < 0) call_guest_no_args(fn_0043e890, 0x0043d193);
+    call_guest_cdecl(0x0043e9a0, args, 1, 0x0043d187);
+    if ((int32_t)R(EAX) < 0) call_guest_no_args(0x0043e890, 0x0043d193);
 }
 
-static void pump_guest_messages(void) { call_guest_no_args(fn_0043d230, 0x0043d152); }
+static void pump_guest_messages(void)
+{
+    call_guest_no_args(0x0043d230, 0x0043d152);
+}
 
 static void advance_frame_counter(void)
 {
@@ -237,13 +230,14 @@ static int run_main_loop(uint32_t previous_tick)
 
 int port_entry_run(void)
 {
-    fprintf(stderr, "startup: entering native port entry (guest PE entry and WinMain bypassed)\n");
+    lf2_log_writef(LF2_LOG_INFO, "port_entry",
+                   "startup: entering native port entry (guest PE entry and WinMain bypassed)\n");
     construct_guest_globals();
     startup_init_step_begin(STARTUP_INIT_WINDOW, "window");
     const int window_ok = initialise_window();
     startup_init_step_done(STARTUP_INIT_WINDOW, "window");
     if (!window_ok) {
-        fprintf(stderr, "startup: DirectDraw/window initialization failed\n");
+        lf2_log_writef(LF2_LOG_INFO, "port_entry", "startup: DirectDraw/window initialization failed\n");
         return 1;
     }
 
@@ -258,20 +252,20 @@ int port_entry_run(void)
 
     const uint32_t frame_surface = LD32(FRAME_SURFACE);
     if (!frame_surface) {
-        fprintf(stderr, "startup: window initialization produced no frame surface\n");
+        lf2_log_writef(LF2_LOG_INFO, "port_entry", "startup: window initialization produced no frame surface\n");
         return 1;
     }
 
     /* This is the defining ordering of the custom entry: data construction is complete and
      * one real game frame is presented before the old WinMain's explicit music handoff. */
-    fprintf(stderr, "startup: native data initialization begin\n");
+    lf2_log_writef(LF2_LOG_INFO, "port_entry", "startup: native data initialization begin\n");
     boot_guest_load_data(WORLD, frame_surface);
-    fprintf(stderr, "startup: native data initialization complete\n");
+    lf2_log_writef(LF2_LOG_INFO, "port_entry", "startup: native data initialization complete\n");
     construct_global_sounds();
     run_game_frame();
     startup_init_ready();
 
     const uint32_t music_args[] = {INITIAL_MUSIC};
-    call_guest_cdecl(fn_00402020, music_args, 1, 0x0043d061);
+    call_guest_cdecl(0x00402020, music_args, 1, 0x0043d061);
     return run_main_loop(guest_time_ms());
 }

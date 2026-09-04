@@ -3,10 +3,12 @@
  * Surface pixels are allocated inside guest memory, so Lock() hands back a plain guest
  * address and the GDI text path can scribble into the same buffer. Everything is 8-bit
  * indexed, which is what the game's BMPs are. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "com.h"
 #include "overrides/geom.h"
 #include "guest_map.h"
-#include "guest_ops.h"
+#include "guest.h"
 #include "hostwin.h"
 #include "render.h"
 #include "engine.h"
@@ -39,17 +41,7 @@ void gdi_last_bitmap_consume(void);
 enum { NATIVE_W = GEOM_SCREEN_W, NATIVE_H = GEOM_SCREEN_H };
 
 /* DDSURFACEDESC field offsets */
-enum {
-    SD_SIZE = 0,
-    SD_FLAGS = 4,
-    SD_HEIGHT = 8,
-    SD_WIDTH = 12,
-    SD_PITCH = 16,
-    SD_SURFACE = 36,
-    SD_PIXELFORMAT = 72,
-    SD_CAPS = 104,
-    SD_BYTES = 108
-};
+enum { SD_SIZE = 0, SD_FLAGS = 4, SD_HEIGHT = 8, SD_WIDTH = 12, SD_PITCH = 16, SD_SURFACE = 36, SD_PIXELFORMAT = 72, SD_CAPS = 104, SD_BYTES = 108 };
 enum { DDSD_CAPS = 1, DDSD_HEIGHT = 2, DDSD_WIDTH = 4, DDSD_PITCH = 8, DDSD_PIXELFORMAT = 0x1000 };
 enum { DDSCAPS_PRIMARYSURFACE = 0x200 };
 enum { DDBLT_COLORFILL = 0x400, DDBLT_KEYSRC = 0x8000 };
@@ -116,17 +108,17 @@ static int blt_stack_best = 1 << 30, blt_stack_best_l, blt_stack_best_t;
 
 void blt_stack_report(void)
 {
-    const char *want = getenv("LF2_BLT_STACK");
+    const char *want = lf2_environment_get(LF2_ENV_BLT_STACK);
     if (!want) return;
     if (blt_stack_hit) return;
     if (!blt_stack_wanted) {
-        fprintf(stderr, "blt stack: NO BLITS AT ALL this run -- %s was never tested\n", want);
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "blt stack: NO BLITS AT ALL this run -- %s was never tested\n", want);
         return;
     }
-    fprintf(stderr,
-            "blt stack: nothing landed on %s. The match is on the exact top-left\n"
-            "           corner; the nearest destination seen was (%d,%d).\n",
-            want, blt_stack_best_l, blt_stack_best_t);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                   "blt stack: nothing landed on %s. The match is on the exact top-left\n"
+                   "           corner; the nearest destination seen was (%d,%d).\n",
+                   want, blt_stack_best_l, blt_stack_best_t);
 }
 
 /* ---- the game's own text ----
@@ -143,14 +135,20 @@ void blt_stack_report(void)
 static int glyph_hint = -1;
 long glyphs_drawn;
 
-void glyph_hint_set(int ch) { glyph_hint = ch; }
+void glyph_hint_set(int ch)
+{
+    glyph_hint = ch;
+}
 
 /* Set by the clip-draw override when the draw is the stage's own shadow bitmap, cleared by
  * the next draw that is not. Latched here because this is the only place that also knows the
  * destination rectangle -- which is where the object stands on the ground, and therefore
  * where a real cast shadow belongs. */
 static int shadow_hint;
-void shadow_hint_set(int on) { shadow_hint = on; }
+void shadow_hint_set(int on)
+{
+    shadow_hint = on;
+}
 
 /* Set by runtime/overrides/background.c around the stage's tinted-layer fills, because the
  * game's colour-fill helper is shared with the front end and the blit cannot tell them apart.
@@ -159,10 +157,19 @@ void shadow_hint_set(int on) { shadow_hint = on; }
 static int world_band_hint;
 static int world_backdrop_hint;
 static long world_band_fills, world_band_widened;
-void world_band_hint_set(int on) { world_band_hint = on; }
-void world_backdrop_hint_set(int on) { world_backdrop_hint = on; }
+void world_band_hint_set(int on)
+{
+    world_band_hint = on;
+}
+void world_backdrop_hint_set(int on)
+{
+    world_backdrop_hint = on;
+}
 
-void glyph_hint_clear(void) { glyph_hint = -1; }
+void glyph_hint_clear(void)
+{
+    glyph_hint = -1;
+}
 
 /* ---- learning which object draws the stage's shadow ----
  *
@@ -185,8 +192,14 @@ void glyph_hint_clear(void) { glyph_hint = -1; }
  */
 static uint32_t clip_obj, shadow_obj_learned;
 static int shadow_obj_stage = -1;
-void clip_obj_note(uint32_t obj) { clip_obj = obj; }
-uint32_t shadow_object(void) { return shadow_obj_learned; }
+void clip_obj_note(uint32_t obj)
+{
+    clip_obj = obj;
+}
+uint32_t shadow_object(void)
+{
+    return shadow_obj_learned;
+}
 
 static void shadow_learn(const Surface *s)
 {
@@ -203,11 +216,11 @@ static void shadow_learn(const Surface *s)
      * which need not be the bitmap's own. */
     if (abs(s->w - sw) > 2 || abs(s->h - sh) > 2) return;
     shadow_obj_learned = clip_obj;
-    if (getenv("LF2_SHADOW_DEBUG"))
-        fprintf(stderr,
-                "shadow: stage %d draws its ellipse on object %08x "
-                "(source %dx%d, shadowsize %dx%d)\n",
-                stage, clip_obj, s->w, s->h, sw, sh);
+    if (lf2_environment_get(LF2_ENV_SHADOW_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                       "shadow: stage %d draws its ellipse on object %08x "
+                       "(source %dx%d, shadowsize %dx%d)\n",
+                       stage, clip_obj, s->w, s->h, sw, sh);
 }
 
 int game_glyph_draw(int ch, int x, int y, uint32_t ink, uint32_t dpix, int dwid, int dhei, int dpitch);
@@ -243,26 +256,22 @@ static uint32_t glyph_ink(const Surface *s, int sl, int st, int sr, int sb)
  * mechanism it never had any business exercising. LF2_BAND_DEBUG=1. */
 void world_band_report(void)
 {
-    if (!getenv("LF2_BAND_DEBUG")) return;
+    if (!lf2_environment_get(LF2_ENV_BAND_DEBUG)) return;
     if (!world_band_fills) {
-        fprintf(stderr, "bands: the stage's fill path drew NOTHING this run -- either no "
-                        "match was reached, or no loaded stage has a tinted layer. This says "
-                        "nothing about whether widening works.\n");
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "bands: the stage's fill path drew NOTHING this run -- either no match was reached, or no loaded stage has a tinted layer. This says nothing about whether widening works.\n");
         return;
     }
-    fprintf(stderr,
-            "bands: %ld stage fill(s), %ld widened to the viewport (view %d, the "
-            "game's own screen %d)%s\n",
-            world_band_fills, world_band_widened, hw.width, GEOM_SCREEN_W,
-            world_band_widened ? "" : " -- none spanned the whole 794 at x 0, so none is a full-width band");
+    lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                   "bands: %ld stage fill(s), %ld widened to the viewport (view %d, the "
+                   "game's own screen %d)%s\n",
+                   world_band_fills, world_band_widened, hw.width, GEOM_SCREEN_W, world_band_widened ? "" : " -- none spanned the whole 794 at x 0, so none is a full-width band");
 }
 
 void vram_report(void)
 {
     /* Reported relative to VRAM_BASE. Printing the raw cursor makes a 316 MB arena look
      * like 1.5 GB, because the base is 0x50000000. */
-    fprintf(stderr, "vram: %ld allocations, %ld KB requested, %u KB of arena used\n", vram_allocs, vram_bytes / 1024,
-            (vram_next - VRAM_BASE) / 1024);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw", "vram: %ld allocations, %ld KB requested, %u KB of arena used\n", vram_allocs, vram_bytes / 1024, (vram_next - VRAM_BASE) / 1024);
 }
 
 static uint32_t vram_alloc(uint32_t n)
@@ -272,10 +281,10 @@ static uint32_t vram_alloc(uint32_t n)
      * sound PCM, the surfaces overwrote it, and the only symptom was that the game
      * sounded broken. An arena that cannot overflow loudly will overflow quietly. */
     if (vram_next + n < vram_next || vram_next + n > GUEST_VRAM_END) {
-        fprintf(stderr,
-                "vram arena exhausted: %u bytes requested at %08x, reservation ends at %08x\n"
-                "  (%ld allocations, %ld KB so far). Raise GUEST_VRAM_SIZE in guest_map.h.\n",
-                n, vram_next, (unsigned)GUEST_VRAM_END, vram_allocs, vram_bytes / 1024);
+        lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                       "vram arena exhausted: %u bytes requested at %08x, reservation ends at %08x\n"
+                       "  (%ld allocations, %ld KB so far). Raise GUEST_VRAM_SIZE in guest_map.h.\n",
+                       n, vram_next, (unsigned)GUEST_VRAM_END, vram_allocs, vram_bytes / 1024);
         abort();
     }
     vram_allocs++;
@@ -314,7 +323,7 @@ enum { SIG_N = 1024, SCREEN_CHANGE_PCT = 25 };
 
 static void screen_change_check(const uint8_t *px, int w, int h, int pitch, long frame)
 {
-    if (!getenv("LF2_SCREEN_HASH") || !px || w <= 0 || h <= 0) return;
+    if (!lf2_environment_get(LF2_ENV_SCREEN_HASH) || !px || w <= 0 || h <= 0) return;
 
     static uint8_t sig[SIG_N], prev[SIG_N];
     static int have_prev;
@@ -326,7 +335,7 @@ static void screen_change_check(const uint8_t *px, int w, int h, int pitch, long
     if (!have_prev) {
         memcpy(prev, sig, SIG_N);
         have_prev = 1;
-        fprintf(stderr, "screen: first frame %ld\n", frame);
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "screen: first frame %ld\n", frame);
         return;
     }
     int diff = 0;
@@ -334,7 +343,7 @@ static void screen_change_check(const uint8_t *px, int w, int h, int pitch, long
         if (sig[i] != prev[i]) diff++;
     const int pct = diff * 100 / SIG_N;
     if (pct >= SCREEN_CHANGE_PCT) {
-        fprintf(stderr, "screen: CHANGED at frame %ld (%d%% of samples)\n", frame, pct);
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "screen: CHANGED at frame %ld (%d%% of samples)\n", frame, pct);
         memcpy(prev, sig, SIG_N);
     }
 }
@@ -344,7 +353,7 @@ static void screen_change_check(const uint8_t *px, int w, int h, int pitch, long
  * unusable for anyone else and a leak of the author's layout. */
 static void dump_path(char *out, size_t n, const char *fmt, ...)
 {
-    const char *dir = getenv("LF2_DUMP_DIR");
+    const char *dir = lf2_environment_get(LF2_ENV_DUMP_DIR);
     if (!dir || !*dir) dir = "scratch";
     int k = snprintf(out, n, "%s/", dir);
     if (k < 0 || (size_t)k >= n) {
@@ -371,14 +380,20 @@ static void dump_path(char *out, size_t n, const char *fmt, ...)
  *
  * The grammar lives in runtime/app/framespec.h so tests/test_framespec.c can walk it without
  * booting the game; script_when is the resolver, because it is what knows the screens. */
-int hostwin_frame_selected(const char *spec, long frame) { return framespec_matches(spec, frame, script_when); }
+int hostwin_frame_selected(const char *spec, long frame)
+{
+    return framespec_matches(spec, frame, script_when);
+}
 /* A capture aimed at a fixed frame number and a probe that fires off game STATE can
  * disagree, and when they do the picture is of the wrong thing while looking perfectly
  * valid -- an A/B of two spawns produced one arm whose run never reached the match, and the
  * two screenshots would have been compared as if they showed the same experiment. So a
  * probe can ask for the next frame instead, and the capture follows the event. */
 static int frame_requested;
-void gfx_request_frame_dump(void) { frame_requested = 1; }
+void gfx_request_frame_dump(void)
+{
+    frame_requested = 1;
+}
 
 static int frame_wanted(long frame)
 {
@@ -386,7 +401,7 @@ static int frame_wanted(long frame)
         frame_requested = 0;
         return 1;
     }
-    return hostwin_frame_selected(getenv("LF2_FRAME_DUMP"), frame);
+    return hostwin_frame_selected(lf2_environment_get(LF2_ENV_FRAME_DUMP), frame);
 }
 
 /* LF2_MEM_DUMP=<frame>[,<frame>...] writes the game's whole .data section to
@@ -406,33 +421,33 @@ uint32_t guest_heap_used(void); /* imports.c */
 
 static void dump_heap(long frame)
 {
-    if (!hostwin_frame_selected(getenv("LF2_HEAP_DUMP"), frame)) return;
+    if (!hostwin_frame_selected(lf2_environment_get(LF2_ENV_HEAP_DUMP), frame)) return;
     const uint32_t used = guest_heap_used();
     char path[256];
     dump_path(path, sizeof path, "heap_%06ld.bin", frame);
     FILE *f = fopen(path, "wb");
     if (!f) {
-        fprintf(stderr, "heap dump: cannot write %s\n", path);
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "heap dump: cannot write %s\n", path);
         return;
     }
     fwrite(g_mem + GUEST_HEAP_BASE, 1, used, f);
     fclose(f);
-    fprintf(stderr, "heap dump: wrote %s (%u bytes from %08x)\n", path, used, (unsigned)GUEST_HEAP_BASE);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw", "heap dump: wrote %s (%u bytes from %08x)\n", path, used, (unsigned)GUEST_HEAP_BASE);
 }
 
 static void dump_data(long frame)
 {
-    if (!hostwin_frame_selected(getenv("LF2_MEM_DUMP"), frame)) return;
+    if (!hostwin_frame_selected(lf2_environment_get(LF2_ENV_MEM_DUMP), frame)) return;
     char path[256];
     dump_path(path, sizeof path, "data_%06ld.bin", frame);
     FILE *f = fopen(path, "wb");
     if (!f) {
-        fprintf(stderr, "data dump: cannot write %s\n", path);
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "data dump: cannot write %s\n", path);
         return;
     }
     fwrite(g_mem + DATA_BASE, 1, DATA_SIZE, f);
     fclose(f);
-    fprintf(stderr, "data dump: wrote %s (%d bytes from %08x)\n", path, DATA_SIZE, DATA_BASE);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw", "data dump: wrote %s (%d bytes from %08x)\n", path, DATA_SIZE, DATA_BASE);
 }
 
 static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
@@ -442,7 +457,7 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
     dump_path(path, sizeof path, "frame_%06ld.ppm", frame);
     FILE *f = fopen(path, "wb");
     if (!f) {
-        fprintf(stderr, "frame dump: cannot write %s\n", path);
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "frame dump: cannot write %s\n", path);
         return;
     }
     fprintf(f, "P6\n%d %d\n255\n", w, h);
@@ -454,10 +469,13 @@ static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
         }
     }
     fclose(f);
-    fprintf(stderr, "frame dump: wrote %s (%dx%d)\n", path, w, h);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw", "frame dump: wrote %s (%dx%d)\n", path, w, h);
 }
 
-int ddraw_frame_pixels_wanted(long frame) { return frame_wanted(frame) || getenv("LF2_SCREEN_HASH") != NULL; }
+int ddraw_frame_pixels_wanted(long frame)
+{
+    return frame_wanted(frame) || lf2_environment_get(LF2_ENV_SCREEN_HASH) != NULL;
+}
 
 void ddraw_frame_diagnostics(const uint8_t *pixels, int w, int h, int pitch, long frame)
 {
@@ -481,7 +499,7 @@ void ddraw_frame_diagnostics(const uint8_t *pixels, int w, int h, int pitch, lon
         bg_camera_report();
         bg_geom_report();
         mode_force_report();
-        if (getenv("LF2_AUDIO_DEBUG")) audio_report();
+        if (lf2_environment_get(LF2_ENV_AUDIO_DEBUG)) audio_report();
     }
     /* The read profile is reported on the same periodic boundary and reset each time, so
      * each block covers one window rather than the whole run: an array swept only during a
@@ -500,7 +518,10 @@ static int hint_on;
  * override turns it on outside the game proper and off inside it. Rendered with the same
  * glyph renderer the game's own text uses -- without SDL3_ttf there are no glyphs and
  * the hint simply does not appear, which costs nothing but the hint. */
-void controls_hint_enable(int on) { hint_on = on; }
+void controls_hint_enable(int on)
+{
+    hint_on = on;
+}
 
 static void controls_hint_draw(const Surface *s)
 {
@@ -588,8 +609,7 @@ static void charselect_device_labels_draw(const Surface *s)
 static void charselect_device_labels_present(const Surface *s)
 {
     const int charselect_up = LD32(0x0044d020u) == 1;
-    if (device_icon_charselect_phase(charselect_up, panel_overlay_up()) == DEVICE_ICON_CHARSELECT_PRESENT)
-        charselect_device_labels_draw(s);
+    if (device_icon_charselect_phase(charselect_up, panel_overlay_up()) == DEVICE_ICON_CHARSELECT_PRESENT) charselect_device_labels_draw(s);
 }
 
 static void present_primary(void);
@@ -653,7 +673,7 @@ static uint32_t lock_hash_surface;
 static int draw_paths_on(void)
 {
     static int on = -1;
-    if (on < 0) on = getenv("LF2_DRAW_PATHS") != NULL;
+    if (on < 0) on = lf2_environment_get(LF2_ENV_DRAW_PATHS) != NULL;
     return on;
 }
 
@@ -676,19 +696,15 @@ static uint32_t surface_hash(const Surface *s)
 void draw_paths_report(void)
 {
     if (!draw_paths_on()) return;
-    fprintf(stderr, "draw paths: Blt=%ld BltFast=%ld Lock=%ld (of which changed pixels=%ld)\n", path_blt, path_bltfast,
-            path_lock, path_lock_wrote);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw", "draw paths: Blt=%ld BltFast=%ld Lock=%ld (of which changed pixels=%ld)\n", path_blt, path_bltfast, path_lock, path_lock_wrote);
     if (!path_blt && !path_bltfast && !path_lock)
-        fprintf(stderr, "draw paths: ALL ZERO -- this run drew nothing at all, so it says "
-                        "nothing about which route the game uses\n");
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "draw paths: ALL ZERO -- this run drew nothing at all, so it says nothing about which route the game uses\n");
     else if (!path_lock_wrote && path_lock)
-        fprintf(stderr,
-                "draw paths: %ld locks and none of them changed a pixel, so on this "
-                "route the game reads and does not draw\n",
-                path_lock);
-    fprintf(stderr, "draw paths: NOT covered -- GDI text goes straight into the surface "
-                    "without Lock (runtime/win32/gdi.c), and a lock whose writes cancel out would "
-                    "hash the same. Both would read as no-draw here.\n");
+        lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                       "draw paths: %ld locks and none of them changed a pixel, so on this "
+                       "route the game reads and does not draw\n",
+                       path_lock);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw", "draw paths: NOT covered -- GDI text goes straight into the surface without Lock (runtime/win32/gdi.c), and a lock whose writes cancel out would hash the same. Both would read as no-draw here.\n");
 }
 
 static void surf_Lock(uint32_t self)
@@ -764,8 +780,7 @@ static void read_rect(uint32_t p, int *l, int *t, int *r, int *b, int dw, int dh
  * shift pixels, and this path draws every sprite in the game. */
 enum { BLIT_MAXW = 4096 };
 
-static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh,
-                        int keyed, uint32_t klo, uint32_t khi, int mirror_x)
+static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh, int keyed, uint32_t klo, uint32_t khi, int mirror_x)
 {
     if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
 
@@ -789,8 +804,7 @@ static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh, Surface *s, 
 
     /* A run of columns that is contiguous and 1:1 (the unscaled case, which is most of
      * them) can be copied without indirection. */
-    const int direct = (ncol > 1) && (col_src[1] - col_src[0] == 1) && (col_src[ncol - 1] - col_src[0] == ncol - 1) &&
-                       (col_dst[ncol - 1] - col_dst[0] == ncol - 1);
+    const int direct = (ncol > 1) && (col_src[1] - col_src[0] == 1) && (col_src[ncol - 1] - col_src[0] == ncol - 1) && (col_dst[ncol - 1] - col_dst[0] == ncol - 1);
 
     for (int y = 0; y < dh; y++) {
         const int syy = sy + (int)((int64_t)y * sh / dh), dyy = dy + y;
@@ -823,13 +837,15 @@ static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh, Surface *s, 
     surface_changed(d);
 }
 
-static void blit(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh, int keyed,
-                 uint32_t klo, uint32_t khi)
-{ blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 0); }
+static void blit(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh, int keyed, uint32_t klo, uint32_t khi)
+{
+    blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 0);
+}
 
-static void blit_mirror_x(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh,
-                          int keyed, uint32_t klo, uint32_t khi)
-{ blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 1); }
+static void blit_mirror_x(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh, int keyed, uint32_t klo, uint32_t khi)
+{
+    blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 1);
+}
 
 /* ---- THE SPACE BESIDE A SCREEN WHOSE BACKDROP IS A PICTURE (issue #44) ----
  *
@@ -917,27 +933,18 @@ static void backdrop_edge_bands(Surface *d, Surface *s, int sl, int st_, int sr,
 /* A declared far-plane edge continues in native-size segments whose X direction alternates.
  * This costs one quad per segment rather than one per column; destination/source extents remain
  * exactly equal, and keyed scenery never reaches this boundary with continuation flags. */
-static void backdrop_mirror_segments(Surface *d, Surface *s, int flags, int sl, int st_, int sr, int sb, int dl, int dt,
-                                     int dr, int db, int keyed, const BltTrace *trace)
+static void backdrop_mirror_segments(Surface *d, Surface *s, int flags, int sl, int st_, int sr, int sb, int dl, int dt, int dr, int db, int keyed, const BltTrace *trace)
 {
     for (int segment = 0;; segment++) {
         BackdropBlit piece;
         if (!backdrop_mirror_segment(flags, d->w, segment, dl, dt, dr, db, sl, st_, sr, sb, &piece)) break;
         blt_trace_backdrop(trace, &piece);
         if (!d->primary) {
-            if (piece.mirror_x)
-                render_blit_mirror_x(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch,
-                                     piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
-            else
-                render_blit(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch,
-                            piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
+            if (piece.mirror_x) render_blit_mirror_x(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch, piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
+            else render_blit(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch, piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
         }
-        if (piece.mirror_x)
-            blit_mirror_x(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st,
-                          piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
-        else
-            blit(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st,
-                 piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
+        if (piece.mirror_x) blit_mirror_x(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st, piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
+        else blit(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st, piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
     }
 }
 static void dump_surface(uint32_t obj, const char *tag)
@@ -977,7 +984,7 @@ static void dump_surface(uint32_t obj, const char *tag)
 void cursor_find_note(int dl, int dt, const char *via)
 {
     static int on = -1;
-    if (on < 0) on = getenv("LF2_CURSOR_FIND") != NULL; /* cached: this is on every blit */
+    if (on < 0) on = lf2_environment_get(LF2_ENV_CURSOR_FIND) != NULL; /* cached: this is on every blit */
     if (!on) return;
     enum { MAX_SITES = 64 };
     static struct {
@@ -1017,15 +1024,13 @@ void cursor_find_note(int dl, int dt, const char *via)
         if (oy > site[k].hi_y) site[k].hi_y = oy;
     }
     if (++frames % 4000 == 0) {
-        fprintf(stderr, "cursor-find: pointer travelled x %d..%d, y %d..%d\n", p_lo_x, p_hi_x, p_lo_y, p_hi_y);
-        if (p_hi_x - p_lo_x < 40 && p_hi_y - p_lo_y < 40)
-            fprintf(stderr, "  POINTER BARELY MOVED -- this cannot identify a cursor\n");
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "cursor-find: pointer travelled x %d..%d, y %d..%d\n", p_lo_x, p_hi_x, p_lo_y, p_hi_y);
+        if (p_hi_x - p_lo_x < 40 && p_hi_y - p_lo_y < 40) lf2_log_writef(LF2_LOG_INFO, "ddraw", "  POINTER BARELY MOVED -- this cannot identify a cursor\n");
         for (int i = 0; i < nsite; i++) {
             const int sx = site[i].hi_x - site[i].lo_x, sy = site[i].hi_y - site[i].lo_y;
             if (site[i].n < 50) continue;
-            fprintf(stderr, "  %-8s ra=%08x n=%-6ld spread x=%-5d y=%-5d offset(%d,%d) %s\n", site[i].via, site[i].ra,
-                    site[i].n, sx, sy, site[i].lo_x, site[i].lo_y,
-                    (sx <= 8 && sy <= 8) ? "<== TRACKS THE POINTER" : "");
+            lf2_log_writef(LF2_LOG_INFO, "ddraw", "  %-8s ra=%08x n=%-6ld spread x=%-5d y=%-5d offset(%d,%d) %s\n", site[i].via, site[i].ra, site[i].n, sx, sy, site[i].lo_x, site[i].lo_y,
+                           (sx <= 8 && sy <= 8) ? "<== TRACKS THE POINTER" : "");
         }
     }
 }
@@ -1106,29 +1111,28 @@ static void framing_note(const char *what, uint32_t key, int off, int left)
 {
     if (key == framing_last) return;
     framing_last = key;
-    if (!getenv("LF2_FRAMING_DEBUG")) return;
-    fprintf(stderr,
-            "framing: frame %ld %s -> %s, offset %d in a %d-wide composition "
-            "(the game's own screen is %d)\n",
-            hostwin_frames(), what, left ? "CENTRED, backdrop art LEFT at x 0" : "CENTRED", off, hw.width, NATIVE_W);
+    if (!lf2_environment_get(LF2_ENV_FRAMING_DEBUG)) return;
+    lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                   "framing: frame %ld %s -> %s, offset %d in a %d-wide composition "
+                   "(the game's own screen is %d)\n",
+                   hostwin_frames(), what, left ? "CENTRED, backdrop art LEFT at x 0" : "CENTRED", off, hw.width, NATIVE_W);
 }
 
 void framing_report(void)
 {
-    if (!getenv("LF2_FRAMING_DEBUG")) return;
+    if (!lf2_environment_get(LF2_ENV_FRAMING_DEBUG)) return;
     /* The backdrop count is part of the answer and not decoration: "the menu screens were
      * seen" and "their left-anchored picture was actually drawn without the centring" are
      * different facts, and a report giving only the first would read as a pass on a build
      * where the picture never matched and quietly got centred with everything else. */
-    fprintf(stderr,
-            "framing: %ld menu screen(s) with a left-anchored backdrop (%ld such "
-            "draw(s) kept at x 0), %ld centred flat-backdrop screen(s), %ld "
-            "picture-backdrop screen(s) so far%s\n",
-            framing_n_left, backdrop_art_seen, framing_n_centre, framing_n_picture,
-            (framing_n_left || framing_n_centre || framing_n_picture)
-                ? ""
-                : " -- NO fixed-794 screen has been framed at all, so this run measured NOTHING "
-                  "about per-screen framing (not wide, or never left the world view)");
+    lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                   "framing: %ld menu screen(s) with a left-anchored backdrop (%ld such "
+                   "draw(s) kept at x 0), %ld centred flat-backdrop screen(s), %ld "
+                   "picture-backdrop screen(s) so far%s\n",
+                   framing_n_left, backdrop_art_seen, framing_n_centre, framing_n_picture,
+                   (framing_n_left || framing_n_centre || framing_n_picture) ? ""
+                                                                             : " -- NO fixed-794 screen has been framed at all, so this run measured NOTHING "
+                                                                               "about per-screen framing (not wide, or never left the world view)");
 }
 
 static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
@@ -1154,22 +1158,37 @@ static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
     framing_note(what, c | 0x40000000u, screen_offset_x(), left);
 }
 
-/* Exposed so tools/routes/widescreen_test.sh can assert the framing of each screen from the run's
+/* Exposed so the recorded widescreen runtime scenario can assert the framing of each screen from the run's
  * own output rather than from a screenshot someone looked at once. */
 /* Does the screen now up anchor its BACKDROP ART to x = 0? True for the front end and the
  * mode menu, whose portrait (MENU_BACK<n>) the game draws at a hard literal x = 0 so that it
  * bleeds off the screen's left edge. Nothing else about those screens is special: their menu
  * content is centred like every other screen's. */
-int screen_backdrop_left(void) { return screen_align_left; }
+int screen_backdrop_left(void)
+{
+    return screen_align_left;
+}
 
-int panel_charselect_up(void) { return hostwin_frames() - panel_charselect_frame <= PANEL_FRESH; }
-int panel_overlay_up(void) { return hostwin_frames() - panel_overlay_frame <= PANEL_FRESH; }
-int panel_hud_up(void) { return hostwin_frames() - panel_hud_frame <= PANEL_FRESH; }
+int panel_charselect_up(void)
+{
+    return hostwin_frames() - panel_charselect_frame <= PANEL_FRESH;
+}
+int panel_overlay_up(void)
+{
+    return hostwin_frames() - panel_overlay_frame <= PANEL_FRESH;
+}
+int panel_hud_up(void)
+{
+    return hostwin_frames() - panel_hud_frame <= PANEL_FRESH;
+}
 /* The front end repaints its backdrop every frame it is up, so the same freshness window that
  * suits the panels suits it. It is deliberately NOT the loading screen or the mode menu: those
  * paint other colours, and a route anchored here means "the first screen, before anything has
  * been chosen". */
-int panel_modemenu_up(void) { return hostwin_frames() - panel_modemenu_frame <= PANEL_FRESH; }
+int panel_modemenu_up(void)
+{
+    return hostwin_frames() - panel_modemenu_frame <= PANEL_FRESH;
+}
 
 /* ---- centring what cannot be made wide ----
  *
@@ -1295,7 +1314,7 @@ int screen_offset_x(void)
  * column of the primary. The ghost cannot happen any more -- not because something clears it
  * but because nothing is left unwritten -- and the clear, and the flag that disabled it, were
  * both dead. A flag whose negative arm can no longer fail is worse than no flag: it makes a
- * test that cannot fail look like a test that passes, which is what tools/routes/resize_test.sh said
+ * test that cannot fail look like a test that passes, which is what the recorded resize runtime scenario said
  * when it went red rather than reporting a pass it could not justify.
  *
  * So the flag now injects the failure directly. The invariant it guards is the new one --
@@ -1304,7 +1323,7 @@ int screen_offset_x(void)
 static int primary_stale_injected(void)
 {
     static int on = -1;
-    if (on < 0) on = getenv("LF2_PRIMARY_STALE") != NULL;
+    if (on < 0) on = lf2_environment_get(LF2_ENV_PRIMARY_STALE) != NULL;
     return on;
 }
 
@@ -1313,9 +1332,9 @@ static void surf_Blt(uint32_t self)
     LOADPROF_SCOPE(LP_BLT);
     Surface *d = com_host(self);
     if (draw_paths_on()) path_blt++;
-    if (getenv("LF2_DUMP_SRC")) {
+    if (lf2_environment_get(LF2_ENV_DUMP_SRC)) {
         static int done;
-        const uint32_t want = (uint32_t)strtoul(getenv("LF2_DUMP_SRC"), NULL, 16);
+        const uint32_t want = (uint32_t)strtoul(lf2_environment_get(LF2_ENV_DUMP_SRC), NULL, 16);
         if (!done && ARG(2) == want) {
             dump_surface(want, "src");
             done = 1;
@@ -1325,8 +1344,7 @@ static void surf_Blt(uint32_t self)
 
     /* Value-level trace: the call sequence already matches the oracle, so the next
      * signal is the arguments. Flags are comparable across runs; pointers are not. */
-    if (getenv("LF2_COM_TRACE"))
-        fprintf(stderr, "ARG Blt flags=0x%x dst=%s src=%s\n", flags, drect ? "rect" : "null", srcobj ? "surf" : "null");
+    if (lf2_environment_get(LF2_ENV_COM_TRACE)) lf2_log_writef(LF2_LOG_INFO, "ddraw", "ARG Blt flags=0x%x dst=%s src=%s\n", flags, drect ? "rect" : "null", srcobj ? "surf" : "null");
 
     int dl, dt, dr, db;
     read_rect(drect, &dl, &dt, &dr, &db, d->w, d->h);
@@ -1366,7 +1384,7 @@ static void surf_Blt(uint32_t self)
     const long trace_frame = hostwin_frames() + 1;
     const BltTrace trace = {
         .frame = trace_frame,
-        .selected = hostwin_frame_selected(getenv("LF2_BLT_FRAME"), trace_frame),
+        .selected = hostwin_frame_selected(lf2_environment_get(LF2_ENV_BLT_FRAME), trace_frame),
         .destination = self,
         .destination_w = d->w,
         .destination_h = d->h,
@@ -1466,17 +1484,17 @@ static void surf_Blt(uint32_t self)
         return;
     }
 
-    if (getenv("LF2_FIND_BLT")) {
+    if (lf2_environment_get(LF2_ENV_FIND_BLT)) {
         static int done;
-        const char *want = getenv("LF2_FIND_BLT");
+        const char *want = lf2_environment_get(LF2_ENV_FIND_BLT);
         int wx = 0, wy = 0;
         sscanf(want, "%d,%d", &wx, &wy);
         if (!done && dl == wx && dt == wy) {
-            fprintf(stderr, "blt (%d,%d)-(%d,%d) issued from guest %08x\n", dl, dt, dr, db, LD32(R(ESP)));
+            lf2_log_writef(LF2_LOG_INFO, "ddraw", "blt (%d,%d)-(%d,%d) issued from guest %08x\n", dl, dt, dr, db, LD32(R(ESP)));
             done = 1;
         }
     }
-    if (getenv("LF2_BLT_RECTS")) {
+    if (lf2_environment_get(LF2_ENV_BLT_RECTS)) {
         /* Capped by NOVELTY, not by count. The cap used to be the first 4000 blits, which
          * is a few seconds of the menu -- so a search for something drawn during a match
          * found nothing and read as "that is never drawn". Distinct rectangles are what the
@@ -1501,12 +1519,12 @@ static void surf_Blt(uint32_t self)
                 seen[nseen].r = dr;
                 seen[nseen].b = db;
                 nseen++;
-                fprintf(stderr, "RECT %d %d %d %d\n", dl, dt, dr, db);
+                lf2_log_writef(LF2_LOG_INFO, "ddraw", "RECT %d %d %d %d\n", dl, dt, dr, db);
             } else if (++dropped == 1) {
-                fprintf(stderr,
-                        "RECT: more than %d distinct rectangles; the rest are NOT "
-                        "logged\n",
-                        (int)MAX_RECTS);
+                lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                               "RECT: more than %d distinct rectangles; the rest are NOT "
+                               "logged\n",
+                               (int)MAX_RECTS);
             }
         }
     }
@@ -1537,8 +1555,7 @@ static void surf_Blt(uint32_t self)
         }
     }
 
-    if (getenv("LF2_BAND_DEBUG") && lf2_wide_width() && panel_hud_up() && srcobj && dl == 0)
-        fprintf(stderr, "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n", dl, dr, dt, db, d->w, NATIVE_W);
+    if (lf2_environment_get(LF2_ENV_BAND_DEBUG) && lf2_wide_width() && panel_hud_up() && srcobj && dl == 0) lf2_log_writef(LF2_LOG_INFO, "ddraw", "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n", dl, dr, dt, db, d->w, NATIVE_W);
     const int backdrop_flags = lf2_wide_width() && panel_hud_up() && s && d->w > NATIVE_W ? world_backdrop_hint : 0;
     const int extend_world_backdrop = (backdrop_flags & BACKDROP_EXTEND_BOTTOM) != 0;
 
@@ -1555,9 +1572,7 @@ static void surf_Blt(uint32_t self)
     panel_note(dl, dt, dr, db);
 
     /* Record the label before the pre-fight panel so ordinary painter order covers it. */
-    if (prefight_panel_draw && !d->primary &&
-        device_icon_charselect_phase(LD32(0x0044d020u) == 1, 1) == DEVICE_ICON_CHARSELECT_BEFORE_OVERLAY)
-        charselect_device_labels_draw(d);
+    if (prefight_panel_draw && !d->primary && device_icon_charselect_phase(LD32(0x0044d020u) == 1, 1) == DEVICE_ICON_CHARSELECT_BEFORE_OVERLAY) charselect_device_labels_draw(d);
 
     /* A PICTURE THAT COVERS THE WHOLE OF THE GAME'S SCREEN IS THAT SCREEN'S BACKGROUND, and
      * the only one in the game is the loading screen's MENU_WAIT (issue #44). It is decided
@@ -1568,8 +1583,7 @@ static void surf_Blt(uint32_t self)
      *
      * Gated off the world view: during a match the rule above has already widened a full-width
      * stage layer, and a stage layer is not a screen's backdrop. */
-    const int backdrop_picture = srcobj && !d->primary && lf2_wide_width() && !panel_hud_up() && d->w > NATIVE_W &&
-                                 dl == 0 && dt == 0 && dr == NATIVE_W && db == NATIVE_H;
+    const int backdrop_picture = srcobj && !d->primary && lf2_wide_width() && !panel_hud_up() && d->w > NATIVE_W && dl == 0 && dt == 0 && dr == NATIVE_W && db == NATIVE_H;
     /* A screen whose backdrop is a picture is one of the CENTRED ones, and it says so here
      * rather than by not saying anything: the alignment is whatever the last screen to draw a
      * backdrop asked for, so a screen that stayed silent would keep the previous screen's. */
@@ -1606,7 +1620,7 @@ static void surf_Blt(uint32_t self)
      * for every site; this asks the simpler question of what tiny things get drawn at all,
      * which is what a cursor would be hiding among. Distinct rects only, so a per-frame
      * redraw does not bury the list. */
-    if (getenv("LF2_SMALL_BLT")) {
+    if (lf2_environment_get(LF2_ENV_SMALL_BLT)) {
         const int w = dr - dl, h = db - dt;
         if (w > 0 && h > 0 && w <= 40 && h <= 40) {
             enum { MAXS = 64 };
@@ -1627,14 +1641,14 @@ static void surf_Blt(uint32_t self)
                 seen[n].w = w;
                 seen[n].h = h;
                 seen[n].ra = LD32(R(ESP));
-                fprintf(stderr, "small blt (%d,%d) %dx%d from guest %08x\n", dl, dt, w, h, seen[n].ra);
+                lf2_log_writef(LF2_LOG_INFO, "ddraw", "small blt (%d,%d) %dx%d from guest %08x\n", dl, dt, w, h, seen[n].ra);
                 n++;
             }
         }
     }
-    if (getenv("LF2_BLT_STACK")) {
+    if (lf2_environment_get(LF2_ENV_BLT_STACK)) {
         int wx = 0, wy = 0;
-        sscanf(getenv("LF2_BLT_STACK"), "%d,%d", &wx, &wy);
+        sscanf(lf2_environment_get(LF2_ENV_BLT_STACK), "%d,%d", &wx, &wy);
         /* The match is on the exact top-left corner, so a coordinate that is one pixel out
          * finds nothing -- and printing nothing is indistinguishable from "that rectangle
          * is never drawn". Track the nearest destination seen so the miss can say what it
@@ -1652,13 +1666,13 @@ static void surf_Blt(uint32_t self)
             shown = 1;
             /* Poor man's backtrace: scan the guest stack for values that look like code
              * addresses in .text, which are the return addresses of the frames above. */
-            fprintf(stderr, "blt (%d,%d) guest call chain:", dl, dt);
+            lf2_log_writef(LF2_LOG_INFO, "ddraw", "blt (%d,%d) guest call chain:", dl, dt);
             uint32_t sp = R(ESP);
             for (int k = 0; k < 400; k++) {
                 const uint32_t v = LD32(sp + (uint32_t)k * 4);
-                if (v >= 0x401000u && v < 0x44e000u) fprintf(stderr, " %08x", v);
+                if (v >= 0x401000u && v < 0x44e000u) lf2_log_writef(LF2_LOG_INFO, "ddraw", " %08x", v);
             }
-            fprintf(stderr, "\n");
+            lf2_log_writef(LF2_LOG_INFO, "ddraw", "\n");
         }
     }
     if (s) {
@@ -1668,10 +1682,10 @@ static void surf_Blt(uint32_t self)
          * (Lock) and the Blt path is innocent. Run against both classes before believing
          * either. */
         shadow_learn(s);
-        const int keyed = ((flags & DDBLT_KEYSRC) || getenv("LF2_CK_FORCE")) && s->has_key;
+        const int keyed = ((flags & DDBLT_KEYSRC) || lf2_environment_get(LF2_ENV_CK_FORCE)) && s->has_key;
         if (keyed) ck_blt_keyed++;
         else ck_blt_plain++;
-        if (getenv("LF2_CK_DEBUG")) {
+        if (lf2_environment_get(LF2_ENV_CK_DEBUG)) {
             /* Keyed by (flags, caller): the caller is the part that leads anywhere, since
              * it names the guest code that decides whether to ask for the key. */
             static long seen[16];
@@ -1686,36 +1700,29 @@ static void surf_Blt(uint32_t self)
                 cv[nf] = caller;
                 hit = nf++;
             }
-            if (hit >= 0 && seen[hit]++ == 0)
-                fprintf(stderr, "Blt flags=%08x has_key=%d from guest %08x\n", flags, s->has_key, caller);
+            if (hit >= 0 && seen[hit]++ == 0) lf2_log_writef(LF2_LOG_INFO, "ddraw", "Blt flags=%08x has_key=%d from guest %08x\n", flags, s->has_key, caller);
         }
-        if (glyph_hint >= 0 &&
-            game_glyph_draw(glyph_hint, dl, dt, glyph_ink(s, sl, st_, sr, sb), d->pixels, d->w, d->h, d->pitch)) {
+        if (glyph_hint >= 0 && game_glyph_draw(glyph_hint, dl, dt, glyph_ink(s, sl, st_, sr, sb), d->pixels, d->w, d->h, d->pitch)) {
             glyphs_drawn++;
         } else {
             /* Recorded for the native renderer and ALSO composed in software. Both paths
              * build every frame; which one is presented is decided at the copy-to-primary.
-             * Running them together is what makes tools/routes/render_test.sh able to diff them. */
+             * Running them together is what makes the recorded render runtime scenario able to diff them. */
             if (!d->primary) {
                 /* The stage's own shadow becomes a GROUND MARKER for the renderer rather
                  * than a picture: it says where the object standing here meets the floor,
                  * which is the one thing a cast shadow needs and the sprite cannot give.
                  * With the effect off it is recorded as the picture it is, so the GPU frame
                  * stays comparable with the software one. */
-                if (getenv("LF2_SHADOW_DEBUG")) {
+                if (lf2_environment_get(LF2_ENV_SHADOW_DEBUG)) {
                     static long hits, miss;
                     if (shadow_hint) hits++;
                     else miss++;
                     if ((hits + miss) % 4000 == 0)
-                        fprintf(stderr,
-                                "shadow: hint set on %ld of %ld sprite blits "
-                                "(learned obj %08x, shadows enabled %d)\n",
-                                hits, hits + miss, shadow_object(), render_shadows_enabled());
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "shadow: hint set on %ld of %ld sprite blits (learned obj %08x, shadows enabled %d)\n", hits, hits + miss, shadow_object(), render_shadows_enabled());
                 }
                 if (shadow_hint && render_shadows_enabled()) render_shadow_ground(d->pixels, dl, dt, dr, db);
-                else
-                    render_blit(d->pixels, dl, dt, dr, db, s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb, keyed,
-                                s->key_lo, s->key_hi);
+                else render_blit(d->pixels, dl, dt, dr, db, s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb, keyed, s->key_lo, s->key_hi);
             }
             /* The injector, and it is deliberately applied to the SOFTWARE copy only --
              * see primary_stale_injected(). Advancing the source with the destination keeps
@@ -1735,21 +1742,14 @@ static void surf_Blt(uint32_t self)
                 }
             }
             blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_, keyed, s->key_lo, s->key_hi);
-            if (backdrop_flags & (BACKDROP_MIRROR_LEFT | BACKDROP_MIRROR_RIGHT))
-                backdrop_mirror_segments(d, s, backdrop_flags, sl, st_, sr, sb, dl, dt, dr, db, keyed, &trace);
+            if (backdrop_flags & (BACKDROP_MIRROR_LEFT | BACKDROP_MIRROR_RIGHT)) backdrop_mirror_segments(d, s, backdrop_flags, sl, st_, sr, sb, dl, dt, dr, db, keyed, &trace);
             BackdropBlit ext;
             const int backdrop_bottom = d->h < GEOM_WORLD_BOTTOM ? d->h : GEOM_WORLD_BOTTOM;
-            for (int row = db; backdrop_bottom_row(extend_world_backdrop, backdrop_bottom, row, dl, dt, dr, db, sl, st_,
-                                                   sr, sb, &ext);
-                 row++) {
+            for (int row = db; backdrop_bottom_row(extend_world_backdrop, backdrop_bottom, row, dl, dt, dr, db, sl, st_, sr, sb, &ext); row++) {
                 blt_trace_backdrop(&trace, &ext);
-                if (!d->primary)
-                    render_blit(d->pixels, ext.dl, ext.dt, ext.dr, ext.db, s->pixels, s->w, s->h, s->pitch, ext.sl,
-                                ext.st, ext.sr, ext.sb, keyed, s->key_lo, s->key_hi);
-                blit(d, ext.dl, ext.dt, ext.dr - ext.dl, ext.db - ext.dt, s, ext.sl, ext.st, ext.sr - ext.sl,
-                     ext.sb - ext.st, keyed, s->key_lo, s->key_hi);
-                backdrop_mirror_segments(d, s, backdrop_flags, ext.sl, ext.st, ext.sr, ext.sb, ext.dl, ext.dt, ext.dr,
-                                         ext.db, keyed, &trace);
+                if (!d->primary) render_blit(d->pixels, ext.dl, ext.dt, ext.dr, ext.db, s->pixels, s->w, s->h, s->pitch, ext.sl, ext.st, ext.sr, ext.sb, keyed, s->key_lo, s->key_hi);
+                blit(d, ext.dl, ext.dt, ext.dr - ext.dl, ext.db - ext.dt, s, ext.sl, ext.st, ext.sr - ext.sl, ext.sb - ext.st, keyed, s->key_lo, s->key_hi);
+                backdrop_mirror_segments(d, s, backdrop_flags, ext.sl, ext.st, ext.sr, ext.sb, ext.dl, ext.dt, ext.dr, ext.db, keyed, &trace);
             }
             if (backdrop_picture) {
                 backdrop_edge_bands(d, s, sl, st_, sr, sb, dl, dt, dr, db);
@@ -1789,10 +1789,9 @@ static void surf_Blt(uint32_t self)
     }
 
     if (d->primary) {
-        if (getenv("LF2_BLT_DEBUG")) {
+        if (lf2_environment_get(LF2_ENV_BLT_DEBUG)) {
             static long n;
-            fprintf(stderr, "blt->primary #%ld drect=%08x [%d %d %d %d] src=%08x srect=%08x flags=%08x\n", ++n, drect,
-                    dl, dt, dr, db, srcobj, srect, flags);
+            lf2_log_writef(LF2_LOG_INFO, "ddraw", "blt->primary #%ld drect=%08x [%d %d %d %d] src=%08x srect=%08x flags=%08x\n", ++n, drect, dl, dt, dr, db, srcobj, srect, flags);
         }
         present_primary();
     }
@@ -1812,7 +1811,7 @@ static void surf_BltFast(uint32_t self)
         read_rect(srect, &sl, &st_, &sr, &sb, s->w, s->h);
         if ((flags & 1) && s->has_key) ck_blt_keyed++;
         else ck_blt_plain++;
-        if (getenv("LF2_CK_DEBUG")) {
+        if (lf2_environment_get(LF2_ENV_CK_DEBUG)) {
             static long seen[8];
             static uint32_t fv[8];
             static int nf;
@@ -1823,11 +1822,10 @@ static void surf_BltFast(uint32_t self)
                 fv[nf] = flags;
                 hit = nf++;
             }
-            if (hit >= 0 && seen[hit]++ == 0) fprintf(stderr, "BltFast flags=%08x (has_key=%d)\n", flags, s->has_key);
+            if (hit >= 0 && seen[hit]++ == 0) lf2_log_writef(LF2_LOG_INFO, "ddraw", "BltFast flags=%08x (has_key=%d)\n", flags, s->has_key);
         }
         cursor_find_note(dx, dy, "BltFast");
-        blit(d, dx, dy, sr - sl, sb - st_, s, sl, st_, sr - sl, sb - st_, (flags & 1) && s->has_key, s->key_lo,
-             s->key_hi);
+        blit(d, dx, dy, sr - sl, sb - st_, s, sl, st_, sr - sl, sb - st_, (flags & 1) && s->has_key, s->key_lo, s->key_hi);
     }
     if (d->primary) present_primary();
     com_ret(6, DD_OK);
@@ -1840,9 +1838,8 @@ long ck_set, ck_blt_keyed, ck_blt_plain;
  * fires cannot tell them apart. */
 void colorkey_report(void)
 {
-    if (!getenv("LF2_CK_DEBUG")) return;
-    fprintf(stderr, "colour-key: SetColorKey=%ld keyed blits=%ld unkeyed blits=%ld\n", ck_set, ck_blt_keyed,
-            ck_blt_plain);
+    if (!lf2_environment_get(LF2_ENV_CK_DEBUG)) return;
+    lf2_log_writef(LF2_LOG_INFO, "ddraw", "colour-key: SetColorKey=%ld keyed blits=%ld unkeyed blits=%ld\n", ck_set, ck_blt_keyed, ck_blt_plain);
 }
 
 static void surf_SetColorKey(uint32_t self)
@@ -1850,9 +1847,7 @@ static void surf_SetColorKey(uint32_t self)
     Surface *s = com_host(self);
     const uint32_t key = ARG(2);
     ck_set++;
-    if (getenv("LF2_CK_DEBUG") && ck_set <= 4)
-        fprintf(stderr, "SetColorKey #%ld flags=%08x key=%08x range=%08x..%08x\n", ck_set, ARG(1), key,
-                key ? LD32(key) : 0, key ? LD32(key + 4) : 0);
+    if (lf2_environment_get(LF2_ENV_CK_DEBUG) && ck_set <= 4) lf2_log_writef(LF2_LOG_INFO, "ddraw", "SetColorKey #%ld flags=%08x key=%08x range=%08x..%08x\n", ck_set, ARG(1), key, key ? LD32(key) : 0, key ? LD32(key + 4) : 0);
     if (key) {
         s->has_key = 1;
         s->key_lo = LD32(key);
@@ -1997,7 +1992,7 @@ static uint32_t make_surface(int w, int h, int primary, int maxw, int maxh)
  *
  * A fixed array with a loud refusal rather than a growing one: the game creates a handful of
  * these once at startup, so a run that reaches the cap means the assumption is wrong, and
- * that is worth a line on stderr rather than a silent realloc. */
+ * that is worth a logger record rather than a silent realloc. */
 enum { FOLLOW_MAX = 8 };
 static uint32_t follow[FOLLOW_MAX];
 static int follow_n;
@@ -2008,10 +2003,10 @@ static void follow_add(uint32_t obj)
         follow[follow_n++] = obj;
         return;
     }
-    fprintf(stderr,
-            "widescreen: more than %d window-following surfaces exist; %08x will "
-            "NOT follow a resize and will keep the width it was created at\n",
-            FOLLOW_MAX, obj);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                   "widescreen: more than %d window-following surfaces exist; %08x will "
+                   "NOT follow a resize and will keep the width it was created at\n",
+                   FOLLOW_MAX, obj);
 }
 
 static void surfaces_follow_window(int w, int h)
@@ -2068,11 +2063,11 @@ void hostwin_window_geometry(int win_w, int win_h)
         static int said;
         if (!said) {
             said = 1;
-            fprintf(stderr,
-                    "widescreen: a %dx%d window asks for a %d-wide composition, past "
-                    "the %d this build allocates for; clamped, so the picture is "
-                    "cropped at the sides from here on\n",
-                    win_w, win_h, win_w, WIDE_MAX);
+            lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                           "widescreen: a %dx%d window asks for a %d-wide composition, past "
+                           "the %d this build allocates for; clamped, so the picture is "
+                           "cropped at the sides from here on\n",
+                           win_w, win_h, win_w, WIDE_MAX);
         }
     }
 
@@ -2086,12 +2081,10 @@ void hostwin_window_geometry(int win_w, int win_h)
         hw.width = (int)w; /* set first: lf2_compose_rect reads the window */
         hw.height = NATIVE_H;
         lf2_compose_rect((int)w, NATIVE_H, &r);
-        fprintf(
-            stderr,
-            "widescreen: window %dx%d -> composition %ldx%d at scale %.3f, drawn "
-            "into %.0fx%.0f at (%.0f,%.0f)%s\n",
-            win_w, win_h, w, NATIVE_H, (double)lf2_world_scale(), (double)r.w, (double)r.h, (double)r.x, (double)r.y,
-            (r.h >= (float)win_h - 1.0f && r.w >= (float)win_w - 1.0f) ? " -- fills the window" : " -- with a band");
+        lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                       "widescreen: window %dx%d -> composition %ldx%d at scale %.3f, drawn "
+                       "into %.0fx%.0f at (%.0f,%.0f)%s\n",
+                       win_w, win_h, w, NATIVE_H, (double)lf2_world_scale(), (double)r.w, (double)r.h, (double)r.x, (double)r.y, (r.h >= (float)win_h - 1.0f && r.w >= (float)win_w - 1.0f) ? " -- fills the window" : " -- with a band");
     }
 
     surfaces_follow_window(hw.width, hw.height);
@@ -2121,11 +2114,16 @@ void hostwin_window_geometry(int win_w, int win_h)
  * buffer -- it is the fallback, and it looks like one.
  */
 void lf2_compose_rect(int comp_w, int comp_h, SDL_FRect *r)
-{ geom_compose_rect(hw.win_w, hw.win_h, comp_w, comp_h, &r->x, &r->y, &r->w, &r->h); }
+{
+    geom_compose_rect(hw.win_w, hw.win_h, comp_w, comp_h, &r->x, &r->y, &r->w, &r->h);
+}
 
 /* How many screen pixels a game pixel becomes. The renderer needs it on its own to scale the
  * quads, and hd2d needs it to put the stage's floor in the rows it is actually drawn in. */
-float lf2_world_scale(void) { return geom_world_scale(hw.win_w, hw.win_h); }
+float lf2_world_scale(void)
+{
+    return geom_world_scale(hw.win_w, hw.win_h);
+}
 
 /* A POINT ON THE WINDOW, IN THE GAME'S OWN PIXELS -- the inverse of the rectangle above, and
  * the thing every hit test needs.
@@ -2141,20 +2139,27 @@ float lf2_world_scale(void) { return geom_world_scale(hw.win_w, hw.win_h); }
  * SDL_RenderCoordinatesFromWindow cannot do this job: it undoes SDL's own logical
  * presentation, which this port turns OFF precisely because it does its placement itself. */
 void lf2_window_to_compose(float wx, float wy, float *cx, float *cy)
-{ geom_window_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, wx, wy, cx, cy); }
+{
+    geom_window_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, wx, wy, cx, cy);
+}
 
 /* The same mapping for a pointer, which SDL delivers in POINTS while hw.win_w/h are PIXELS
  * (issue #56). The density enters the geometry here and nowhere else, and it is in geom.h so
  * tests/test_geom.c can walk it across densities without a scaled display to run on. */
 void lf2_pointer_to_compose(float px, float py, float density, float *cx, float *cy)
-{ geom_pointer_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, density, px, py, cx, cy); }
+{
+    geom_pointer_to_compose(hw.win_w, hw.win_h, hw.width, hw.height, density, px, py, cx, cy);
+}
 
 /* Widescreen is ON whenever the window is wider in aspect than the game's own picture, and
  * OFF when it is not. There is no switch: an env var read once at startup was a developer's
  * escape hatch rather than a feature (issue #20). The guest half -- the game's own viewport
  * width words -- is wide_apply() in runtime/overrides/menu.c, and it reads this, so there is
  * one source of truth and not two that can disagree. */
-int lf2_wide_width(void) { return hw.width > NATIVE_W ? hw.width : 0; }
+int lf2_wide_width(void)
+{
+    return hw.width > NATIVE_W ? hw.width : 0;
+}
 
 static void dd_CreateSurface(uint32_t self)
 {
@@ -2196,8 +2201,7 @@ static void dd_CreateSurface(uint32_t self)
     const int primary = (caps & DDSCAPS_PRIMARYSURFACE) != 0;
     int picture_w = 0, picture_h = 0;
     long bitmaps_loaded = 0;
-    const int picture =
-        !primary && gdi_last_bitmap(&picture_w, &picture_h, &bitmaps_loaded) && picture_w == w && picture_h == h;
+    const int picture = !primary && gdi_last_bitmap(&picture_w, &picture_h, &bitmaps_loaded) && picture_w == w && picture_h == h;
     if (picture) gdi_last_bitmap_consume();
     const int follows = primary || (!picture && w == NATIVE_W && h == NATIVE_H);
     if (follows) {
@@ -2215,20 +2219,19 @@ static void dd_CreateSurface(uint32_t self)
      * surfaces got widened and which did not, and a log that printed only the widened ones
      * could not answer it. Every line carries the verdict, so "no surface followed" and "no
      * surface was created" are different outputs. */
-    if (getenv("LF2_SURF_DEBUG")) {
+    if (lf2_environment_get(LF2_ENV_SURF_DEBUG)) {
         static int n;
-        fprintf(stderr, "createsurface #%d asked %dx%d caps=%08x from guest %08x -> %dx%d %s\n", ++n,
-                (flags & DDSD_WIDTH) ? (int)LD32(desc + SD_WIDTH) : -1,
-                (flags & DDSD_HEIGHT) ? (int)LD32(desc + SD_HEIGHT) : -1, caps, LD32(R(ESP)), w, h,
-                primary   ? "PRIMARY (follows)"
-                : follows ? "FOLLOWS THE WINDOW"
-                : picture ? "fixed: holds the picture just loaded (issue #50)"
-                          : "fixed");
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "createsurface #%d asked %dx%d caps=%08x from guest %08x -> %dx%d %s\n", ++n, (flags & DDSD_WIDTH) ? (int)LD32(desc + SD_WIDTH) : -1, (flags & DDSD_HEIGHT) ? (int)LD32(desc + SD_HEIGHT) : -1,
+                       caps, LD32(R(ESP)), w, h,
+                       primary   ? "PRIMARY (follows)"
+                       : follows ? "FOLLOWS THE WINDOW"
+                       : picture ? "fixed: holds the picture just loaded (issue #50)"
+                                 : "fixed");
         if (n == 1)
-            fprintf(stderr,
-                    "createsurface: %ld bitmaps had been loaded before the first "
-                    "surface existed\n",
-                    bitmaps_loaded);
+            lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                           "createsurface: %ld bitmaps had been loaded before the first "
+                           "surface existed\n",
+                           bitmaps_loaded);
     }
     ST32(out, obj);
     com_ret(4, DD_OK);
@@ -2272,10 +2275,10 @@ static void dd_SetDisplayMode(uint32_t self)
     static int said;
     if (!said && w > 0 && h > 0 && (w != hw.width || h != hw.height)) {
         said = 1;
-        fprintf(stderr,
-                "ddraw: the game asked for a %dx%d display mode; the window is "
-                "%dx%d and gives a %dx%d composition, which is what it gets\n",
-                w, h, hw.win_w, hw.win_h, hw.width, hw.height);
+        lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                       "ddraw: the game asked for a %dx%d display mode; the window is "
+                       "%dx%d and gives a %dx%d composition, which is what it gets\n",
+                       w, h, hw.win_w, hw.win_h, hw.width, hw.height);
     }
     com_ret(4, DD_OK);
 }
@@ -2467,8 +2470,7 @@ static const char *SURF_NAMES[36] = {
     "UpdateOverlayZOrder",
 };
 static const char *CLIP_NAMES[9] = {
-    "QueryInterface",    "AddRef",      "Release", "GetClipList", "GetHWnd", "Initialize",
-    "IsClipListChanged", "SetClipList", "SetHWnd",
+    "QueryInterface", "AddRef", "Release", "GetClipList", "GetHWnd", "Initialize", "IsClipListChanged", "SetClipList", "SetHWnd",
 };
 static const char *PAL_NAMES[7] = {
     "QueryInterface", "AddRef", "Release", "GetCaps", "GetEntries", "Initialize", "SetEntries",

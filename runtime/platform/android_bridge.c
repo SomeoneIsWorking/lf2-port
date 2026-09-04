@@ -1,3 +1,4 @@
+#include "lf2_log.h"
 #include "android_bridge.h"
 
 #include <lucent/platform_c.h>
@@ -34,7 +35,8 @@ static int ensure_selection_state(void)
     selection.mutex = SDL_CreateMutex();
     selection.condition = SDL_CreateCondition();
     if (selection.mutex && selection.condition) return 1;
-    fprintf(stderr, "android: cannot create game-import synchronization state: %s\n", SDL_GetError());
+    lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: cannot create game-import synchronization state: %s\n",
+                   SDL_GetError());
     return 0;
 }
 
@@ -95,11 +97,13 @@ int android_bridge_initialize(void)
 {
     const char *directory = SDL_GetAndroidInternalStoragePath();
     if (!directory || !*directory) {
-        fprintf(stderr, "android: cannot resolve app-private storage: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: cannot resolve app-private storage: %s\n",
+                       SDL_GetError());
         return 0;
     }
     if (!lucent_platform_set_user_data_directory(directory)) {
-        fprintf(stderr, "android: Lucent refused app-private storage path %s\n", directory);
+        lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: Lucent refused app-private storage path %s\n",
+                       directory);
         return 0;
     }
     return ensure_selection_state();
@@ -117,7 +121,7 @@ int android_bridge_enforce_window_policy(void)
 {
     char error[256] = "";
     if (call_activity_void("enforceLf2WindowPolicy", error, sizeof error)) return 1;
-    fprintf(stderr, "android: %s\n", error);
+    lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: %s\n", error);
     return 0;
 }
 
@@ -129,7 +133,7 @@ SetupUiResult android_bridge_choose_game_tree(const char *message, char *output,
     SDL_LockMutex(selection.mutex);
     if (selection.waiting) {
         SDL_UnlockMutex(selection.mutex);
-        fprintf(stderr, "android: a game-tree selection is already active\n");
+        lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: a game-tree selection is already active\n");
         return SETUP_UI_ERROR;
     }
     selection.waiting = 1;
@@ -144,7 +148,7 @@ SetupUiResult android_bridge_choose_game_tree(const char *message, char *output,
         SDL_LockMutex(selection.mutex);
         selection.waiting = 0;
         SDL_UnlockMutex(selection.mutex);
-        fprintf(stderr, "android: %s\n", call_error);
+        lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: %s\n", call_error);
         return SETUP_UI_ERROR;
     }
 
@@ -164,10 +168,12 @@ SetupUiResult android_bridge_choose_game_tree(const char *message, char *output,
     const int failed = selection.failed;
     const int selected = selection.executable[0] != 0;
     if (selected && !copy_text(output, capacity, selection.executable)) {
-        fprintf(stderr, "android: imported game path is longer than %zu bytes\n", capacity - 1);
+        lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: imported game path is longer than %zu bytes\n",
+                       capacity - 1);
         output[0] = 0;
     }
-    if (failed) fprintf(stderr, "android: game-tree import failed: %s\n", selection.error);
+    if (failed)
+        lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: game-tree import failed: %s\n", selection.error);
     selection.waiting = 0;
     SDL_UnlockMutex(selection.mutex);
     if (failed || (selected && !output[0])) return SETUP_UI_ERROR;
@@ -252,5 +258,6 @@ JNIEXPORT void JNICALL Java_io_github_someoneisworking_lf2port_Lf2Activity_nativ
 void android_bridge_request_update(void)
 {
     char error[256] = "";
-    if (!call_activity_void("requestLf2Update", error, sizeof error)) fprintf(stderr, "android: %s\n", error);
+    if (!call_activity_void("requestLf2Update", error, sizeof error))
+        lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: %s\n", error);
 }

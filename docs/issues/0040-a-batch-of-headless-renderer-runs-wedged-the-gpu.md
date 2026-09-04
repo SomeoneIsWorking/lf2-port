@@ -112,7 +112,7 @@ Until at least 1-3 are done, DO NOT run batches of headless sessions on this mac
 ANOTHER RESET-AND-REBOOT, 2026-08-11/12, AND THIS ONE NAMES THE PROCESS BY PID -- the closest
 this entry has come to attribution, though it is still association and not proof.
 
-WHAT HAPPENED: the machine rebooted at ~01:11 while a tools/e2e.sh sweep was running. The
+WHAT HAPPENED: the machine rebooted at ~01:11 while a tools/e2e.py sweep was running. The
 previous boot's kernel log holds 61 lines matching ring timeout / GPU reset begin / VRAM is
 lost, the first at 21:32 and the last at 01:04:44.
 
@@ -131,7 +131,7 @@ not act on it, and put `timeout -k 5` on every route. The `-k` is right and stay
 through where a TERM does not. But the CAUSE of that particular hang was not a stubborn signal
 handler: it was PID 414834, wedged on a GPU that had just reset. The commit message for the -k
 change says "TERM alone waits forever on a child that does not act on it", which is true in
-general and was not what happened here. Corrected in tools/e2e.sh's comment.
+general and was not what happened here. Corrected in tools/e2e.py's comment.
 
 THE MITIGATION TAKEN, which is the part that matters: NINE OF THE THIRTEEN ROUTES DO NOT TEST
 THE RENDERER AND WERE RUNNING ON THE GPU ANYWAY. They now pin LF2_RENDERER=soft --
@@ -204,7 +204,7 @@ allocation) were fixed on reasoning plus one-sided evidence, never on a repeat. 
 repeat, run deliberately and bounded so that a fault would stop it rather than being run
 through -- which is the actual mistake this entry records.
 
-METHOD. `tools/e2e.sh render` is the heaviest GPU route in the tree: four full instances per
+METHOD. The retired renderer comparison was the heaviest GPU scenario in the tree: four full instances per
 run, each booting the game, reaching a match and comparing the GPU frame against the software
 compositor. It was run three times back to back, with
 
@@ -247,4 +247,4 @@ reasonable thing to do at all, and it is why this entry can close on a measureme
 on a promise to be careful.
 
 ### Resolution (2026-08-12)
-Two causes were found and fixed in the port's own code -- per-frame GPU texture churn (~2400 allocations and frees per second, now pooled to a flat steady state) and an abandoned 2304-row surface allocation costing 302 MB per instance instead of 72. The workload was then REPEATED deliberately and bounded: tools/e2e.sh render three times back to back, 12 GPU instances, counting the kernel's ring-timeout/reset/lockup lines before and after every iteration and stopping on the first increase. It stayed at 0, on a 12-hour boot that also carried a full 17-route sweep and two SDL_GPU spikes with 0 amdgpu lines of any kind. A negative cannot prove which fix mattered, but the pattern that produced 219 timeouts and 65 resets in 75 minutes no longer reproduces. The durable mitigation is gpuguard, the machine-wide interlock every GPU run in this session went through.
+Two causes were found and fixed in the port's own code -- per-frame GPU texture churn (~2400 allocations and frees per second, now pooled to a flat steady state) and an abandoned 2304-row surface allocation costing 302 MB per instance instead of 72. The workload was then repeated deliberately and bounded: the recorded renderer comparison ran three times back to back, 12 GPU instances, counting the kernel's ring-timeout/reset/lockup lines before and after every iteration and stopping on the first increase. It stayed at 0, on a 12-hour boot that also carried a full 17-route sweep and two SDL_GPU spikes with 0 amdgpu lines of any kind. A negative cannot prove which fix mattered, but the pattern that produced 219 timeouts and 65 resets in 75 minutes no longer reproduced. The durable mitigation was the machine-wide GPU interlock used by every run in that session.

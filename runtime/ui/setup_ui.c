@@ -1,3 +1,4 @@
+#include "lf2_log.h"
 #include "setup_ui.h"
 
 #include <SDL3/SDL.h>
@@ -58,7 +59,7 @@ static int browse_button(const char *message)
     };
     int button = BUTTON_QUIT;
     if (!SDL_ShowMessageBox(&box, &button)) {
-        fprintf(stderr, "setup: cannot show the game-file dialog: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "setup_ui", "setup: cannot show the game-file dialog: %s\n", SDL_GetError());
         return BUTTON_QUIT;
     }
     return button;
@@ -69,7 +70,7 @@ SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t 
 {
     if (!selection || capacity == 0) return SETUP_UI_ERROR;
     selection[0] = 0;
-    fprintf(stderr, "setup: %s\n", message);
+    lf2_log_writef(LF2_LOG_INFO, "setup_ui", "setup: %s\n", message);
 
 #ifdef __ANDROID__
     return android_bridge_choose_game_tree(message, selection, capacity);
@@ -77,7 +78,7 @@ SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t 
 
     SDL_SetAppMetadata("LF2 Port", NULL, "io.github.SomeoneIsWorking.lf2-port");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        fprintf(stderr, "setup: SDL video initialization failed: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "setup_ui", "setup: SDL video initialization failed: %s\n", SDL_GetError());
         return SETUP_UI_ERROR;
     }
     if (browse_button(message) != BUTTON_BROWSE) {
@@ -88,7 +89,7 @@ SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t 
     FileDialogState state = {0};
     state.mutex = SDL_CreateMutex();
     if (!state.mutex) {
-        fprintf(stderr, "setup: cannot create file-dialog state: %s\n", SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "setup_ui", "setup: cannot create file-dialog state: %s\n", SDL_GetError());
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         return SETUP_UI_ERROR;
     }
@@ -124,7 +125,7 @@ SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t 
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 
     if (failed || (selected && !selection[0])) {
-        fprintf(stderr, "setup: file picker failed: %s\n", dialog_error);
+        lf2_log_writef(LF2_LOG_INFO, "setup_ui", "setup: file picker failed: %s\n", dialog_error);
         return SETUP_UI_ERROR;
     }
     return selected ? SETUP_UI_SELECTED : SETUP_UI_CANCELLED;

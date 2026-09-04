@@ -597,7 +597,7 @@ static void test_camera(void)
 static void test_draw_camera(void)
 {
     /* At the game's own width the offset is zero BY DEFINITION, which is what keeps
-     * tools/routes/background_test.sh's byte-identity arm true. */
+     * the recorded background runtime scenario's byte-identity arm true. */
     eq("794 is the game's own camera", geom_draw_camera(400, 794), 400);
     /* 1100 -> offset 153. Measured in play: the game's camera reached 400, drawn as 247. */
     eq("1100 shifts by half the extra", geom_draw_camera(400, 1100), 247);

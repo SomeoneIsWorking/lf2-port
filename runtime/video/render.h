@@ -22,7 +22,7 @@
  * THE SOFTWARE PATH IS NOT REMOVED. It still composes every frame, and LF2_RENDERER=soft
  * presents it exactly as before. That is deliberate: a renderer that cannot be diffed against
  * the thing it replaces is a rewrite, and every other piece of this port was landed by
- * running the two side by side (tools/routes/render_test.sh).
+ * running the two side by side (the recorded render runtime scenario).
  */
 #ifndef LF2_RENDER_H
 #define LF2_RENDER_H

@@ -13,7 +13,7 @@ A device pressing mid-match can join as a real player: it claims a free slot, a 
 
 ## Evidence
 
-Two-sided in tools/routes/coop_dropin_test.sh (tools/e2e.sh coop_dropin): identical joins differing only in whether a direction is pressed afterwards give ~180 px of travel with animation vs <10 px and a frozen animation counter. Both arms first assert the join happened, and that assertion was checked against a negative log where it correctly does not fire.
+Two-sided in the recorded drop-in co-op scenario: identical joins differing only in whether a direction is pressed afterwards give ~180 px of travel with animation vs <10 px and a frozen animation counter. Both arms first assert the join happened, and that assertion was checked against a negative log where it correctly does not fire.
 
 ## What would falsify it
 

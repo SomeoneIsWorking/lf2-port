@@ -11,26 +11,26 @@ with selected behavior owned natively and every remaining guest instruction
 dynamically translated by `shared/x86port`.
 
 Why it matters: the port must preserve the original game without shipping its
-assets, depending on maintainer-only analysis tools, generating a title-sized C
-corpus, or maintaining two gameplay engines.
+assets, depending on maintainer-only analysis tools, or maintaining a second
+title-specific gameplay implementation.
 
 Success conditions:
 
 - A fresh checkout validates and consumes the player's exact LF2 v2.0a image
-  directly; build, install, provisioning, and release paths emit no guest
-  source, object corpus, or precompiled title substrate.
-- The gameplay target links one execution path: native overrides plus the
-  `x86port` JIT. An interpreter is available only in separately built test
-  targets, including diagnostic tests. Build-graph, link-map/symbol, and
-  selector inspection prove interpreter execution, interpreter-backed helpers,
-  and fallback machinery are absent from gameplay.
+  directly as runtime data; build, install, provisioning, and release paths do
+  not derive or consume a title-specific guest implementation.
+- The gameplay target defaults to native overrides plus the `x86port` JIT. A
+  bounded, reason-coded interpreter fallback is permitted only after a failed
+  or unsupported compilation or unsafe translated execution. An explicit
+  interpreter mode remains diagnostic-only, and fallback coverage cannot
+  satisfy gameplay or performance gates.
 - Runtime override lookup, disabled-override diagnosis, and scoped original
   calls are address- and image-aware and do not require regeneration.
 - The existing native entry, Win32/DirectDraw/DirectSound/GDI HLE, guest-memory
   contract, and verified native overrides are preserved through the migration.
-- The representative gameplay conformance gate in `docs/migration.md` passes
-  on every released host architecture before the offline translator and its
-  generated-only metadata are removed.
+- The repository retains only the runtime JIT execution model, and the
+  representative gameplay conformance gate in `docs/migration.md` passes on
+  every released host architecture.
 
 Constraints and non-goals:
 
@@ -90,6 +90,7 @@ Success conditions:
   executable, installer, extracted data, or reconstructable instruction bytes.
 - x86-64 and ARM64 product JIT backends pass executable-memory, instruction-
   cache, ABI, correctness, performance, and sustained-device gates for the
-  hosts on which they are released; no host falls back to interpretation.
+  hosts on which they are released; fallback coverage is reported separately
+  and cannot qualify a host backend.
 
 Contributing state items: S004, S012–S013, S016–S019.

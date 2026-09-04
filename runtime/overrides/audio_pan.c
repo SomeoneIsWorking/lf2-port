@@ -1,6 +1,6 @@
 /* fn_00416fb0 / fn_00417090 -- how loud a sound is in each ear, from where it is on screen.
  *
- * One of the hand-written native replacements for recompiled functions; see
+ * One of the hand-written native replacements for guest routines; see
  * runtime/overrides/overrides.h for how the set is divided and why.
  *
  * WHY THIS FILE EXISTS: widescreen was silent on the right (issue #39). Not quieter -- SILENT,
@@ -40,14 +40,16 @@
  *
  * ABI: cdecl, RET 0 -- the caller pops. Two arguments (world x, slot index). At return the
  * original leaves the right-ear volume in EAX and &accum_right[i] in ECX; both are reproduced
- * because the callers are recompiled code and this cannot see which of them it reads.
+ * because the callers are guest code and this cannot see which of them it reads.
  */
 
+#include "environment.h"
 #include "overrides.h"
 #include "world.h"
 #include "geom.h"
 
-#include "guest_ops.h"
+#include "guest.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,14 +75,14 @@ static long pan_calls, pan_silent;
 static int pan_view(void)
 {
     static int raw = -1;
-    if (raw < 0) raw = getenv("LF2_AUDIO_PAN_RAW") != NULL;
+    if (raw < 0) raw = lf2_environment_get(LF2_ENV_AUDIO_PAN_RAW) != NULL;
     return raw ? GEOM_SCREEN_W : bg_view_width();
 }
 
 static void pan_apply(uint32_t seen_tab, uint32_t l_tab, uint32_t r_tab)
 {
     const int32_t world_x = (int32_t)LD32(R(ESP) + 4);
-    const uint32_t slot   = LD32(R(ESP) + 8);
+    const uint32_t slot = LD32(R(ESP) + 8);
     const int32_t sx = world_x - (int32_t)LD32(BG_CAMERA_X);
 
     int vl = 0, vr = 0;
@@ -92,18 +94,27 @@ static void pan_apply(uint32_t seen_tab, uint32_t l_tab, uint32_t r_tab)
     const uint32_t off = slot * 4u;
     /* The game clears both accumulators the first time a slot is touched in a frame, so they
      * sum the sources of one sound rather than growing without bound. */
-    if (LD32(seen_tab + off) == 0) { ST32(l_tab + off, 0); ST32(r_tab + off, 0); }
+    if (LD32(seen_tab + off) == 0) {
+        ST32(l_tab + off, 0);
+        ST32(r_tab + off, 0);
+    }
     ST32(l_tab + off, LD32(l_tab + off) + (uint32_t)vl);
     ST32(r_tab + off, LD32(r_tab + off) + (uint32_t)vr);
     ST32(seen_tab + off, 1);
 
     R(EAX) = (uint32_t)vr;
     R(ECX) = r_tab + off;
-    R(ESP) += 4;                       /* cdecl: pop the return address only */
+    R(ESP) += 4; /* cdecl: pop the return address only */
 }
 
-void fn_00416fb0(void) { pan_apply(PAN_A_SEEN, PAN_A_L, PAN_A_R); }
-void fn_00417090(void) { pan_apply(PAN_B_SEEN, PAN_B_L, PAN_B_R); }
+void fn_00416fb0(void)
+{
+    pan_apply(PAN_A_SEEN, PAN_A_L, PAN_A_R);
+}
+void fn_00417090(void)
+{
+    pan_apply(PAN_B_SEEN, PAN_B_L, PAN_B_R);
+}
 
 /* WHERE A SOUND CAN BE HEARD AT ALL, against the view being drawn.
  *
@@ -117,24 +128,27 @@ void fn_00417090(void) { pan_apply(PAN_B_SEEN, PAN_B_L, PAN_B_R); }
  * must be exactly (-200, 1000), because that is what the shipped constants give. */
 void audio_pan_report(void)
 {
-    if (!getenv("LF2_AUDIO_PAN")) return;
+    if (!lf2_environment_get(LF2_ENV_AUDIO_PAN)) return;
     const int view = bg_view_width();
     const int pv = pan_view();
     const int far = geom_pan_scaled(GEOM_PAN_FAR, pv);
     const int lo = geom_pan_scaled(GEOM_PAN_LEFT_X, pv) - far + 1;
     const int hi = geom_pan_scaled(GEOM_PAN_RIGHT_X, pv) + far - 1;
-    fprintf(stderr, "audio pan: view %d -- speakers at %d and %d, audible screen x %d..%d\n",
-            view, geom_pan_scaled(GEOM_PAN_LEFT_X, pv),
-            geom_pan_scaled(GEOM_PAN_RIGHT_X, pv), lo, hi);
+    lf2_log_writef(LF2_LOG_INFO, "audio", "audio pan: view %d -- speakers at %d and %d, audible screen x %d..%d\n",
+                   view, geom_pan_scaled(GEOM_PAN_LEFT_X, pv), geom_pan_scaled(GEOM_PAN_RIGHT_X, pv), lo, hi);
     if (lo <= 0 && hi >= view - 1)
-        fprintf(stderr, "audio pan: the audible span covers the whole %d-wide picture, so "
-                        "nothing on screen is culled\n", view);
+        lf2_log_writef(LF2_LOG_INFO, "audio",
+                       "audio pan: the audible span covers the whole %d-wide picture, so "
+                       "nothing on screen is culled\n",
+                       view);
     else
-        fprintf(stderr, "audio pan: the audible span does NOT cover the picture -- screen x "
-                        "%d..%d of %d is SILENT, which is issue #39's audio half\n",
-                hi + 1 < view ? hi + 1 : 0, view - 1, view);
-    fprintf(stderr, "audio pan: %ld pan(s) computed, %ld of them fully silent%s\n",
-            pan_calls, pan_silent,
-            pan_calls ? "" : " -- NO sound was panned in this run, so these numbers describe "
-                             "nothing");
+        lf2_log_writef(LF2_LOG_INFO, "audio",
+                       "audio pan: the audible span does NOT cover the picture -- screen x "
+                       "%d..%d of %d is SILENT, which is issue #39's audio half\n",
+                       hi + 1 < view ? hi + 1 : 0, view - 1, view);
+    lf2_log_writef(LF2_LOG_INFO, "audio", "audio pan: %ld pan(s) computed, %ld of them fully silent%s\n", pan_calls,
+                   pan_silent,
+                   pan_calls ? ""
+                             : " -- NO sound was panned in this run, so these numbers describe "
+                               "nothing");
 }

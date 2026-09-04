@@ -176,6 +176,14 @@ class BootstrapCheckoutTest(unittest.TestCase):
 
         with (
             mock.patch.object(bootstrap, "BINARY", binary),
+            mock.patch.object(
+                bootstrap,
+                "resolve_runtime_dependencies",
+                return_value={
+                    "x86port": self.root / "runtime-deps" / "x86port",
+                    "jit-common": self.root / "runtime-deps" / "jit-common",
+                },
+            ),
             mock.patch.object(bootstrap.subprocess, "run", side_effect=build),
         ):
             bootstrap.build(venv_python, port_assets)

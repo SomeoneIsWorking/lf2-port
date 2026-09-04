@@ -1,16 +1,17 @@
 /* Global port-menu lifecycle.
  *
- * Dusklight's menu command opens its RmlUi document stack directly. LF2 follows the same
- * ownership: this module tracks where the shell opened and exposes LF2 actions, while
+ * This module tracks where the RmlUi shell opened and exposes LF2 actions, while
  * runtime/ui owns every visible menu element and all navigation. A running match uses the
  * game's own pause pipeline while its normal draw/present path continues behind the document.
  * There is deliberately no second, hand-painted Escape menu here.
  */
+#include "lf2_log.h"
+#include "environment.h"
 #include "hostwin.h"
 #include "cheats.h"
 #include "function_keys.h"
 #include "gamepad.h"
-#include "guest_ops.h"
+#include "guest.h"
 #include "keyboard.h"
 #include "rmlui.h"
 #include "touch_input.h"
@@ -111,8 +112,9 @@ void pause_tick(void)
     const int start_edge = edge(&was_start, start);
     const int toggle = escape_edge | start_edge;
 
-    if (getenv("LF2_RMLUI_DEBUG") && (escape_edge || start_edge))
-        fprintf(stderr, "rmlui menu command: escape=%d start=%d active=%d\n", escape_edge, start_edge, rmlui_active());
+    if (lf2_environment_get(LF2_ENV_RMLUI_DEBUG) && (escape_edge || start_edge))
+        lf2_log_writef(LF2_LOG_INFO, "pause", "rmlui menu command: escape=%d start=%d active=%d\n", escape_edge,
+                       start_edge, rmlui_active());
 
     if (!toggle) return;
     if (rmlui_active()) pause_menu_close();
@@ -122,7 +124,8 @@ void pause_tick(void)
 void pause_report(void)
 {
     if (leave_f4_pulses)
-        fprintf(stderr, "pause leave: %u F4 pulse(s); key %s; post-match overlay %s at shutdown\n", leave_f4_pulses,
-                hostwin_injected_key(VK_F4) ? "DOWN" : "released", panel_overlay_up() ? "up" : "not up");
+        lf2_log_writef(LF2_LOG_INFO, "pause",
+                       "pause leave: %u F4 pulse(s); key %s; post-match overlay %s at shutdown\n", leave_f4_pulses,
+                       hostwin_injected_key(VK_F4) ? "DOWN" : "released", panel_overlay_up() ? "up" : "not up");
     cheats_report();
 }

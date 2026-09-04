@@ -1,4 +1,6 @@
 /* See config.h for what this is and why the keys moved here. */
+#include "lf2_log.h"
+#include "environment.h"
 #include "config.h"
 
 #include "user_paths.h"
@@ -10,12 +12,12 @@
 /* The file, or NULL when settings are disabled (LF2_CONFIG set-but-empty). */
 static const char *config_file(int create_directory)
 {
-    const char *v = getenv("LF2_CONFIG");
+    const char *v = lf2_environment_get(LF2_ENV_CONFIG);
     if (v) return *v ? v : NULL;
     static char path[4096];
     char error[512];
     if (!user_paths_config_file(path, sizeof path, create_directory, error, sizeof error)) {
-        fprintf(stderr, "config: %s\n", error);
+        lf2_log_writef(LF2_LOG_INFO, "config", "config: %s\n", error);
         return NULL;
     }
     return path;
@@ -79,18 +81,18 @@ int config_save(void)
 {
     const char *path = config_file(1);
     if (!path) {
-        const char *override = getenv("LF2_CONFIG");
+        const char *override = lf2_environment_get(LF2_ENV_CONFIG);
         return override && !*override;
     }
     FILE *f = path ? fopen(path, "w") : NULL;
     if (!f) {
-        perror(path);
+        lf2_log_perror("config", path);
         return 0;
     }
     fprintf(f, "# LF2 port settings\n");
     for (int i = 0; i < slot_n; i++) fprintf(f, "%s %s\n", slot[i].name, slot[i].value);
     if (fclose(f) != 0) {
-        perror(path);
+        lf2_log_perror("config", path);
         return 0;
     }
     return 1;

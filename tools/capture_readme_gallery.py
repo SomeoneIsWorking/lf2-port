@@ -17,12 +17,12 @@ import subprocess
 import sys
 from typing import Mapping, Sequence
 
+from build.scratch_clean import ScratchCleanError, empty_scratch_child
 from routes.ppm import read_ppm
 
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRATCH = ROOT / "scratch"
-CLEAN_TOOL = ROOT / "tools" / "build" / "scratch_clean.sh"
 
 
 class GalleryError(RuntimeError):
@@ -240,24 +240,16 @@ def require_inputs(build: Path, game: Path) -> tuple[Path, str]:
             "ImageMagick 'magick' is required for lossless PPM-to-PNG conversion; "
             "on Fedora run: sudo dnf install ImageMagick"
         )
-    if not CLEAN_TOOL.is_file() or not os.access(CLEAN_TOOL, os.X_OK):
-        raise GalleryError(f"scoped scratch cleanup tool is missing or not executable: {CLEAN_TOOL}")
     return binary, magick
 
 
 def clean_output(output: Path) -> None:
     relative = output.relative_to(ROOT)
-    result = subprocess.run(
-        [str(CLEAN_TOOL), str(relative)],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise GalleryError(f"scoped scratch cleanup failed: {detail}")
-    print(result.stdout.strip())
+    try:
+        _target, removed = empty_scratch_child(ROOT, relative)
+    except ScratchCleanError as error:
+        raise GalleryError(f"scoped scratch cleanup failed: {error}") from error
+    print(f"gallery capture: cleared {relative} ({removed} entries removed)")
 
 
 def terminate_exact_process(process: subprocess.Popen[bytes]) -> None:

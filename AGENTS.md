@@ -6,9 +6,9 @@ input, UI, and selected game behavior. Every other guest instruction must run
 on demand from the player's authenticated `lf2.exe` through `shared/x86port`'s
 JIT.
 
-The checked-in source still contains the retired offline x86-to-C path. It is
-migration input, not a supported product or oracle. Do not build, launch,
-regenerate, extend, or use that path for new evidence.
+The x86-64 executor adapter consumes `x86port_runtime` and currently refuses at
+the first unsupported instruction during startup. Extend the shared JIT rather
+than adding a title-specific execution path.
 
 ## Read before non-trivial work
 
@@ -29,14 +29,14 @@ re-deriving an address, ABI, state transition, or failed approach.
 
 ## Non-negotiable execution contract
 
-- The gameplay product is native code plus the `x86port` JIT. There is no
-  offline or install-time emission of guest C/C++, objects, or precompiled
-  title code.
-- An interpreter may exist only in a separately built test target, including
-  diagnostic tests. The gameplay build must not link it, select it, or fall
-  back to it. Enforce
-  this with build, link, and selector audits, not a counter that happened to
-  remain zero.
+- The gameplay product is native code plus the `x86port` JIT. The player's
+  executable is runtime data and no title-specific guest implementation is a
+  build input.
+- JIT execution is the gameplay default. A bounded interpreter fallback may
+  handle only a failed/unsupported compilation or an unsafe translated exit;
+  every fallback is reason-coded and counted. An explicit interpreter mode is
+  diagnostic-only, and fallback coverage is never gameplay or performance
+  proof.
 - `x86port` owns x86 decode, architectural state, instruction semantics,
   dynamic translation, executable memory, and translated-block lifetime. LF2
   must not fork those responsibilities.
@@ -45,11 +45,11 @@ re-deriving an address, ABI, state transition, or failed approach.
 - Override lookup uses runtime guest address and image identity. A native
   override can make a scoped original call through the JIT without recursively
   selecting itself. Changing override state invalidates captured call paths.
-- Unsupported guest behavior fails with its guest PC and decoded bytes. It
-  never becomes a no-op, interpreter step, or guessed translation.
-- The current generated-C product is not a comparison arm. New differential
-  evidence comes from Wine/the original executable, binary analysis, or the
-  interpreter available only in a separately built test target.
+- Unsupported guest behavior reports its guest PC and decoded bytes. Until the
+  shared runtime supplies the bounded fallback contract, it refuses rather
+  than becoming a no-op or guessed translation.
+- Differential evidence comes from Wine/the original executable, binary
+  analysis, or the separately built test oracle.
 
 ## Preserve the working seams
 
@@ -61,9 +61,8 @@ The CPU migration must adapt the existing product instead of rewriting it.
   access policy, adapted once to `x86port`'s CPU/memory interface.
 - `runtime/win32/` retains the Win32, CRT, GDI, DirectDraw COM, DirectShow,
   DirectSound, input, and socket/HLE service boundary.
-- `runtime/overrides/` retains the verified native behavior and ABI facts. Its
-  generated-symbol calls are replaced by address-based runtime dispatch and
-  scoped original calls.
+- `runtime/overrides/` retains the verified native behavior and ABI facts. It
+  uses address-based runtime dispatch and scoped original calls.
 - `runtime/video/`, `runtime/audio/`, `runtime/input/`, `runtime/ui/`, and
   `runtime/platform/` remain peer host subsystems. A renderer refactor is not a
   prerequisite for CPU execution. First preserve the same calls and data at
@@ -84,22 +83,20 @@ guest return sentinel at `0x004462e0`, and no guest PE-entry or WinMain call.
 Compare registers, EFLAGS, x87/SSE state, the guest stack, EIP/return reason,
 and every guest write with the test target's interpreter. Require nonzero
 translated-block counts and a controlled negative that the comparison rejects.
-Build-graph, link-map/symbol, and selector inspection must independently prove
-that the gameplay target cannot contain interpreter execution, interpreter-
-backed helpers, or fallback machinery; zero fallback telemetry is supplementary
-and cannot establish that absence. This discriminator is not permission to run
-a mixed static/JIT gameplay binary.
+Build-graph and selector inspection must independently prove the gameplay
+default is the JIT and no explicit interpreter mode is exposed. Fallback
+telemetry must name why it ran and how much execution it covered. This
+discriminator is not permission to treat fallback execution as gameplay proof.
 
-## Representative-gameplay retirement gate
+## Representative-gameplay restoration gate
 
-The offline translator, generated corpus, symbol dispatcher, generation seeds,
-and static-only tests are removed together only after the native/JIT product:
+The deleted execution path is not part of this gate. Gameplay is restored only
+after the native/JIT product:
 
 - provisions a fresh checkout from the player's authenticated game asset
   without a translation step;
-- proves by build/link/selector inspection that gameplay contains the JIT and
-  no interpreter execution, interpreter-backed helper, fallback machinery, or
-  generated guest body;
+- proves by build/link/selector inspection that gameplay defaults to the JIT,
+  has no explicit interpreter mode, and exposes bounded fallback telemetry;
 - reaches the existing menu, character-select, VS, and Stage Mode frontier;
 - runs a bounded Stage Mode fight with player input, enemy/world updates,
   DirectDraw/GDI presentation, sound effects, music, timing, and interrupts;
@@ -124,10 +121,13 @@ Boot, a logo, a menu, a clean trace, or a single frame is not this gate.
   grow, and 2,000+ lines require extraction before extension.
   `tools/build/check_structure.py` remains the mechanical authority and must
   cover new first-party modules.
-- Lucent is the only process logger. LF2's bridge may assemble C/stdio
-  fragments, but timestamps, channels, sinks, and serialization stay in
-  Lucent. Emit one record per call site; never wrap logging in a debug `if`.
+- Lucent is the only process logger. Product modules call LF2's typed logger
+  bridge explicitly; they never write `stderr`/`stdout` or rely on a forced
+  macro that disguises stdio. Timestamps, channels, sinks, and serialization
+  stay in Lucent. Emit one record per call site.
 - `runtime/app/config.*` owns typed settings and persistence;
+  `runtime/app/environment.*` owns the typed maintainer-override key set and
+  is the only product source allowed to read the process environment;
   `runtime/app/user_paths.*` owns the LF2 path below Lucent's OS user-data
   directory; `runtime/ui/` edits configuration but does not own it. `LF2_*`
   environment variables are diagnostic/maintainer overrides, never features
@@ -141,6 +141,9 @@ Boot, a logo, a menu, a clean trace, or a single frame is not this gate.
   stable activity path in `scratch/`, never `/tmp`. Never issue raw `rm`.
 - Project automation is Python. `run.sh` is only the thin locked-environment
   launcher.
+- `tools/build/source_dependencies.py` owns the immutable x86port and
+  jit-common revisions, checkout validation, and clean provisioning under
+  `build/deps`. CMake consumes only paths resolved by that owner.
 
 ## Issue and evidence discipline
 
@@ -152,8 +155,8 @@ belongs in one nearest living authority, not copied across every registry.
 
 ## Game content
 
-Never commit or package `lf2.exe`, the installer, extracted game data,
-`re/instructions.tsv`, or anything from which the original program can be
+Never commit or package `lf2.exe`, the installer, extracted game data, raw
+instruction-byte exports, or anything from which the original program can be
 reconstructed. Source and packaged builds accept player-owned game files and
 validate the exact LF2 v2.0a identity. Curated documentation screenshots are
 the only tracked visual-output exception.

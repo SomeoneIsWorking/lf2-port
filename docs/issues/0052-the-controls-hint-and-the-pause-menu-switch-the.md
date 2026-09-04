@@ -44,7 +44,7 @@ WHAT THE PLAYER GETS. The 978x550 composition is handed to SDL as one texture an
 scaled to 1920x1080, so on every menu a game pixel is a ~2x2 block, the outline-font text
 from issue #45 is rasterised small and then magnified (the exact "blurry or blocky bitmap"
 #41 warned about), and the per-quad scale does nothing. The picture FILLS the window, which
-is why tools/e2e.sh widescreen passes and why this was invisible: that test reads the
+is why the recorded widescreen scenario passed and why this was invisible: that test read the
 composition width and the placement rectangle, and both are right. It cannot see WHICH
 renderer filled it.
 
@@ -107,7 +107,7 @@ Tile allocations stay flat at 0.062/frame, which is the counter issue #40 asks t
 `journalctl -k -b 0` reports ZERO ring timeouts, GPU resets, illegal opcodes or lost VRAM
 across every run in this session.
 
-A LYING INSTRUMENT FELL OUT OF THIS and is recorded as I010. tools/e2e.sh render dumps frames
+A LYING INSTRUMENT FELL OUT OF THIS. The retired renderer comparison dumped frames
 1300 (character selection) and 2250 (a match). Character selection has the hint up, so its
 `gpu` arm was dumping the SOFTWARE buffer: "frame_001300: gpu matches software" was one buffer
 compared against itself, and had been for the whole life of the renderer. Its negative control
@@ -116,7 +116,7 @@ dropping draws changes what the software compositor composes too -- the control 
 with the positive and went green with the renderer uninvolved. Both frames are real
 comparisons now: max channel diff 1 on the menu, 2 on the match.
 
-VERIFIED: ctest 8/8, and tools/e2e.sh smoke mouse resize widescreen background render -- six
+VERIFIED: ctest 8/8, and tools/e2e.py smoke mouse resize widescreen background render -- six
 of six passing, including background's byte-identity arm at 794x550.
 
 WHAT IS LEFT, unchanged from the entry above: the pause menu. It needs the renderer to be able
@@ -165,7 +165,7 @@ close callback invalidates the UI frame that invoked it. `ui_global` compares th
 against a deterministic no-modal control at matching offsets: outside-document pixels and the
 first hidden frame (+362) plus two successors must match exactly.
 
-AND ONE LYING INSTRUMENT, recorded as I010: render_test dumps frame 1300, character selection,
+AND ONE LYING INSTRUMENT: the retired renderer comparison dumped frame 1300, character selection,
 which has the hint up -- so its `gpu` arm was dumping the SOFTWARE buffer and "gpu matches
 software" was one buffer compared against itself for the whole life of the renderer. Its
 negative control could not catch that, because LF2_RENDER_SKIP is applied in the display-list

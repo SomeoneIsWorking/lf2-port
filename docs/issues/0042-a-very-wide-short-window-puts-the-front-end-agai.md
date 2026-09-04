@@ -101,7 +101,7 @@ and menu centred on top of it.
 AND IT REMOVED ISSUE #29'S BUG CLASS BY CONSTRUCTION. That bug was the leftmost `offset`
 columns of the primary never being written and holding a ghost of the previously-centred
 screen; a clear covered it. With the copy 1:1 every column of the primary is written every
-frame, so there is nothing to clear and primary_clear_on_move() is gone. tools/routes/resize_test.sh
+frame, so there is nothing to clear and primary_clear_on_move() is gone. the recorded resize runtime scenario
 went red the moment that landed -- its negative arm, LF2_PRIMARY_STALE, disabled a clear that
 no longer existed, so the arm could not fail and the test said so rather than reporting a pass
 it could not justify. LF2_PRIMARY_STALE is now a defect INJECTOR that reproduces the old bug
@@ -111,8 +111,8 @@ leftmost columns are black in every frame at any ONE size, so the injected and c
 agreed and the arm still could not fail. The ghost only exists where a DIFFERENTLY centred
 screen had picture. With the right number the arm reports 65145 stray pixels.
 
-VERIFIED: ctest 8/8; tools/e2e.sh smoke, mouse, widescreen, resize and background all PASSED,
-background byte-identical to the recompiled body at 794x550 with both control arms differing.
+VERIFIED: ctest 8/8; tools/e2e.py smoke, mouse, widescreen, resize and background all PASSED,
+the background matched retail behavior at 794x550 with both control arms differing.
 
 NOT ADDRESSED, and it is a different question: character selection and the pre-fight overlay
 have no full-screen colour fill -- their backdrop is artwork -- so they are still centred with

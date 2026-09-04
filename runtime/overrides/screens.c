@@ -1,16 +1,18 @@
 /* The post-load screens' mouse: mode menu, character selection, the overlay.
  *
- * One of the hand-written native replacements for recompiled functions; see
+ * One of the hand-written native replacements for guest routines; see
  * runtime/overrides/overrides.h for how the set is divided and why.
  */
 
+#include "environment.h"
 #include "overrides.h"
 #include "geom.h"
 #include "world.h"
 
-#include "guest_ops.h"
+#include "guest.h"
 #include "guest_map.h"
 #include "hostwin.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,12 +54,19 @@
 enum { OBJ_TABLE = 0x00458c94, OBJ_SEL = 0x364, CS_SLOTS = 8 };
 
 /* x runs and y runs of the eight portrait panels, read off a frame dump. */
-static const struct { int x0, x1; } CS_COL[4] = {
-    { 147, 266 }, { 300, 419 }, { 453, 572 }, { 606, 725 },
+static const struct {
+    int x0, x1;
+} CS_COL[4] = {
+    {147, 266},
+    {300, 419},
+    {453, 572},
+    {606, 725},
 };
-static const struct { int y0, y1; } CS_ROW[2] = {
-    {  95, 282 },      /* portrait 95..213 plus its Player/Fighter/Team rows */
-    { 306, 495 },
+static const struct {
+    int y0, y1;
+} CS_ROW[2] = {
+    {95, 282}, /* portrait 95..213 plus its Player/Fighter/Team rows */
+    {306, 495},
 };
 
 static int cs_slot_at(int x, int y)
@@ -76,12 +85,14 @@ static int cs_slot_at(int x, int y)
 void charselect_mouse(void)
 {
     static int dbg0 = -1;
-    if (dbg0 < 0) dbg0 = getenv("LF2_CS_DEBUG") != NULL;
+    if (dbg0 < 0) dbg0 = lf2_environment_get(LF2_ENV_CS_DEBUG) != NULL;
     if (dbg0) {
-        static long n; int px=-1, py=-1; const int have = hostwin_pointer(&px, &py);
+        static long n;
+        int px = -1, py = -1;
+        const int have = hostwin_pointer(&px, &py);
         if (++n % 120 == 0)
-            fprintf(stderr, "cs-gate: top_mode=%u have_ptr=%d ptr=(%d,%d)\n",
-                    game_top_mode(), have, px, py);
+            lf2_log_writef(LF2_LOG_INFO, "screens", "cs-gate: top_mode=%u have_ptr=%d ptr=(%d,%d)\n", game_top_mode(),
+                           have, px, py);
     }
     if (game_top_mode() != MODE_IN_GAME) return;
 
@@ -90,23 +101,24 @@ void charselect_mouse(void)
     if (!hostwin_pointer(&mx, &my)) return;
     static int last_x = -1, last_y = -1;
     const int moved = (mx != last_x || my != last_y);
-    last_x = mx; last_y = my;
+    last_x = mx;
+    last_y = my;
 
     const int slot = cs_slot_at(mx, my);
     static int dbg = -1;
-    if (dbg < 0) dbg = getenv("LF2_CS_DEBUG") != NULL;
+    if (dbg < 0) dbg = lf2_environment_get(LF2_ENV_CS_DEBUG) != NULL;
     if (dbg) {
         const int kp0 = keyboard_player();
         const uint32_t e0 = (uint32_t)(1 + (kp0 >= 0 ? kp0 : 0));
         const uint32_t p0 = LD32(OBJ_TABLE + e0 * 4);
-        fprintf(stderr, "cs: ptr=(%d,%d) slot=%d kbplayer=%d entry=%u obj=%08x cur=%u\n",
-                mx, my, slot, kp0, e0, p0, p0 ? LD32(p0 + OBJ_SEL) : 0xffffffffu);
+        lf2_log_writef(LF2_LOG_INFO, "screens", "cs: ptr=(%d,%d) slot=%d kbplayer=%d entry=%u obj=%08x cur=%u\n", mx,
+                       my, slot, kp0, e0, p0, p0 ? LD32(p0 + OBJ_SEL) : 0xffffffffu);
     }
     if (slot < 0) return;
 
     const int kp = keyboard_player();
     const uint32_t e = (uint32_t)(1 + (kp >= 0 ? kp : 0));
-    const uint32_t objp = LD32(OBJ_TABLE + e * 4);   /* a table of POINTERS, 4 bytes each */
+    const uint32_t objp = LD32(OBJ_TABLE + e * 4); /* a table of POINTERS, 4 bytes each */
     if (!objp) return;
 
     const uint32_t cur = LD32(objp + OBJ_SEL);
@@ -118,8 +130,7 @@ void charselect_mouse(void)
          * Not on a .data word, which is what this comment used to say: the candidate for
          * one (0x0044d070) is the GAME MODE wearing a screen's disguise, and it reads the
          * same in VS mode whether the overlay is up or not. See menu.c. */
-        if (panel_charselect_up() && !panel_overlay_up() && hostwin_mouse_clicked())
-            mouse_confirm_frames = 2;
+        if (panel_charselect_up() && !panel_overlay_up() && hostwin_mouse_clicked()) mouse_confirm_frames = 2;
         return;
     }
 
@@ -152,14 +163,18 @@ void charselect_mouse(void)
  * So each screen seeds the handler's memory with the pointer's CURRENT position on the frame
  * it opens. A player who then moves the mouse gets hover; one who does not, does not.
  */
-static int screen_edge_seed(int *open_last, int open_now, int *last_x, int *last_y,
-                            int mx, int my)
+static int screen_edge_seed(int *open_last, int open_now, int *last_x, int *last_y, int mx, int my)
 {
     const int rising = open_now && !*open_last;
     *open_last = open_now;
-    if (rising) { *last_x = mx; *last_y = my; return 0; }
+    if (rising) {
+        *last_x = mx;
+        *last_y = my;
+        return 0;
+    }
     const int moved = (mx != *last_x || my != *last_y);
-    *last_x = mx; *last_y = my;
+    *last_x = mx;
+    *last_y = my;
     return moved;
 }
 
@@ -182,7 +197,7 @@ static int screen_edge_seed(int *open_last, int open_now, int *last_x, int *last
  * ink rows rather than by reading coordinates off a screenshot.
  * ------------------------------------------------------------------------ */
 enum { MODEMENU_SEL = 0x00451160, MODEMENU_ITEMS = 8 };
-enum { MM_X0 = 250, MM_X1 = 560, MM_Y0 = 202, MM_STEP_Q = 273 };   /* step 27.3 px, x10 */
+enum { MM_X0 = 250, MM_X1 = 560, MM_Y0 = 202, MM_STEP_Q = 273 }; /* step 27.3 px, x10 */
 
 static int modemenu_item_at(int x, int y)
 {
@@ -197,7 +212,10 @@ static int modemenu_was_open;
 
 void modemenu_mouse(void)
 {
-    if (game_top_mode() != MODE_IN_GAME) { modemenu_was_open = 0; return; }
+    if (game_top_mode() != MODE_IN_GAME) {
+        modemenu_was_open = 0;
+        return;
+    }
 
     int mx, my;
     if (!hostwin_pointer(&mx, &my)) return;
@@ -220,15 +238,19 @@ void modemenu_mouse(void)
         const int new_gate = panel_modemenu_up();
         live_frames++;
         if (old_gate && !new_gate) wrong_frames++;
-        if (getenv("LF2_MODEMENU_DEBUG") && (live_frames % 900) == 0)
-            fprintf(stderr, "modemenu: the old game-mode gate was true on %ld of %ld frame(s) "
-                            "where the mode menu was NOT drawn -- %s\n",
-                    wrong_frames, live_frames,
-                    wrong_frames ? "the handler was live off its own screen (issue #51)"
-                                 : "so this run shows no misfire, and says nothing about runs "
-                                   "that reach other screens");
+        if (lf2_environment_get(LF2_ENV_MODEMENU_DEBUG) && (live_frames % 900) == 0)
+            lf2_log_writef(LF2_LOG_INFO, "screens",
+                           "modemenu: the old game-mode gate was true on %ld of %ld frame(s) "
+                           "where the mode menu was NOT drawn -- %s\n",
+                           wrong_frames, live_frames,
+                           wrong_frames ? "the handler was live off its own screen (issue #51)"
+                                        : "so this run shows no misfire, and says nothing about runs "
+                                          "that reach other screens");
     }
-    if (!panel_modemenu_up()) { modemenu_was_open = 0; return; }
+    if (!panel_modemenu_up()) {
+        modemenu_was_open = 0;
+        return;
+    }
     const uint32_t cur = LD32(MODEMENU_SEL);
 
     static int last_x = -1, last_y = -1;
@@ -291,7 +313,10 @@ enum { OVERLAY_ITEMS = GEOM_OVERLAY_ITEMS };
 /* The overlay's edge memory, cleared when it is not up so the next opening is a rising edge
  * again. Separate from the handler so the early return can reach it. */
 static int overlay_was_open;
-static void overlay_mouse_closed(void) { overlay_was_open = 0; }
+static void overlay_mouse_closed(void)
+{
+    overlay_was_open = 0;
+}
 
 /* LF2_STAGE_PREVIEW selects through the game's PRE-FIGHT state, not through its draw pass.
  *
@@ -305,7 +330,7 @@ static void overlay_mouse_closed(void) { overlay_was_open = 0; }
  * Stage Mode is allowed to replace the choice with its own scripted section stage. The close
  * report says so rather than calling a screenshot of a different background a successful
  * preview. VS mode leaves this choice intact and is the deterministic gallery route. */
-static int preview_target = -3;            /* -3 env unread; -2 registry unavailable; -1 invalid */
+static int preview_target = -3; /* -3 env unread; -2 registry unavailable; -1 invalid */
 static const char *preview_want;
 static long preview_overlay_frames;
 static int preview_said, preview_closed_said;
@@ -313,7 +338,7 @@ static int preview_said, preview_closed_said;
 static void stage_preview_tick(int open)
 {
     if (preview_target == -3) {
-        preview_want = getenv("LF2_STAGE_PREVIEW");
+        preview_want = lf2_environment_get(LF2_ENV_STAGE_PREVIEW);
         preview_target = preview_want && *preview_want ? -2 : -1;
     }
     if (!preview_want || !*preview_want) return;
@@ -323,8 +348,10 @@ static void stage_preview_tick(int open)
         if (preview_target < 0) {
             if (!preview_said && preview_target == -1) {
                 preview_said = 1;
-                fprintf(stderr, "stage preview: LF2_STAGE_PREVIEW=%s names no loaded background; "
-                                "the pre-fight choice is unchanged\n", preview_want);
+                lf2_log_writef(LF2_LOG_INFO, "screens",
+                               "stage preview: LF2_STAGE_PREVIEW=%s names no loaded background; "
+                               "the pre-fight choice is unchanged\n",
+                               preview_want);
             }
             return;
         }
@@ -333,9 +360,10 @@ static void stage_preview_tick(int open)
         preview_overlay_frames++;
         if (!preview_said) {
             preview_said = 1;
-            fprintf(stderr, "stage preview: %s is registry background %d; selected on the "
-                            "pre-fight overlay so match setup and rendering use one record\n",
-                    preview_want, preview_target);
+            lf2_log_writef(LF2_LOG_INFO, "screens",
+                           "stage preview: %s is registry background %d; selected on the "
+                           "pre-fight overlay so match setup and rendering use one record\n",
+                           preview_want, preview_target);
         }
         return;
     }
@@ -344,26 +372,31 @@ static void stage_preview_tick(int open)
         preview_closed_said = 1;
         const int actual = (int)LD32(BG_INDEX);
         if (actual == preview_target)
-            fprintf(stderr, "stage preview: selection survived match initialization after %ld "
-                            "overlay frame(s); background %d owns gameplay and rendering\n",
-                    preview_overlay_frames, actual);
+            lf2_log_writef(LF2_LOG_INFO, "screens",
+                           "stage preview: selection survived match initialization after %ld "
+                           "overlay frame(s); background %d owns gameplay and rendering\n",
+                           preview_overlay_frames, actual);
         else
-            fprintf(stderr, "stage preview: the game replaced requested background %d with %d "
-                            "during match initialization (Stage Mode owns scripted section "
-                            "stages); this run is NOT a preview of %s\n",
-                    preview_target, actual, preview_want);
+            lf2_log_writef(LF2_LOG_INFO, "screens",
+                           "stage preview: the game replaced requested background %d with %d "
+                           "during match initialization (Stage Mode owns scripted section "
+                           "stages); this run is NOT a preview of %s\n",
+                           preview_target, actual, preview_want);
     }
 }
 
 int overlay_open(void)
 {
-    return game_top_mode() == MODE_IN_GAME && panel_overlay_up()
-        && LD32(OVERLAY_SEL) < OVERLAY_ITEMS;
+    return game_top_mode() == MODE_IN_GAME && panel_overlay_up() && LD32(OVERLAY_SEL) < OVERLAY_ITEMS;
 }
 
 void overlay_mouse(void)
 {
-    if (!overlay_open()) { stage_preview_tick(0); overlay_mouse_closed(); return; }
+    if (!overlay_open()) {
+        stage_preview_tick(0);
+        overlay_mouse_closed();
+        return;
+    }
     stage_preview_tick(1);
 
     int mx, my;
@@ -373,9 +406,9 @@ void overlay_mouse(void)
     const int moved = screen_edge_seed(&overlay_was_open, 1, &last_x, &last_y, mx, my);
 
     const int item = geom_overlay_item_at(mx, my);
-    if (getenv("LF2_OVERLAY_DEBUG"))
-        fprintf(stderr, "overlay: frame %ld pointer (%d,%d) -> item %d, selection %u\n",
-                hostwin_frames(), mx, my, item, LD32(OVERLAY_SEL));
+    if (lf2_environment_get(LF2_ENV_OVERLAY_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "screens", "overlay: frame %ld pointer (%d,%d) -> item %d, selection %u\n",
+                       hostwin_frames(), mx, my, item, LD32(OVERLAY_SEL));
     if (item < 0) return;
 
     const uint32_t cur = LD32(OVERLAY_SEL);
@@ -387,7 +420,7 @@ void overlay_mouse(void)
     if (hostwin_mouse_clicked()) {
         ST32(OVERLAY_SEL, (uint32_t)item);
         mouse_confirm_frames = 2;
-        if (getenv("LF2_MENU_DEBUG"))
-            fprintf(stderr, "overlay click on item %d at (%d,%d)\n", item, mx, my);
+        if (lf2_environment_get(LF2_ENV_MENU_DEBUG))
+            lf2_log_writef(LF2_LOG_INFO, "screens", "overlay click on item %d at (%d,%d)\n", item, mx, my);
     }
 }

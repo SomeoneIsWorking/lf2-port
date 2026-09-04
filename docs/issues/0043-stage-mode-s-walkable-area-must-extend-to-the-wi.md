@@ -33,7 +33,7 @@ WHAT HAS TO BE FOUND, and none of it is established yet:
     changed, which is the correct answer and the opposite of the change requested.
   - WHAT STAGE MODE DOES DIFFERENTLY. Sections are a stage-mode concept; VS has the lock at
     zero. `LF2_MODE=stage` drives the port into stage mode (runtime/overrides/menu.c) and
-    `tools/e2e.sh stage_mode` already reaches it, so there is a route to observe this on.
+    The recorded Stage Mode scenario reached it, so there is evidence for this boundary.
 
 HOW TO READ IT: tools/re/ghidra_scripts/DecompDump.py, see docs/running.md. fn_0041b5d0 is the
 function that already gave up the camera bounds; the object step fn_004064d0 is the other
@@ -92,7 +92,7 @@ shows stage the player cannot reach. On this reading that cannot be true once #3
 substitution is in force, at either a section boundary or the end of a stage. So either the
 symptom predates #36, or it is something else with the same look -- and the honest next step
 is to put a fighter against the right-hand bound of a stage-mode section at 1920x1080 and
-photograph the gap, not to add a constant. tools/e2e.sh stage_mode already drives the port
+photograph the gap, not to add a constant. The recorded Stage Mode scenario drove the port
 into stage mode and reports the lock binding the camera on 273 frames.
 
 WHAT THIS DECOMPILE CANNOT TELL YOU, said plainly because the output looks more complete than
@@ -191,13 +191,13 @@ VERIFIED:
   - `ctest geometry`, 5791 checks. The new ones walk every view from 794 to 3840: the bound is
     never pulled IN below the game's B, and whenever it moves it is EXACTLY camera_max + view
     and nothing else -- so this cannot drift into a fudge factor.
-  - tools/e2e.sh stage_mode, three arms on the runs it already made, no new run:
+  - the recorded Stage Mode scenario, three arms on the runs it already made, no new run:
         stage@794   the walk bound is the game's own B, untouched
         stage@1100  the walk bound moved out to the screen's right edge
         vs@1100     no section, so no boundary was invented
     The 794 arm is what makes this a discriminator: a build that widened unconditionally
     passes the 1100 arm and fails that one alone.
-  - tools/e2e.sh background byte-identity at 794x550 still holds.
+  - the recorded background identity at 794x550 still holds.
   - Observed at 1920x1080 in stage 1-1: lock 106 so B = 900, view 978, camera 0, walk widened
     to 978, and the fighter now walks to the right edge of the picture instead of stopping 78
     world pixels short of it.

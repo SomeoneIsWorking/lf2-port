@@ -51,7 +51,7 @@ Per stage, authored geometry that the existing 2D layers are mapped onto:
   not.
 - **The software compositor must keep working.** It has no depth buffer and never will, so the
   geometry has to be additive -- a stage with no authored geometry draws exactly as it does
-  today, and `tools/e2e.sh background` stays byte-exact.
+  today, and the recorded background comparison stays byte-exact.
 
 ## Dependency
 
@@ -92,7 +92,7 @@ about 18% of the frame. Against an ultrawide 2542 view they leave 1742.
 WHY THIS IS THE RIGHT FIRST PIECE rather than the 3D geometry: it is the smallest thing that
 needs the same substrate -- a per-stage, in-repo, hand-authored file loaded beside bg.dat and
 drawn by runtime/overrides/background.c -- and it has an unambiguous acceptance test, because a
-stage with no authored file must draw byte-identically to today (tools/e2e.sh background). The
+stage with no authored file must draw byte-identically to today (the recorded background comparison). The
 depth buffer of issue #49 is not needed to place a 2D extension, so this half can land first
 and prove the format while the renderer work proceeds separately.
 
@@ -113,7 +113,7 @@ narrows it a great deal, and #49 now carries the detail. In short:
     finished texture to the existing display list as an ordinary quad.
 
 Nothing in `render.c` is rewritten, the software compositor is untouched, and a stage with no
-authored geometry submits no pass -- which is what keeps `tools/e2e.sh background` byte-exact.
+authored geometry submits no pass -- which is what keeps the recorded background comparison byte-exact.
 
 WHY A SET DOES NOT NEED A SHARED DEPTH BUFFER WITH THE SPRITES: the levels are BEHIND every
 fighter. Mesh-against-mesh interpenetration is the case that genuinely needs depth, and it is
@@ -190,7 +190,7 @@ SO THE PIPELINE IS, with no copy anywhere in it:
   5. hand it to the existing display list as the BACKMOST quad
 
 render.c is not rewritten, the software compositor is untouched, and a stage with no authored
-geometry allocates nothing and submits nothing -- which is what keeps tools/e2e.sh background
+geometry allocates nothing and submits nothing -- which is what keeps the recorded background comparison
 byte-exact.
 
 WHAT IS STILL UNMEASURED, and the claims say so rather than implying otherwise: the spike drew
@@ -236,7 +236,7 @@ next person to touch the pipeline can check the test still discriminates.
 
 The self-test runs at INIT rather than from render_report, which is behind LF2_RENDER_DEBUG and
 fires every 900 frames -- a self-test needing two switches and a long run is the same as not
-having one. tools/e2e.sh mesh is what runs it.
+having one. The recorded mesh scenario is what ran it.
 
 `tools/build/build_shaders.py` compiles `*.vert` as well as `*.frag`, taking the stage from the
 extension; its current two-stage pipeline covers committed SPIR-V and MSL for every source.
@@ -410,7 +410,7 @@ Also asserted there, because each is a thing that could silently be wrong:
   - an UNKNOWN depth (0) going to the far plane and not moving with the camera at all.
 
 Mutants run: ignoring the depth in the shift fails 24 checks; disabling the pipeline's depth
-test still makes tools/e2e.sh mesh print FAIL after the rewrite, so the discriminator survived
+test still made the recorded mesh scenario print FAIL after the rewrite, so the discriminator survived
 the change to the vertex format.
 
 WHAT IS LEFT before a stage can be woven: the pass has no TEXTURE support (vertex colour only),
@@ -526,7 +526,7 @@ where the lookup and the submit belong), and then the art, which is the hand-wea
 
 background.c now resolves `depth: layer <file>` against the loaded stage's own layers and
 loads a stage's `.stage` when the background index changes. Proven inside the running game:
-`tools/e2e.sh stage_geom`, three arms, all green.
+The recorded stage-geometry scenario had three arms, all green.
 
 WHERE THE FILES LIVE, and why it took a decision. The port's cwd is the GAME TREE, because the
 game opens all of its own data by relative path -- and the game tree is neither in this repo nor
@@ -608,7 +608,7 @@ WHAT HAD TO CHANGE for it:
             frame that drops geometry for want of it is COUNTED -- "the surface is not known
             yet" and "there was nothing to draw" produce the same empty frame.
 
-MEASURED, and the measurement is the point. `tools/e2e.sh stage_geom` gained a GPU arm with TWO
+MEASURED, and the measurement is the point. The recorded stage-geometry scenario gained a GPU arm with TWO
 solids straddling Brokeback Clif's layers: one at bc1.bmp's derived 1.2068 (equal to layers
 0..2, so it belongs behind every layer) and one at 0.5 (nearer than bc4/bc5 at 1.0, so it
 belongs after all of them). Result: 1464 geometry passes over 732 frames -- EXACTLY TWO A FRAME
@@ -626,7 +626,7 @@ counter before the thing it counts exists:
     Now 1900, so the report at 1800 sees the match.
   - the assertion grepped the FIRST report line, which is the same pre-match zero. Now the last.
 
-The byte-identity arm of `tools/e2e.sh background` still holds, ctest 11/11, and the mesh
+The recorded background identity arm still holds, ctest 11/11, and the mesh
 self-test still passes. GPU: gpuguard latch clear before and after, 0 kernel trouble lines.
 
 WHAT IS LEFT IS THE ART, and only the art. No engineering piece is outstanding. `stages/` is in
@@ -678,7 +678,7 @@ comes back as -180, not +180. Both name the same direction, so nothing downstrea
 apart. The comment was corrected rather than the code, and the test now asserts both the real
 behaviour and that the two ends are the same light, so nobody "fixes" what was never wrong.
 
-Instrument I015. tools/e2e.sh render still passes, including the arm that asserts the light
+Instrument I015. The recorded renderer comparison passed, including the arm that asserts the light
 changes NOTHING on a frame with no fighters in it.
 
 ### Resolution (2026-08-13)

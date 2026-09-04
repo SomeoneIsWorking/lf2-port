@@ -5,7 +5,7 @@ Issue #62. Nothing here is game content: a `.stage` file and the models it names
 port's own work and are committed to the repo, unlike `game/`.
 
 A stage with no `.stage` file draws exactly as it does today. That is the acceptance test the
-whole feature is built around — `tools/e2e.py background` stays byte-identical — and it is why
+whole feature is built around — the recorded background comparison stays byte-identical — and it is why
 absence is the default rather than an empty file being required.
 
 ## Where the files live

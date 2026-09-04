@@ -18,7 +18,7 @@ Fix the frame-lifetime or composition transition that produces the transient cor
 
 ## Investigation
 
-The first implementation froze matches by declining `fn_004246b0__orig` and invented a second
+The first implementation froze matches by declining `original guest routine 0x004246b0` and invented a second
 presentation lifecycle for the missing game frame. Retaining display-list lengths was invalid:
 present-time decorations could clear the spent list and reuse its tile arena before the hold was
 reacquired, so restoring metadata resurrected entries over changed backing. Replacing that with
@@ -36,7 +36,7 @@ frame could look recovered while the first hidden frame still glitched.
 
 There is now one frame lifecycle: the game's ordinary one.
 
-- `fn_004246b0__orig` always runs, so every screen—including a match beneath RmlUi—continues
+- `original guest routine 0x004246b0` always runs, so every screen—including a match beneath RmlUi—continues
   through its normal update, display-list build, render, and present. Modal behavior is owned by
   the existing input boundary, which consumes physical input before LF2 sees it.
 - Native snapshot capture/restore, software completed-region retention, frozen presentation,
@@ -59,7 +59,7 @@ must match the full control frames byte-for-byte. The +360 action reaches RmlUi 
 accept stale replay.
 
 ### Resolution (2026-08-22)
-Removed the second frozen-frame lifecycle rather than retaining another picture of the game: fn_004246b0__orig now always owns the ordinary update/draw/present beneath modal RmlUi, and input ownership alone makes the shell modal. Closing from rmlui_input_update had hidden the document but continued Context::Update/Render in that same UI frame; a document-generation token now cancels the interrupted frame before backend rendering. Deleted native snapshot capture/restore, software completed-region retention, and on-demand frozen present. Added offline lifecycle checks and an exact ui_global route that targets the first hidden frame after close and requires live pixels beneath the modal.
+Removed the second frozen-frame lifecycle rather than retaining another picture of the game: original guest routine 0x004246b0 now always owns the ordinary update/draw/present beneath modal RmlUi, and input ownership alone makes the shell modal. Closing from rmlui_input_update had hidden the document but continued Context::Update/Render in that same UI frame; a document-generation token now cancels the interrupted frame before backend rendering. Deleted native snapshot capture/restore, software completed-region retention, and on-demand frozen present. Added offline lifecycle checks and an exact ui_global route that targets the first hidden frame after close and requires live pixels beneath the modal.
 
 ### Note (2026-08-22)
 Follow-up audit removed the last spent/fl_touch deferred-clear state: present now clears list lengths, overlay boundaries, tile-arena use, and pool claims immediately. ui_global no longer accepts coverage as proof; it runs a deterministic no-match-modal control at the same @match offsets, requires exact outside-document pixels while open, and byte-identical full frames for the first hidden frame (+362) and two successors.

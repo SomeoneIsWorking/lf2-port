@@ -3,10 +3,7 @@ project(lf2_port C CXX)
 
 include(GNUInstallDirs)
 
-# The recompiled game is intentionally very literal C: every guest instruction becomes
-# explicit register/memory operations.  Leaving a single-config generator at CMake's empty
-# build type compiles that hot dispatch code at -O0 and turns the data parser into seconds of
-# avoidable host work.  Keep debug symbols, but make the runnable product optimized by default.
+# Keep symbols for JIT/runtime diagnostics while optimizing the runnable product.
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
@@ -18,19 +15,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_library(x86_decode recompiler/x86_decode.c)
-target_include_directories(x86_decode PUBLIC recompiler)
-target_compile_options(x86_decode PRIVATE -Wall -Wextra)
-
-add_executable(test_corpus recompiler/test_corpus.c)
-target_link_libraries(test_corpus PRIVATE x86_decode)
-target_compile_options(test_corpus PRIVATE -Wall -Wextra)
-
 enable_testing()
 
 # Lucent is the one process logger. It owns timestamping, channel formatting, sink/file routing,
-# and cross-thread serialization; LF2's narrow bridge below only assembles legacy printf fragments
-# into complete records. The variables remain in LF2's diagnostics namespace.
+# and cross-thread serialization; LF2's narrow bridge accepts explicit complete records from
+# product call sites. The variables remain in LF2's diagnostics namespace.
 if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/lucent/CMakeLists.txt")
     set(LUCENT_CHANNEL_ENV "LF2_LOG_CHANNELS")
     set(LUCENT_LOG_FILE_ENV "LF2_LOG_FILE")
@@ -39,6 +28,15 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/lucent/CMakeLists.txt")
 else()
     message(FATAL_ERROR "third_party/lucent is missing -- run `git submodule update --init --recursive`")
 endif()
+
+add_library(lf2_environment STATIC runtime/app/environment.c)
+target_include_directories(lf2_environment PUBLIC runtime/app)
+target_compile_options(lf2_environment PRIVATE -Wall -Wextra)
+
+add_library(lf2_diagnostics STATIC runtime/log/lf2_log.cpp)
+target_include_directories(lf2_diagnostics PUBLIC runtime/log)
+target_compile_options(lf2_diagnostics PRIVATE -Wall -Wextra)
+target_link_libraries(lf2_diagnostics PUBLIC lucent::lucent)
 
 # ---- THERE IS ONE SUITE AND IT IS FAST ----
 #
@@ -61,55 +59,14 @@ endif()
 # three-run, 270-second script became 20 assertions in a millisecond, and gained a walk across
 # every on-screen pixel that the script had never done.
 
-# re/instructions.tsv is Ghidra's disassembly of the game: every instruction with its raw
-# bytes, which is enough to reconstruct .text. It is a derivative of a binary this project
-# does not distribute, so it is gitignored and supplied by whoever runs the build
-# (docs/isa-scope.md has the one-line Ghidra command).
-#
-# It feeds two different tests, and only one of them actually needs Ghidra:
-#   decoder_corpus -- checks our decoder against an INDEPENDENT disassembly. Skips (77)
-#                     without it, loudly; there is no substitute, by definition.
-#   instructions   -- feeds real encodings to the host CPU and to our lift and compares.
-#                     A corpus emitted by our own decoder serves that perfectly well, so
-#                     one is generated when Ghidra's is absent rather than losing 66,984
-#                     checks in a fresh clone.
-add_test(NAME decoder_corpus
-         COMMAND test_corpus ${CMAKE_SOURCE_DIR}/re/instructions.tsv)
-set_tests_properties(decoder_corpus PROPERTIES SKIP_RETURN_CODE 77)
-
-add_executable(lift recompiler/lift.c)
-target_link_libraries(lift PRIVATE x86_decode)
-target_compile_options(lift PRIVATE -Wall -Wextra)
-
-option(LF2_HOST_TOOLS_ONLY "Build only host-side recompilation tools" OFF)
-if(LF2_HOST_TOOLS_ONLY)
-    return()
-endif()
-
 if(ANDROID)
-    if(NOT LF2_RECOMP_SOURCE OR NOT EXISTS "${LF2_RECOMP_SOURCE}")
-        message(FATAL_ERROR
-            "Android requires -DLF2_RECOMP_SOURCE=<host-generated lf2_recomp.c>. "
-            "Run tools/build/android.py; generated code remains under build/ and is never committed.")
-    endif()
     set(LF2_MUSIC_DECODER runtime/audio/music_decode_libav.c)
 else()
-    set(LF2_RECOMP_SOURCE ${CMAKE_BINARY_DIR}/gen/lf2_recomp.c)
     set(LF2_MUSIC_DECODER runtime/audio/music_decode_process.c)
-    add_custom_command(
-        OUTPUT ${LF2_RECOMP_SOURCE}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
-        COMMAND lift ${CMAKE_SOURCE_DIR}/game/lf2.exe ${CMAKE_SOURCE_DIR}/re/entries.tsv
-                     ${LF2_RECOMP_SOURCE}
-        DEPENDS lift ${CMAKE_SOURCE_DIR}/re/entries.tsv ${CMAKE_SOURCE_DIR}/re/overrides.txt
-        COMMENT "Recompiling lf2.exe -> C")
 endif()
 
-set(LF2_RUNTIME_SOURCES
-    ${LF2_RECOMP_SOURCE}
+set(LF2_NATIVE_RUNTIME_SOURCES
     runtime/cpu/guest.c
-    runtime/cpu/flags.c
-    runtime/cpu/strops.c
     runtime/cpu/rwatch.c
     runtime/win32/imports.c
     runtime/win32/paths.c
@@ -128,7 +85,6 @@ set(LF2_RUNTIME_SOURCES
     runtime/app/game_selection.cpp
     runtime/app/installer_extract.cpp
     runtime/app/port_resources.c
-    runtime/log/lf2_log.cpp
     runtime/app/pause.c
     runtime/app/function_keys.c
     runtime/app/options.c
@@ -145,6 +101,7 @@ set(LF2_RUNTIME_SOURCES
     runtime/app/script.c
     runtime/win32/wsock.c
     runtime/overrides/boot_guest.c
+    runtime/overrides/native_override.c
     runtime/overrides/startup_init.c
     runtime/overrides/startup_frontend.c
     runtime/overrides/startup_world.c
@@ -182,14 +139,39 @@ set(LF2_RUNTIME_SOURCES
     third_party/RmlUi/Backends/RmlUi_Platform_SDL.cpp
     runtime/app/main.c)
 if(ANDROID)
-    list(APPEND LF2_RUNTIME_SOURCES runtime/platform/android_bridge.c)
+    list(APPEND LF2_NATIVE_RUNTIME_SOURCES runtime/platform/android_bridge.c)
+endif()
+
+# The gameplay target has one product-only JIT adapter and no alternate executor.
+set(LF2_JIT_EXECUTOR runtime/cpu/jit_executor.c)
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/${LF2_JIT_EXECUTOR}")
+    message(FATAL_ERROR "LF2 requires its runtime/cpu/jit_executor.c x86port adapter")
+endif()
+if(NOT X86PORT_DIR OR NOT EXISTS "${X86PORT_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "X86PORT_DIR must name the exact checkout resolved by "
+                        "tools/build/source_dependencies.py; run tools/build/build.py")
+endif()
+if(NOT X86PORT_JITCOMMON_DIR OR
+   NOT EXISTS "${X86PORT_JITCOMMON_DIR}/src/jitcommon/block_cache.h")
+    message(FATAL_ERROR "X86PORT_JITCOMMON_DIR must name the exact checkout resolved by "
+                        "tools/build/source_dependencies.py; run tools/build/build.py")
+endif()
+set(X86PORT_JITCOMMON_DIR "${X86PORT_JITCOMMON_DIR}" CACHE PATH
+    "pinned shared/jit-common checkout" FORCE)
+add_subdirectory("${X86PORT_DIR}" "${CMAKE_BINARY_DIR}/deps/x86port" EXCLUDE_FROM_ALL)
+if(NOT TARGET x86port_runtime)
+    message(FATAL_ERROR "shared/x86port must export the product-only x86port_runtime target")
+endif()
+set(LF2_RUNTIME_SOURCES ${LF2_JIT_EXECUTOR} ${LF2_NATIVE_RUNTIME_SOURCES})
+
+if(ANDROID)
     add_library(lf2 SHARED ${LF2_RUNTIME_SOURCES})
     set_target_properties(lf2 PROPERTIES OUTPUT_NAME main)
 else()
     add_executable(lf2 ${LF2_RUNTIME_SOURCES})
 endif()
-# EVERY subsystem directory is on the include path, which is what lets a file say
-# #include "guest_ops.h" wherever it happens to live. The alternative -- relative "../"
+# Every subsystem directory is on the include path, which lets a source include the
+# owning module's public header wherever the caller happens to live. Relative "../"
 # includes -- ties each file to its position in the tree and turns any future regrouping into
 # an edit of every header line (issue #46).
 target_include_directories(lf2 PRIVATE
@@ -199,7 +181,9 @@ target_include_directories(lf2 PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/RmlUi/Backends)
 # RmlUi's SDL backends pick SDL2 vs SDL3 by this macro (Backends/RmlUi_Platform_SDL.h).
 target_compile_definitions(lf2 PRIVATE RMLUI_SDL_VERSION_MAJOR=3)
-target_compile_options(lf2 PRIVATE -include "${CMAKE_SOURCE_DIR}/runtime/log/lf2_log.h")
+if(TARGET x86port_runtime)
+    target_link_libraries(lf2 PRIVATE x86port_runtime)
+endif()
 
 # The hand-woven stage geometry (issue #62) travels BESIDE THE BINARY.
 #
@@ -227,63 +211,9 @@ add_custom_target(stages ALL
     COMMENT "stages/ -> beside the binary")
 add_dependencies(lf2 stages)
 
-# Warnings on the hand-written runtime only. The recompiled output is machine-emitted and
-# would bury the signal, so it is compiled without them rather than the whole target being
-# left unchecked -- which is how four real warnings sat unnoticed.
-set_source_files_properties(
-    runtime/cpu/guest.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c runtime/win32/imports.c runtime/win32/paths.c
-    runtime/win32/com.c runtime/win32/win32.c runtime/video/blt_trace.c runtime/video/ddraw.c runtime/video/host_frame.c runtime/video/result_panel.c runtime/video/stage_banner.c
-    runtime/audio/dsound.c ${LF2_MUSIC_DECODER} runtime/win32/dshow.c
-    runtime/win32/gdi.c runtime/app/loadprof.c runtime/app/game_selection.cpp runtime/app/installer_extract.cpp runtime/app/port_resources.c runtime/app/pause.c runtime/app/function_keys.c runtime/input/gamepad.c runtime/input/bindings.c runtime/input/keyboard.c runtime/input/touch_input.cpp runtime/app/script.c
-    runtime/log/lf2_log.cpp runtime/ui/rmlui_system.cpp
-    runtime/app/options.c
-    runtime/app/config.c
-    runtime/app/user_paths.c
-    runtime/app/game_data.c
-    runtime/app/port_entry.c
-    runtime/app/update.c
-    runtime/platform/window_policy.c
-    runtime/win32/wsock.c
-    runtime/overrides/boot_guest.c
-    runtime/overrides/startup_init.c
-    runtime/overrides/startup_frontend.c
-    runtime/overrides/startup_world.c
-    runtime/overrides/cheats.c
-    runtime/overrides/menu.c
-    runtime/overrides/screens.c
-    runtime/overrides/input.c
-    runtime/overrides/coop.c
-    runtime/overrides/coop_debug.c
-    runtime/overrides/hud.c
-    runtime/overrides/text.c
-    runtime/overrides/assets.c
-    runtime/overrides/object_parser.c
-    runtime/overrides/object_frames.c
-    runtime/overrides/background.c
-    runtime/overrides/objects.c
-    runtime/overrides/audio_pan.c
-    runtime/video/render.c
-    runtime/video/hd2d.c
-    runtime/video/mesh.c
-    runtime/video/engine.c
-    runtime/video/engine_visibility_probe.c
-    runtime/video/engine_textures.c
-    runtime/video/engine_lighting.c
-    runtime/video/stagegeom.c
-    runtime/ui/ui_rgba.c
-    runtime/ui/setup_ui.c runtime/ui/touch_controls.c
-    runtime/platform/android_bridge.c
-    runtime/app/main.c
+# Warnings on every hand-written product source. Keep the source list authoritative above.
+set_source_files_properties(${LF2_JIT_EXECUTOR} ${LF2_NATIVE_RUNTIME_SOURCES}
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
-option(LF2_FN_TRACE "Trace guest function entries (debugging)" OFF)
-if(LF2_FN_TRACE)
-    target_compile_definitions(lf2 PRIVATE LF2_FN_TRACE)
-endif()
-option(LF2_STACK_CHECK "Assert stack balance at every guest RET (debugging)" OFF)
-if(LF2_STACK_CHECK)
-    target_compile_definitions(lf2 PRIVATE LF2_STACK_CHECK LF2_FN_TRACE)
-endif()
-
 if(NOT TARGET SDL3::SDL3)
     find_package(SDL3 REQUIRED CONFIG)
 endif()
@@ -293,7 +223,7 @@ endif()
 find_library(LF2_M m)
 find_package(ZLIB REQUIRED)
 find_package(BZip2 REQUIRED)
-target_link_libraries(lf2 PRIVATE SDL3::SDL3 lucent::lucent lucent::zip ZLIB::ZLIB BZip2::BZip2
+target_link_libraries(lf2 PRIVATE SDL3::SDL3 lf2_environment lf2_diagnostics lucent::zip ZLIB::ZLIB BZip2::BZip2
                                   $<$<BOOL:${LF2_M}>:${LF2_M}>)
 
 if(ANDROID)
@@ -368,7 +298,7 @@ target_link_libraries(test_function_keys PRIVATE SDL3::SDL3)
 target_compile_options(test_function_keys PRIVATE -Wall -Wextra)
 add_test(NAME function_keys COMMAND test_function_keys)
 
-add_executable(test_lf2_log tests/test_lf2_log.cpp runtime/log/lf2_log.cpp)
+add_executable(test_lf2_log tests/test_lf2_log.cpp)
 target_include_directories(test_lf2_log PRIVATE runtime/log)
 target_link_libraries(test_lf2_log PRIVATE lucent::lucent)
 target_compile_options(test_lf2_log PRIVATE -Wall -Wextra)
@@ -396,6 +326,13 @@ target_compile_options(test_ui_rgba PRIVATE -Wall -Wextra)
 add_test(NAME ui_rgba COMMAND test_ui_rgba)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME execution_boundary COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_execution_boundary.py)
+add_test(NAME source_policy COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_source_policy.py)
+add_test(NAME product_execution_symbols COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tools/build/check_product_symbols.py
+         --nm ${CMAKE_NM} --product $<TARGET_FILE:lf2>)
 add_test(NAME structure COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tools/build/check_structure.py)
 add_test(NAME clang_format COMMAND ${Python3_EXECUTABLE}
@@ -409,6 +346,10 @@ add_test(NAME bootstrap COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_bootstrap.py)
 add_test(NAME build_toolchain COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_build_toolchain.py)
+add_test(NAME source_dependencies COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_source_dependencies.py)
+add_test(NAME scratch_clean COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_scratch_clean.py)
 add_test(NAME runtime_log_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_runtime_log.py)
 add_test(NAME build_shaders_tool COMMAND ${Python3_EXECUTABLE}
@@ -656,55 +597,14 @@ target_compile_options(test_mixer PRIVATE -Wall -Wextra)
 target_link_libraries(test_mixer PRIVATE m)
 add_test(NAME mixer COMMAND test_mixer)
 
-add_executable(test_flags tests/test_flags.c runtime/cpu/flags.c)
-target_include_directories(test_flags PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)
-add_test(NAME flags COMMAND test_flags)
-set_tests_properties(flags PROPERTIES SKIP_RETURN_CODE 77)
-
-if(EXISTS ${CMAKE_SOURCE_DIR}/re/instructions.tsv)
-    set(INSN_TSV ${CMAKE_SOURCE_DIR}/re/instructions.tsv)
-    set(INSN_TSV_DEP ${INSN_TSV})
-else()
-    set(INSN_TSV ${CMAKE_BINARY_DIR}/gen/instructions.tsv)
-    set(INSN_TSV_DEP ${INSN_TSV})
-    add_custom_command(
-        OUTPUT ${INSN_TSV}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
-        COMMAND lift --dump-insns ${CMAKE_SOURCE_DIR}/game/lf2.exe
-                     ${CMAKE_SOURCE_DIR}/re/entries.tsv ${INSN_TSV}
-        DEPENDS lift ${CMAKE_SOURCE_DIR}/re/entries.tsv
-        COMMENT "No Ghidra dump present; deriving an instruction corpus from the binary")
-endif()
-
-add_custom_command(
-    OUTPUT ${CMAKE_BINARY_DIR}/gen/insn_cases.c
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/gen
-    COMMAND lift --insn-test ${INSN_TSV} ${CMAKE_BINARY_DIR}/gen/insn_cases.c
-    DEPENDS lift ${INSN_TSV_DEP}
-    COMMENT "Generating instruction differential cases")
-
-add_executable(test_insn ${CMAKE_BINARY_DIR}/gen/insn_cases.c tests/test_insn.c runtime/cpu/flags.c runtime/cpu/strops.c runtime/cpu/rwatch.c)
-target_include_directories(test_insn PRIVATE runtime runtime/cpu runtime/audio runtime/video runtime/win32)
-# The committed golden vectors let a non-x86 host replay the x86 truth; on such a host
-# the bare `test_insn` run below automatically becomes a replay against this file.
-target_compile_definitions(test_insn PRIVATE
-    LF2_VECTORS_PATH="${CMAKE_SOURCE_DIR}/re/insn_vectors.bin")
-add_test(NAME instructions COMMAND test_insn)
-set_tests_properties(instructions PROPERTIES SKIP_RETURN_CODE 77)
-
-# Regenerate the vectors (x86 only): cmake --build . --target insn_vectors
-add_custom_target(insn_vectors
-    COMMAND test_insn --capture ${CMAKE_SOURCE_DIR}/re/insn_vectors.bin
-    DEPENDS test_insn
-    COMMENT "Capturing instruction golden vectors from the host CPU")
-
-# On x86 the replay path itself is exercised against the committed vectors, so a broken
-# replay cannot hide behind the live differential until someone runs it on a Mac.
-if(EXISTS ${CMAKE_SOURCE_DIR}/re/insn_vectors.bin)
-    add_test(NAME instructions_replay
-             COMMAND test_insn --replay ${CMAKE_SOURCE_DIR}/re/insn_vectors.bin)
-    set_tests_properties(instructions_replay PROPERTIES SKIP_RETURN_CODE 77)
-endif()
+# Product modules compiled directly into focused tests retain the same typed
+# configuration and Lucent diagnostic owners as the shipping executable.
+get_property(LF2_DIRECTORY_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(test_target IN LISTS LF2_DIRECTORY_TARGETS)
+    if(test_target MATCHES "^test_")
+        target_link_libraries(${test_target} PRIVATE lf2_environment lf2_diagnostics)
+    endif()
+endforeach()
 
 # RelWithDebInfo defines NDEBUG, but these executables use assert() as their test contract.
 # Keep assertions live for every current and future test_ target without changing the product's
@@ -722,7 +622,7 @@ foreach(LF2_TEST_TARGET IN LISTS LF2_DIRECTORY_TARGETS)
 endforeach()
 
 # The SPIR-V and MSL in runtime/shaders/gen/ are committed, so the build needs no shader
-# compiler. The gate recompiles authoritative GLSL with glslc and translates that exact SPIR-V
+# compiler. The gate compiles authoritative GLSL again with glslc and translates that exact SPIR-V
 # with SDL_shadercross. Missing shadercross preserves the SPIR-V comparison before reporting the
 # MSL half skipped; stale evidence still fails.
 add_test(NAME shaders

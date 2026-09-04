@@ -22,6 +22,8 @@
  * hd2d_quad.vert. Character visibility and projected shadow reception both depth-test against
  * the completed scene.
  */
+#include "lf2_log.h"
+#include "environment.h"
 #include "engine_lighting.h"
 
 #include <SDL3/SDL_gpu.h>
@@ -148,7 +150,8 @@ int engine_lighting_init(SDL_GPUDevice *dev, SDL_GPUShaderFormat formats, SDL_GP
         lp.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
         p_chars = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
         if (!p_chars) {
-            fprintf(stderr, "engine: the character-mask pipeline failed: %s -- no lighting chain\n", SDL_GetError());
+            lf2_log_writef(LF2_LOG_INFO, "engine_lighting",
+                           "engine: the character-mask pipeline failed: %s -- no lighting chain\n", SDL_GetError());
         }
         SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
 
@@ -157,7 +160,7 @@ int engine_lighting_init(SDL_GPUDevice *dev, SDL_GPUShaderFormat formats, SDL_GP
          * foreground object (#99). The visibility probe's named LEQUAL arm is the deliberate
          * other-answer mutation: it must expose self-shadowing on the same shipping pipeline
          * or the equal-depth sample is not a trustworthy instrument. */
-        const char *visibility_probe = getenv("LF2_VISIBILITY_PROBE");
+        const char *visibility_probe = lf2_environment_get(LF2_ENV_VISIBILITY_PROBE);
         lp.depth_stencil_state.compare_op = visibility_probe && strcmp(visibility_probe, "shadow-self-lequal") == 0
                                                 ? SDL_GPU_COMPAREOP_LESS_OR_EQUAL
                                                 : SDL_GPU_COMPAREOP_LESS;
@@ -166,7 +169,8 @@ int engine_lighting_init(SDL_GPUDevice *dev, SDL_GPUShaderFormat formats, SDL_GP
                             sizeof hd2d_shadow_msl, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1, "cast-shadow mask");
         p_shadow = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
         if (!p_shadow) {
-            fprintf(stderr, "engine: the cast-shadow-mask pipeline failed: %s -- no lighting chain\n", SDL_GetError());
+            lf2_log_writef(LF2_LOG_INFO, "engine_lighting",
+                           "engine: the cast-shadow-mask pipeline failed: %s -- no lighting chain\n", SDL_GetError());
         }
         SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
 
@@ -176,7 +180,8 @@ int engine_lighting_init(SDL_GPUDevice *dev, SDL_GPUShaderFormat formats, SDL_GP
                                              sizeof hd2d_light_msl, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, "light");
         p_light = SDL_CreateGPUGraphicsPipeline(DEV, &lp);
         if (!p_light) {
-            fprintf(stderr, "engine: the light pipeline failed: %s -- no lighting chain\n", SDL_GetError());
+            lf2_log_writef(LF2_LOG_INFO, "engine_lighting",
+                           "engine: the light pipeline failed: %s -- no lighting chain\n", SDL_GetError());
         }
         SDL_ReleaseGPUShader(DEV, lp.fragment_shader);
     }
@@ -192,15 +197,19 @@ int engine_lighting_init(SDL_GPUDevice *dev, SDL_GPUShaderFormat formats, SDL_GP
     if (vert) SDL_ReleaseGPUShader(DEV, vert);
 
     if (!light_ok || !smp_linear)
-        fprintf(stderr, "engine: the lighting chain did not come up -- frames are presented "
-                        "unlit, which is a picture without shading rather than a broken one\n");
+        lf2_log_writef(LF2_LOG_INFO, "engine_lighting",
+                       "engine: the lighting chain did not come up -- frames are presented "
+                       "unlit, which is a picture without shading rather than a broken one\n");
     return light_ok;
 }
 
 /* True when the chain could not even build its own sampler, which the engine treats as fatal
  * rather than as "unlit": the old single-file arrangement refused there and must keep doing
  * so, or a half-working device would silently change how much of the port runs. */
-int engine_lighting_sampler_missing(void) { return smp_linear == NULL; }
+int engine_lighting_sampler_missing(void)
+{
+    return smp_linear == NULL;
+}
 
 void engine_lighting_bind_targets(SDL_GPUTexture *color, SDL_GPUTexture *depth, SDL_GPUTexture *chars,
                                   SDL_GPUTexture *shadow, SDL_GPUTexture *lit, SDL_GPUSampler *nearest)
@@ -292,7 +301,8 @@ static int lvbuf_reserve(int bytes)
     lvxfer = SDL_CreateGPUTransferBuffer(DEV, &ti);
 
     if (!lvbuf || !lvxfer) {
-        fprintf(stderr, "engine: could not allocate a %d-byte light vertex buffer: %s\n", bytes, SDL_GetError());
+        lf2_log_writef(LF2_LOG_INFO, "engine_lighting",
+                       "engine: could not allocate a %d-byte light vertex buffer: %s\n", bytes, SDL_GetError());
         if (lvbuf) {
             SDL_ReleaseGPUBuffer(DEV, lvbuf);
             lvbuf = NULL;
@@ -318,7 +328,7 @@ static int show_stage_name(void)
     static int looked, show;
     if (!looked) {
         looked = 1;
-        const char *v = getenv("LF2_HD2D_SHOW");
+        const char *v = lf2_environment_get(LF2_ENV_HD2D_SHOW);
         show = v && strcmp(v, "chars") == 0 ? 1 : (v && strcmp(v, "shadow") == 0 ? 2 : 0);
     }
     return show;
@@ -495,11 +505,11 @@ SDL_GPUTexture *engine_lighting_run(const EngineQuad *q, int n, int w, int h)
 
 void engine_lighting_report(void)
 {
-    fprintf(stderr,
-            "engine: lighting %s -- %ld frame(s) lit, %ld character quad(s) into the "
-            "mask, %ld shadow quad(s)%s\n",
-            (light_ok && opt_lighting()) ? "ON" : "off", stat_light_frames, stat_char_quads, stat_shadow_quads,
-            light_ok ? "" : "  (NO lighting chain: frames are presented unlit)");
+    lf2_log_writef(LF2_LOG_INFO, "engine_lighting",
+                   "engine: lighting %s -- %ld frame(s) lit, %ld character quad(s) into the "
+                   "mask, %ld shadow quad(s)%s\n",
+                   (light_ok && opt_lighting()) ? "ON" : "off", stat_light_frames, stat_char_quads, stat_shadow_quads,
+                   light_ok ? "" : "  (NO lighting chain: frames are presented unlit)");
 }
 
 void engine_lighting_shutdown(void)

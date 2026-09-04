@@ -26,7 +26,7 @@
 
 #include "engine.h"
 
-/* Build the chain's shaders, pipelines and sampler. Returns 0 and says why on stderr when the
+/* Build the chain's shaders, pipelines and sampler. Returns 0 and says why through the logger when the
  * chain cannot run here -- frames are then presented unlit, which is a picture without
  * shading rather than a broken one. */
 int engine_lighting_init(SDL_GPUDevice *dev, SDL_GPUShaderFormat formats, SDL_GPUTextureFormat depth_format);

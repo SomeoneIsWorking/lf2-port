@@ -57,7 +57,7 @@ void opt_set_light_intensity(float v);
  * Config key `sprite_passes`, holding the same string the parser reads, e.g.
  * `nearest:1/2,nearest:2,aa,inner,outline:1`. LF2_SPRITE_PASSES pins it once at first read for
  * route arms (the issue #69 pattern). A spec that does not parse is REFUSED, by name, on
- * stderr -- the chain then stays empty rather than quietly becoming a different chain. */
+ * the logger -- the chain then stays empty rather than quietly becoming a different chain. */
 const SpriteChain *opt_sprite_chain(void);
 void opt_set_sprite_chain(const SpriteChain *chain);
 

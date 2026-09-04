@@ -1,6 +1,6 @@
 /* fn_0041a250 -- the stage's background layer draw.
  *
- * One of the hand-written native replacements for recompiled functions; see
+ * One of the hand-written native replacements for guest routines; see
  * runtime/overrides/overrides.h for how the set is divided and why.
  *
  * WHY THIS IS AN OVERRIDE AND NOT A BLIT-PATH HEURISTIC. Widescreen has to decide, for every
@@ -44,29 +44,29 @@
  * A wider view never changes a bitmap's dimensions or the layers' shared world origin.
  * backdrop_layout.h declares the one opaque far plane whose edge may continue behind them.
  *
- * Verified against the body it replaces by drawing the same frames both ways: see
- * tools/routes/background_test.sh.
+ * The original observations remain recorded in the issue and claim ledgers. Runtime
+ * conformance now compares the JIT path against the independent emulator oracle.
  */
 
+#include "environment.h"
 #include "overrides.h"
 #include "world.h"
 #include "geom.h"
 
 #include "com.h"
-#include "guest_ops.h"
+#include "guest.h"
 #include "hostwin.h"
+#include "jit_executor.h"
 #include "stagegeom.h"
 #include "render.h"
 #include "backdrop.h"
 #include "backdrop_layout.h"
 #include "port_resources.h"
+#include "lf2_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-void fn_0041a250__orig(void);
-void fn_0041a5a0__orig(void);
 
 /* The camera's shadow copy and the two words that gate it, straight out of fn_0041b5d0. */
 enum { CAM_MIRROR = 0x00450b7c, CAM_MIRROR_ON_A = 0x00450b74, CAM_MIRROR_ON_B = 0x00450b84 };
@@ -164,18 +164,7 @@ static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, i
      * geom_layer_offset -- checked by tests/test_geom.c without booting the game. The pin is
      * issue #23: every stage's sky is non-looping and only just wider than 794. Any declared
      * native-size continuation is placed later; parallax itself remains the game's formula. */
-    if (stage_width <= w || span <= w) return 0; /* pinned: the skew must not move it */
-    const int32_t off = geom_layer_offset(span, stage_width, camera, w);
-    /* LF2_BG_SKEW=<n> shifts every parallax offset by n. It exists so the byte-identity
-     * check in tools/routes/background_test.sh has a NEGATIVE case: a frame dump that is identical
-     * whatever this function returns would be measuring nothing. Never set in normal use.
-     * Read once -- this runs for every layer of every frame. */
-    static int skew = -1;
-    if (skew < 0) {
-        const char *s = getenv("LF2_BG_SKEW");
-        skew = s ? atoi(s) : 0;
-    }
-    return off + skew;
+    return geom_layer_offset(span, stage_width, camera, w);
 }
 
 /* ---- WHERE THE WIDE VIEW IS CENTRED (issue #39) ----
@@ -203,7 +192,7 @@ static int32_t layer_offset(int32_t span, int32_t stage_width, int32_t camera, i
  * Clamped at zero because there is no world left of the stage's start: at the left edge the
  * view degrades to what it did before -- the extra width on the right -- rather than opening a
  * band of nothing. At the game's own 794 the offset is exactly zero, which is why
- * tools/routes/background_test.sh's byte-identity arm still holds. */
+ * the recorded background runtime scenario's byte-identity arm still holds. */
 static long bg_alt_frames;
 static long cam_frames, cam_shifted, cam_locked, cam_lock_bound, cam_walk_widened;
 static int32_t cam_walk_max;
@@ -234,89 +223,91 @@ int bg_draw_camera(void)
  * read as a broken feature, which is exactly the kind of silence this port does not accept. */
 void bg_camera_report(void)
 {
-    if (!getenv("LF2_CAMERA")) return;
+    if (!lf2_environment_get(LF2_ENV_CAMERA)) return;
     const int view = bg_view_width();
     const int32_t stage = (int32_t)bg_stage_field(BG_STAGE_WIDTH);
-    fprintf(stderr,
-            "camera: view %d, centring offset %d; the game's camera reached %d and the "
-            "drawing camera %d over %ld frame(s)\n",
-            view, cam_k, cam_game_max, cam_draw_max, cam_frames);
+    lf2_log_writef(LF2_LOG_INFO, "background",
+                   "camera: view %d, centring offset %d; the game's camera reached %d and the "
+                   "drawing camera %d over %ld frame(s)\n",
+                   view, cam_k, cam_game_max, cam_draw_max, cam_frames);
     /* The section lock is what stage mode uses to hold the camera until a section is cleared,
      * and it is ZERO in VS mode. Reporting it is how a route can show it reached stage mode at
      * all -- and it is the only evidence issue #36's clamp has ever run. */
     /* Issue #58's open question, answered by every run that prints this. */
     if (bg_alt_frames)
-        fprintf(stderr,
-                "camera: the game's BUILT-IN background (index %d, fn_0041a050) was "
-                "drawn on %ld of those frames -- its bands are 794 wide as literals, so "
-                "issue #58 is REACHABLE and visible in a wide view\n",
-                BG_ALT_PASS, bg_alt_frames);
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: the game's BUILT-IN background (index %d, fn_0041a050) was "
+                       "drawn on %ld of those frames -- its bands are 794 wide as literals, so "
+                       "issue #58 is REACHABLE and visible in a wide view\n",
+                       BG_ALT_PASS, bg_alt_frames);
     else
-        fprintf(stderr,
-                "camera: the built-in background (index %d, fn_0041a050) was never "
-                "selected in %ld frame(s), so this run says nothing about issue #58 -- "
-                "it does NOT show the backdrop is unreachable, only that this route did "
-                "not reach it\n",
-                BG_ALT_PASS, cam_frames);
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: the built-in background (index %d, fn_0041a050) was never "
+                       "selected in %ld frame(s), so this run says nothing about issue #58 -- "
+                       "it does NOT show the backdrop is unreachable, only that this route did "
+                       "not reach it\n",
+                       BG_ALT_PASS, cam_frames);
     if (cam_locked)
-        fprintf(stderr,
-                "camera: the stage-mode section lock was set on %ld frame(s), reaching "
-                "%d, and BOUND the camera on %ld of them -- so this run entered stage "
-                "mode%s\n",
-                cam_locked, cam_lock_max, cam_lock_bound,
-                cam_lock_bound ? " and the lock's view substitution did work (issue #36)"
-                               : ", but the stage's own bound was always tighter, so the "
-                                 "lock's view substitution was NOT exercised");
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: the stage-mode section lock was set on %ld frame(s), reaching "
+                       "%d, and BOUND the camera on %ld of them -- so this run entered stage "
+                       "mode%s\n",
+                       cam_locked, cam_lock_max, cam_lock_bound,
+                       cam_lock_bound ? " and the lock's view substitution did work (issue #36)"
+                                      : ", but the stage's own bound was always tighter, so the "
+                                        "lock's view substitution was NOT exercised");
     else
-        fprintf(stderr, "camera: the stage-mode section lock was NEVER set, so this run did not "
-                        "enter stage mode and says nothing about issue #36\n");
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: the stage-mode section lock was NEVER set, so this run did not "
+                       "enter stage mode and says nothing about issue #36\n");
     /* The walk bound, and the negative carries its own reason. Three different runs report
      * zero here and they mean three different things -- VS mode has no section at all, a 794
      * view is the game's own answer by construction, and a wide view whose camera always
      * reached its bound had nothing to widen. A bare "0" would read as the fix not working. */
     if (!cam_locked)
-        fprintf(stderr, "camera: no walk bound was widened because this run set no section "
-                        "lock at all, which is VS mode -- it says nothing about issue #43\n");
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: no walk bound was widened because this run set no section "
+                       "lock at all, which is VS mode -- it says nothing about issue #43\n");
     else if (view <= BG_SCREEN_W)
-        fprintf(stderr,
-                "camera: no walk bound was widened, and correctly so -- the view is "
-                "the game's own %d, where geom_walk_max returns the game's B by "
-                "construction\n",
-                BG_SCREEN_W);
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: no walk bound was widened, and correctly so -- the view is "
+                       "the game's own %d, where geom_walk_max returns the game's B by "
+                       "construction\n",
+                       BG_SCREEN_W);
     else if (cam_walk_widened)
-        fprintf(stderr,
-                "camera: the walk bound was widened to the screen's right edge on %ld "
-                "frame(s), reaching %d -- so a fighter can reach every part of the "
-                "stage this %d-wide view shows (issue #43)\n",
-                cam_walk_widened, cam_walk_max, view);
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: the walk bound was widened to the screen's right edge on %ld "
+                       "frame(s), reaching %d -- so a fighter can reach every part of the "
+                       "stage this %d-wide view shows (issue #43)\n",
+                       cam_walk_widened, cam_walk_max, view);
     else
-        fprintf(stderr,
-                "camera: the view is %d and a section lock was set, but NO walk bound "
-                "needed widening -- the camera reached its bound on every frame, so "
-                "the screen's right edge already sat on the game's own B\n",
-                view);
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: the view is %d and a section lock was set, but NO walk bound "
+                       "needed widening -- the camera reached its bound on every frame, so "
+                       "the screen's right edge already sat on the game's own B\n",
+                       view);
     if (cam_shifted)
-        fprintf(stderr,
-                "camera: %ld of %ld frames were re-centred, so the wide view is "
-                "centred on what the 4:3 view showed rather than extended right\n",
-                cam_shifted, cam_frames);
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: %ld of %ld frames were re-centred, so the wide view is "
+                       "centred on what the 4:3 view showed rather than extended right\n",
+                       cam_shifted, cam_frames);
     else if (cam_k <= 0)
-        fprintf(stderr,
-                "camera: NOTHING was re-centred, and correctly so -- the view is the "
-                "game's own %d, where the offset is zero by definition\n",
-                BG_SCREEN_W);
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: NOTHING was re-centred, and correctly so -- the view is the "
+                       "game's own %d, where the offset is zero by definition\n",
+                       BG_SCREEN_W);
     else if (stage <= view)
-        fprintf(stderr,
-                "camera: NOTHING was re-centred -- the stage is %d wide and the view "
-                "is %d, so the whole stage already fits and the camera never left 0. "
-                "There is no world to centre into\n",
-                stage, view);
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: NOTHING was re-centred -- the stage is %d wide and the view "
+                       "is %d, so the whole stage already fits and the camera never left 0. "
+                       "There is no world to centre into\n",
+                       stage, view);
     else
-        fprintf(stderr,
-                "camera: NOTHING was re-centred although the offset is %d and the "
-                "stage (%d) is wider than the view (%d) -- the camera never got past "
-                "the offset, so this run does NOT exercise the centring\n",
-                cam_k, stage, view);
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "camera: NOTHING was re-centred although the offset is %d and the "
+                       "stage (%d) is wider than the view (%d) -- the camera never got past "
+                       "the offset, so this run does NOT exercise the centring\n",
+                       cam_k, stage, view);
 }
 
 /* fn_00415160 as fn_0041a050 calls it: cdecl, five args, the caller pops. Marked as a world
@@ -337,7 +328,7 @@ static void alt_fill(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t colour
  * is 794 wide as a literal -- the game saying "the whole width of the screen" in the only units
  * it had. On a 978-wide composition they cover 81% of it and the rest goes unpainted. Same
  * substitution as the layer pass and the object pass: 794 is the VIEW, not a constant. It has to
- * be an override for the same reason fn_0041a5a0 did -- the widths are immediates in recompiled
+ * be an override for the same reason fn_0041a5a0 did -- the widths are immediates in retail
  * code, so there is no address to write.
  *
  * IT IS A BACKGROUND A PLAYER CHOOSES, which is what made it worth doing: index 99 sits inside
@@ -348,7 +339,6 @@ static void alt_fill(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t colour
  * __thiscall, one stack arg, RET 4. The three clip draws take their receiver from the background
  * record -- Ghidra elides it at every call site, as it does throughout this binary.
  *
- * LF2_ALTBG_ORIG=1 runs the recompiled body instead, for the byte-identity A/B.
  */
 enum {
     ALTBG_SKY = 0x4d81978, /* [[this+0x7d4]+off] -- the receiver of each clip draw */
@@ -356,15 +346,8 @@ enum {
     ALTBG_POST = 0x4d81974
 };
 
-void fn_0041a050__orig(void);
-
 void fn_0041a050(void)
 {
-    if (getenv("LF2_ALTBG_ORIG")) {
-        fn_0041a050__orig();
-        return;
-    }
-
     const uint32_t self = R(ECX);
     const uint32_t arg0 = LD32(R(ESP) + 4);
     const uint32_t rec = LD32(self + 0x7d4);
@@ -401,7 +384,7 @@ void fn_0041a050(void)
 
 /* fn_0041a5a0 -- the stage's object pass -- is now HAND-PORTED, in
  * runtime/overrides/objects.c. The camera wrapper that used to sit here existed only because
- * the body was recompiled: it wrote the shifted camera into the guest's word around the call so
+ * the earlier wrapper wrote the shifted camera into the guest's word around the call so
  * the lifted `SUB reg, camera` sites would draw shifted. The port reads the drawing camera
  * directly at each of those sites, so there is nothing left to wrap (issue #55).
  */
@@ -483,7 +466,8 @@ static void stage_geom_sync(void)
             /* A file that exists and is wrong is reported EVERY time the stage is entered,
              * not once: an author fixing a .stage file re-enters the stage to see whether it
              * worked, and a once-only message would go quiet exactly then. */
-            fprintf(stderr, "stage geometry: %s/%s.stage was REFUSED -- %s\n", dirs[i], name, stage_geom.error);
+            lf2_log_writef(LF2_LOG_INFO, "background", "stage geometry: %s/%s.stage was REFUSED -- %s\n", dirs[i], name,
+                           stage_geom.error);
             return;
         }
         if (stage_geom.n) break;
@@ -495,20 +479,20 @@ static void stage_geom_sync(void)
          * never ran" are the two things this whole subsystem can fail to distinguish. It
          * names every directory it looked in, so a file in the wrong place reads as a file in
          * the wrong place rather than as a stage nobody has woven yet. */
-        if (getenv("LF2_STAGE_GEOM")) {
-            fprintf(stderr,
-                    "stage geometry: %s has no <dir>/%s.stage, so nothing is woven "
-                    "into it -- this stage draws exactly as it always has. Looked "
-                    "in:\n",
-                    name, name);
-            for (int i = 0; i < nd; i++) fprintf(stderr, "stage geometry:   %s\n", dirs[i]);
+        if (lf2_environment_get(LF2_ENV_STAGE_GEOM)) {
+            lf2_log_writef(LF2_LOG_INFO, "background",
+                           "stage geometry: %s has no <dir>/%s.stage, so nothing is woven "
+                           "into it -- this stage draws exactly as it always has. Looked "
+                           "in:\n",
+                           name, name);
+            for (int i = 0; i < nd; i++) lf2_log_writef(LF2_LOG_INFO, "background", "stage geometry:   %s\n", dirs[i]);
         }
         return;
     }
-    fprintf(stderr,
-            "stage geometry: %s -- %d solid(s), %d vertices, %d OBJ line(s) this "
-            "loader does not read\n",
-            name, stage_geom.solids, stage_geom.n, stage_geom.skipped_lines);
+    lf2_log_writef(LF2_LOG_INFO, "background",
+                   "stage geometry: %s -- %d solid(s), %d vertices, %d OBJ line(s) this "
+                   "loader does not read\n",
+                   name, stage_geom.solids, stage_geom.n, stage_geom.skipped_lines);
     /* THE DEPTHS, and they are the half of this worth printing. A count of vertices says the
      * file parsed; a depth says the solid landed in the plane it was authored for, which is
      * the thing `depth: layer <file>` exists to get right and the thing that goes silently
@@ -516,10 +500,11 @@ static void stage_geom_sync(void)
      * like a bug. Printed per solid, by watching the depth change down the vertex list. */
     for (int i = 0; i < stage_geom.n; i++) {
         if (i && stage_geom.v[i].depth == stage_geom.v[i - 1].depth) continue;
-        fprintf(stderr, "stage geometry:   solid at depth %.4f (%s)\n", (double)stage_geom.v[i].depth,
-                stage_geom.v[i].depth > 1.0f   ? "further than the fighters"
-                : stage_geom.v[i].depth < 1.0f ? "nearer than the fighters"
-                                               : "the fighters' own plane");
+        lf2_log_writef(LF2_LOG_INFO, "background", "stage geometry:   solid at depth %.4f (%s)\n",
+                       (double)stage_geom.v[i].depth,
+                       stage_geom.v[i].depth > 1.0f   ? "further than the fighters"
+                       : stage_geom.v[i].depth < 1.0f ? "nearer than the fighters"
+                                                      : "the fighters' own plane");
     }
 }
 
@@ -592,10 +577,10 @@ static void geom_plan(int count, int32_t stage_width)
             static int said;
             if (!said) {
                 said = 1;
-                fprintf(stderr,
-                        "stage geometry: more than %d solids at distinct depths -- the "
-                        "rest are NOT drawn\n",
-                        (int)(sizeof geom_runs / sizeof geom_runs[0]));
+                lf2_log_writef(LF2_LOG_INFO, "background",
+                               "stage geometry: more than %d solids at distinct depths -- the "
+                               "rest are NOT drawn\n",
+                               (int)(sizeof geom_runs / sizeof geom_runs[0]));
             }
             break;
         }
@@ -682,16 +667,17 @@ static void geom_submit(int gap, int camera, int view_w, int view_h)
 
 void bg_geom_report(void)
 {
-    if (!getenv("LF2_STAGE_GEOM")) return;
-    fprintf(stderr,
-            "stage geometry: %ld frame(s) with geometry, %ld pass(es) placed in the "
-            "display list, %ld dropped for want of a known composition surface, "
-            "%ld solid(s) past the %d-gap limit\n",
-            geom_frames, geom_submits, geom_no_surface, geom_over_gaps, GEOM_GAPS_MAX);
+    if (!lf2_environment_get(LF2_ENV_STAGE_GEOM)) return;
+    lf2_log_writef(LF2_LOG_INFO, "background",
+                   "stage geometry: %ld frame(s) with geometry, %ld pass(es) placed in the "
+                   "display list, %ld dropped for want of a known composition surface, "
+                   "%ld solid(s) past the %d-gap limit\n",
+                   geom_frames, geom_submits, geom_no_surface, geom_over_gaps, GEOM_GAPS_MAX);
     if (geom_frames && !geom_submits)
-        fprintf(stderr, "stage geometry: a stage HAS geometry and NOT ONE pass reached the "
-                        "frame -- the pass is unavailable (software renderer?), or the "
-                        "composition surface was never discovered\n");
+        lf2_log_writef(LF2_LOG_INFO, "background",
+                       "stage geometry: a stage HAS geometry and NOT ONE pass reached the "
+                       "frame -- the pass is unavailable (software renderer?), or the "
+                       "composition surface was never discovered\n");
 }
 
 /* Issue #28: the camera is still clamped to the 4:3 limit, so a wider view scrolls past the
@@ -731,7 +717,7 @@ static void camera_clamp_to_view(int32_t stage_width, int32_t view)
      * `lock + 794 - view` puts the right edge exactly where the 4:3 game puts it, which is
      * the whole of the request: the camera stops the same distance from the walk boundary
      * whatever the window is. At view == 794 it is `lock` unchanged, so this cannot alter
-     * the game's own picture -- which is what tools/routes/background_test.sh's byte-identity arm
+     * the game's own picture -- which is what the recorded background runtime scenario's byte-identity arm
      * checks.
      *
      * NOT VERIFIED IN STAGE MODE ITSELF: every scripted route this port has reaches VS mode,
@@ -794,21 +780,6 @@ void fn_0041a250(void)
     const uint32_t arg0 = LD32(R(ESP) + 4);
     uint32_t bg = LD32(BG_INDEX);
 
-    /* LF2_BG_ORIG=1 hands every frame to the recompiled body instead. It is the A/B this
-     * file is verified by, not a fallback anyone should need: tools/routes/background_test.sh runs
-     * the same route five ways and asserts that at 794x550 the dumped frames are
-     * BYTE-IDENTICAL to this body's, and that at 1600x550 they are not. A reimplementation
-     * that cannot be diffed against what it replaces is a rewrite.
-     *
-     * The identity is only worth anything because it can fail, which is what LF2_BG_SKEW is
-     * for. Two runs agreeing proves nothing if the dump would agree whatever was drawn. */
-    static int use_orig = -1;
-    if (use_orig < 0) use_orig = getenv("LF2_BG_ORIG") != NULL;
-    if (use_orig) {
-        fn_0041a250__orig();
-        return;
-    }
-
     /* Index 99 is a different pass entirely (fn_0041a050) and nothing here applies to it.
      * The original body is kept callable for exactly this, and for the escape below. */
     /* LF2_ALTBG_FORCE=1 draws the BUILT-IN background instead of the loaded stage's layers.
@@ -817,11 +788,8 @@ void fn_0041a250(void)
      * (issue #58). Without it the pass is unreachable from any scripted route, and its override
      * could not be verified against the body it replaces. */
     /* It has to write the GUEST WORD, not this local. The alt branch below hands off to
-     * fn_0041a250__orig, which reads the index out of 0x0044d024 itself -- so setting only the
-     * local left both arms of the A/B drawing the ordinary stage, and they came out identical
-     * at 794 AND at 1920. That read as "the port matches the body it replaces" and was really
-     * "neither arm ever called the ported function". */
-    const int alt_forced = getenv("LF2_ALTBG_FORCE") != NULL;
+     * the original guest pass reads the index out of 0x0044d024 itself. */
+    const int alt_forced = lf2_environment_get(LF2_ENV_ALTBG_FORCE) != NULL;
     const uint32_t bg_saved = LD32(BG_INDEX);
     if (alt_forced) {
         bg = BG_ALT_PASS;
@@ -840,7 +808,7 @@ void fn_0041a250(void)
          * itself, so it gets the same treatment as the object pass. */
         const uint32_t saved = LD32(BG_CAMERA_X);
         ST32(BG_CAMERA_X, (uint32_t)bg_draw_camera());
-        fn_0041a250__orig();
+        lf2_jit_call_original(0x0041a250);
         ST32(BG_CAMERA_X, saved);
         if (alt_forced) ST32(BG_INDEX, bg_saved);
         return;
@@ -861,13 +829,13 @@ void fn_0041a250(void)
         static int said;
         if (!said) {
             said = 1;
-            fprintf(stderr,
-                    "background: layer count %d for background %u exceeds the %d the "
-                    "table holds -- the layer field constants do not describe this "
-                    "record, so the game's own body is drawing this stage\n",
-                    count, bg, BG_MAX_LAYERS);
+            lf2_log_writef(LF2_LOG_INFO, "background",
+                           "background: layer count %d for background %u exceeds the %d the "
+                           "table holds -- the layer field constants do not describe this "
+                           "record, so the game's own body is drawing this stage\n",
+                           count, bg, BG_MAX_LAYERS);
         }
-        fn_0041a250__orig();
+        lf2_jit_call_original(0x0041a250);
         return;
     }
 
@@ -880,10 +848,10 @@ void fn_0041a250(void)
      * nearer layer must move further than a distant one. */
     const int32_t camera = (int32_t)bg_draw_camera();
     const long trace_frame = hostwin_frames() + 1;
-    const int trace_selected = hostwin_frame_selected(getenv("LF2_BLT_FRAME"), trace_frame);
+    const int trace_selected = hostwin_frame_selected(lf2_environment_get(LF2_ENV_BLT_FRAME), trace_frame);
     if (trace_selected)
-        fprintf(stderr, "backdrop camera frame %ld guest=%d draw=%d view=%d stage=%d\n", trace_frame,
-                (int32_t)LD32(BG_CAMERA_X), camera, view, stage_width);
+        lf2_log_writef(LF2_LOG_INFO, "background", "backdrop camera frame %ld guest=%d draw=%d view=%d stage=%d\n",
+                       trace_frame, (int32_t)LD32(BG_CAMERA_X), camera, view, stage_width);
 
     /* The hand-woven geometry, planned before the loop and submitted INSIDE it, because where
      * each pass lands in the painter order is the whole point (issue #62). */
@@ -955,8 +923,9 @@ void fn_0041a250(void)
             backdrop_plane_placement(stage_name, span, lx, view, &translation, &backdrop_flags);
             if (transparent) backdrop_flags &= ~BACKDROP_EXTEND_BOTTOM;
             if (trace_selected)
-                fprintf(stderr, "backdrop layer frame %ld index=%d span=%d x=%d off=%d flags=%d\n", trace_frame, i,
-                        span, lx, off + translation, backdrop_flags);
+                lf2_log_writef(LF2_LOG_INFO, "background",
+                               "backdrop layer frame %ld index=%d span=%d x=%d off=%d flags=%d\n", trace_frame, i, span,
+                               lx, off + translation, backdrop_flags);
             world_backdrop_hint_set(backdrop_flags);
             draw_layer(obj, off + lx + translation, y, transparent, arg0);
             world_backdrop_hint_set(0);
