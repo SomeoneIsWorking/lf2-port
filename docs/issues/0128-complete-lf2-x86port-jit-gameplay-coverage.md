@@ -40,12 +40,13 @@ retired execution interfaces from returning anywhere in first-party source,
 documentation, or tools.
 
 The current Clang-built silent product run loaded the authenticated image,
-passed native window/DirectDraw initialization, completed native data
-initialization, loaded game art, entered 686,258 blocks while translating 5,329
-instructions across 790 distinct blocks, and refused at `0x00401E27`.
-Independent `llvm-objdump` identifies bytes `F7 E2` there as `MUL EDX`. That is
-the next shared emitter boundary. The pinned runtime does not yet supply bounded
-fallback.
+passed native window/DirectDraw initialization, completed data/art/music
+initialization, presented frame 1, reached the mode menu, entered 698,084 blocks,
+and translated 530,993 instructions across 9,218 blocks with zero translation
+refusals. It then refused at `0x0040000C`, where control had entered PE/DOS-header
+data rather than an instruction. The `MUL EDX` emitter boundary is resolved;
+the next task is to recover the incorrect control-flow owner. The pinned runtime
+does not yet supply bounded fallback.
 
 ## Acceptance
 

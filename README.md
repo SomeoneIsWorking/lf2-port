@@ -8,9 +8,9 @@ guest instruction from the player's original executable.
 The repository is currently integrating its runtime executor. Its native
 renderer, platform services, UI, input, audio, packaging, and gameplay
 enhancements remain. The x86-64 gameplay target builds against
-`x86port_runtime`, reaches native startup, and refuses at the first unsupported
-JIT instruction (`MUL EDX` at `0x00401E27`) because the pinned runtime does not
-yet expose bounded fallback. The current work is the [native/JIT migration](docs/migration.md);
+`x86port_runtime`, reaches the mode menu, and then refuses when control enters
+PE/DOS-header data at `0x0040000C`. The pinned runtime still has no bounded
+fallback. The current work is the [native/JIT migration](docs/migration.md);
 capability truth is in
 [project state](docs/project-state.md).
 
