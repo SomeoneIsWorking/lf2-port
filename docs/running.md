@@ -3,10 +3,11 @@
 ## Current execution state
 
 The x86-64 `lf2` target links `x86port_runtime`. Its bounded silent run reached
-native startup, completed native data initialization, loaded game art, and then
-refused `MUL EDX` at guest `0x00401E27`, the first missing emitter. The pinned
-runtime does not yet provide bounded fallback, so this is an implementation
-frontier rather than playable-game evidence. ARM64 has no JIT backend yet.
+native startup, completed data/art/music initialization, presented frame 1, and
+reached the mode menu. It then refused guest `0x0040000C` because control entered
+PE/DOS-header data rather than an instruction. The pinned runtime does not yet
+provide bounded fallback, so this remains an implementation frontier rather
+than playable-game evidence. ARM64 has no JIT backend yet.
 
 The next differential target is defined in `docs/migration.md`. It executes
 guest `0x004031b0` from the authenticated image through `shared/x86port` and
@@ -35,7 +36,7 @@ class can fail. None of these commands runs the game.
 ## Shipping launcher contract
 
 `tools/build/source_dependencies.py` owns the immutable x86port revision
-`e18bf6e8c7f2e7afc92f3c0b4575398bd1ecd8c7` and jit-common revision
+`9b224ebdb2bfc9e60fa507cdf98b3ab389f3f814` and jit-common revision
 `75ce92882aba7d80a39822604ab3a294f9c8944e`. It validates an explicitly
 configured or shared checkout as clean and exact, or provisions both under
 `build/deps`. CMake consumes only the resolved paths.

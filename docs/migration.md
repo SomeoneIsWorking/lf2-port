@@ -27,9 +27,10 @@ configuration; a fresh installation never requires it.
 ## Current boundary
 
 The x86-64 target compiles `runtime/cpu/jit_executor.c` against
-`x86port_runtime`. Unsupported instructions currently stop with their guest PC
-because the pinned shared runtime does not yet expose the bounded fallback
-contract. The first reached gap is `MUL EDX` at `0x00401E27`.
+`x86port_runtime`. The current pinned runtime executes `MUL EDX` and reaches the
+mode menu. It then refuses when control enters PE/DOS-header data at
+`0x0040000C`; the next task is to recover the incorrect control-flow owner. The
+shared runtime does not yet expose the bounded fallback contract.
 
 New execution evidence comes from:
 

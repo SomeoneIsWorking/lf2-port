@@ -55,7 +55,7 @@ class SourceDependencyTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_x86port_pin_is_the_landed_runtime_revision(self) -> None:
-        self.assertEqual(X86PORT.revision, "e18bf6e8c7f2e7afc92f3c0b4575398bd1ecd8c7")
+        self.assertEqual(X86PORT.revision, "9b224ebdb2bfc9e60fa507cdf98b3ab389f3f814")
 
     def test_missing_checkout_is_provisioned_at_exact_revision(self) -> None:
         resolved = resolve_checkout(self.root, self.dependency, {})

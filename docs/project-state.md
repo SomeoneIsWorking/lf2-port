@@ -82,13 +82,13 @@ The x86-64 product now adapts the existing guest memory/PE state, imports, COM,
 and native overrides to `x86port_runtime`. Native calls use runtime addresses;
 scoped original calls disable only their current override. A bounded silent run
 loaded the authenticated image, entered the native startup, created the host
-window and DirectDraw surface, completed native data initialization, loaded game
-art, entered 686,258 blocks while translating 5,329 instructions across 790
-distinct blocks, and then correctly refused the first uncovered instruction:
-`MUL EDX` (`F7 E2`) at `0x00401E27`.
+window and DirectDraw surface, completed data/art/music initialization, presented
+frame 1, reached the mode menu, entered 698,084 blocks while translating 530,993
+instructions across 9,218 distinct blocks, and then refused at `0x0040000C`
+because control entered PE/DOS-header data rather than an instruction.
 
-Gap: expand shared JIT emitter coverage from that exact PC and re-establish the
-complete gameplay frontier. Issue #128 owns this work.
+Gap: recover the control-flow owner that entered `0x0040000C` and re-establish
+the complete gameplay frontier. Issue #128 owns this work.
 
 ### S006 — Widescreen and ultrawide
 
@@ -183,8 +183,8 @@ interception, code invalidation, denominated block statistics, and explicit
 unsupported-instruction refusal without exposing the test oracle. LF2 owns the
 typed native-address table and scoped original-call policy.
 
-Gap: x86-64 emitter coverage is incomplete; the first reached LF2 gap is
-`MUL EDX` at `0x00401E27`. The shared runtime also lacks the bounded fallback
+Gap: the first reached LF2 failure is control entering non-code PE/DOS-header
+data at `0x0040000C`. The shared runtime also lacks the bounded fallback
 contract. Full gameplay and conformance remain unverified.
 
 ### S019 — ARM64 product JIT
