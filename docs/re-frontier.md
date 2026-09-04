@@ -1,7 +1,7 @@
 # RE Frontier — LF2 native-port replacement boundaries
 
-This is the ordered ground-truth chain behind native replacements. `docs/codemap.md` says what
-exists; this file distinguishes binary-derived ports from authored host behavior. A
+This is the ordered ground-truth chain behind native replacements. `docs/codemap.md` says who
+owns each responsibility; this file distinguishes binary-derived ports from authored host behavior. A
 `re-verified` step has both binary/data evidence and a real-game falsifier.
 
 Statuses: `re-verified`, `re-partial`, `in-progress`, `hack`, `authored`, `todo`, and
