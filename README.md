@@ -1,212 +1,142 @@
 # lf2-port
 
-A **native Linux/macOS port of Little Fighter 2 v2.0a** by static recompilation — the x86
-binary is translated to C, and the Windows APIs it calls are reimplemented on SDL3. Along
-the way it gains the quality-of-life features the original cannot support: controller
-auto-detect and hotswap, and borderless windowed mode.
+A native Linux, macOS, and Android port of **Little Fighter 2 v2.0a**. The
+target product keeps the port's native host systems and selected native game
+behavior while `shared/x86port` dynamically translates every remaining x86-32
+guest instruction from the player's original executable.
 
-> **Status: it plays the game.** The port boots, renders, navigates the menus, starts a
-> VS-mode match, and has sound effects and background music.
-> See [`docs/codemap.md`](docs/codemap.md) for an honest per-subsystem status, including
-> what is still broken.
+The repository is currently between execution architectures. Its native
+renderer, platform services, UI, input, audio, packaging, and gameplay
+enhancements exist, but the checked-in gameplay build still depends on the
+retired offline x86-to-C pipeline. That pipeline is no longer a supported
+product or oracle and must not be built or run. The current work is the
+[native/JIT migration](docs/migration.md); capability truth is in
+[project state](docs/project-state.md).
 
-## Screenshots
+## Intended product
+
+```text
+authenticated lf2.exe
+        |
+native LF2 entry and bounded initialization
+        |
+LF2 runtime adapter -> x86port JIT -> translated blocks from live guest bytes
+        |                    |
+        |                    +-> LF2 native overrides by guest address
+        +-> Win32 / CRT / DirectDraw / GDI / DirectSound HLE
+                                      |
+                        SDL3 host presentation, audio, input, and UI
+```
+
+There is no offline guest-code generation in the intended build. An x86
+interpreter may be linked only into a separately built test target, including
+diagnostic tests, for differential testing. Build-graph, link-map/symbol, and
+selector inspection must prove it and its helper/fallback machinery are absent
+from gameplay.
+
+The CPU migration preserves the current Win32, DirectDraw, HLE, native-entry,
+native-override, renderer, audio, input, and UI seams. It does not require a
+graphics rewrite. See the [codemap](docs/codemap.md) for ownership.
+
+## Feature state
+
+The comparison baseline is the unmodified Windows LF2 v2.0a release. These are
+the intended differences and their current state; IDs link the summary to the
+canonical inventory.
+
+| State item | Capability | State |
+| --- | --- | --- |
+| S001 | Boot, menus, VS Mode, and Stage Mode with audio | partial — established before migration; JIT re-conformance pending |
+| S005 | Native overrides plus on-demand `x86port` JIT execution | missing |
+| S006 | Widescreen/ultrawide adds world coverage without stretching | verified |
+| S002, S007 | High-resolution pixel-art rendering, lighting, and cast shadows | verified |
+| S003 | Persistent remappable keyboard/controller actions | partial — physical-hardware gate pending |
+| S008, S009 | Two-controller local play and controller hot-plug | partial — physical-hardware gate pending |
+| S010 | Borderless, windowed, fullscreen, and Alt+Enter modes | verified |
+| S011 | Modern anti-aliased host text | verified |
+| S004 | Linux AppImage first-run file selection | partial — clean-machine release gate pending |
+| S012 | macOS native release | partial — Metal acceptance and JIT host gate pending |
+| S013 | Android ARM64 release with touch and private setup | partial — ARM64 JIT and hardware gate pending |
+| S014 | Original network play | missing |
+
+The full inventory also tracks interpreter exclusion, generated-path removal,
+representative gameplay conformance, and host JIT coverage in
+[`docs/project-state.md`](docs/project-state.md).
+
+## Screenshots from the preserved native host path
 
 ![Android Stage Mode with on-screen touch controls](docs/screenshots/android-stage-mode-touch.png)
 
-*Stage Mode running natively on Android in widescreen with circular on-screen touch controls.*
+*Stage Mode with the authored Android touch layer.*
 
 ![Native ultrawide Stage Mode PvE](docs/screenshots/stage-mode-pve-ultrawide.png)
 
-*Stage Mode PvE at 3440×1440: the ultrawide viewport exposes more of the stage while preserving
+*Stage Mode at 3440×1440: the viewport exposes more stage area while preserving
 the original pixel geometry.*
 
 ![Native widescreen demo match](docs/screenshots/demo-match-widescreen.png)
 
-*Native 16:9 presentation expands the world view instead of stretching the original 4:3 frame.*
+*A 16:9 world view rather than a stretched 4:3 frame.*
 
 | In-game port menu | Native renderer and lighting controls |
-|---|---|
-| ![The in-game RmlUi port menu](docs/screenshots/port-menu-overview.png) | ![Native renderer and lighting controls in RmlUi](docs/screenshots/port-menu-graphics.png) |
+| --- | --- |
+| ![The in-game RmlUi port menu](docs/screenshots/port-menu-overview.png) | ![Native renderer and lighting controls](docs/screenshots/port-menu-graphics.png) |
 
-![Remappable keyboard and controller inputs](docs/screenshots/port-menu-controls.png)
+These captures establish preserved host capabilities; they do not prove the
+new JIT execution path until the representative-gameplay gate passes.
 
-*Keyboard and controller bindings use the same device-independent input layer.*
+## Game files are not distributed
 
-These promotional screenshots were captured from a locally extracted copy of LF2. The game
-executable and extracted assets are not distributed in this repository.
+This repository and its releases must not contain `lf2.exe`, the original
+installer, sprites, audio, data, or a reconstructable instruction-byte corpus.
+Little Fighter 2 is freeware by **Marti Wong and Starsky Wong** and remains
+their copyright. This is an unofficial project with no affiliation with or
+endorsement by the authors.
 
-## No original game files are distributed here
+The finished launcher accepts the player's LF2 v2.0a installer, a complete
+extracted tree, or one bounded nested ZIP; validates exact executable and data
+identity; and persists the accepted location in OS user data. The gameplay
+runtime consumes the authenticated executable directly.
 
-This repository and its releases contain the port and its statically translated native program,
-but **not** the original `lf2.exe`, installer, sprites, audio, or data. Little Fighter 2 is freeware
-by **Marti Wong and Starsky Wong** and remains their copyright. To play, download the official
-installer from <https://lf2.net>. Packaged builds can initialize directly from that installer;
-source builds extract it locally during bootstrap. The installer and extracted tree are gitignored.
-
-The curated promotional screenshots above are the only tracked visual output from the game;
-they do not include or replace any separately usable game asset.
-
-That applies to derivatives too. `re/instructions.tsv` — Ghidra's dump of every instruction
-*with its raw bytes* — is gitignored for the same reason, since `.text` can be rebuilt from
-it. Regenerate it from your own copy ([`docs/isa-scope.md`](docs/isa-scope.md)); the build
-derives a substitute corpus when it is absent, so only the decoder-vs-Ghidra test skips.
-What is kept is `re/entries.tsv` and `re/functions.tsv`: function addresses, sizes and
-placeholder names, with no code in them.
-
-This is an unofficial project with no affiliation with or endorsement by the LF2 authors.
-
-## AppImage release
-
-Download `LF2-Port-x86_64.AppImage` from a GitHub release, make it executable, and open it. On the
-first launch, the port shows a native SDL setup dialog. Choose the original `LF2_v2.0a.exe` installer
-directly, `lf2.exe` inside a complete extracted tree, or a ZIP containing that tree at any folder
-depth. The executable identity and every file named by `data/data.txt` are validated before play, and
-the accepted directory is remembered in the user's XDG configuration directory.
-
-As a zero-configuration alternative, put the complete extracted tree in a directory named `game`
-beside the AppImage:
-
-```text
-LF2-Port-x86_64.AppImage
-game/lf2.exe
-game/data/data.txt
-```
-
-Use the launcher's **Select Little Fighter 2 Game Files…** desktop action, or run the AppImage with
-`--select-game`, to replace the saved location. The AppImage never copies or embeds the selected
-game tree. Open the in-game settings menu and choose **Check for updates** to run the bundled graphical
-updater against the AppImage; releases also include the matching `.AppImage.zsync` delta metadata.
+`re/instructions.tsv` remains gitignored because its raw-byte column can
+reconstruct game code. Address/name metadata may be retained only where it has
+an independent runtime, RE, or native-override use; lists that exist solely to
+drive offline code generation are removed with that pipeline.
 
 ## Building and running
 
-```sh
-./run.sh
-```
+There is temporarily no supported gameplay build from this checkout. Do not
+invoke the current `./run.sh`, generated-C build, or old end-to-end routes until
+state item S005 replaces their execution owner. The eventual zero-argument
+`./run.sh` remains the shipping interface: a slim `uv run --frozen` shim that
+provisions player-owned assets, builds the native/JIT target, and launches it.
+It will not run tests or expose an engine selector.
 
-After installing the host build prerequisites listed below, that is the whole project setup.
-`run.sh` is a slim `uv run --frozen` shim over `bootstrap.py`, which provisions everything the repo can own and
-refuses by name — with the exact fix — when something is missing:
-
-1. `port-assets` validated at `$PORT_ASSETS_DIR`, reused or provisioned below
-   `$SHARED_DIR`, reused from the standard shared-repo layout when present, or
-   cloned at a pinned revision into gitignored `build/deps`.
-2. the pinned `third_party/RmlUi` and `third_party/lucent` submodules initialized when missing.
-3. the Python environment synced by **uv** from the committed lockfile with `--frozen`
-   (`pyproject.toml`; uv installs Python itself if the system one is old).
-4. the game tree extracted from the installer (`tools/extract_game.py`, no
-   Windows or Wine needed) — the installer is taken from `$LF2_INSTALLER`,
-   then a copy beside the port, then downloaded from lf2.net.
-5. the build via `tools/build/build.py` (skipped when the binary is current;
-   `REBUILD=1 ./run.sh` forces it), then the game started from `game/`.
-
-After `./run.sh` has provisioned the external checkouts, Python environment,
-and game tree, the direct build/run path is:
-
-```sh
-uv run --frozen python tools/build/build.py
-build/clang/lf2
-```
-
-Needs SDL3, `SDL3_ttf`, `SDL3_image`, bzip2 and cmake (plus a C11 and C++20 toolchain).
-Agents verify with Clang; the project does not select or police the user's compiler.
-Extraction needs only Python 3 standard library —
-no Windows, no Wine. Background music additionally needs `ffmpeg` on PATH at
-runtime (see below); everything else works without it.
-
-The bzip2 development package is `bzip2-devel` on Fedora (`sudo dnf install bzip2-devel`),
-`libbz2-dev` on Debian/Ubuntu (`sudo apt install libbz2-dev`), and `bzip2` in Homebrew
-(`brew install bzip2`).
-
-The launcher resolves and validates the game tree, then enters it before starting the guest because
-the game opens its data by relative path. Full details, including headless operation and the
-debugging environment variables, are in [`docs/running.md`](docs/running.md).
-
-## What works, and what doesn't
-
-| | |
-|---|---|
-| Boot, menus, character select, a VS match | works |
-| Rendering — DirectDraw, GDI text, colour-keyed sprites | works |
-| Sound effects (DirectSound → SDL3) | works |
-| Background music (WMA) | works, needs `ffmpeg` on PATH |
-| Modern anti-aliased text | menu and character-select text, with required `SDL3_ttf` and embedded licensed fonts |
-| Controller auto-detect and hotswap, no configuration | implemented, **untested on real hardware** |
-| Two controllers, two players | works — second pad joins as Player 2, no configuration |
-| Borderless / windowed / fullscreen, Alt+Enter | works |
-| Linux | works |
-| macOS | user-built; Metal shader support added after the shadow report, **re-test pending (#100)** |
-| Android | **no verified release yet** — ARM64 native build, landscape policy, private installer/folder/ZIP setup, all-menu touch routing, GitHub updater, and signed-build gates are implemented; signed install/device correctness and performance evidence remain |
-| Netplay | **not ported** — stubbed as "no network available" |
-
-The controller row remains untested because no gamepad was available. The macOS row records a
-real user build; its new Metal renderer path still needs the acceptance run in issue #100.
-
-## Extracting the game files
-
-The v2.0a installer is not Inno Setup or NSIS — it's a Win32 stub wrapping a custom `wwgT`
-container. `tools/extract_game.py` reconstructs the full 690-file tree with no Windows
-involved. Correctness is verified end to end: the game boots from the reconstructed tree.
-
-The container format, including a deduplication trap that silently misaligns filenames
-against their contents if you pair them naively, is documented in
-[`docs/codemap.md`](docs/codemap.md).
-
-## How it works
-
-The recompiler decodes all 70,508 instructions of `lf2.exe` and emits one C function per
-guest function — 100% of instructions lifted, no interpreter fallback. The runtime provides
-a 4 GiB lazily-committed guest address space, lazy EFLAGS, x87 in host `double`, and
-reimplementations of DirectDraw, DirectSound, DirectShow, GDI and the Win32 message loop on
-SDL3. COM interfaces are synthesised as guest-memory vtables with sentinel addresses that
-dispatch back into host C.
-
-Correctness rests on differential testing against the host CPU: **8373 instruction
-encodings × 8 rounds = 66,984 checks**, including x87, under **both gcc and clang**. Every
-claim of the form "this is right" in the docs is expected to name the measurement behind
-it, and several documented findings are corrections of earlier confidently-wrong ones.
-
-Building under a second compiler is part of that, not housekeeping: it is what caught
-`FSTP ST(i)` being emitted as `FST(i) = fpu_pop();`, which reads and modifies the FPU top
-pointer unsequenced. Undefined behaviour that gcc happened to order correctly, so 66,984
-passing checks said nothing about it.
-
-### Notes from the reverse engineering
-
-Full detail in [`docs/platform-boundary.md`](docs/platform-boundary.md) and
-[`docs/isa-scope.md`](docs/isa-scope.md).
-
-- **The porting surface is small.** An unpacked MSVC 2005 binary, 284 KB of code, ~130
-  imported symbols, only 92 distinct mnemonics. `DirectDrawCreate` is the *only* DirectDraw
-  import, so every other video call travels through COM vtables — which means the runtime
-  gets to define them.
-- **Part of every frame is drawn by GDI**, not DirectDraw. A naive "DirectDraw → texture"
-  port silently loses the text rendering path.
-- **Controller hotswap is impossible in the stock game by construction.** It enumerates
-  joysticks once at startup, probes only device ids 0 and 1, and uses `joySetCapture` — a
-  legacy API with no device-arrival notification. Replacing that surface is necessary but
-  not sufficient: the game only consults a joystick for a player whose *control config*
-  names one, so a correctly reimplemented `joyGetPosEx` can answer perfectly while a
-  controller still does nothing. "Plug it in and play" needed the input gather ported.
-- **Ghidra does not disassemble everything reachable**, so `re/instructions.tsv` is a lower
-  bound. A live block using `FNSTCW` is absent from it entirely; "the binary contains no X"
-  is not a conclusion that file can support.
+Documentation-only validation available during this planning milestone is
+listed in [`docs/running.md`](docs/running.md). The first executable milestone
+and the gate that restores product runs are specified in
+[`docs/migration.md`](docs/migration.md).
 
 ## Repository layout
 
-| Path | |
-|---|---|
-| `recompiler/` | x86 decoder and the x86 → C lifter |
-| `runtime/` | guest machine, SDL3 backends, Win32/COM shims, test harnesses |
-| `tools/` | installer unpacker, Ghidra scripts, analysis helpers |
-| `docs/` | codemap, running guide, reverse-engineering notes |
-| `re/` | Ghidra-derived function and instruction maps |
-| `game/` | extracted game tree — **gitignored, supply your own** |
+| Path | Responsibility |
+| --- | --- |
+| `runtime/app/` | native entry, lifecycle, game-file selection, configuration, user paths |
+| `runtime/cpu/` | LF2 memory/PE ownership and the future adapter to `shared/x86port` |
+| `runtime/win32/` | Win32, CRT, COM, DirectDraw, GDI, DirectShow, and socket/HLE services |
+| `runtime/overrides/` | title-specific native behavior and runtime override registrations |
+| `runtime/video/`, `runtime/audio/`, `runtime/input/`, `runtime/ui/` | native host subsystems |
+| `platforms/` | package/platform composition |
+| `tools/` | Python provisioning, verification, packaging, and RE tools |
+| `docs/` | goals, state, migration, ownership, evidence, and RE notes |
+| `re/` | non-code title metadata retained only for runtime/RE/native ownership |
+| `game/` | player-owned extracted tree; gitignored |
+
+`shared/x86port` owns x86 decoding, architectural state, interpreter tests,
+dynamic translation, executable memory, and block caching. LF2 does not carry a
+second implementation.
 
 ## Licence
 
-[MIT](LICENSE).
-
-This covers the tools, recompiler, runtime and documentation in this repository only. It
-says nothing about Little Fighter 2 itself, which remains the copyright of Marti Wong and
-Starsky Wong and is not distributed here.
+[MIT](LICENSE) covers this repository's original code and documentation only.
+It grants no rights to Little Fighter 2 or its assets.
