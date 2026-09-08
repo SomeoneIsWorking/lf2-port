@@ -27,18 +27,25 @@ class SourceDependency:
 JIT_COMMON = SourceDependency(
     name="jit-common",
     repository="https://github.com/SomeoneIsWorking/jit-common.git",
-    revision="03ac795cbc39843e795cb8091fb96bff2b1c9017",
+    revision="4c58336f5d187d556755c20c983b5dc168f8f9b1",
     marker="src/jitcommon/block_cache.h",
 )
 
 X86PORT = SourceDependency(
     name="x86port",
     repository="https://github.com/SomeoneIsWorking/x86port.git",
-    revision="e1522b2f77c030b928b76ffef5fbc5a832eb1e24",
+    revision="75da9c6457c30fd21eae03b5eaf0f6ff3de42b11",
     marker="src/x86port/jit_engine.h",
 )
 
 RUNTIME_DEPENDENCIES = (JIT_COMMON, X86PORT)
+
+ANDROID_PORT = SourceDependency(
+    name="android-port",
+    repository="https://github.com/SomeoneIsWorking/android-port.git",
+    revision="cc6c75c889c6b638cd540129cdc825c33960c3d6",
+    marker="tools/android_port.py",
+)
 
 
 class DependencyError(RuntimeError):

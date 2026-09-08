@@ -134,3 +134,24 @@ Desktop results do not qualify Android. Android additionally requires signed
 physical-device evidence for touch/controller switching, orientation,
 audio/lifecycle correctness, loading, memory, sustained frame-time percentiles,
 and thermal behavior.
+
+## Android shared build and runtime owners
+
+`uv run --frozen python tools/build/android.py` assembles the native/JIT APK using
+`platforms/android/android-port-profile.json`. The profile owns arm64-v8a, the
+existing API 24 floor, and `build/deps/android/android-24/arm64-v8a`; `--work-dir`
+relocates title build outputs without creating another dependency prefix. The
+Android tool resolves the pinned `android-port` source through the same immutable
+dependency resolver as runtime sources. `--native-only` stops after ELF inspection;
+`--release` requires the existing maintainer signing variables. No game executable
+is a build input or APK payload. `--install` names the profile's ADB serial and
+uses the shared emulator lock for device commands.
+
+Shared android-port supplies SDL3, SDL3_image, SDL3_ttf, FreeType, bzip2, and
+FFmpeg ASF/WMA using its common prefix; LF2 no longer clones or builds these in a
+private Android dependency implementation. The title still owns installer identity,
+complete-install validation, stage resources, package metadata and updater policy.
+`Lf2Activity` hands SAF copying/grants/cancellation to `LucentDocumentImport`, then
+retains its existing native validation callback before publishing the validated
+contained directory through Lucent. A selected `lf2.exe` still requests its whole
+folder; ZIP and original installer selections still use the native resolver.

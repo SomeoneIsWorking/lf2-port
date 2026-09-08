@@ -138,9 +138,13 @@ has passed the representative gameplay/release gate.
 
 The ARM64 package builder, landscape policy, private installer/folder/ZIP setup,
 touch routing, controller/touch presentation policy, updater, and signed-build
-checks exist.
+checks exist. The API24 arm64 debug APK now assembles through the shared Android
+prefix with NDK28.2 Clang and Java25. Its native ELF entry, packaged runtime
+libraries, and exclusion of original game files pass inspection. Lucent owns
+SAF staging and validated contained-directory publication. This is build and
+package evidence, not an Android OS/gameplay observation.
 
-Gap: `x86port` has no qualified ARM64 product backend, and signed physical-device
+Gap: LF2 has no qualified ARM64 gameplay run, and signed physical-device
 correctness, audio, lifecycle, and sustained performance evidence remains absent.
 
 ### S014 — Network play
@@ -189,10 +193,11 @@ contract.
 
 ### S019 — ARM64 product JIT
 
-Missing capability: `x86port` needs an ARM64 backend with W^X publication,
-instruction-cache coherence, ABI transitions, invalidation, and representative
-LF2 gameplay qualification before macOS ARM64 or Android can ship the new
-product. Bounded fallback coverage cannot qualify the backend.
+The pinned `x86port` supplies an AArch64 backend and LF2 now links it into an
+Android APK. Representative LF2 gameplay, executable-memory and lifecycle
+qualification on Android and Apple Silicon remain unverified. Shared synthetic
+CPU results and successful APK assembly cannot establish those title contracts;
+bounded fallback coverage cannot qualify the backend.
 
 ### S020 — Asset-free CI
 
@@ -202,7 +207,7 @@ tests from exact full-history source inputs with read-only repository
 permissions and no `lf2.exe`.
 
 Gap: the first remote run is pending landing. macOS ARM64 and Android product
-jobs remain unavailable because `x86port` has no ARM64 JIT backend; their
-missing release capabilities are recorded in S012, S013, and S019. Windows is
+jobs remain to be wired and executed through the shared build owners; their
+missing release qualification is recorded in S012, S013, and S019. Windows is
 the comparison baseline rather than an intended shipping host and is therefore
 inapplicable to this port's current delivery goals.

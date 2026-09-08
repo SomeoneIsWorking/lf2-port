@@ -14,6 +14,12 @@ if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
             'LF2_ANDROID_STORE_PASSWORD, and LF2_ANDROID_KEY_PASSWORD. Refusing an unsigned APK.')
 }
 
+def jniDirectory = System.getenv('LF2_ANDROID_JNI_LIBS')
+def minimumSdk = System.getenv('LF2_ANDROID_MIN_SDK')
+if (!jniDirectory || !minimumSdk) {
+    throw new GradleException('Use tools/build/android.py to select the shared Android package profile')
+}
+
 android {
     namespace = 'io.github.someoneisworking.lf2port'
     compileSdk = 35
@@ -35,7 +41,7 @@ android {
 
     defaultConfig {
         applicationId = 'io.github.someoneisworking.lf2port'
-        minSdk = 24
+        minSdk = minimumSdk.toInteger()
         targetSdk = 35
         versionCode = (System.getenv('LF2_ANDROID_VERSION_CODE') ?: '1000').toInteger()
         versionName = System.getenv('LF2_ANDROID_VERSION_NAME') ?: '0.1.0'
@@ -51,6 +57,8 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+
+    sourceSets.main.jniLibs.srcDirs = [jniDirectory]
 
     packagingOptions {
         jniLibs {

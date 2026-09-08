@@ -1,0 +1,2 @@
+rootProject.name = 'LF2-Port'
+include ':app'
