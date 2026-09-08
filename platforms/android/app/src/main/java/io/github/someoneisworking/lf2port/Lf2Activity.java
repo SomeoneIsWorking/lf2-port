@@ -4,10 +4,11 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
-import android.widget.Toast;
+import android.os.Build;
 
 import io.github.someoneisworking.lucent.LucentActivity;
 import io.github.someoneisworking.lucent.LucentDocumentImport;
+import io.github.someoneisworking.lucent.LucentImportProgress;
 
 import java.io.File;
 import java.io.IOException;
@@ -15,6 +16,7 @@ import java.util.Locale;
 
 /** LF2 setup wording, native validation handoff, and title window/update policy. */
 public final class Lf2Activity extends LucentActivity {
+    private static final String PICKER_STATE = "lucent-picker";
     private static final int REQUEST_GAME_TREE = 2001;
     private static final int REQUEST_GAME_FILE = 2002;
     private static final int MAX_FILES = 50_000;
@@ -23,6 +25,7 @@ public final class Lf2Activity extends LucentActivity {
     private boolean selectionPending;
     private UpdateManager updateManager;
     private LucentDocumentImport importer;
+    private LucentImportProgress importProgress;
     // Main-thread callbacks publish this result before waking the native validation thread.
     private volatile LucentDocumentImport.Result pendingImport;
 
@@ -37,6 +40,13 @@ public final class Lf2Activity extends LucentActivity {
     protected void onCreate(Bundle state) {
         importer = new LucentDocumentImport(this,
                 new LucentDocumentImport.Limits(MAX_FILES, MAX_BYTES, 64 * 1024));
+        selectionPending = importer.restorePickerState(
+                state == null ? null : state.getBundle(PICKER_STATE), importCallback());
+        importProgress = new LucentImportProgress(this, 2003, "lf2_game_import",
+                "Game File Installation", "Installing Little Fighter 2", Lf2Activity.class);
+        importer.setProgressListener((entries, bytes, name) -> {
+            if (importer.active()) importProgress.update(entries + " files, " + bytes + " bytes — " + name);
+        });
         importer.cleanStaleImports();
         try {
             new Lf2StageAssets(this).extract();
@@ -44,21 +54,36 @@ public final class Lf2Activity extends LucentActivity {
             throw new IllegalStateException("Could not prepare packaged LF2 stage geometry", error);
         }
         super.onCreate(state);
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[] {android.Manifest.permission.POST_NOTIFICATIONS}, 2004);
+        }
         updateManager = new UpdateManager(this);
         updateManager.check(false);
     }
 
     @Override
+    protected void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        state.putBundle(PICKER_STATE, importer.savePickerState());
+    }
+
+    @Override
     protected void onDestroy() {
         if (updateManager != null) updateManager.destroy();
-        importer.cancel();
-        finishSelection(null, "The Android activity closed before game-file setup completed.");
+        if (isFinishing()) {
+            importer.cancel();
+            importProgress.stop();
+            finishSelection(null, "The Android activity closed before game-file setup completed.");
+        }
         super.onDestroy();
     }
 
     private void finishSelection(String selectedPath, String error) {
         if (!selectionPending) return;
         selectionPending = false;
+        if (selectedPath == null) importProgress.stop();
         nativeGameTreeResult(selectedPath, error);
     }
 
@@ -87,6 +112,7 @@ public final class Lf2Activity extends LucentActivity {
     }
 
     private void discardPreviousImport() throws IOException {
+        importProgress.stop();
         if (pendingImport != null) {
             importer.discard(pendingImport);
             pendingImport = null;
@@ -148,7 +174,7 @@ public final class Lf2Activity extends LucentActivity {
     protected void onActivityResult(int request, int result, Intent data) {
         if (updateManager != null && updateManager.handleActivityResult(request)) return;
         if (importer.handleActivityResult(request, result, data)) {
-            if (importer.active()) Toast.makeText(this, R.string.importing_game_files, Toast.LENGTH_LONG).show();
+            if (importer.active()) importProgress.start(getString(R.string.importing_game_files));
             return;
         }
         super.onActivityResult(request, result, data);
@@ -158,6 +184,7 @@ public final class Lf2Activity extends LucentActivity {
     public String commitLf2GameTree(String selectedPath) throws IOException {
         if (pendingImport == null) throw new IOException("No private import is waiting for validation.");
         File installed = importer.promoteValidated(pendingImport, new File(selectedPath), "game");
+        runOnUiThread(() -> importProgress.stop());
         pendingImport = null;
         return installed.getAbsolutePath();
     }
