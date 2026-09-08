@@ -59,7 +59,7 @@ target_link_libraries(lf2_diagnostics PUBLIC lucent::lucent)
 # three-run, 270-second script became 20 assertions in a millisecond, and gained a walk across
 # every on-screen pixel that the script had never done.
 
-if(ANDROID)
+if(ANDROID OR EMSCRIPTEN)
     set(LF2_MUSIC_DECODER runtime/audio/music_decode_libav.c)
 else()
     set(LF2_MUSIC_DECODER runtime/audio/music_decode_process.c)
@@ -252,9 +252,9 @@ find_package(BZip2 REQUIRED)
 target_link_libraries(lf2 PRIVATE SDL3::SDL3 lf2_environment lf2_diagnostics lucent::zip ZLIB::ZLIB BZip2::BZip2
                                   $<$<BOOL:${LF2_M}>:${LF2_M}>)
 
-if(ANDROID)
+if(ANDROID OR EMSCRIPTEN)
     if(NOT LF2_FFMPEG_ROOT)
-        message(FATAL_ERROR "Android requires LF2_FFMPEG_ROOT from tools/build/android.py")
+        message(FATAL_ERROR "Android/Web builds require LF2_FFMPEG_ROOT from the shared web/android prefix")
     endif()
     find_path(LF2_LIBAV_INCLUDE libavformat/avformat.h PATHS "${LF2_FFMPEG_ROOT}/include"
               NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
@@ -264,11 +264,33 @@ if(ANDROID)
         target_link_libraries(lf2 PRIVATE "${LF2_${library}_LIBRARY}")
     endforeach()
     target_include_directories(lf2 PRIVATE "${LF2_LIBAV_INCLUDE}")
-    # FFmpeg's supported contract for embedding its PIC static archives in a
-    # shared library. This binds the AArch64 assembly's exported helper symbols
-    # locally instead of leaving text relocations for Android's loader.
-    target_link_options(lf2 PRIVATE "-Wl,-Bsymbolic")
-    target_link_libraries(lf2 PRIVATE android log)
+    if(ANDROID)
+        # FFmpeg's supported contract for embedding its PIC static archives in a
+        # shared library. This binds the AArch64 assembly's exported helper symbols
+        # locally instead of leaving text relocations for Android's loader.
+        target_link_options(lf2 PRIVATE "-Wl,-Bsymbolic")
+        target_link_libraries(lf2 PRIVATE android log)
+    endif()
+endif()
+
+if(EMSCRIPTEN)
+    # Browser events and filesystem work stay on the browser main thread; the
+    # guest, JIT, and synchronous native calls run on the application worker.
+    set_source_files_properties(runtime/app/main.c PROPERTIES
+        COMPILE_DEFINITIONS main=lf2_native_main)
+    target_sources(lf2 PRIVATE src/web/web_main.cpp)
+    target_link_libraries(lf2 PRIVATE lucent::web)
+    target_link_options(lf2 PRIVATE
+        -pthread -sPROXY_TO_PTHREAD=1 -sPTHREAD_POOL_SIZE=16
+        -sASYNCIFY=1 -sOFFSCREENCANVAS_SUPPORT=1
+        "-sOFFSCREENCANVASES_TO_PTHREAD=#canvas"
+        -sWASMFS=1 -sFORCE_FILESYSTEM=1
+        -sINITIAL_MEMORY=64MB -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB
+        -sSTACK_SIZE=2MB -sDEFAULT_PTHREAD_STACK_SIZE=2MB
+        -sALLOW_TABLE_GROWTH=1 -sEXIT_RUNTIME=1
+        -sENVIRONMENT=web,worker -sASSERTIONS=1
+        -sEXPORTED_RUNTIME_METHODS=callMain)
+    set_target_properties(lf2 PROPERTIES SUFFIX ".js")
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

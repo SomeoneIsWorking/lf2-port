@@ -1,0 +1,106 @@
+name: Browser release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PORT_ASSETS_DIR: ${{ github.workspace }}/vendor/shared/port-assets
+      X86PORT_DIR: ${{ github.workspace }}/vendor/shared/x86port
+      X86PORT_JITCOMMON_DIR: ${{ github.workspace }}/vendor/shared/jit-common
+      WEB_PORT_DIR: ${{ github.workspace }}/vendor/shared/web-port
+    steps:
+      - name: Checkout title and source submodules
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+          submodules: recursive
+      - name: Checkout shared browser dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: SomeoneIsWorking/web-port
+          ref: a66e52df035f1221d09f7e892a7822b628ab8a98
+          path: vendor/shared/web-port
+          fetch-depth: 1
+          submodules: recursive
+      - name: Checkout shared runtime dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: SomeoneIsWorking/x86port
+          ref: cd4590fadcbfde9fb54d52423179bdb71df13e9c
+          path: vendor/shared/x86port
+          fetch-depth: 1
+          submodules: recursive
+      - name: Checkout shared cache dependency
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: SomeoneIsWorking/jit-common
+          ref: 4c58336f5d187d556755c20c983b5dc168f8f9b1
+          path: vendor/shared/jit-common
+          fetch-depth: 1
+          submodules: recursive
+      - name: Checkout shared assets
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: SomeoneIsWorking/port-assets
+          ref: 330c1bf146bd97ecc6af49e637476a677f0e55a0
+          path: vendor/shared/port-assets
+          fetch-depth: 1
+          submodules: recursive
+      - name: Install uv
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081
+        with:
+          enable-cache: true
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021
+        with:
+          version: 4.0.16
+          actions-cache-folder: emsdk-cache
+      - name: Install GLSL compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y glslc
+      - name: Build pinned SPIR-V tools
+        run: |
+          git clone --filter=blob:none https://github.com/KhronosGroup/SPIRV-Tools.git vendor/spirv-tools
+          git -C vendor/spirv-tools checkout --detach 685919f35dfbb8c2b50bf61412349a48d9fc6a37
+          git -C vendor/spirv-tools submodule update --init --recursive
+          cmake -S vendor/spirv-tools -B build/spirv-tools -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DSPIRV_SKIP_TESTS=ON -DSPIRV_WERROR=OFF
+          cmake --build build/spirv-tools --target spirv-as spirv-dis spirv-opt spirv-val --parallel 2
+          echo "$GITHUB_WORKSPACE/build/spirv-tools" >> "$GITHUB_PATH"
+      - name: Build asset-free browser package
+        run: uv run --frozen python tools/build_web.py --emsdk "$EMSDK" --jobs 2
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
+        with:
+          path: build/release/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e

@@ -10,7 +10,7 @@
 #include "android_bridge.h"
 #endif
 
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
 enum { BUTTON_QUIT = 0, BUTTON_BROWSE = 1 };
 
 typedef struct FileDialogState {
@@ -74,6 +74,10 @@ SetupUiResult setup_ui_choose_game(const char *message, char *selection, size_t 
 
 #ifdef __ANDROID__
     return android_bridge_choose_game_tree(message, selection, capacity);
+#elif defined(__EMSCRIPTEN__)
+    lf2_log_writef(LF2_LOG_INFO, "setup_ui",
+                   "setup: browser setup is owned by the WebAssembly page; native path selection is unavailable\n");
+    return SETUP_UI_ERROR;
 #else
 
     SDL_SetAppMetadata("LF2 Port", NULL, "io.github.SomeoneIsWorking.lf2-port");
