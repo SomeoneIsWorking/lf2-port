@@ -164,3 +164,9 @@ complete-install validation, stage resources, package metadata and updater polic
 retains its existing native validation callback before publishing the validated
 contained directory through Lucent. A selected `lf2.exe` still requests its whole
 folder; ZIP and original installer selections still use the native resolver.
+
+The Android Activity saves Lucent's pending picker identity and rebinds its result
+to the recreated Activity. A shared foreground notification displays an indeterminate
+progress bar and live file/byte counts while copying, then remains through native
+validation until commit or rejection. SAF does not provide a reliable total before
+enumeration, so the display does not invent a completion percentage.
