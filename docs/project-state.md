@@ -130,10 +130,14 @@ redistributable fonts; original bitmap-authored game panels remain original.
 
 ### S012 — macOS release
 
-The native macOS build and Metal shader path exist.
+The native macOS build and Metal shader path exist. `tools/build/macos.py`
+stages the native binary, its non-system dylib closure, `stages/`, and an
+ad-hoc signed `.app`; the release workflow now exercises that packager on an
+Apple Silicon runner.
 
-Gap: issue #100's real Metal acceptance remains open, and no ARM64 JIT product
-has passed the representative gameplay/release gate.
+Gap: the remote macOS job and issue #100's real Metal acceptance are not yet
+verified, and no ARM64 JIT product has passed the representative
+gameplay/release gate.
 
 ### S013 — Android release and touch controls
 
