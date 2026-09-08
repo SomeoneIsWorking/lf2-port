@@ -240,11 +240,10 @@ cross-origin isolation after the service-worker reload, persistent-storage
 initialization, and the no-install state without console or network errors.
 The package is ready for the GitHub Pages workflow and never contains game
 files. The Browser release workflow deployed the asset-free package at
-`https://someoneisworking.github.io/lf2-port/` (run 34197382067).
+`https://someoneisworking.github.io/lf2-port/` (run 34216936080).
 
 Gap: a real LF2 install has not yet been imported in a browser, so translated
 gameplay, WebGPU presentation, and persisted-install restart remain unverified.
 x86port must also qualify translated stores that modify cached/current code,
 including an instruction-boundary exit from the active translation. Pages
-deployment is still a remote workflow gate, not established by the local
-package alone.
+deployment is verified by run `34216936080`; browser gameplay remains open.
