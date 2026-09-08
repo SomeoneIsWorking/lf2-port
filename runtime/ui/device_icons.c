@@ -69,16 +69,18 @@ static SDL_Surface *native_icon_surface(DeviceAsset asset, float scale)
 int device_icon_paint(uint32_t dst_pixels, int dst_w, int dst_h, int dst_pitch, int x, int y, int dev)
 {
     SDL_Surface *icon = icon_surface(asset_for_device(dev));
-    if (!icon || !g_mem) return 0;
+    if (!icon || !guest_memory_ready()) return 0;
 
     for (int iy = 0; iy < icon->h; iy++) {
         const uint32_t *src =
             (const uint32_t *)((const unsigned char *)icon->pixels + (size_t)iy * (size_t)icon->pitch);
         const int dy = y + iy;
+        if (dy < 0 || dy >= dst_h) continue;
+        uint32_t *row = (uint32_t *)guest_write_pointer(dst_pixels + (size_t)dy * (size_t)dst_pitch, (size_t)dst_pitch);
         for (int ix = 0; ix < icon->w; ix++) {
             const int dx = x + ix;
-            if (dx < 0 || dx >= dst_w || dy < 0 || dy >= dst_h) continue;
-            uint32_t *dst = (uint32_t *)(g_mem + dst_pixels + (size_t)dy * (size_t)dst_pitch) + dx;
+            if (dx < 0 || dx >= dst_w) continue;
+            uint32_t *dst = row + dx;
             *dst = ui_rgba_over_xrgb(src[ix], *dst);
         }
     }

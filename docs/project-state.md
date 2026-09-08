@@ -42,8 +42,9 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S016 | Gameplay defaults to JIT, exposes no explicit interpreter mode, and accounts for bounded fallback by reason and coverage | partial | S018 | G001, G003 |
 | S017 | Retired title-specific execution interfaces and toolchains remain absent | verified | — | G001 |
 | S018 | `shared/x86port` supplies the x86-64 product JIT and bounded fallback contract | partial | — | G001, G003 |
-| S019 | `shared/x86port` supplies a qualified ARM64 product JIT backend for macOS and Android | missing | — | G001, G003 |
+| S019 | `shared/x86port` supplies a qualified ARM64 product JIT backend for macOS and Android | partial | — | G001, G003 |
 | S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
+| S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | blocked | S005, S015 | G001, G003 |
 
 ## Capability details
 
@@ -211,3 +212,15 @@ jobs remain to be wired and executed through the shared build owners; their
 missing release qualification is recorded in S012, S013, and S019. Windows is
 the comparison baseline rather than an intended shipping host and is therefore
 inapplicable to this port's current delivery goals.
+
+### S021 — Browser native/JIT delivery
+
+Sparse guest backing and complete native pointer spans are implemented and have
+focused synthetic coverage, including bounded bitmap/resource decoding. They
+retain the desktop JIT adapter and avoid a browser-sized 4 GiB allocation.
+
+Gap: x86port must qualify translated stores that modify cached/current code,
+including an instruction-boundary exit from the active translation. The LF2 web
+build and worker startup, persistent import flow, WebGPU presentation, browser
+interaction and GitHub Pages deployment remain unverified. Native compilation
+and sparse mapping tests are not browser gameplay evidence.

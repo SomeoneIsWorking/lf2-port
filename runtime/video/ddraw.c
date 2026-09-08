@@ -9,6 +9,8 @@
 #include "overrides/geom.h"
 #include "guest_map.h"
 #include "guest.h"
+#include "surface_memory.h"
+#include "frame_capture.h"
 #include "hostwin.h"
 #include "render.h"
 #include "engine.h"
@@ -30,7 +32,6 @@ void gdi_last_bitmap_consume(void);
 #include "loadprof.h"
 
 #include <SDL3/SDL.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -41,7 +42,17 @@ void gdi_last_bitmap_consume(void);
 enum { NATIVE_W = GEOM_SCREEN_W, NATIVE_H = GEOM_SCREEN_H };
 
 /* DDSURFACEDESC field offsets */
-enum { SD_SIZE = 0, SD_FLAGS = 4, SD_HEIGHT = 8, SD_WIDTH = 12, SD_PITCH = 16, SD_SURFACE = 36, SD_PIXELFORMAT = 72, SD_CAPS = 104, SD_BYTES = 108 };
+enum {
+    SD_SIZE = 0,
+    SD_FLAGS = 4,
+    SD_HEIGHT = 8,
+    SD_WIDTH = 12,
+    SD_PITCH = 16,
+    SD_SURFACE = 36,
+    SD_PIXELFORMAT = 72,
+    SD_CAPS = 104,
+    SD_BYTES = 108
+};
 enum { DDSD_CAPS = 1, DDSD_HEIGHT = 2, DDSD_WIDTH = 4, DDSD_PITCH = 8, DDSD_PIXELFORMAT = 0x1000 };
 enum { DDSCAPS_PRIMARYSURFACE = 0x200 };
 enum { DDBLT_COLORFILL = 0x400, DDBLT_KEYSRC = 0x8000 };
@@ -93,14 +104,6 @@ static void surface_changed(const Surface *s)
     render_surface_dirty(s->pixels);
     engine_surface_dirty(s->pixels);
 }
-
-/* Surfaces live here rather than on the guest heap so a huge sprite sheet cannot
- * collide with malloc'd game data. The range is declared in guest_map.h, which is also
- * what stops it colliding with the sound PCM arena -- it used to, silently. */
-enum { VRAM_BASE = GUEST_VRAM_BASE };
-static uint32_t vram_next = VRAM_BASE;
-
-long vram_allocs, vram_bytes;
 
 /* LF2_BLT_STACK bookkeeping; see the hook in the Blt path. */
 static int blt_stack_wanted, blt_stack_hit;
@@ -236,7 +239,8 @@ static uint32_t glyph_ink(const Surface *s, int sl, int st, int sr, int sb)
     uint32_t best = 0x00ffffffu;
     int best_lum = -1;
     for (int y = st; y < sb && y < s->h; y++) {
-        const uint32_t *row = (const uint32_t *)(g_mem + s->pixels + (size_t)y * (size_t)s->pitch);
+        const uint32_t *row =
+            (const uint32_t *)(guest_pointer(s->pixels + (uint32_t)y * (uint32_t)s->pitch, (size_t)s->pitch));
         for (int x = sl; x < sr && x < s->w; x++) {
             const uint32_t px = row[x] & 0x00ffffffu;
             if (s->has_key && px >= s->key_lo && px <= s->key_hi) continue;
@@ -258,40 +262,16 @@ void world_band_report(void)
 {
     if (!lf2_environment_get(LF2_ENV_BAND_DEBUG)) return;
     if (!world_band_fills) {
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "bands: the stage's fill path drew NOTHING this run -- either no match was reached, or no loaded stage has a tinted layer. This says nothing about whether widening works.\n");
+        lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                       "bands: the stage's fill path drew NOTHING this run -- either no match was reached, or no "
+                       "loaded stage has a tinted layer. This says nothing about whether widening works.\n");
         return;
     }
     lf2_log_writef(LF2_LOG_INFO, "ddraw",
                    "bands: %ld stage fill(s), %ld widened to the viewport (view %d, the "
                    "game's own screen %d)%s\n",
-                   world_band_fills, world_band_widened, hw.width, GEOM_SCREEN_W, world_band_widened ? "" : " -- none spanned the whole 794 at x 0, so none is a full-width band");
-}
-
-void vram_report(void)
-{
-    /* Reported relative to VRAM_BASE. Printing the raw cursor makes a 316 MB arena look
-     * like 1.5 GB, because the base is 0x50000000. */
-    lf2_log_writef(LF2_LOG_INFO, "ddraw", "vram: %ld allocations, %ld KB requested, %u KB of arena used\n", vram_allocs, vram_bytes / 1024, (vram_next - VRAM_BASE) / 1024);
-}
-
-static uint32_t vram_alloc(uint32_t n)
-{
-    /* Refuse past the reservation instead of walking into the next arena. Running off
-     * the end used to be invisible: the allocator handed out addresses belonging to the
-     * sound PCM, the surfaces overwrote it, and the only symptom was that the game
-     * sounded broken. An arena that cannot overflow loudly will overflow quietly. */
-    if (vram_next + n < vram_next || vram_next + n > GUEST_VRAM_END) {
-        lf2_log_writef(LF2_LOG_INFO, "ddraw",
-                       "vram arena exhausted: %u bytes requested at %08x, reservation ends at %08x\n"
-                       "  (%ld allocations, %ld KB so far). Raise GUEST_VRAM_SIZE in guest_map.h.\n",
-                       n, vram_next, (unsigned)GUEST_VRAM_END, vram_allocs, vram_bytes / 1024);
-        abort();
-    }
-    vram_allocs++;
-    vram_bytes += n;
-    uint32_t p = vram_next;
-    vram_next = (vram_next + n + 4095u) & ~4095u;
-    return p;
+                   world_band_fills, world_band_widened, hw.width, GEOM_SCREEN_W,
+                   world_band_widened ? "" : " -- none spanned the whole 794 at x 0, so none is a full-width band");
 }
 
 /* The game never creates a DirectDraw palette -- it queries GetPixelFormat and adapts.
@@ -309,180 +289,9 @@ static void write_pixelformat(uint32_t pf)
     ST32(pf + 28, 0);
 }
 
-/* ---- screen-change detection ----
- * Whether a scripted click actually did anything is not answerable from the key array --
- * every screen reads the same keys -- so LF2_SCREEN_HASH watches the framebuffer instead.
- *
- * The comparison is deliberately coarse. Menus animate (cursors blink, banners scroll), so
- * an exact hash changes every frame and reports nothing useful. Instead a subsampled
- * signature is compared byte-for-byte and a change is reported only when a large fraction
- * of it differs, which is what a screen transition looks like and what local animation
- * does not.
- */
-enum { SIG_N = 1024, SCREEN_CHANGE_PCT = 25 };
-
-static void screen_change_check(const uint8_t *px, int w, int h, int pitch, long frame)
-{
-    if (!lf2_environment_get(LF2_ENV_SCREEN_HASH) || !px || w <= 0 || h <= 0) return;
-
-    static uint8_t sig[SIG_N], prev[SIG_N];
-    static int have_prev;
-    for (int i = 0; i < SIG_N; i++) {
-        const int x = (int)((long)i * 7919 % w);
-        const int y = (int)((long)i * 6271 % h);
-        sig[i] = px[(long)y * pitch + x];
-    }
-    if (!have_prev) {
-        memcpy(prev, sig, SIG_N);
-        have_prev = 1;
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "screen: first frame %ld\n", frame);
-        return;
-    }
-    int diff = 0;
-    for (int i = 0; i < SIG_N; i++)
-        if (sig[i] != prev[i]) diff++;
-    const int pct = diff * 100 / SIG_N;
-    if (pct >= SCREEN_CHANGE_PCT) {
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "screen: CHANGED at frame %ld (%d%% of samples)\n", frame, pct);
-        memcpy(prev, sig, SIG_N);
-    }
-}
-
-/* Diagnostic dumps go to $LF2_DUMP_DIR, default "scratch". Never an absolute path: this
- * is a committed file in a public repository, and a baked-in home directory is both
- * unusable for anyone else and a leak of the author's layout. */
-static void dump_path(char *out, size_t n, const char *fmt, ...)
-{
-    const char *dir = lf2_environment_get(LF2_ENV_DUMP_DIR);
-    if (!dir || !*dir) dir = "scratch";
-    int k = snprintf(out, n, "%s/", dir);
-    if (k < 0 || (size_t)k >= n) {
-        out[0] = 0;
-        return;
-    }
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(out + k, n - (size_t)k, fmt, ap);
-    va_end(ap);
-}
-
-/* Deterministic visual capture: LF2_FRAME_DUMP=1500,1800 writes those presented frames as
- * PPM into $LF2_DUMP_DIR. Screenshotting an X server instead means racing the game's own
- * timing -- two attempts at capturing a match landed on the menu before it -- and cannot
- * run headless at all. Frame numbers are exact, so a capture is reproducible.
- */
-/* AN ITEM MAY BE `@screen+N` TOO, and that is not a convenience -- it is the same defect the
- * pad scripts had. A dump frame is a stopwatch aimed at a moving target: render_test asked for
- * frame 2250 to get "a frame with fighters on it", and when the routes stopped waiting 840
- * frames for a front end that was already up, 2250-840 landed somewhere else in the match and
- * the arm failed for a reason that had nothing to do with the renderer. The pad scripts were
- * given screen anchors for exactly this in issue #25; the dumps kept their stopwatches.
- *
- * The grammar lives in runtime/app/framespec.h so tests/test_framespec.c can walk it without
- * booting the game; script_when is the resolver, because it is what knows the screens. */
-int hostwin_frame_selected(const char *spec, long frame)
-{
-    return framespec_matches(spec, frame, script_when);
-}
-/* A capture aimed at a fixed frame number and a probe that fires off game STATE can
- * disagree, and when they do the picture is of the wrong thing while looking perfectly
- * valid -- an A/B of two spawns produced one arm whose run never reached the match, and the
- * two screenshots would have been compared as if they showed the same experiment. So a
- * probe can ask for the next frame instead, and the capture follows the event. */
-static int frame_requested;
-void gfx_request_frame_dump(void)
-{
-    frame_requested = 1;
-}
-
-static int frame_wanted(long frame)
-{
-    if (frame_requested) {
-        frame_requested = 0;
-        return 1;
-    }
-    return hostwin_frame_selected(lf2_environment_get(LF2_ENV_FRAME_DUMP), frame);
-}
-
-/* LF2_MEM_DUMP=<frame>[,<frame>...] writes the game's whole .data section to
- * data_<frame>.bin in $LF2_DUMP_DIR. Diffing two of them across a single input finds the
- * variable behind an on-screen change when reading the disassembly would mean picking one
- * candidate out of hundreds -- which is how the pre-fight overlay's selection index was
- * located. tools/re/diff_data.py does the comparison.
- *
- * The range is the section's own bounds from the PE header, not a guess: dumping too
- * little would drop the answer and look like "nothing changed". */
-enum { DATA_BASE = 0x0044d000, DATA_SIZE = 0xc724 };
-
-/* LF2_HEAP_DUMP=<frame>[,...] snapshots the guest heap in use, for the same
- * before/after diffing as LF2_MEM_DUMP but over the region .data cannot reach.
- * tools/re/diff_data.py --base 0x20000000 reads it. */
-uint32_t guest_heap_used(void); /* imports.c */
-
-static void dump_heap(long frame)
-{
-    if (!hostwin_frame_selected(lf2_environment_get(LF2_ENV_HEAP_DUMP), frame)) return;
-    const uint32_t used = guest_heap_used();
-    char path[256];
-    dump_path(path, sizeof path, "heap_%06ld.bin", frame);
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "heap dump: cannot write %s\n", path);
-        return;
-    }
-    fwrite(g_mem + GUEST_HEAP_BASE, 1, used, f);
-    fclose(f);
-    lf2_log_writef(LF2_LOG_INFO, "ddraw", "heap dump: wrote %s (%u bytes from %08x)\n", path, used, (unsigned)GUEST_HEAP_BASE);
-}
-
-static void dump_data(long frame)
-{
-    if (!hostwin_frame_selected(lf2_environment_get(LF2_ENV_MEM_DUMP), frame)) return;
-    char path[256];
-    dump_path(path, sizeof path, "data_%06ld.bin", frame);
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "data dump: cannot write %s\n", path);
-        return;
-    }
-    fwrite(g_mem + DATA_BASE, 1, DATA_SIZE, f);
-    fclose(f);
-    lf2_log_writef(LF2_LOG_INFO, "ddraw", "data dump: wrote %s (%d bytes from %08x)\n", path, DATA_SIZE, DATA_BASE);
-}
-
-static void dump_frame(const uint8_t *px, int w, int h, int pitch, long frame)
-{
-    if (!frame_wanted(frame)) return;
-    char path[256];
-    dump_path(path, sizeof path, "frame_%06ld.ppm", frame);
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "frame dump: cannot write %s\n", path);
-        return;
-    }
-    fprintf(f, "P6\n%d %d\n255\n", w, h);
-    for (int y = 0; y < h; y++) {
-        const uint32_t *row = (const uint32_t *)(px + (size_t)y * (size_t)pitch);
-        for (int x = 0; x < w; x++) {
-            const uint8_t rgb[3] = {(uint8_t)(row[x] >> 16), (uint8_t)(row[x] >> 8), (uint8_t)row[x]};
-            fwrite(rgb, 1, 3, f);
-        }
-    }
-    fclose(f);
-    lf2_log_writef(LF2_LOG_INFO, "ddraw", "frame dump: wrote %s (%dx%d)\n", path, w, h);
-}
-
-int ddraw_frame_pixels_wanted(long frame)
-{
-    return frame_wanted(frame) || lf2_environment_get(LF2_ENV_SCREEN_HASH) != NULL;
-}
-
 void ddraw_frame_diagnostics(const uint8_t *pixels, int w, int h, int pitch, long frame)
 {
-    screen_change_check(pixels, w, h, pitch, frame);
-    dump_frame(pixels, w, h, pitch, frame);
-    dump_data(frame);
-    dump_heap(frame);
+    frame_capture_present((CaptureFrame){pixels, w, h, pitch, frame});
     /* Periodic, not one-shot: a single report at frame 900 lands before the match has
      * started, so it measures the menus and reads as if nothing ever plays. */
     if (frame % 900 == 0) {
@@ -609,7 +418,8 @@ static void charselect_device_labels_draw(const Surface *s)
 static void charselect_device_labels_present(const Surface *s)
 {
     const int charselect_up = LD32(0x0044d020u) == 1;
-    if (device_icon_charselect_phase(charselect_up, panel_overlay_up()) == DEVICE_ICON_CHARSELECT_PRESENT) charselect_device_labels_draw(s);
+    if (device_icon_charselect_phase(charselect_up, panel_overlay_up()) == DEVICE_ICON_CHARSELECT_PRESENT)
+        charselect_device_labels_draw(s);
 }
 
 static void present_primary(void);
@@ -622,7 +432,7 @@ static void present_primary(void)
     if (hint_on) controls_hint_draw(s);
     hud_device_labels(s);
     charselect_device_labels_present(s);
-    hostwin_present(g_mem + s->pixels, s->w, s->h, s->pitch);
+    hostwin_present(guest_pointer(s->pixels, (size_t)s->pitch * (size_t)s->h), s->w, s->h, s->pitch);
     LOADPROF_END();
 }
 
@@ -681,7 +491,8 @@ static uint32_t surface_hash(const Surface *s)
 {
     uint32_t h = 2166136261u;
     for (int y = 0; y < s->h; y++) {
-        const uint32_t *row = (const uint32_t *)(g_mem + s->pixels + (size_t)y * (size_t)s->pitch);
+        const uint32_t *row =
+            (const uint32_t *)(guest_pointer(s->pixels + (uint32_t)y * (uint32_t)s->pitch, (size_t)s->pitch));
         for (int x = 0; x < s->w; x++) {
             h ^= row[x];
             h *= 16777619u;
@@ -696,15 +507,21 @@ static uint32_t surface_hash(const Surface *s)
 void draw_paths_report(void)
 {
     if (!draw_paths_on()) return;
-    lf2_log_writef(LF2_LOG_INFO, "ddraw", "draw paths: Blt=%ld BltFast=%ld Lock=%ld (of which changed pixels=%ld)\n", path_blt, path_bltfast, path_lock, path_lock_wrote);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw", "draw paths: Blt=%ld BltFast=%ld Lock=%ld (of which changed pixels=%ld)\n",
+                   path_blt, path_bltfast, path_lock, path_lock_wrote);
     if (!path_blt && !path_bltfast && !path_lock)
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "draw paths: ALL ZERO -- this run drew nothing at all, so it says nothing about which route the game uses\n");
+        lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                       "draw paths: ALL ZERO -- this run drew nothing at all, so it says nothing about which route the "
+                       "game uses\n");
     else if (!path_lock_wrote && path_lock)
         lf2_log_writef(LF2_LOG_INFO, "ddraw",
                        "draw paths: %ld locks and none of them changed a pixel, so on this "
                        "route the game reads and does not draw\n",
                        path_lock);
-    lf2_log_writef(LF2_LOG_INFO, "ddraw", "draw paths: NOT covered -- GDI text goes straight into the surface without Lock (runtime/win32/gdi.c), and a lock whose writes cancel out would hash the same. Both would read as no-draw here.\n");
+    lf2_log_writef(
+        LF2_LOG_INFO, "ddraw",
+        "draw paths: NOT covered -- GDI text goes straight into the surface without Lock (runtime/win32/gdi.c), and a "
+        "lock whose writes cancel out would hash the same. Both would read as no-draw here.\n");
 }
 
 static void surf_Lock(uint32_t self)
@@ -780,7 +597,8 @@ static void read_rect(uint32_t p, int *l, int *t, int *r, int *b, int dw, int dh
  * shift pixels, and this path draws every sprite in the game. */
 enum { BLIT_MAXW = 4096 };
 
-static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh, int keyed, uint32_t klo, uint32_t khi, int mirror_x)
+static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh,
+                        int keyed, uint32_t klo, uint32_t khi, int mirror_x)
 {
     if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
 
@@ -804,13 +622,16 @@ static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh, Surface *s, 
 
     /* A run of columns that is contiguous and 1:1 (the unscaled case, which is most of
      * them) can be copied without indirection. */
-    const int direct = (ncol > 1) && (col_src[1] - col_src[0] == 1) && (col_src[ncol - 1] - col_src[0] == ncol - 1) && (col_dst[ncol - 1] - col_dst[0] == ncol - 1);
+    const int direct = (ncol > 1) && (col_src[1] - col_src[0] == 1) && (col_src[ncol - 1] - col_src[0] == ncol - 1) &&
+                       (col_dst[ncol - 1] - col_dst[0] == ncol - 1);
 
     for (int y = 0; y < dh; y++) {
         const int syy = sy + (int)((int64_t)y * sh / dh), dyy = dy + y;
         if (syy < 0 || syy >= s->h || dyy < 0 || dyy >= d->h) continue;
-        const uint32_t *sp = (const uint32_t *)(g_mem + s->pixels + (size_t)syy * (size_t)s->pitch);
-        uint32_t *dp = (uint32_t *)(g_mem + d->pixels + (size_t)dyy * (size_t)d->pitch);
+        const uint32_t *sp =
+            (const uint32_t *)(guest_pointer(s->pixels + (uint32_t)syy * (uint32_t)s->pitch, (size_t)s->pitch));
+        uint32_t *dp =
+            (uint32_t *)(guest_write_pointer(d->pixels + (uint32_t)dyy * (uint32_t)d->pitch, (size_t)d->pitch));
 
         if (direct) {
             const uint32_t *srow = sp + col_src[0];
@@ -837,12 +658,14 @@ static void blit_mapped(Surface *d, int dx, int dy, int dw, int dh, Surface *s, 
     surface_changed(d);
 }
 
-static void blit(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh, int keyed, uint32_t klo, uint32_t khi)
+static void blit(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh, int keyed,
+                 uint32_t klo, uint32_t khi)
 {
     blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 0);
 }
 
-static void blit_mirror_x(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh, int keyed, uint32_t klo, uint32_t khi)
+static void blit_mirror_x(Surface *d, int dx, int dy, int dw, int dh, Surface *s, int sx, int sy, int sw, int sh,
+                          int keyed, uint32_t klo, uint32_t khi)
 {
     blit_mapped(d, dx, dy, dw, dh, s, sx, sy, sw, sh, keyed, klo, khi, 1);
 }
@@ -887,7 +710,8 @@ static void band_paint(Surface *d, int x, int w, int top, int bot, uint32_t c)
     render_fill(d->pixels, x, top, x + w, bot, c);
     for (int y = top; y < bot && y < d->h; y++) {
         if (y < 0) continue;
-        uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
+        uint32_t *row =
+            (uint32_t *)(guest_write_pointer(d->pixels + (uint32_t)y * (uint32_t)d->pitch, (size_t)d->pitch));
         for (int i = x; i < x + w; i++) row[i] = c;
     }
 }
@@ -910,7 +734,8 @@ static void backdrop_edge_bands(Surface *d, Surface *s, int sl, int st_, int sr,
         if (y < db && y >= 0 && y < d->h) {
             const int sy = st_ + (int)((int64_t)(y - dt) * (sb - st_) / (db - dt));
             if (sy >= 0 && sy < s->h) {
-                const uint32_t *row = (const uint32_t *)(g_mem + s->pixels + (size_t)sy * (size_t)s->pitch);
+                const uint32_t *row =
+                    (const uint32_t *)(guest_pointer(s->pixels + (uint32_t)sy * (uint32_t)s->pitch, (size_t)s->pitch));
                 if (have_left) cl = row[left.source_x] & 0x00ffffffu;
                 if (have_right) cr = row[right.source_x] & 0x00ffffffu;
                 valid = 1;
@@ -933,18 +758,27 @@ static void backdrop_edge_bands(Surface *d, Surface *s, int sl, int st_, int sr,
 /* A declared far-plane edge continues in native-size segments whose X direction alternates.
  * This costs one quad per segment rather than one per column; destination/source extents remain
  * exactly equal, and keyed scenery never reaches this boundary with continuation flags. */
-static void backdrop_mirror_segments(Surface *d, Surface *s, int flags, int sl, int st_, int sr, int sb, int dl, int dt, int dr, int db, int keyed, const BltTrace *trace)
+static void backdrop_mirror_segments(Surface *d, Surface *s, int flags, int sl, int st_, int sr, int sb, int dl, int dt,
+                                     int dr, int db, int keyed, const BltTrace *trace)
 {
     for (int segment = 0;; segment++) {
         BackdropBlit piece;
         if (!backdrop_mirror_segment(flags, d->w, segment, dl, dt, dr, db, sl, st_, sr, sb, &piece)) break;
         blt_trace_backdrop(trace, &piece);
         if (!d->primary) {
-            if (piece.mirror_x) render_blit_mirror_x(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch, piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
-            else render_blit(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch, piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
+            if (piece.mirror_x)
+                render_blit_mirror_x(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch,
+                                     piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
+            else
+                render_blit(d->pixels, piece.dl, piece.dt, piece.dr, piece.db, s->pixels, s->w, s->h, s->pitch,
+                            piece.sl, piece.st, piece.sr, piece.sb, keyed, s->key_lo, s->key_hi);
         }
-        if (piece.mirror_x) blit_mirror_x(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st, piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
-        else blit(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st, piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
+        if (piece.mirror_x)
+            blit_mirror_x(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st,
+                          piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
+        else
+            blit(d, piece.dl, piece.dt, piece.dr - piece.dl, piece.db - piece.dt, s, piece.sl, piece.st,
+                 piece.sr - piece.sl, piece.sb - piece.st, keyed, s->key_lo, s->key_hi);
     }
 }
 static void dump_surface(uint32_t obj, const char *tag)
@@ -952,12 +786,13 @@ static void dump_surface(uint32_t obj, const char *tag)
     Surface *s = com_host(obj);
     if (!s) return;
     char path[160];
-    dump_path(path, sizeof path, "dump_%s.ppm", tag);
+    frame_capture_path(path, sizeof path, "dump_%s.ppm", tag);
     FILE *f = fopen(path, "wb");
     if (!f) return;
     fprintf(f, "P6\n%d %d\n255\n", s->w, s->h);
     for (int y = 0; y < s->h; y++) {
-        const uint32_t *r = (const uint32_t *)(g_mem + s->pixels + (size_t)y * (size_t)s->pitch);
+        const uint32_t *r =
+            (const uint32_t *)(guest_pointer(s->pixels + (uint32_t)y * (uint32_t)s->pitch, (size_t)s->pitch));
         for (int x = 0; x < s->w; x++) {
             const uint8_t px[3] = {(uint8_t)(r[x] >> 16), (uint8_t)(r[x] >> 8), (uint8_t)r[x]};
             fwrite(px, 1, 3, f);
@@ -1024,12 +859,15 @@ void cursor_find_note(int dl, int dt, const char *via)
         if (oy > site[k].hi_y) site[k].hi_y = oy;
     }
     if (++frames % 4000 == 0) {
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "cursor-find: pointer travelled x %d..%d, y %d..%d\n", p_lo_x, p_hi_x, p_lo_y, p_hi_y);
-        if (p_hi_x - p_lo_x < 40 && p_hi_y - p_lo_y < 40) lf2_log_writef(LF2_LOG_INFO, "ddraw", "  POINTER BARELY MOVED -- this cannot identify a cursor\n");
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "cursor-find: pointer travelled x %d..%d, y %d..%d\n", p_lo_x, p_hi_x,
+                       p_lo_y, p_hi_y);
+        if (p_hi_x - p_lo_x < 40 && p_hi_y - p_lo_y < 40)
+            lf2_log_writef(LF2_LOG_INFO, "ddraw", "  POINTER BARELY MOVED -- this cannot identify a cursor\n");
         for (int i = 0; i < nsite; i++) {
             const int sx = site[i].hi_x - site[i].lo_x, sy = site[i].hi_y - site[i].lo_y;
             if (site[i].n < 50) continue;
-            lf2_log_writef(LF2_LOG_INFO, "ddraw", "  %-8s ra=%08x n=%-6ld spread x=%-5d y=%-5d offset(%d,%d) %s\n", site[i].via, site[i].ra, site[i].n, sx, sy, site[i].lo_x, site[i].lo_y,
+            lf2_log_writef(LF2_LOG_INFO, "ddraw", "  %-8s ra=%08x n=%-6ld spread x=%-5d y=%-5d offset(%d,%d) %s\n",
+                           site[i].via, site[i].ra, site[i].n, sx, sy, site[i].lo_x, site[i].lo_y,
                            (sx <= 8 && sy <= 8) ? "<== TRACKS THE POINTER" : "");
         }
     }
@@ -1115,7 +953,8 @@ static void framing_note(const char *what, uint32_t key, int off, int left)
     lf2_log_writef(LF2_LOG_INFO, "ddraw",
                    "framing: frame %ld %s -> %s, offset %d in a %d-wide composition "
                    "(the game's own screen is %d)\n",
-                   hostwin_frames(), what, left ? "CENTRED, backdrop art LEFT at x 0" : "CENTRED", off, hw.width, NATIVE_W);
+                   hostwin_frames(), what, left ? "CENTRED, backdrop art LEFT at x 0" : "CENTRED", off, hw.width,
+                   NATIVE_W);
 }
 
 void framing_report(void)
@@ -1130,9 +969,10 @@ void framing_report(void)
                    "draw(s) kept at x 0), %ld centred flat-backdrop screen(s), %ld "
                    "picture-backdrop screen(s) so far%s\n",
                    framing_n_left, backdrop_art_seen, framing_n_centre, framing_n_picture,
-                   (framing_n_left || framing_n_centre || framing_n_picture) ? ""
-                                                                             : " -- NO fixed-794 screen has been framed at all, so this run measured NOTHING "
-                                                                               "about per-screen framing (not wide, or never left the world view)");
+                   (framing_n_left || framing_n_centre || framing_n_picture)
+                       ? ""
+                       : " -- NO fixed-794 screen has been framed at all, so this run measured NOTHING "
+                         "about per-screen framing (not wide, or never left the world view)");
 }
 
 static void screen_fill_note(uint32_t colour, int l, int t, int r, int b)
@@ -1344,7 +1184,9 @@ static void surf_Blt(uint32_t self)
 
     /* Value-level trace: the call sequence already matches the oracle, so the next
      * signal is the arguments. Flags are comparable across runs; pointers are not. */
-    if (lf2_environment_get(LF2_ENV_COM_TRACE)) lf2_log_writef(LF2_LOG_INFO, "ddraw", "ARG Blt flags=0x%x dst=%s src=%s\n", flags, drect ? "rect" : "null", srcobj ? "surf" : "null");
+    if (lf2_environment_get(LF2_ENV_COM_TRACE))
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "ARG Blt flags=0x%x dst=%s src=%s\n", flags, drect ? "rect" : "null",
+                       srcobj ? "surf" : "null");
 
     int dl, dt, dr, db;
     read_rect(drect, &dl, &dt, &dr, &db, d->w, d->h);
@@ -1473,7 +1315,8 @@ static void surf_Blt(uint32_t self)
         if (!d->primary) render_fill(d->pixels, dl, dt, dr, db, fill);
         for (int y = dt; y < db && y < d->h; y++) {
             if (y < 0) continue;
-            uint32_t *row = (uint32_t *)(g_mem + d->pixels + (size_t)y * (size_t)d->pitch);
+            uint32_t *row =
+                (uint32_t *)(guest_write_pointer(d->pixels + (uint32_t)y * (uint32_t)d->pitch, (size_t)d->pitch));
             for (int x = dl < 0 ? 0 : dl; x < dr && x < d->w; x++) row[x] = fill & 0x00ffffffu;
         }
         surface_changed(d);
@@ -1490,7 +1333,8 @@ static void surf_Blt(uint32_t self)
         int wx = 0, wy = 0;
         sscanf(want, "%d,%d", &wx, &wy);
         if (!done && dl == wx && dt == wy) {
-            lf2_log_writef(LF2_LOG_INFO, "ddraw", "blt (%d,%d)-(%d,%d) issued from guest %08x\n", dl, dt, dr, db, LD32(R(ESP)));
+            lf2_log_writef(LF2_LOG_INFO, "ddraw", "blt (%d,%d)-(%d,%d) issued from guest %08x\n", dl, dt, dr, db,
+                           LD32(R(ESP)));
             done = 1;
         }
     }
@@ -1555,7 +1399,9 @@ static void surf_Blt(uint32_t self)
         }
     }
 
-    if (lf2_environment_get(LF2_ENV_BAND_DEBUG) && lf2_wide_width() && panel_hud_up() && srcobj && dl == 0) lf2_log_writef(LF2_LOG_INFO, "ddraw", "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n", dl, dr, dt, db, d->w, NATIVE_W);
+    if (lf2_environment_get(LF2_ENV_BAND_DEBUG) && lf2_wide_width() && panel_hud_up() && srcobj && dl == 0)
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "band: dl %d dr %d dt %d db %d dest %d wide (NATIVE_W %d)\n", dl, dr, dt,
+                       db, d->w, NATIVE_W);
     const int backdrop_flags = lf2_wide_width() && panel_hud_up() && s && d->w > NATIVE_W ? world_backdrop_hint : 0;
     const int extend_world_backdrop = (backdrop_flags & BACKDROP_EXTEND_BOTTOM) != 0;
 
@@ -1572,7 +1418,9 @@ static void surf_Blt(uint32_t self)
     panel_note(dl, dt, dr, db);
 
     /* Record the label before the pre-fight panel so ordinary painter order covers it. */
-    if (prefight_panel_draw && !d->primary && device_icon_charselect_phase(LD32(0x0044d020u) == 1, 1) == DEVICE_ICON_CHARSELECT_BEFORE_OVERLAY) charselect_device_labels_draw(d);
+    if (prefight_panel_draw && !d->primary &&
+        device_icon_charselect_phase(LD32(0x0044d020u) == 1, 1) == DEVICE_ICON_CHARSELECT_BEFORE_OVERLAY)
+        charselect_device_labels_draw(d);
 
     /* A PICTURE THAT COVERS THE WHOLE OF THE GAME'S SCREEN IS THAT SCREEN'S BACKGROUND, and
      * the only one in the game is the loading screen's MENU_WAIT (issue #44). It is decided
@@ -1583,7 +1431,8 @@ static void surf_Blt(uint32_t self)
      *
      * Gated off the world view: during a match the rule above has already widened a full-width
      * stage layer, and a stage layer is not a screen's backdrop. */
-    const int backdrop_picture = srcobj && !d->primary && lf2_wide_width() && !panel_hud_up() && d->w > NATIVE_W && dl == 0 && dt == 0 && dr == NATIVE_W && db == NATIVE_H;
+    const int backdrop_picture = srcobj && !d->primary && lf2_wide_width() && !panel_hud_up() && d->w > NATIVE_W &&
+                                 dl == 0 && dt == 0 && dr == NATIVE_W && db == NATIVE_H;
     /* A screen whose backdrop is a picture is one of the CENTRED ones, and it says so here
      * rather than by not saying anything: the alignment is whatever the last screen to draw a
      * backdrop asked for, so a screen that stayed silent would keep the previous screen's. */
@@ -1641,7 +1490,8 @@ static void surf_Blt(uint32_t self)
                 seen[n].w = w;
                 seen[n].h = h;
                 seen[n].ra = LD32(R(ESP));
-                lf2_log_writef(LF2_LOG_INFO, "ddraw", "small blt (%d,%d) %dx%d from guest %08x\n", dl, dt, w, h, seen[n].ra);
+                lf2_log_writef(LF2_LOG_INFO, "ddraw", "small blt (%d,%d) %dx%d from guest %08x\n", dl, dt, w, h,
+                               seen[n].ra);
                 n++;
             }
         }
@@ -1700,9 +1550,12 @@ static void surf_Blt(uint32_t self)
                 cv[nf] = caller;
                 hit = nf++;
             }
-            if (hit >= 0 && seen[hit]++ == 0) lf2_log_writef(LF2_LOG_INFO, "ddraw", "Blt flags=%08x has_key=%d from guest %08x\n", flags, s->has_key, caller);
+            if (hit >= 0 && seen[hit]++ == 0)
+                lf2_log_writef(LF2_LOG_INFO, "ddraw", "Blt flags=%08x has_key=%d from guest %08x\n", flags, s->has_key,
+                               caller);
         }
-        if (glyph_hint >= 0 && game_glyph_draw(glyph_hint, dl, dt, glyph_ink(s, sl, st_, sr, sb), d->pixels, d->w, d->h, d->pitch)) {
+        if (glyph_hint >= 0 &&
+            game_glyph_draw(glyph_hint, dl, dt, glyph_ink(s, sl, st_, sr, sb), d->pixels, d->w, d->h, d->pitch)) {
             glyphs_drawn++;
         } else {
             /* Recorded for the native renderer and ALSO composed in software. Both paths
@@ -1719,10 +1572,15 @@ static void surf_Blt(uint32_t self)
                     if (shadow_hint) hits++;
                     else miss++;
                     if ((hits + miss) % 4000 == 0)
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "shadow: hint set on %ld of %ld sprite blits (learned obj %08x, shadows enabled %d)\n", hits, hits + miss, shadow_object(), render_shadows_enabled());
+                        lf2_log_writef(
+                            LF2_LOG_INFO, "ddraw",
+                            "shadow: hint set on %ld of %ld sprite blits (learned obj %08x, shadows enabled %d)\n",
+                            hits, hits + miss, shadow_object(), render_shadows_enabled());
                 }
                 if (shadow_hint && render_shadows_enabled()) render_shadow_ground(d->pixels, dl, dt, dr, db);
-                else render_blit(d->pixels, dl, dt, dr, db, s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb, keyed, s->key_lo, s->key_hi);
+                else
+                    render_blit(d->pixels, dl, dt, dr, db, s->pixels, s->w, s->h, s->pitch, sl, st_, sr, sb, keyed,
+                                s->key_lo, s->key_hi);
             }
             /* The injector, and it is deliberately applied to the SOFTWARE copy only --
              * see primary_stale_injected(). Advancing the source with the destination keeps
@@ -1742,14 +1600,21 @@ static void surf_Blt(uint32_t self)
                 }
             }
             blit(d, dl, dt, dr - dl, db - dt, s, sl, st_, sr - sl, sb - st_, keyed, s->key_lo, s->key_hi);
-            if (backdrop_flags & (BACKDROP_MIRROR_LEFT | BACKDROP_MIRROR_RIGHT)) backdrop_mirror_segments(d, s, backdrop_flags, sl, st_, sr, sb, dl, dt, dr, db, keyed, &trace);
+            if (backdrop_flags & (BACKDROP_MIRROR_LEFT | BACKDROP_MIRROR_RIGHT))
+                backdrop_mirror_segments(d, s, backdrop_flags, sl, st_, sr, sb, dl, dt, dr, db, keyed, &trace);
             BackdropBlit ext;
             const int backdrop_bottom = d->h < GEOM_WORLD_BOTTOM ? d->h : GEOM_WORLD_BOTTOM;
-            for (int row = db; backdrop_bottom_row(extend_world_backdrop, backdrop_bottom, row, dl, dt, dr, db, sl, st_, sr, sb, &ext); row++) {
+            for (int row = db; backdrop_bottom_row(extend_world_backdrop, backdrop_bottom, row, dl, dt, dr, db, sl, st_,
+                                                   sr, sb, &ext);
+                 row++) {
                 blt_trace_backdrop(&trace, &ext);
-                if (!d->primary) render_blit(d->pixels, ext.dl, ext.dt, ext.dr, ext.db, s->pixels, s->w, s->h, s->pitch, ext.sl, ext.st, ext.sr, ext.sb, keyed, s->key_lo, s->key_hi);
-                blit(d, ext.dl, ext.dt, ext.dr - ext.dl, ext.db - ext.dt, s, ext.sl, ext.st, ext.sr - ext.sl, ext.sb - ext.st, keyed, s->key_lo, s->key_hi);
-                backdrop_mirror_segments(d, s, backdrop_flags, ext.sl, ext.st, ext.sr, ext.sb, ext.dl, ext.dt, ext.dr, ext.db, keyed, &trace);
+                if (!d->primary)
+                    render_blit(d->pixels, ext.dl, ext.dt, ext.dr, ext.db, s->pixels, s->w, s->h, s->pitch, ext.sl,
+                                ext.st, ext.sr, ext.sb, keyed, s->key_lo, s->key_hi);
+                blit(d, ext.dl, ext.dt, ext.dr - ext.dl, ext.db - ext.dt, s, ext.sl, ext.st, ext.sr - ext.sl,
+                     ext.sb - ext.st, keyed, s->key_lo, s->key_hi);
+                backdrop_mirror_segments(d, s, backdrop_flags, ext.sl, ext.st, ext.sr, ext.sb, ext.dl, ext.dt, ext.dr,
+                                         ext.db, keyed, &trace);
             }
             if (backdrop_picture) {
                 backdrop_edge_bands(d, s, sl, st_, sr, sb, dl, dt, dr, db);
@@ -1791,7 +1656,9 @@ static void surf_Blt(uint32_t self)
     if (d->primary) {
         if (lf2_environment_get(LF2_ENV_BLT_DEBUG)) {
             static long n;
-            lf2_log_writef(LF2_LOG_INFO, "ddraw", "blt->primary #%ld drect=%08x [%d %d %d %d] src=%08x srect=%08x flags=%08x\n", ++n, drect, dl, dt, dr, db, srcobj, srect, flags);
+            lf2_log_writef(LF2_LOG_INFO, "ddraw",
+                           "blt->primary #%ld drect=%08x [%d %d %d %d] src=%08x srect=%08x flags=%08x\n", ++n, drect,
+                           dl, dt, dr, db, srcobj, srect, flags);
         }
         present_primary();
     }
@@ -1822,10 +1689,12 @@ static void surf_BltFast(uint32_t self)
                 fv[nf] = flags;
                 hit = nf++;
             }
-            if (hit >= 0 && seen[hit]++ == 0) lf2_log_writef(LF2_LOG_INFO, "ddraw", "BltFast flags=%08x (has_key=%d)\n", flags, s->has_key);
+            if (hit >= 0 && seen[hit]++ == 0)
+                lf2_log_writef(LF2_LOG_INFO, "ddraw", "BltFast flags=%08x (has_key=%d)\n", flags, s->has_key);
         }
         cursor_find_note(dx, dy, "BltFast");
-        blit(d, dx, dy, sr - sl, sb - st_, s, sl, st_, sr - sl, sb - st_, (flags & 1) && s->has_key, s->key_lo, s->key_hi);
+        blit(d, dx, dy, sr - sl, sb - st_, s, sl, st_, sr - sl, sb - st_, (flags & 1) && s->has_key, s->key_lo,
+             s->key_hi);
     }
     if (d->primary) present_primary();
     com_ret(6, DD_OK);
@@ -1839,7 +1708,8 @@ long ck_set, ck_blt_keyed, ck_blt_plain;
 void colorkey_report(void)
 {
     if (!lf2_environment_get(LF2_ENV_CK_DEBUG)) return;
-    lf2_log_writef(LF2_LOG_INFO, "ddraw", "colour-key: SetColorKey=%ld keyed blits=%ld unkeyed blits=%ld\n", ck_set, ck_blt_keyed, ck_blt_plain);
+    lf2_log_writef(LF2_LOG_INFO, "ddraw", "colour-key: SetColorKey=%ld keyed blits=%ld unkeyed blits=%ld\n", ck_set,
+                   ck_blt_keyed, ck_blt_plain);
 }
 
 static void surf_SetColorKey(uint32_t self)
@@ -1847,7 +1717,9 @@ static void surf_SetColorKey(uint32_t self)
     Surface *s = com_host(self);
     const uint32_t key = ARG(2);
     ck_set++;
-    if (lf2_environment_get(LF2_ENV_CK_DEBUG) && ck_set <= 4) lf2_log_writef(LF2_LOG_INFO, "ddraw", "SetColorKey #%ld flags=%08x key=%08x range=%08x..%08x\n", ck_set, ARG(1), key, key ? LD32(key) : 0, key ? LD32(key + 4) : 0);
+    if (lf2_environment_get(LF2_ENV_CK_DEBUG) && ck_set <= 4)
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "SetColorKey #%ld flags=%08x key=%08x range=%08x..%08x\n", ck_set, ARG(1),
+                       key, key ? LD32(key) : 0, key ? LD32(key + 4) : 0);
     if (key) {
         s->has_key = 1;
         s->key_lo = LD32(key);
@@ -1897,7 +1769,7 @@ static void surf_GetAttachedSurface(uint32_t self)
         b->h = s->h;
         b->pitch = s->pitch;
         b->pixels = vram_alloc((uint32_t)b->pitch * (uint32_t)b->h);
-        memset(g_mem + b->pixels, 0, (size_t)b->pitch * (size_t)b->h);
+        memset(guest_write_pointer(b->pixels, (size_t)b->pitch * (size_t)b->h), 0, (size_t)b->pitch * (size_t)b->h);
         s->attached = com_create(IF_SURFACE, b);
     }
     if (ARG(2)) ST32(ARG(2), s->attached);
@@ -1981,7 +1853,7 @@ static uint32_t make_surface(int w, int h, int primary, int maxw, int maxh)
     s->rows = maxh;
     s->pixels = vram_alloc((uint32_t)s->pitch * (uint32_t)maxh);
     s->primary = primary;
-    memset(g_mem + s->pixels, 0, (size_t)s->pitch * (size_t)maxh);
+    memset(guest_write_pointer(s->pixels, (size_t)s->pitch * (size_t)maxh), 0, (size_t)s->pitch * (size_t)maxh);
     return com_create(IF_SURFACE, s);
 }
 
@@ -2081,10 +1953,12 @@ void hostwin_window_geometry(int win_w, int win_h)
         hw.width = (int)w; /* set first: lf2_compose_rect reads the window */
         hw.height = NATIVE_H;
         lf2_compose_rect((int)w, NATIVE_H, &r);
-        lf2_log_writef(LF2_LOG_INFO, "ddraw",
-                       "widescreen: window %dx%d -> composition %ldx%d at scale %.3f, drawn "
-                       "into %.0fx%.0f at (%.0f,%.0f)%s\n",
-                       win_w, win_h, w, NATIVE_H, (double)lf2_world_scale(), (double)r.w, (double)r.h, (double)r.x, (double)r.y, (r.h >= (float)win_h - 1.0f && r.w >= (float)win_w - 1.0f) ? " -- fills the window" : " -- with a band");
+        lf2_log_writef(
+            LF2_LOG_INFO, "ddraw",
+            "widescreen: window %dx%d -> composition %ldx%d at scale %.3f, drawn "
+            "into %.0fx%.0f at (%.0f,%.0f)%s\n",
+            win_w, win_h, w, NATIVE_H, (double)lf2_world_scale(), (double)r.w, (double)r.h, (double)r.x, (double)r.y,
+            (r.h >= (float)win_h - 1.0f && r.w >= (float)win_w - 1.0f) ? " -- fills the window" : " -- with a band");
     }
 
     surfaces_follow_window(hw.width, hw.height);
@@ -2201,7 +2075,8 @@ static void dd_CreateSurface(uint32_t self)
     const int primary = (caps & DDSCAPS_PRIMARYSURFACE) != 0;
     int picture_w = 0, picture_h = 0;
     long bitmaps_loaded = 0;
-    const int picture = !primary && gdi_last_bitmap(&picture_w, &picture_h, &bitmaps_loaded) && picture_w == w && picture_h == h;
+    const int picture =
+        !primary && gdi_last_bitmap(&picture_w, &picture_h, &bitmaps_loaded) && picture_w == w && picture_h == h;
     if (picture) gdi_last_bitmap_consume();
     const int follows = primary || (!picture && w == NATIVE_W && h == NATIVE_H);
     if (follows) {
@@ -2221,8 +2096,9 @@ static void dd_CreateSurface(uint32_t self)
      * surface was created" are different outputs. */
     if (lf2_environment_get(LF2_ENV_SURF_DEBUG)) {
         static int n;
-        lf2_log_writef(LF2_LOG_INFO, "ddraw", "createsurface #%d asked %dx%d caps=%08x from guest %08x -> %dx%d %s\n", ++n, (flags & DDSD_WIDTH) ? (int)LD32(desc + SD_WIDTH) : -1, (flags & DDSD_HEIGHT) ? (int)LD32(desc + SD_HEIGHT) : -1,
-                       caps, LD32(R(ESP)), w, h,
+        lf2_log_writef(LF2_LOG_INFO, "ddraw", "createsurface #%d asked %dx%d caps=%08x from guest %08x -> %dx%d %s\n",
+                       ++n, (flags & DDSD_WIDTH) ? (int)LD32(desc + SD_WIDTH) : -1,
+                       (flags & DDSD_HEIGHT) ? (int)LD32(desc + SD_HEIGHT) : -1, caps, LD32(R(ESP)), w, h,
                        primary   ? "PRIMARY (follows)"
                        : follows ? "FOLLOWS THE WINDOW"
                        : picture ? "fixed: holds the picture just loaded (issue #50)"
@@ -2470,7 +2346,8 @@ static const char *SURF_NAMES[36] = {
     "UpdateOverlayZOrder",
 };
 static const char *CLIP_NAMES[9] = {
-    "QueryInterface", "AddRef", "Release", "GetClipList", "GetHWnd", "Initialize", "IsClipListChanged", "SetClipList", "SetHWnd",
+    "QueryInterface",    "AddRef",      "Release", "GetClipList", "GetHWnd", "Initialize",
+    "IsClipListChanged", "SetClipList", "SetHWnd",
 };
 static const char *PAL_NAMES[7] = {
     "QueryInterface", "AddRef", "Release", "GetCaps", "GetEntries", "Initialize", "SetEntries",

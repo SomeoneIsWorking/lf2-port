@@ -872,8 +872,8 @@ static void h_GetKeyState(void)
 static void h_MessageBoxA(void)
 {
     /* Logged rather than shown: a modal dialog blocks the run and tells us nothing. */
-    lf2_log_writef(LF2_LOG_INFO, "win32", "[MessageBox] %s | %s\n", ARG(2) ? (const char *)(g_mem + ARG(2)) : "",
-                   ARG(1) ? (const char *)(g_mem + ARG(1)) : "");
+    lf2_log_writef(LF2_LOG_INFO, "win32", "[MessageBox] %s | %s\n", ARG(2) ? guest_string(ARG(2)) : "",
+                   ARG(1) ? guest_string(ARG(1)) : "");
     ret_stdcall(4, 1);
 }
 

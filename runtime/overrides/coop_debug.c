@@ -442,7 +442,7 @@ void coop_registry_dump(uint32_t self)
                         fwrite(zero, 1, HEAD, f);
                         continue;
                     }
-                    fwrite(g_mem + d, 1, HEAD, f);
+                    fwrite(guest_pointer(d, HEAD), 1, HEAD, f);
                     written++;
                 }
                 fclose(f);

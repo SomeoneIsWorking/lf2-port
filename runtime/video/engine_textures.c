@@ -76,7 +76,7 @@ static void fill_rgba(uint8_t *dst, const EngineQuad *quad, int w, int h)
         return;
     }
 
-    const uint8_t *base = g_mem + quad->src_pixels;
+    const uint8_t *base = guest_pointer(quad->src_pixels, (size_t)quad->spitch * (size_t)h);
     const uint32_t lo = quad->key_lo & 0x00ffffffu;
     const uint32_t hi = quad->key_hi & 0x00ffffffu;
     for (int y = 0; y < h; y++) {
@@ -198,8 +198,10 @@ SDL_GPUTexture *engine_texture_for(const EngineQuad *quad)
     const int h = quad->host_argb ? quad->host_h : quad->sh;
     if (w <= 0 || h <= 0) return NULL;
 
-    const uint32_t content = quad->host_argb ? sample_hash((const uint8_t *)quad->host_argb, w, h, quad->host_pitch)
-                                             : sample_hash(g_mem + quad->src_pixels, w, h, quad->spitch);
+    const uint32_t content =
+        quad->host_argb
+            ? sample_hash((const uint8_t *)quad->host_argb, w, h, quad->host_pitch)
+            : sample_hash(guest_pointer(quad->src_pixels, (size_t)quad->spitch * (size_t)h), w, h, quad->spitch);
     for (int i = 0; i < texture_count; i++) {
         EngineTexture *entry = &textures[i];
         if (!same_key(entry, quad, w, h)) continue;

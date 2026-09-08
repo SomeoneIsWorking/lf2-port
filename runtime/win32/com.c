@@ -2,6 +2,8 @@
 #include "environment.h"
 #include "com.h"
 #include "guest.h"
+#include "guest_arena.h"
+#include "guest_map.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,22 +26,14 @@ static uint32_t vtable_addr[IF_COUNT];
 
 /* Objects and their vtables live in a dedicated slab so they never collide with the
  * guest heap or the loaded image. */
-enum { COM_ARENA = 0x30000000u };
-static uint32_t com_next = COM_ARENA;
-
-static uint32_t arena_alloc(uint32_t n)
-{
-    uint32_t p = com_next;
-    com_next = (com_next + n + 15u) & ~15u;
-    return p;
-}
+static GuestArena objects_arena = {GUEST_COM_BASE, GUEST_COM_END, 16};
 
 void com_init(void)
 {
     for (int i = 0; i < IF_COUNT; i++) {
         const int n = com_class[i].nmethods;
         if (!n) continue;
-        vtable_addr[i] = arena_alloc((uint32_t)n * 4);
+        vtable_addr[i] = guest_arena_alloc(&objects_arena, (uint32_t)n * 4);
         for (int m = 0; m < n; m++)
             ST32(vtable_addr[i] + (uint32_t)m * 4, COM_SENTINEL | ((uint32_t)i << 8) | (uint32_t)m);
     }
@@ -51,7 +45,7 @@ uint32_t com_create(int iface, void *host)
         lf2_log_writef(LF2_LOG_INFO, "com", "too many COM objects\n");
         abort();
     }
-    uint32_t self = arena_alloc(8);
+    uint32_t self = guest_arena_alloc(&objects_arena, 8);
     ST32(self, vtable_addr[iface]);
     ST32(self + 4, (uint32_t)nobjects);
     objects[nobjects].self = self;

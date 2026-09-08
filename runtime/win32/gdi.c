@@ -13,6 +13,7 @@
 #include "engine.h"
 #include "com.h"
 #include "guest.h"
+#include "gdi_bitmap.h"
 #include "hostwin.h"
 #include "loadprof.h"
 #include "paths.h"
@@ -38,11 +39,6 @@ static void ret_stdcall(int nargs, uint32_t value)
 
 int ddraw_surface_info(uint32_t obj, uint32_t *pixels, int *w, int *h, int *pitch);
 void ddraw_surface_present(uint32_t obj);
-typedef struct {
-    int w, h, pitch, bpp;
-    uint8_t *pixels; /* top-down, one byte per pixel for 8-bit */
-    uint32_t pal[256];
-} Bitmap;
 
 enum { MAX_GDI = 512, H_BITMAP = 0xB0000000u, H_DC = 0xD0000000u };
 static Bitmap *bitmaps[MAX_GDI];
@@ -56,232 +52,11 @@ static Bitmap *bitmap_of(uint32_t h)
     return i < (uint32_t)nbitmaps ? bitmaps[i] : NULL;
 }
 
-/* RLE8, which is what the game's bitmaps actually use -- their headers declare far more
- * pixels than the file contains, and reading them as raw rows yields garbage that then
- * runs out partway down.
- *
- * Pairs of (count, value): a non-zero count repeats value. A zero count is an escape --
- * 0 ends the line, 1 ends the bitmap, 2 is a delta, and 3 or more introduces that many
- * literal bytes padded to a word boundary. Output is written top-down here; the caller
- * has already accounted for the bottom-up flip.
- *
- * Runs move through memset/memcpy with the destination row pointer kept across tokens,
- * rather than through a bounds check and two multiplications per pixel. The token state
- * machine -- including its quirks (a count run stops at the line's end, a literal run
- * consumes and advances x past it, the pad follows an odd literal) -- is untouched. */
-static void rle8_decode(const uint8_t *src, size_t n, Bitmap *b, int flip)
-{
-    /* The decoded row `flip ? b->h - 1 - y : y`, refreshed whenever y moves. */
-    uint8_t *row = b->pixels + (size_t)(flip ? b->h - 1 : 0) * (size_t)b->pitch;
-    size_t i = 0;
-    int x = 0, y = 0;
-    while (i + 1 < n && y < b->h) {
-        const uint8_t count = src[i], value = src[i + 1];
-        i += 2;
-        if (count) {
-            int room = b->w - x;
-            if (room <= 0) continue; /* past the line's end the run is dropped, as before */
-            if (room > count) room = count;
-            memset(row + x, value, (size_t)room);
-            x += room;
-            continue;
-        }
-        if (value == 0) {
-            x = 0;
-            y++;
-            row += flip ? -(ptrdiff_t)b->pitch : (ptrdiff_t)b->pitch;
-            continue;
-        } /* end of line */
-        if (value == 1) break; /* end of bitmap */
-        if (value == 2) {      /* delta */
-            if (i + 1 >= n) break;
-            x += src[i];
-            y += src[i + 1];
-            row = b->pixels + (size_t)(flip ? b->h - 1 - y : y) * (size_t)b->pitch;
-            i += 2;
-            continue;
-        }
-        const size_t have = n - i < (size_t)value ? n - i : (size_t)value;
-        int room = b->w - x;
-        if (room > (int)have) room = (int)have;
-        if (room > 0) memcpy(row + x, src + i, (size_t)room);
-        i += have;
-        x += (int)have;
-        if (value & 1) i++; /* pad to a word */
-    }
-}
-
-/* Load a Windows BMP. Rows are stored bottom-up and padded to four bytes. */
-static Bitmap *bmp_load(const char *path)
-{
-    FILE *fh = fopen(path, "rb");
-    if (!fh) return NULL;
-    uint8_t hdr[54];
-    if (fread(hdr, 1, sizeof hdr, fh) != sizeof hdr || hdr[0] != 'B' || hdr[1] != 'M') {
-        fclose(fh);
-        return NULL;
-    }
-    const uint32_t data_off = (uint32_t)hdr[10] | ((uint32_t)hdr[11] << 8) | ((uint32_t)hdr[12] << 16) | ((uint32_t)hdr[13] << 24);
-    const int32_t w = (int32_t)((uint32_t)hdr[18] | ((uint32_t)hdr[19] << 8) | ((uint32_t)hdr[20] << 16) | ((uint32_t)hdr[21] << 24));
-    const int32_t h = (int32_t)((uint32_t)hdr[22] | ((uint32_t)hdr[23] << 8) | ((uint32_t)hdr[24] << 16) | ((uint32_t)hdr[25] << 24));
-    const int bpp = (int)((uint32_t)hdr[28] | ((uint32_t)hdr[29] << 8));
-    const uint32_t compression = (uint32_t)hdr[30] | ((uint32_t)hdr[31] << 8) | ((uint32_t)hdr[32] << 16) | ((uint32_t)hdr[33] << 24);
-    const uint32_t clr_used = (uint32_t)hdr[46] | ((uint32_t)hdr[47] << 8) | ((uint32_t)hdr[48] << 16) | ((uint32_t)hdr[49] << 24);
-    if (bpp != 8 || w <= 0) {
-        fclose(fh);
-        return NULL;
-    }
-
-    const int flip = h > 0; /* positive height means bottom-up */
-    const int rows = flip ? h : -h;
-
-    Bitmap *b = SDL_calloc(1, sizeof *b);
-    b->w = w;
-    b->h = rows;
-    b->bpp = bpp;
-    b->pitch = w;
-    b->pixels = SDL_calloc(1, (size_t)w * (size_t)rows);
-
-    const uint32_t ncolours = clr_used ? clr_used : 256u;
-    fseek(fh, 54, SEEK_SET);
-    for (uint32_t i = 0; i < ncolours && i < 256; i++) {
-        uint8_t e[4];
-        if (fread(e, 1, 4, fh) != 4) break;
-        b->pal[i] = ((uint32_t)e[2] << 16) | ((uint32_t)e[1] << 8) | e[0];
-    }
-
-    fseek(fh, 0, SEEK_END);
-    const long file_size = ftell(fh);
-    fseek(fh, (long)data_off, SEEK_SET);
-
-    if (compression == 1) { /* BI_RLE8 */
-        const size_t n = (size_t)(file_size - (long)data_off);
-        uint8_t *raw = SDL_malloc(n);
-        const size_t got = fread(raw, 1, n, fh);
-        rle8_decode(raw, got, b, flip);
-        SDL_free(raw);
-        fclose(fh);
-        return b;
-    }
-
-    const size_t src_pitch = ((size_t)w + 3u) & ~3u;
-    uint8_t *row = SDL_malloc(src_pitch);
-    for (int y = 0; y < rows; y++) {
-        if (fread(row, 1, src_pitch, fh) != src_pitch) break;
-        memcpy(b->pixels + (size_t)(flip ? rows - 1 - y : y) * (size_t)w, row, (size_t)w);
-    }
-    SDL_free(row);
-    fclose(fh);
-    return b;
-}
-
 static uint32_t bitmap_handle(Bitmap *b)
 {
     if (!b || nbitmaps >= (int)MAX_GDI) return 0;
     bitmaps[nbitmaps] = b;
     return H_BITMAP + (uint32_t)nbitmaps++;
-}
-
-/* ---- PE resources ----
- * The menu bitmaps are not files; they live in the 3 MB .rsrc section and the game asks
- * for them by name. The image is already mapped in guest memory, so the resource tree is
- * walked there. A resource bitmap is a DIB: BITMAPINFOHEADER, palette, pixels, with no
- * file header. */
-enum { IMAGE_BASE = 0x400000, RT_BITMAP = 2 };
-
-static uint32_t rsrc_base;
-
-static int name_matches(uint32_t entry_name, const char *want)
-{
-    if (!(entry_name & 0x80000000u)) return 0;
-    const uint32_t p = rsrc_base + (entry_name & 0x7fffffffu);
-    const uint32_t len = LD16(p);
-    for (uint32_t i = 0; i < len; i++) {
-        const uint32_t ch = LD16(p + 2 + i * 2);
-        const unsigned char w = (unsigned char)want[i];
-        if (!w || ch > 0xff) return 0;
-        if (SDL_toupper(ch) != SDL_toupper(w)) return 0;
-    }
-    return want[len] == 0;
-}
-
-/* Returns the data entry RVA, or 0. */
-static uint32_t rsrc_find(const char *name)
-{
-    const uint32_t pe = LD32(IMAGE_BASE + 0x3C) + IMAGE_BASE;
-    const uint32_t dir_rva = LD32(pe + 24 + 112); /* data directory 2 */
-    if (!dir_rva) return 0;
-    rsrc_base = IMAGE_BASE + dir_rva;
-
-    if (lf2_environment_get(LF2_ENV_RSRC_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "rsrc base=%08x named=%d id=%d\n", rsrc_base, LD16(rsrc_base + 12), LD16(rsrc_base + 14));
-
-    /* level 1: type */
-    const uint32_t n1 = (uint32_t)LD16(rsrc_base + 12) + LD16(rsrc_base + 14);
-    for (uint32_t i = 0; i < n1; i++) {
-        const uint32_t e = rsrc_base + 16 + i * 8;
-        if (lf2_environment_get(LF2_ENV_RSRC_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "  type entry %u: name=%08x sub=%08x\n", i, LD32(e), LD32(e + 4));
-        if (LD32(e) != RT_BITMAP) continue;
-        const uint32_t sub = LD32(e + 4);
-        if (!(sub & 0x80000000u)) continue;
-        const uint32_t d2 = rsrc_base + (sub & 0x7fffffffu);
-
-        /* level 2: name */
-        const uint32_t n2 = (uint32_t)LD16(d2 + 12) + LD16(d2 + 14);
-        for (uint32_t j = 0; j < n2; j++) {
-            const uint32_t e2 = d2 + 16 + j * 8;
-            if (!name_matches(LD32(e2), name)) continue;
-            /* Every offset in the resource tree is relative to the section base, not
-             * an address. The language level is optional. */
-            uint32_t leaf = LD32(e2 + 4);
-            if (leaf & 0x80000000u) { /* level 3: language */
-                const uint32_t d3 = rsrc_base + (leaf & 0x7fffffffu);
-                leaf = LD32(d3 + 16 + 4);
-            }
-            return LD32(rsrc_base + leaf); /* data entry -> RVA */
-        }
-    }
-    return 0;
-}
-
-/* Build a Bitmap from a DIB already in guest memory. */
-static Bitmap *dib_load(uint32_t p)
-{
-    const uint32_t hdr = LD32(p); /* biSize */
-    const int32_t w = (int32_t)LD32(p + 4);
-    const int32_t h = (int32_t)LD32(p + 8);
-    const int bpp = (int)LD16(p + 14);
-    const uint32_t clr = LD32(p + 32);
-    if (bpp != 8 || w <= 0 || hdr < 40) return NULL;
-
-    const int flip = h > 0;
-    const int rows = flip ? h : -h;
-    Bitmap *b = SDL_calloc(1, sizeof *b);
-    b->w = w;
-    b->h = rows;
-    b->bpp = bpp;
-    b->pitch = w;
-    b->pixels = SDL_calloc(1, (size_t)w * (size_t)rows);
-
-    const uint32_t pal = p + hdr;
-    const uint32_t ncolours = clr ? clr : 256u;
-    for (uint32_t i = 0; i < ncolours && i < 256; i++) b->pal[i] = ((uint32_t)LD8(pal + i * 4 + 2) << 16) | ((uint32_t)LD8(pal + i * 4 + 1) << 8) | LD8(pal + i * 4);
-
-    const uint32_t bits = pal + ncolours * 4;
-    const uint32_t compression = LD32(p + 16);
-
-    if (compression == 1) {                                         /* BI_RLE8 */
-        const uint32_t n = LD32(p + 20) ? LD32(p + 20) : 0x100000u; /* biSizeImage */
-        rle8_decode(g_mem + bits, n, b, flip);
-        return b;
-    }
-
-    const size_t src_pitch = ((size_t)w + 3u) & ~3u;
-    for (int y = 0; y < rows; y++) {
-        const uint32_t src = bits + (uint32_t)((size_t)y * src_pitch);
-        uint8_t *dst = b->pixels + (size_t)(flip ? rows - 1 - y : y) * (size_t)w;
-        for (int x = 0; x < w; x++) dst[x] = LD8(src + (uint32_t)x);
-    }
-    return b;
 }
 
 /* ---- entry points ---- */
@@ -300,19 +75,21 @@ static void h_LoadImageA(void)
         return;
     }
 
-    if (lf2_environment_get(LF2_ENV_RSRC_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "LoadImage name=%s type=%u flags=%08x\n", (const char *)(g_mem + name), ARG(2), flags);
+    if (lf2_environment_get(LF2_ENV_RSRC_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "gdi", "LoadImage name=%s type=%u flags=%08x\n", guest_string(name), ARG(2),
+                       flags);
 
     Bitmap *b = NULL;
     if (flags & 0x10u) { /* LR_LOADFROMFILE */
-        b = bmp_load(host_path_of(name));
+        b = bitmap_load_file(host_path_of(name));
     } else {
-        const uint32_t rva = rsrc_find((const char *)(g_mem + name));
-        if (rva) b = dib_load(IMAGE_BASE + rva);
+        b = bitmap_load_resource(guest_string(name));
     }
     if (!b) {
         /* Expected: the game probes for an override file first so users can replace
          * artwork, then asks for the resource of the same name. Only noisy on request. */
-        if (lf2_environment_get(LF2_ENV_RSRC_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "LoadImage: cannot load %s\n", (const char *)(g_mem + name));
+        if (lf2_environment_get(LF2_ENV_RSRC_DEBUG))
+            lf2_log_writef(LF2_LOG_INFO, "gdi", "LoadImage: cannot load %s\n", guest_string(name));
         ret_stdcall(6, 0);
         return;
     }
@@ -402,7 +179,9 @@ static void h_StretchBlt(void)
     int dwid, dhei, dpitch;
     if (!ddraw_surface_info(hdst, &dpix, &dwid, &dhei, &dpitch) || dw <= 0 || dh <= 0) {
         static long n;
-        if (++n % 200 == 1) lf2_log_writef(LF2_LOG_INFO, "gdi", "stretchblt: dest %08x is not a surface (#%ld, %dx%d)\n", hdst, n, dw, dh);
+        if (++n % 200 == 1)
+            lf2_log_writef(LF2_LOG_INFO, "gdi", "stretchblt: dest %08x is not a surface (#%ld, %dx%d)\n", hdst, n, dw,
+                           dh);
         LOADPROF_END();
         ret_stdcall(11, 0);
         return;
@@ -412,7 +191,9 @@ static void h_StretchBlt(void)
     if (!b || sw <= 0 || sh <= 0) {
         {
             static long f;
-            if (++f % 200 == 1) lf2_log_writef(LF2_LOG_INFO, "gdi", "stretchblt FAILED #%ld src_dc=%08x bitmap=%s\n", f, hsrc, b ? "ok" : "none");
+            if (++f % 200 == 1)
+                lf2_log_writef(LF2_LOG_INFO, "gdi", "stretchblt FAILED #%ld src_dc=%08x bitmap=%s\n", f, hsrc,
+                               b ? "ok" : "none");
         }
         LOADPROF_END();
         ret_stdcall(11, 0);
@@ -438,9 +219,10 @@ static void h_StretchBlt(void)
             if (ty < 0 || ty >= dhei) continue;
             const int by = sy + y;
             if (by < 0 || by >= b->h) continue;
-            uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)ty * (size_t)dpitch);
+            uint32_t *dst = (uint32_t *)guest_write_pointer(dpix + (size_t)ty * (size_t)dpitch, (size_t)dpitch);
             const uint8_t *row = b->pixels + (size_t)by * (size_t)b->pitch;
-            for (int x = lo; x < hi; x++) dst[dx + x] = b->pal[row[sx + x]]; /* index -> XRGB via the bitmap's palette */
+            for (int x = lo; x < hi; x++)
+                dst[dx + x] = b->pal[row[sx + x]]; /* index -> XRGB via the bitmap's palette */
         }
     } else {
         /* Exact incremental stepping instead of a 64-bit divide per pixel. The pick for
@@ -453,7 +235,7 @@ static void h_StretchBlt(void)
             if (ty < 0 || ty >= dhei) continue;
             const int by = sy + (int)((int64_t)y * sh / dh);
             if (by < 0 || by >= b->h) continue;
-            uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)ty * (size_t)dpitch);
+            uint32_t *dst = (uint32_t *)guest_write_pointer(dpix + (size_t)ty * (size_t)dpitch, (size_t)dpitch);
             const uint8_t *src = b->pixels + (size_t)by * (size_t)b->pitch;
             StretchMapPos p = stretchmap_start(&col);
             for (int x = 0; x < dw; x++) {
@@ -479,7 +261,7 @@ static void h_StretchBlt(void)
         if (f) {
             fprintf(f, "P6\n%d %d\n255\n", dwid, dhei);
             for (int y = 0; y < dhei; y++) {
-                const uint32_t *r = (const uint32_t *)(g_mem + dpix + (size_t)y * (size_t)dpitch);
+                const uint32_t *r = (const uint32_t *)guest_pointer(dpix + (size_t)y * (size_t)dpitch, (size_t)dpitch);
                 for (int x = 0; x < dwid; x++) {
                     const uint8_t px[3] = {(uint8_t)(r[x] >> 16), (uint8_t)(r[x] >> 8), (uint8_t)r[x]};
                     fwrite(px, 1, 3, f);
@@ -494,7 +276,9 @@ static void h_StretchBlt(void)
     {
         static long n;
         if (lf2_environment_get(LF2_ENV_RSRC_DEBUG))
-            lf2_log_writef(LF2_LOG_INFO, "gdi", "stretchblt #%ld %dx%d -> %dx%d at (%d,%d) in %dx%d from guest %08x%s\n", ++n, sw, sh, dw, dh, dx, dy, dwid, dhei, LD32(R(ESP)), (sw == dw && sh == dh) ? "" : "  <== SCALING");
+            lf2_log_writef(LF2_LOG_INFO, "gdi",
+                           "stretchblt #%ld %dx%d -> %dx%d at (%d,%d) in %dx%d from guest %08x%s\n", ++n, sw, sh, dw,
+                           dh, dx, dy, dwid, dhei, LD32(R(ESP)), (sw == dw && sh == dh) ? "" : "  <== SCALING");
     }
     LOADPROF_END();
     ret_stdcall(11, 1);
@@ -617,7 +401,9 @@ static TTF_Font *font_open(void)
                        "text: the embedded Liberation Sans (%u bytes) would not open (%s) -- "
                        "NO TEXT WILL BE DRAWN.\n",
                        lf2_font_sans_len, SDL_GetError());
-    else if (lf2_environment_get(LF2_ENV_GLYPH_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "text: embedded Liberation Sans, %u bytes, %d pt\n", lf2_font_sans_len, TEXT_PT);
+    else if (lf2_environment_get(LF2_ENV_GLYPH_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "gdi", "text: embedded Liberation Sans, %u bytes, %d pt\n", lf2_font_sans_len,
+                       TEXT_PT);
     return ui_font;
 }
 
@@ -675,7 +461,8 @@ static int text_draw_ttf(const char *text, int x, int y, uint32_t dpix, int dwid
             for (int tx = 0; tx < tsrc->w; tx++) {
                 const int a = (int)(src[tx] >> 24);
                 if (!a) continue;
-                tile[ty * tsrc->w + tx] = ((uint32_t)a << 24) | ((uint32_t)(tr * a / 255) << 16) | ((uint32_t)(tg * a / 255) << 8) | (uint32_t)(tb * a / 255);
+                tile[ty * tsrc->w + tx] = ((uint32_t)a << 24) | ((uint32_t)(tr * a / 255) << 16) |
+                                          ((uint32_t)(tg * a / 255) << 8) | (uint32_t)(tb * a / 255);
             }
         }
         render_tile_end();
@@ -686,7 +473,7 @@ static int text_draw_ttf(const char *text, int x, int y, uint32_t dpix, int dwid
         const int dy = y + ty;
         if (dy < 0 || dy >= dhei) continue;
         const uint32_t *src = (const uint32_t *)((const uint8_t *)rgba->pixels + (size_t)ty * (size_t)rgba->pitch);
-        uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
+        uint32_t *dst = (uint32_t *)guest_write_pointer(dpix + (size_t)dy * (size_t)dpitch, (size_t)dpitch);
         for (int tx = 0; tx < rgba->w; tx++) {
             const int dx = x + tx;
             if (dx < 0 || dx >= dwid) continue;
@@ -978,7 +765,8 @@ int game_glyph_tile(int ch, int x, int y, uint32_t ink, uint32_t dst_pixels)
         for (int gx = 0; gx < cw; gx++) {
             const int a = cov[gy * cw + gx];
             if (!a) continue;
-            tile[gy * cw + gx] = ((uint32_t)a << 24) | ((uint32_t)(ir * a / 255) << 16) | ((uint32_t)(ig * a / 255) << 8) | (uint32_t)(ib * a / 255);
+            tile[gy * cw + gx] = ((uint32_t)a << 24) | ((uint32_t)(ir * a / 255) << 16) |
+                                 ((uint32_t)(ig * a / 255) << 8) | (uint32_t)(ib * a / 255);
         }
     render_tile_end();
     return 1;
@@ -1002,7 +790,7 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink, uint32_t dpix, int dwid,
     for (int gy = 0; gy < GLYPH_H; gy++) {
         const int dy = y + gy;
         if (dy < 0 || dy >= dhei) continue;
-        uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
+        uint32_t *dst = (uint32_t *)guest_write_pointer(dpix + (size_t)dy * (size_t)dpitch, (size_t)dpitch);
         for (int gx = 0; gx < GLYPH_W; gx++) {
             const int a = g->cov[gy * GLYPH_W + gx];
             if (!a) continue;
@@ -1011,7 +799,8 @@ int game_glyph_draw(int ch, int x, int y, uint32_t ink, uint32_t dpix, int dwid,
             const uint32_t bg = dst[dx];
             const int br = (int)((bg >> 16) & 0xff), bgc = (int)((bg >> 8) & 0xff);
             const int bb = (int)(bg & 0xff);
-            dst[dx] = ((uint32_t)((ir * a + br * (255 - a)) / 255) << 16) | ((uint32_t)((ig * a + bgc * (255 - a)) / 255) << 8) | (uint32_t)((ib * a + bb * (255 - a)) / 255);
+            dst[dx] = ((uint32_t)((ir * a + br * (255 - a)) / 255) << 16) |
+                      ((uint32_t)((ig * a + bgc * (255 - a)) / 255) << 8) | (uint32_t)((ib * a + bb * (255 - a)) / 255);
         }
     }
     return 1;
@@ -1081,7 +870,8 @@ static void h_TextOutA(void)
      * decided by it -- hud_offset_x by the band the y falls in, screen_offset_x by whether
      * the surface is wider than 794 -- and a line that prints only the final x cannot show
      * which of them declined and why (issue #54). */
-    if (lf2_environment_get(LF2_ENV_TEXT_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "gdi", "text (%d,%d) dst %08x %dx%d %d %s\n", x, y, dpix, dwid, dhei, len, text);
+    if (lf2_environment_get(LF2_ENV_TEXT_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "gdi", "text (%d,%d) dst %08x %dx%d %d %s\n", x, y, dpix, dwid, dhei, len, text);
 
 #ifdef LF2_HAVE_TTF
     if (text_draw_ttf(text, x, y, dpix, dwid, dhei, dpitch)) {
@@ -1126,7 +916,8 @@ static void h_TextOutA(void)
     for (int i = 0; i < len; i++) {
         int ink_l = cell, ink_r = -1;
         for (int ty = 0; ty < h; ty++) {
-            const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
+            const uint32_t *row =
+                (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
             for (int cx = 0; cx < cell; cx++)
                 if (row[i * cell + cx] & 0x00ffffffu) {
                     if (cx < ink_l) ink_l = cx;
@@ -1141,8 +932,9 @@ static void h_TextOutA(void)
         for (int ty = 0; ty < h; ty++) {
             const int dy = y + ty;
             if (dy < 0 || dy >= dhei) continue;
-            uint32_t *dst = (uint32_t *)(g_mem + dpix + (size_t)dy * (size_t)dpitch);
-            const uint32_t *row = (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
+            uint32_t *dst = (uint32_t *)guest_write_pointer(dpix + (size_t)dy * (size_t)dpitch, (size_t)dpitch);
+            const uint32_t *row =
+                (const uint32_t *)((const uint8_t *)scratch->pixels + (size_t)ty * (size_t)scratch->pitch);
             for (int cx = ink_l; cx <= ink_r; cx++) {
                 const int dx = pen + (cx - ink_l);
                 if (dx < 0 || dx >= dwid) continue;

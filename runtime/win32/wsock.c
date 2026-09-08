@@ -33,7 +33,7 @@ static void h_WSAStartup(void)
         ST16(data, 0x0202);     /* wVersion  */
         ST16(data + 2, 0x0202); /* wHighVersion */
         for (uint32_t i = 4; i < 400; i += 4) ST32(data + i, 0);
-        snprintf((char *)(g_mem + data + 4), 128, "lf2-port stub");
+        snprintf((char *)guest_write_pointer(data + 4, 128), 128, "lf2-port stub");
         ST16(data + 388, 1);    /* iMaxSockets */
         ST16(data + 390, 1024); /* iMaxUdpDg   */
     }
@@ -43,7 +43,7 @@ static void h_WSAStartup(void)
 static void h_gethostname(void)
 {
     const uint32_t name = ARG(0), len = ARG(1);
-    if (name && len) snprintf((char *)(g_mem + name), len, "localhost");
+    if (name && len) snprintf((char *)guest_write_pointer(name, len), len, "localhost");
     ret_stdcall(2, 0);
 }
 

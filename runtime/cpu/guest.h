@@ -4,6 +4,8 @@
 #define GUEST_H
 
 #include "environment.h"
+#include "guest_map.h"
+#include "guest_memory.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -17,7 +19,6 @@ typedef struct {
 } Cpu;
 
 extern Cpu cpu;
-extern uint8_t *g_mem;                  /* guest address N lives at g_mem[N] */
 extern uint32_t g_image_lo, g_image_hi; /* mapped extent of the loaded PE image */
 
 #define R(i) (cpu.r[(i)])
@@ -50,28 +51,28 @@ int rwatch_triggered(void);
 static inline uint8_t LD8(uint32_t a)
 {
     RWATCH(a);
-    return *(uint8_t *)(g_mem + a);
+    return *(uint8_t *)guest_pointer(a, 1);
 }
 static inline uint16_t LD16(uint32_t a)
 {
-    return *(uint16_t *)(g_mem + a);
+    return *(uint16_t *)guest_pointer(a, 2);
 }
 static inline uint32_t LD32(uint32_t a)
 {
     RWATCH(a);
-    return *(uint32_t *)(g_mem + a);
+    return *(uint32_t *)guest_pointer(a, 4);
 }
 static inline void ST8(uint32_t a, uint8_t v)
 {
-    *(uint8_t *)(g_mem + a) = v;
+    *(uint8_t *)guest_write_pointer(a, 1) = v;
 }
 static inline void ST16(uint32_t a, uint16_t v)
 {
-    *(uint16_t *)(g_mem + a) = v;
+    *(uint16_t *)guest_write_pointer(a, 2) = v;
 }
 static inline void ST32(uint32_t a, uint32_t v)
 {
-    *(uint32_t *)(g_mem + a) = v;
+    *(uint32_t *)guest_write_pointer(a, 4) = v;
 }
 
 /* Native overrides access guest doubles as data. These helpers do not implement x87;
@@ -80,13 +81,15 @@ static inline double guest_load_f64(uint32_t address)
 {
     double value;
     uint8_t *bytes = (uint8_t *)&value;
-    for (size_t index = 0; index < sizeof value; ++index) bytes[index] = g_mem[address + index];
+    const uint8_t *source = guest_pointer(address, sizeof value);
+    for (size_t index = 0; index < sizeof value; ++index) bytes[index] = source[index];
     return value;
 }
 
 static inline void guest_store_f64(uint32_t address, double value)
 {
-    for (size_t index = 0; index < sizeof value; ++index) g_mem[address + index] = ((const uint8_t *)&value)[index];
+    uint8_t *destination = guest_write_pointer(address, sizeof value);
+    for (size_t index = 0; index < sizeof value; ++index) destination[index] = ((const uint8_t *)&value)[index];
 }
 
 static inline void PUSH32(uint32_t v)
@@ -108,7 +111,7 @@ enum { IMPORT_SENTINEL = 0xF0000000u };
 
 /* Thread information block. The CRT's SEH prologues address it through FS, so FS-relative
  * accesses are rebased here instead of landing on absolute address 0. */
-enum { TIB_BASE = 0x7FFDE000u };
+#define TIB_BASE GUEST_TIB_BASE
 void host_import(uint32_t sentinel);
 
 void guest_init(void);

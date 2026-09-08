@@ -8,38 +8,23 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
-#include <sys/mman.h>
-
-/* macOS has no MAP_NORESERVE -- it never over-commits the way Linux does, so the flag is
- * only ever a hint and dropping it changes nothing. */
-#ifndef MAP_NORESERVE
-#define MAP_NORESERVE 0
-#endif
-
 static void bind_imports(uint8_t *file, uint32_t base, uint32_t pe);
 static void dump_trace(void);
 
 Cpu cpu;
-uint8_t *g_mem;
 
 /* The mapped extent of the loaded image. A memory scan that wants to say "I looked at all
  * of .text/.rdata/.data" has to know where they end; guessing a round number would make
  * every negative result carry an unstated blind spot. */
 uint32_t g_image_lo, g_image_hi;
 
-enum { GUEST_SPACE = 0x100000000ull }; /* full 32-bit space, lazily committed */
 enum { STACK_TOP = 0x00300000, STACK_SIZE = 0x00100000 };
 
 void guest_init(void)
 {
-    /* Reserving the whole 4 GiB means a guest address is just an index -- no bounds
-     * check or translation on the hot path. Pages are only committed when touched. */
-    void *p = mmap(NULL, GUEST_SPACE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-    if (p == MAP_FAILED) {
-        lf2_log_perror("guest", "mmap guest space");
-        abort();
-    }
-    g_mem = p;
+    guest_memory_init();
+    guest_memory_map(GUEST_STACK_BASE, GUEST_STACK_END - GUEST_STACK_BASE);
+    guest_memory_map(GUEST_TIB_BASE, GUEST_TIB_END - GUEST_TIB_BASE);
 
     memset(&cpu, 0, sizeof cpu);
     extern void (*rwatch_trace_hook)(void);
@@ -80,12 +65,14 @@ void guest_load_image(const char *exe_path)
     const uint16_t optsz = *(uint16_t *)(file + pe + 20);
     const uint32_t base = *(uint32_t *)(file + pe + 24 + 28);
     const uint8_t *sec = file + pe + 24 + optsz;
+    const uint32_t image_size = *(uint32_t *)(file + pe + 24 + 56);
+    guest_memory_map(base, image_size);
 
     /* Map the headers too. A real loader maps SizeOfHeaders bytes at the image base, and
      * this program depends on it: it checks the MZ signature at 0x400000, and its
      * resources are found by walking the data directory in mapped memory. */
     const uint32_t hdr_size = *(uint32_t *)(file + pe + 24 + 60);
-    memcpy(g_mem + base, file, hdr_size ? hdr_size : 0x400);
+    memcpy(guest_write_pointer(base, hdr_size ? hdr_size : 0x400), file, hdr_size ? hdr_size : 0x400);
 
     g_image_lo = base;
     g_image_hi = base + (hdr_size ? hdr_size : 0x400);
@@ -96,8 +83,9 @@ void guest_load_image(const char *exe_path)
         const uint32_t rva = *(uint32_t *)(s + 12);
         const uint32_t rsize = *(uint32_t *)(s + 16);
         const uint32_t roff = *(uint32_t *)(s + 20);
-        memset(g_mem + base + rva, 0, vsize);
-        memcpy(g_mem + base + rva, file + roff, rsize < vsize ? rsize : vsize);
+        memset(guest_write_pointer(base + rva, vsize), 0, vsize);
+        memcpy(guest_write_pointer(base + rva, rsize < vsize ? rsize : vsize), file + roff,
+               rsize < vsize ? rsize : vsize);
         if (base + rva + vsize > g_image_hi) g_image_hi = base + rva + vsize;
     }
     bind_imports(file, base, pe);
@@ -119,22 +107,20 @@ static void bind_imports(uint8_t *file, uint32_t base, uint32_t pe)
 {
     const uint32_t dir = *(uint32_t *)(file + pe + 24 + 104);
     if (!dir) return;
-    uint8_t *d = g_mem + base + dir;
+    uint8_t *d = guest_pointer(base + dir, 20);
     for (;; d += 20) {
         const uint32_t oft = *(uint32_t *)(d + 0), name_rva = *(uint32_t *)(d + 12);
         const uint32_t fta = *(uint32_t *)(d + 16);
         if (!name_rva) break;
-        const char *dll = (const char *)(g_mem + base + name_rva);
-        uint32_t *thunk = (uint32_t *)(g_mem + base + (oft ? oft : fta));
-        uint32_t *iat = (uint32_t *)(g_mem + base + fta);
+        const char *dll = guest_string(base + name_rva);
+        uint32_t *thunk = (uint32_t *)guest_pointer(base + (oft ? oft : fta), 4);
+        uint32_t *iat = (uint32_t *)guest_write_pointer(base + fta, 4);
         for (int i = 0; thunk[i]; i++) {
             if (nimports >= MAX_IMPORTS) break;
             snprintf(imports[nimports].dll, sizeof imports[0].dll, "%s", dll);
             if (thunk[i] & 0x80000000u)
                 snprintf(imports[nimports].name, sizeof imports[0].name, "#%u", thunk[i] & 0xffff);
-            else
-                snprintf(imports[nimports].name, sizeof imports[0].name, "%s",
-                         (const char *)(g_mem + base + thunk[i] + 2));
+            else snprintf(imports[nimports].name, sizeof imports[0].name, "%s", guest_string(base + thunk[i] + 2));
             iat[i] = IMPORT_SENTINEL + (uint32_t)nimports;
             nimports++;
         }

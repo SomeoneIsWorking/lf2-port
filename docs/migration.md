@@ -39,6 +39,23 @@ Issue #128 records that evidence and its limits. The next execution boundary is
 representative gameplay; the shared direct engine does not yet expose the
 bounded fallback contract.
 
+The guest-memory boundary uses one `X86pMem` view for the JIT and native spans.
+Desktop retains a contiguous reservation. WebAssembly uses shared x86port sparse
+mapping with independent backing for the loaded PE, stack/TIB and each used heap,
+COM, surface or PCM allocation. Native borrowed pointers resolve their complete
+span; strings must terminate inside their allocation. Mapper publication and
+native lookup are serialized, and backing survives until application teardown.
+`guest_map.h` includes COM and TIB ownership so heap/surface growth cannot enter
+them. Synthetic sparse tests cover discontiguous high addresses, holes, wrap,
+cross-allocation shared reads/writes and native prewrite notification; bounded
+bitmap fixtures exercise both file and PE-resource loading through that memory.
+
+This does not yet qualify browser gameplay. Shared translated-store invalidation
+and an active-block self-modification exit remain x86port responsibilities;
+prewrite callbacks alone cannot establish their instruction-boundary contract.
+The browser build, startup/import composition and deployed interactive observation
+must qualify the same execution path before web delivery is verified.
+
 New execution evidence comes from:
 
 - the original LF2 v2.0a executable under Wine or another independent oracle;
