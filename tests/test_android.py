@@ -117,6 +117,11 @@ def main() -> int:
         / "lf2port"
         / "Lf2Activity.java"
     ).read_text()
+    assert "savePickerState()" in activity
+    assert "restorePickerState(" in activity
+    assert "LucentImportProgress" in activity
+    assert "LucentImportService" in manifest
+    assert "android.permission.FOREGROUND_SERVICE_DATA_SYNC" in manifest
     assert "enforceLf2WindowPolicy" in activity
     assert "ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE" in activity
     assert "hideSystemUI();" in activity
