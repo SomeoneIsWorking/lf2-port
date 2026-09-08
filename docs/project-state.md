@@ -133,11 +133,11 @@ redistributable fonts; original bitmap-authored game panels remain original.
 The native macOS build and Metal shader path exist. `tools/build/macos.py`
 stages the native binary, its non-system dylib closure, `stages/`, and an
 ad-hoc signed `.app`; the release workflow now exercises that packager on an
-Apple Silicon runner.
+Apple Silicon runner. The combined Linux, Android, and macOS ARM64 CI run
+`34214371352` passed the native/JIT and quality gates on all three hosts.
 
-Gap: the remote macOS job and issue #100's real Metal acceptance are not yet
-verified, and no ARM64 JIT product has passed the representative
-gameplay/release gate.
+Gap: issue #100's real Metal acceptance and the representative macOS
+gameplay/release gate remain open despite the passing native/quality CI job.
 
 ### S013 — Android release and touch controls
 
@@ -222,13 +222,13 @@ permissions and no `lf2.exe`. Its Android arm64-v8a job now assembles the
 asset-free debug APK through `tools/build/android.py`, the pinned Android
 profile, and the shared Android dependency prefix; it does not claim device
 runtime evidence. The first remote Linux and Browser runs passed at
-`ad01e8d` (CI run 34197382110; Pages run 34197382067), and the Android package
-job passed at run `34211616648`.
+`ad01e8d` (CI run 34197382110; Pages run 34197382067), and the combined Linux,
+Android, and macOS ARM64 run passed at `34214371352`.
 
-Gap: macOS ARM64 product CI and Android device/runtime qualification remain
-open; the Android package and local Cuttlefish evidence are recorded in S013
-and S019. Windows is the comparison baseline rather than an intended shipping
-host and is therefore inapplicable to this port's current delivery goals.
+Gap: Android device/runtime qualification remains open; the Android package
+and local Cuttlefish evidence are recorded in S013 and S019. Windows is the
+comparison baseline rather than an intended shipping host and is therefore
+inapplicable to this port's current delivery goals.
 
 ### S021 — Browser native/JIT delivery
 
