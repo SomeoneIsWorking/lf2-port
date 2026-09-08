@@ -147,6 +147,9 @@ ARM64 run installed that APK, staged the exact `game/` tree into app-private
 storage, reached the retail mode menu through the ARM64 product JIT, and showed
 the authored touch overlay; the process remained alive while presenting frames.
 
+The asset-free Android package job passed in CI at run `34211616648`; this
+checks the build and APK-content boundary only.
+
 Gap: the run bypassed the system picker because the headless DocumentsUI surface
 did not stay foregrounded, so interruption/recreation of a real SAF import is
 still unverified. Signed physical-device correctness, audio/lifecycle checks,
@@ -215,7 +218,8 @@ permissions and no `lf2.exe`. Its Android arm64-v8a job now assembles the
 asset-free debug APK through `tools/build/android.py`, the pinned Android
 profile, and the shared Android dependency prefix; it does not claim device
 runtime evidence. The first remote Linux and Browser runs passed at
-`ad01e8d` (CI run 34197382110; Pages run 34197382067).
+`ad01e8d` (CI run 34197382110; Pages run 34197382067), and the Android package
+job passed at run `34211616648`.
 
 Gap: macOS ARM64 product CI and Android device/runtime qualification remain
 open; the Android package and local Cuttlefish evidence are recorded in S013
