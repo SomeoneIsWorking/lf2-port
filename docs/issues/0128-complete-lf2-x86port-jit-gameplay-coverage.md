@@ -6,7 +6,7 @@ symptom: The x86-64 LF2 adapter executes through x86port_runtime, but the first 
 state_items: S005,S015,S016,S017,S018,S019
 tags: migration,jit,x86port,execution
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-09-08
 ---
 
 ## Root cause
@@ -39,14 +39,23 @@ positive product boundary, while `tests/test_source_policy.py` prevents exact
 retired execution interfaces from returning anywhere in first-party source,
 documentation, or tools.
 
-The current Clang-built silent product run loaded the authenticated image,
-passed native window/DirectDraw initialization, completed data/art/music
-initialization, presented frame 1, reached the mode menu, entered 698,084 blocks,
-and translated 530,993 instructions across 9,218 blocks with zero translation
-refusals. It then refused at `0x0040000C`, where control had entered PE/DOS-header
-data rather than an instruction. The `MUL EDX` emitter boundary is resolved;
-the next task is to recover the incorrect control-flow owner. The pinned runtime
-does not yet supply bounded fallback.
+The adapter's call context was not scoped across recursive HLE/guest calls:
+entering a child replaced the engine's interception, dispatch, and translation
+boundary pointers with the child's stack-local context; returning left those
+pointers referring to an expired frame. The adapter now restores the enclosing
+call's context before returning. `test_jit_calls` executes the production adapter
+and real JIT with synthetic code. Before the change a nested HLE call missed the
+parent return sentinel and executed its INT3 negative. It now preserves registers,
+stack balance and return EIP across three calls, two nested HLE entries and three
+scoped original calls (seven entered blocks, three translations, zero refusals).
+
+A Clang-built silent, unpaced run with x86port `e1522b2` and jit-common `03ac795`
+loaded the authenticated game, initialized data/art/music, reached the mode menu,
+and exited normally at the requested ten presented frames. It entered 734,144
+blocks and translated 6,848 instructions across 1,068 blocks, with zero refusals
+or cache flushes. The previous `0x0040000C` refusal did not recur in this bounded
+observation. This is startup evidence; representative gameplay and independent
+state/output conformance remain open.
 
 ## Acceptance
 

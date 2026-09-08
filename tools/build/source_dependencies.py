@@ -27,14 +27,14 @@ class SourceDependency:
 JIT_COMMON = SourceDependency(
     name="jit-common",
     repository="https://github.com/SomeoneIsWorking/jit-common.git",
-    revision="75ce92882aba7d80a39822604ab3a294f9c8944e",
+    revision="03ac795cbc39843e795cb8091fb96bff2b1c9017",
     marker="src/jitcommon/block_cache.h",
 )
 
 X86PORT = SourceDependency(
     name="x86port",
     repository="https://github.com/SomeoneIsWorking/x86port.git",
-    revision="9b224ebdb2bfc9e60fa507cdf98b3ab389f3f814",
+    revision="e1522b2f77c030b928b76ffef5fbc5a832eb1e24",
     marker="src/x86port/jit_engine.h",
 )
 

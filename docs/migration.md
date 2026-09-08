@@ -24,13 +24,20 @@ The executable remains player-owned data. A persistent block cache, if later
 justified, is disposable OS user data keyed to the exact image, core, host, and
 configuration; a fresh installation never requires it.
 
+WebAssembly is part of the migration release contract: a browser-capable WASM
+build must execute through the same runtime boundary (runtime boundary discovery,
+the same JIT/fallback semantics, and matching counters/evidence model). If web
+parity is blocked, the plan must record that blocker explicitly and keep release
+claims dependent on representative gameplay coverage on web.
+
 ## Current boundary
 
 The x86-64 target compiles `runtime/cpu/jit_executor.c` against
-`x86port_runtime`. The current pinned runtime executes `MUL EDX` and reaches the
-mode menu. It then refuses when control enters PE/DOS-header data at
-`0x0040000C`; the next task is to recover the incorrect control-flow owner. The
-shared runtime does not yet expose the bounded fallback contract.
+`x86port_runtime`. The adapter scopes recursive HLE/guest call contexts and the
+current pinned runtime reaches the mode menu in a ten-frame startup observation.
+Issue #128 records that evidence and its limits. The next execution boundary is
+representative gameplay; the shared direct engine does not yet expose the
+bounded fallback contract.
 
 New execution evidence comes from:
 
