@@ -145,12 +145,14 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: '0.10.12'
-      - name: Install native dependencies
-        run: brew install ffmpeg freetype pkg-config sdl3 sdl3_image sdl3_ttf ninja
+      - name: Install native and quality dependencies
+        run: |
+          brew install ffmpeg freetype llvm pkg-config sdl3 sdl3_image sdl3_ttf ninja
+          echo "LLVM_BIN=$(brew --prefix llvm)/bin" >> "$GITHUB_ENV"
       - name: Build the real macOS native/JIT product boundary
         run: CC=clang CXX=clang++ uv run --frozen python tools/build/build.py --build-dir build/ci-macos
       - name: Run macOS native/JIT boundary and quality tests
         run: >-
-          ctest --test-dir build/ci-macos --output-on-failure
+          PATH="$LLVM_BIN:$PATH" ctest --test-dir build/ci-macos --output-on-failure
           --tests-regex
           '^(game_data|execution_boundary|source_policy|product_execution_symbols|structure|clang_format|clang_tidy|build_toolchain|source_dependencies|game_selection)$'
