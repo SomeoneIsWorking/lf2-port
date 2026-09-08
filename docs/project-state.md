@@ -151,8 +151,9 @@ ARM64 run installed that APK, staged the exact `game/` tree into app-private
 storage, reached the retail mode menu through the ARM64 product JIT, and showed
 the authored touch overlay; the process remained alive while presenting frames.
 
-The asset-free Android package job passed in CI at run `34211616648`; this
-checks the build and APK-content boundary only.
+The asset-free Android package job passed in CI at run `34216452485` alongside
+the Linux AppImage and Apple Silicon `.app` package jobs; this checks the build,
+APK-content, and package-boundary paths only.
 
 Gap: the run bypassed the system picker because the headless DocumentsUI surface
 did not stay foregrounded, so interruption/recreation of a real SAF import is
@@ -223,7 +224,7 @@ asset-free debug APK through `tools/build/android.py`, the pinned Android
 profile, and the shared Android dependency prefix; it does not claim device
 runtime evidence. The first remote Linux and Browser runs passed at
 `ad01e8d` (CI run 34197382110; Pages run 34197382067), and the combined Linux,
-Android, and macOS ARM64 run passed at `34214371352`.
+Android, and macOS ARM64 package run passed at `34216452485`.
 
 Gap: Android device/runtime qualification remains open; the Android package
 and local Cuttlefish evidence are recorded in S013 and S019. Windows is the
