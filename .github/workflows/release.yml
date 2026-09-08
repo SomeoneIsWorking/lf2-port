@@ -57,7 +57,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            clang clang++ cmake ninja-build pkg-config file zsync \
+            clang cmake ninja-build pkg-config file zsync \
             libbz2-dev libfreetype-dev libsdl3-dev libsdl3-image-dev \
             libsdl3-ttf-dev libavcodec-dev libavformat-dev libavutil-dev \
             libswresample-dev zlib1g-dev
