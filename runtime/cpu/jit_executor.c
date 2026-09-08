@@ -30,6 +30,7 @@ typedef struct {
 static X86pJitEngine *engine;
 static X86pMem memory;
 static X86pCpu jit_cpu;
+static const CallBoundary *active_boundary;
 
 void com_call(uint32_t sentinel);
 void host_import(uint32_t sentinel);
@@ -141,6 +142,14 @@ static X86pJitDispatchResult dispatch_inline(X86pCpu *state, void *user)
     return kX86pDispatchContinue;
 }
 
+static void select_boundary(const CallBoundary *boundary)
+{
+    active_boundary = boundary;
+    x86p_jit_engine_set_intercept(engine, boundary ? intercept : NULL, (void *)boundary);
+    x86p_jit_engine_set_dispatch(engine, boundary ? dispatch_inline : NULL, (void *)boundary);
+    x86p_jit_engine_set_boundary(engine, boundary ? translation_boundary : NULL, (void *)boundary);
+}
+
 static void execute(CallRequest request)
 {
     ensure_engine();
@@ -151,17 +160,20 @@ static void execute(CallRequest request)
         .excluded_override = request.excluded_override,
     };
     char reason[256];
+    /* An HLE callback can enter another guest function while the engine's
+     * outer dispatch loop is active. Its predicates must resume with the
+     * enclosing call's live context, never the returned child's stack frame. */
+    const CallBoundary *parent_boundary = active_boundary;
+    select_boundary(&boundary);
 
     for (unsigned slice = 0; slice < JIT_MAX_SLICES_PER_CALL; ++slice) {
         reason[0] = '\0';
-        x86p_jit_engine_set_intercept(engine, intercept, (void *)&boundary);
-        x86p_jit_engine_set_dispatch(engine, dispatch_inline, (void *)&boundary);
-        x86p_jit_engine_set_boundary(engine, translation_boundary, (void *)&boundary);
         const X86pJitRunStatus status = x86p_jit_engine_run(engine, &jit_cpu, JIT_SLICE_STEPS, reason, sizeof reason);
         if (status == kX86pRunBudget) continue;
         if (status != kX86pRunIntercept) fail("JIT execution stopped", jit_cpu.eip, status, reason);
         if (jit_cpu.eip == boundary.return_address) {
             view_from_jit();
+            select_boundary(parent_boundary);
             return;
         }
         dispatch_intercept(jit_cpu.eip);

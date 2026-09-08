@@ -185,6 +185,12 @@ if(TARGET x86port_runtime)
     target_link_libraries(lf2 PRIVATE x86port_runtime)
 endif()
 
+add_executable(test_jit_calls tests/test_jit_calls.c runtime/cpu/jit_executor.c)
+target_include_directories(test_jit_calls PRIVATE
+    runtime/cpu runtime/win32 runtime/overrides runtime/app runtime/log)
+target_link_libraries(test_jit_calls PRIVATE x86port_runtime lf2_diagnostics lf2_environment)
+add_test(NAME jit_calls COMMAND test_jit_calls)
+
 # The hand-woven stage geometry (issue #62) travels BESIDE THE BINARY.
 #
 # It cannot travel in the working directory: the port runs with its cwd in the GAME TREE,

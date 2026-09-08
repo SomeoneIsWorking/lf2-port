@@ -86,8 +86,7 @@ static inline double guest_load_f64(uint32_t address)
 
 static inline void guest_store_f64(uint32_t address, double value)
 {
-    const uint8_t *bytes = (const uint8_t *)&value;
-    for (size_t index = 0; index < sizeof value; ++index) g_mem[address + index] = bytes[index];
+    for (size_t index = 0; index < sizeof value; ++index) g_mem[address + index] = ((const uint8_t *)&value)[index];
 }
 
 static inline void PUSH32(uint32_t v)

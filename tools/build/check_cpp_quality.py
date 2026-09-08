@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import shutil
 import subprocess
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ADOPTED_C_SOURCES = (
@@ -16,6 +15,8 @@ ADOPTED_C_SOURCES = (
     ROOT / "runtime" / "app" / "environment.h",
     ROOT / "runtime" / "cpu" / "jit_executor.c",
     ROOT / "runtime" / "cpu" / "jit_executor.h",
+    ROOT / "runtime" / "cpu" / "guest.h",
+    ROOT / "tests" / "test_jit_calls.c",
     ROOT / "runtime" / "overrides" / "native_override.c",
     ROOT / "runtime" / "overrides" / "native_override.h",
     ROOT / "runtime" / "ui" / "rmlui_system.h",

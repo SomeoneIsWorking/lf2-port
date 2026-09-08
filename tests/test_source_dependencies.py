@@ -9,14 +9,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools" / "build"))
 
-from source_dependencies import (  # noqa: E402
+from source_dependencies import (
+    RUNTIME_DEPENDENCIES,
     DependencyError,
     SourceDependency,
-    X86PORT,
     resolve_checkout,
 )
 
@@ -54,8 +53,10 @@ class SourceDependencyTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_x86port_pin_is_the_landed_runtime_revision(self) -> None:
-        self.assertEqual(X86PORT.revision, "9b224ebdb2bfc9e60fa507cdf98b3ab389f3f814")
+    def test_runtime_dependencies_declare_immutable_revisions(self) -> None:
+        for dependency in RUNTIME_DEPENDENCIES:
+            with self.subTest(dependency=dependency.name):
+                self.assertRegex(dependency.revision, r"^[0-9a-f]{40}$")
 
     def test_missing_checkout_is_provisioned_at_exact_revision(self) -> None:
         resolved = resolve_checkout(self.root, self.dependency, {})
