@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -123,6 +124,17 @@ def check_tidy(build: Path) -> int:
     compile_commands = build / "compile_commands.json"
     if not compile_commands.is_file():
         raise SystemExit(f"missing {compile_commands}; configure with CMAKE_EXPORT_COMPILE_COMMANDS=ON")
+    extra_args: list[str] = []
+    if sys.platform == "darwin":
+        sdk = subprocess.run(
+            ["xcrun", "--sdk", "macosx", "--show-sdk-path"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if not sdk:
+            raise SystemExit("xcrun returned an empty macOS SDK path for clang-tidy")
+        extra_args = ["--extra-arg=-isysroot", f"--extra-arg={sdk}"]
     failed = False
     for source in [*ADOPTED_C_TIDY_SOURCES, *cpp_sources()]:
         result = subprocess.run(
@@ -132,6 +144,7 @@ def check_tidy(build: Path) -> int:
                 str(build),
                 "--quiet",
                 '--line-filter=[{"name":".*/runtime/.*"}]',
+                *extra_args,
                 str(source),
             ],
             cwd=ROOT,
