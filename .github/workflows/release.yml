@@ -1,0 +1,210 @@
+name: Release packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (for example v0.1.0)'
+        required: false
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: '0.10.12'
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  linux-appimage:
+    name: Linux AppImage (x86-64)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    env:
+      PORT_ASSETS_DIR: ${{ github.workspace }}/build/deps/port-assets
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SomeoneIsWorking/port-assets
+          ref: 330c1bf146bd97ecc6af49e637476a677f0e55a0
+          path: build/deps/port-assets
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install native and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            clang clang++ cmake ninja-build pkg-config file zsync \
+            libbz2-dev libfreetype-dev libsdl3-dev libsdl3-image-dev \
+            libsdl3-ttf-dev libavcodec-dev libavformat-dev libavutil-dev \
+            libswresample-dev zlib1g-dev
+      - name: Build native release binary
+        run: CC=clang CXX=clang++ uv run --frozen python tools/build/build.py --build-dir build/release-native
+      - name: Build AppImage
+        run: >-
+          uv run --frozen python tools/build/appimage.py
+          --build-dir build/release-native
+          --work-dir build/release-appimage
+          --output build/release/LF2-Port-x86_64.AppImage
+          --version "${GITHUB_REF_NAME:-dev}" --fetch-tools
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: lf2-linux-appimage
+          path: |
+            build/release/LF2-Port-x86_64.AppImage
+            build/release/LF2-Port-x86_64.AppImage.zsync
+
+  macos-app:
+    name: macOS app (Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      PORT_ASSETS_DIR: ${{ github.workspace }}/build/deps/port-assets
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SomeoneIsWorking/port-assets
+          ref: 330c1bf146bd97ecc6af49e637476a677f0e55a0
+          path: build/deps/port-assets
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install native dependencies
+        run: brew install ffmpeg freetype pkg-config sdl3 sdl3_image sdl3_ttf ninja
+      - name: Build native release binary
+        run: CC=clang CXX=clang++ uv run --frozen python tools/build/build.py --build-dir build/macos
+      - name: Stage and verify the .app
+        run: uv run --frozen python tools/build/macos.py --binary build/macos/lf2
+      - name: Zip the bundle
+        run: ditto -c -k --sequesterRsrc --keepParent build/release/LF2-Port.app build/release/LF2-Port-macos-arm64.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: lf2-macos-app
+          path: build/release/LF2-Port-macos-arm64.zip
+
+  android-apk:
+    name: Android (arm64-v8a)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PORT_ASSETS_DIR: ${{ github.workspace }}/build/deps/port-assets
+      LF2_ANDROID_KEYSTORE_B64: ${{ secrets.LF2_ANDROID_KEYSTORE_B64 }}
+      LF2_ANDROID_KEY_ALIAS: ${{ secrets.LF2_ANDROID_KEY_ALIAS }}
+      LF2_ANDROID_STORE_PASSWORD: ${{ secrets.LF2_ANDROID_STORE_PASSWORD }}
+      LF2_ANDROID_KEY_PASSWORD: ${{ secrets.LF2_ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SomeoneIsWorking/port-assets
+          ref: 330c1bf146bd97ecc6af49e637476a677f0e55a0
+          path: build/deps/port-assets
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: >-
+            platforms;android-35
+            build-tools;36.0.0
+            cmake;3.31.6
+            ndk;28.2.13676358
+      - name: Select the pinned Android CMake and JDK
+        run: |
+          echo "$ANDROID_SDK_ROOT/cmake/3.31.6/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y openjdk-21-jdk
+          echo "JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64" >> "$GITHUB_ENV"
+      - name: Prepare release signing key
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          test -n "$LF2_ANDROID_KEYSTORE_B64"
+          test -n "$LF2_ANDROID_KEY_ALIAS"
+          test -n "$LF2_ANDROID_STORE_PASSWORD"
+          test -n "$LF2_ANDROID_KEY_PASSWORD"
+          mkdir -p build/signing
+          printf '%s' "$LF2_ANDROID_KEYSTORE_B64" | base64 --decode > build/signing/release.keystore
+          echo "LF2_ANDROID_KEYSTORE=$GITHUB_WORKSPACE/build/signing/release.keystore" >> "$GITHUB_ENV"
+      - name: Build signed release APK for tags or debug APK for manual runs
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            uv run --frozen python tools/build/android.py --release
+          else
+            uv run --frozen python tools/build/android.py
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: lf2-android-apk
+          path: build/release/*.apk
+
+  publish:
+    name: Publish GitHub release
+    needs: [linux-appimage, macos-app, android-apk]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          path: dist
+      - name: Collect release files and checksums
+        run: |
+          mkdir -p release_assets
+          find dist -type f \( -name '*.AppImage' -o -name '*.zsync' -o -name '*.zip' -o -name '*.apk' \) -exec cp {} release_assets/ \;
+          cd release_assets
+          sha256sum * > SHA256SUMS.txt
+      - name: Determine tag name
+        id: tag
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.value }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release_assets/* --clobber
+          else
+            gh release create "$tag" release_assets/* --title "LF2 native port $tag" \
+              --notes "Asset-free Linux AppImage, macOS Apple Silicon app, and Android arm64-v8a package. Supply your own LF2 v2.0a game files through each platform's setup flow. Windows is a comparison baseline, not a shipping target for this port."
+          fi
