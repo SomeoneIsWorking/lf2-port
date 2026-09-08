@@ -9,6 +9,7 @@
 #include "dsound.h"
 #include "guest_map.h"
 #include "guest.h"
+#include "guest_arena.h"
 #include "music_decode.h"
 
 #include <SDL3/SDL.h>
@@ -479,7 +480,7 @@ static void dump_src(const SBuf *b)
     fwrite(&bits, 2, 1, f);
     fwrite("data", 1, 4, f);
     fwrite(&data, 4, 1, f);
-    fwrite(g_mem + b->pixels, 1, data, f);
+    fwrite(guest_pointer(b->pixels, data), 1, data, f);
     fclose(f);
 }
 
@@ -627,8 +628,7 @@ static void obj_Release(uint32_t self)
  * only 256 MB above the surface arena, which needs ~322 MB -- so surfaces overwrote the
  * sound data and the game played bitmaps as audio. Menu sounds survived only because they
  * play before the surface arena grows that far. */
-enum { PCM_ARENA = GUEST_PCM_BASE };
-static uint32_t pcm_next = PCM_ARENA;
+static GuestArena pcm = {GUEST_PCM_BASE, GUEST_PCM_END, 4096};
 
 static void ds_CreateSoundBuffer(uint32_t self)
 {
@@ -644,16 +644,8 @@ static void ds_CreateSoundBuffer(uint32_t self)
 
     SBuf *b = SDL_calloc(1, sizeof *b);
     b->bytes = bytes ? bytes : 4;
-    if (pcm_next + b->bytes > GUEST_PCM_END) {
-        lf2_log_writef(LF2_LOG_INFO, "dsound",
-                       "pcm arena exhausted: %u bytes at %08x, reservation ends at %08x. "
-                       "Raise GUEST_PCM_SIZE in guest_map.h.\n",
-                       b->bytes, pcm_next, (unsigned)GUEST_PCM_END);
-        abort();
-    }
-    b->pixels = pcm_next;
-    pcm_next = (pcm_next + b->bytes + 4095u) & ~4095u;
-    memset(g_mem + b->pixels, 0, b->bytes);
+    b->pixels = guest_arena_alloc(&pcm, b->bytes);
+    memset(guest_write_pointer(b->pixels, b->bytes), 0, b->bytes);
     b->channels = 1;
     b->rate = 22050;
     b->bits = 8;

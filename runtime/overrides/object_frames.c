@@ -83,7 +83,7 @@ static int copy_token(ObjectTokenStream *stream, uint32_t destination, size_t ca
     if (object_token_next(stream, token, sizeof token) != 1) return 0;
     const size_t length = strlen(token);
     if (length >= capacity) return 0;
-    memcpy(g_mem + destination, token, length + 1);
+    memcpy(guest_write_pointer(destination, length + 1), token, length + 1);
     return 1;
 }
 
@@ -119,7 +119,7 @@ static int parse_itr(ObjectTokenStream *stream, uint32_t frame)
     ST32(frame + FRAME_ITR_COUNT, count);
     if (count == 1) ST32(frame + FRAME_ITR_POINTER, guest_allocate(400));
     const uint32_t record = LD32(frame + FRAME_ITR_POINTER) + (count - 1) * 80;
-    memset(g_mem + record, 0, 80);
+    memset(guest_write_pointer(record, 80), 0, 80);
 
     char key[128];
     while (object_token_next(stream, key, sizeof key) == 1) {
@@ -140,7 +140,7 @@ static int parse_bdy(ObjectTokenStream *stream, uint32_t frame)
     ST32(frame + FRAME_BDY_COUNT, count);
     if (count == 1) ST32(frame + FRAME_BDY_POINTER, guest_allocate(200));
     const uint32_t record = LD32(frame + FRAME_BDY_POINTER) + (count - 1) * 40;
-    memset(g_mem + record, 0, 40);
+    memset(guest_write_pointer(record, 40), 0, 40);
     return parse_fixed_block(stream, record, "bdy_end:", BDY_FIELDS, sizeof BDY_FIELDS / sizeof BDY_FIELDS[0]);
 }
 
@@ -148,12 +148,12 @@ static void load_sound(const char *path, uint32_t frame)
 {
     const size_t length = strlen(path);
     const uint32_t copy = guest_allocate((uint32_t)length + 1);
-    memcpy(g_mem + copy, path, length + 1);
+    memcpy(guest_write_pointer(copy, length + 1), path, length + 1);
     ST32(frame + FRAME_SOUND_PATH, copy);
 
     uint32_t index = 0;
     const uint32_t count = LD32(SOUND_COUNT);
-    while (index < count && strcmp((const char *)g_mem + SOUND_NAMES + index * 20, path) != 0) ++index;
+    while (index < count && strcmp(guest_string(SOUND_NAMES + index * 20), path) != 0) ++index;
     ST32(frame + FRAME_SOUND_INDEX, index);
     if (index < count) return;
 
@@ -169,7 +169,7 @@ static void load_sound(const char *path, uint32_t frame)
         PUSH32(0x0040ef74);
         dispatch(method);
     }
-    memcpy(g_mem + SOUND_NAMES + index * 20, path, length + 1);
+    memcpy(guest_write_pointer(SOUND_NAMES + index * 20, length + 1), path, length + 1);
     ST32(SOUND_COUNT, index + 1);
 }
 

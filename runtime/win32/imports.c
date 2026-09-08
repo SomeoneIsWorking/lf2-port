@@ -6,6 +6,7 @@
 #include "lf2_log.h"
 #include "environment.h"
 #include "guest.h"
+#include "guest_heap.h"
 #include "hostwin.h"
 #include "guest_map.h"
 #include "paths.h"
@@ -30,35 +31,6 @@ static void ret_cdecl(uint32_t value)
 {
     R(EAX) = value;
     R(ESP) += 4;
-}
-
-/* ---- guest heap ----
- * Bump allocator over a dedicated region. Free is a no-op for now: the game allocates
- * its sprite and stage data once at load, so this holds for a session, but it will need
- * a real free list before anything long-running. */
-enum { HEAP_BASE = GUEST_HEAP_BASE, HEAP_SIZE = GUEST_HEAP_SIZE };
-static uint32_t heap_next = HEAP_BASE;
-
-/* How far the bump allocator has grown. The character-select slot state lives in a
- * malloc'd structure, so a .data-only snapshot cannot see it -- diffing .data across a
- * cursor move found only free-running counters, and the negative control changed the
- * same ones. Exposed so the dump can cover the heap that is actually in use rather than
- * a fixed guess at its size. */
-uint32_t guest_heap_used(void)
-{
-    return heap_next - HEAP_BASE;
-}
-
-static uint32_t guest_alloc(uint32_t size)
-{
-    size = (size + 15u) & ~15u;
-    if (heap_next + size > HEAP_BASE + HEAP_SIZE) {
-        lf2_log_writef(LF2_LOG_INFO, "imports", "guest heap exhausted\n");
-        abort();
-    }
-    uint32_t p = heap_next;
-    heap_next += size;
-    return p;
 }
 
 /* ---- handlers ---- */
@@ -167,8 +139,11 @@ void clock_sites_report(void)
                    "clock sites: %ld reads from %d call site(s)%s. `run` is reads since the "
                    "last Sleep -- a large one is a loop watching the clock without "
                    "sleeping\n",
-                   clk_reads_total, clk_nsites, clk_dropped ? " (and more sites than this build can hold; some were DROPPED)" : "");
-    for (int k = 0; k < clk_nsites; k++) lf2_log_writef(LF2_LOG_INFO, "imports", "  from=%08x  %-24s reads=%-9ld longest run=%-7ld at frame %ld\n", clk_site[k], clk_site_api[k], clk_site_n[k], clk_site_max_run[k], clk_site_max_at[k]);
+                   clk_reads_total, clk_nsites,
+                   clk_dropped ? " (and more sites than this build can hold; some were DROPPED)" : "");
+    for (int k = 0; k < clk_nsites; k++)
+        lf2_log_writef(LF2_LOG_INFO, "imports", "  from=%08x  %-24s reads=%-9ld longest run=%-7ld at frame %ld\n",
+                       clk_site[k], clk_site_api[k], clk_site_n[k], clk_site_max_run[k], clk_site_max_at[k]);
     if (clk_dropped)
         lf2_log_writef(LF2_LOG_INFO, "imports",
                        "  ... and %ld reads from call sites past the %d this build records, "
@@ -258,7 +233,8 @@ static void h_Sleep(void)
         int k = 0;
         for (; k < sleep_nsites; k++)
             if (sleep_site[k] == ra) break;
-        if (k == sleep_nsites && sleep_nsites < (int)(sizeof sleep_site / sizeof *sleep_site)) sleep_site[sleep_nsites++] = ra;
+        if (k == sleep_nsites && sleep_nsites < (int)(sizeof sleep_site / sizeof *sleep_site))
+            sleep_site[sleep_nsites++] = ra;
         if (k < (int)(sizeof sleep_site / sizeof *sleep_site)) sleep_site_n[k]++;
     }
     ret_stdcall(1, 0);
@@ -397,7 +373,7 @@ static void h_lstrlenA(void)
 static void h_OutputDebugStringA(void)
 {
     uint32_t p = ARG(0);
-    lf2_log_writef(LF2_LOG_INFO, "imports", "[dbg] %s\n", (const char *)(g_mem + p));
+    lf2_log_writef(LF2_LOG_INFO, "imports", "[dbg] %s\n", guest_string(p));
     ret_stdcall(1, 0);
 }
 
@@ -409,9 +385,7 @@ static void h_malloc(void)
 }
 static void h_calloc(void)
 {
-    uint32_t n = ARG(0) * ARG(1), p = guest_alloc(n);
-    memset(g_mem + p, 0, n);
-    ret_cdecl(p);
+    ret_cdecl(guest_calloc(ARG(0), ARG(1)));
 }
 static void h_free(void)
 {
@@ -419,12 +393,12 @@ static void h_free(void)
 }
 static void h_memcpy(void)
 {
-    memmove(g_mem + ARG(0), g_mem + ARG(1), ARG(2));
+    if (ARG(2)) memmove(guest_write_pointer(ARG(0), ARG(2)), guest_pointer(ARG(1), ARG(2)), ARG(2));
     ret_cdecl(ARG(0));
 }
 static void h_memset(void)
 {
-    memset(g_mem + ARG(0), (int)ARG(1), ARG(2));
+    if (ARG(2)) memset(guest_write_pointer(ARG(0), ARG(2)), (int)ARG(1), ARG(2));
     ret_cdecl(ARG(0));
 }
 
@@ -434,7 +408,7 @@ static void h_getmainargs(void)
     static uint32_t argv_block;
     if (!argv_block) {
         uint32_t name = guest_alloc(16);
-        memcpy(g_mem + name, "lf2.exe", 8);
+        memcpy(guest_write_pointer(name, 8), "lf2.exe", 8);
         argv_block = guest_alloc(8);
         ST32(argv_block, name);
         ST32(argv_block + 4, 0);
@@ -517,7 +491,7 @@ static FILE *file_of(uint32_t tok)
 
 static const char *gstr(uint32_t p)
 {
-    return (const char *)(g_mem + p);
+    return guest_string(p);
 }
 
 /* Text-mode translation.
@@ -557,9 +531,13 @@ long load_skipped_sleeps;
 void load_span_report(void)
 {
     if (lf2_environment_get(LF2_ENV_LOAD_SITES)) {
-        lf2_log_writef(LF2_LOG_INFO, "imports", "load sites: %d distinct guest callers of fopen on data files\n", load_nsites);
-        for (int i = 0; i < load_nsites; i++) lf2_log_writef(LF2_LOG_INFO, "imports", "  %08x  %8ld files  first: %s\n", load_site[i], load_site_n[i], load_site_path[i]);
-        if (!load_nsites) lf2_log_writef(LF2_LOG_INFO, "imports", "  none -- no data file was opened in this run at all\n");
+        lf2_log_writef(LF2_LOG_INFO, "imports", "load sites: %d distinct guest callers of fopen on data files\n",
+                       load_nsites);
+        for (int i = 0; i < load_nsites; i++)
+            lf2_log_writef(LF2_LOG_INFO, "imports", "  %08x  %8ld files  first: %s\n", load_site[i], load_site_n[i],
+                           load_site_path[i]);
+        if (!load_nsites)
+            lf2_log_writef(LF2_LOG_INFO, "imports", "  none -- no data file was opened in this run at all\n");
     }
     if (!lf2_environment_get(LF2_ENV_SCAN_PROF)) return;
     if (!load_files) {
@@ -573,7 +551,8 @@ void load_span_report(void)
     lf2_log_writef(LF2_LOG_INFO, "imports",
                    "data load: %ld files, %.3f s actively loading (span %.3f s incl. idle), "
                    "%ld frame-pacing sleeps skipped\n",
-                   load_files, (double)load_active_ms / 1000.0, (double)(load_last_open_ms - load_first_open_ms) / 1000.0, load_skipped_sleeps);
+                   load_files, (double)load_active_ms / 1000.0,
+                   (double)(load_last_open_ms - load_first_open_ms) / 1000.0, load_skipped_sleeps);
 }
 
 static uint32_t now_ms(void)
@@ -598,7 +577,8 @@ static void note_data_open(const char *path)
     if (!path) return;
     const size_t n = strlen(path);
     /* the game's own data: data\*.dat, *.txt indexes, and the sprite sheets it pulls in */
-    if (n > 4 && (strcasecmp(path + n - 4, ".dat") == 0 || strcasecmp(path + n - 4, ".txt") == 0 || strcasecmp(path + n - 4, ".bmp") == 0)) {
+    if (n > 4 && (strcasecmp(path + n - 4, ".dat") == 0 || strcasecmp(path + n - 4, ".txt") == 0 ||
+                  strcasecmp(path + n - 4, ".bmp") == 0)) {
         const uint32_t t = now_ms();
         if (load_last_open_ms && (t - load_last_open_ms) < 300u) load_active_ms += t - load_last_open_ms;
         load_last_open_ms = t;
@@ -629,7 +609,8 @@ static void h_fopen(void)
     const int text = !strchr(mode, 'b');
     const int reading = !strchr(mode, 'w') && !strchr(mode, 'a');
     char *backing = NULL;
-    FILE *fh = (text && reading) ? lf2_open_translated(host_path_of(ARG(0)), &backing) : fopen(host_path_of(ARG(0)), mode);
+    FILE *fh =
+        (text && reading) ? lf2_open_translated(host_path_of(ARG(0)), &backing) : fopen(host_path_of(ARG(0)), mode);
     if (!fh) {
         ret_cdecl(0);
         return;
@@ -643,7 +624,8 @@ static void h_fopen(void)
     }
     text_buf[tok - 0xFE000000u] = backing;
     note_data_open(host_path_of(ARG(0)));
-    if (lf2_environment_get(LF2_ENV_STR_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "imports", "fopen[%08x] %s (%s)\n", tok, host_path_of(ARG(0)), mode);
+    if (lf2_environment_get(LF2_ENV_STR_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "imports", "fopen[%08x] %s (%s)\n", tok, host_path_of(ARG(0)), mode);
     ret_cdecl(tok);
 }
 static void h_fclose(void)
@@ -662,7 +644,7 @@ static void h_fclose(void)
 static void h_fgets(void)
 {
     FILE *fh = file_of(ARG(2));
-    char *r = fh ? fgets((char *)(g_mem + ARG(0)), (int)ARG(1), fh) : NULL;
+    char *r = fh && (int)ARG(1) > 0 ? fgets((char *)guest_write_pointer(ARG(0), ARG(1)), (int)ARG(1), fh) : NULL;
     ret_cdecl(r ? ARG(0) : 0);
 }
 
@@ -717,7 +699,7 @@ static int gformat(char *out, size_t cap, const char *fmt, uint32_t argp)
         case 'e':
         case 'E': {
             double d;
-            __builtin_memcpy(&d, g_mem + argp, 8);
+            __builtin_memcpy(&d, guest_pointer(argp, sizeof d), sizeof d);
             snprintf(tmp, sizeof tmp, spec, d);
             argp += 8;
             break;
@@ -738,8 +720,10 @@ static void h_sprintf(void)
 {
     char buf[4096];
     int n = gformat(buf, sizeof buf, gstr(ARG(1)), R(ESP) + 4 + 8);
-    if (lf2_environment_get(LF2_ENV_STR_DEBUG)) lf2_log_writef(LF2_LOG_INFO, "imports", "sprintf -> %08x (%d bytes) fmt=\"%s\" out=\"%.60s\"\n", ARG(0), n, gstr(ARG(1)), buf);
-    memcpy(g_mem + ARG(0), buf, (size_t)n + 1);
+    if (lf2_environment_get(LF2_ENV_STR_DEBUG))
+        lf2_log_writef(LF2_LOG_INFO, "imports", "sprintf -> %08x (%d bytes) fmt=\"%s\" out=\"%.60s\"\n", ARG(0), n,
+                       gstr(ARG(1)), buf);
+    memcpy(guest_write_pointer(ARG(0), (size_t)n + 1), buf, (size_t)n + 1);
     ret_cdecl((uint32_t)n);
 }
 
@@ -828,7 +812,7 @@ static void scan_store(const ScanArg *a, const void *slot)
     case 's': {
         const char *str = slot;
         const size_t len = strlen(str);
-        memcpy(g_mem + a->out, str, len + 1);
+        memcpy(guest_write_pointer(a->out, len + 1), str, len + 1);
         break;
     }
     default: break;
@@ -851,22 +835,29 @@ static long sleep_calls_at_first, sleep_calls_at_last;
 void scan_prof_report(void)
 {
     if (!lf2_environment_get(LF2_ENV_SCAN_PROF)) return;
-    lf2_log_writef(LF2_LOG_INFO, "imports", "gscan: %ld calls, %.3f s inside gscan, %.0f ns/call (timer overhead included)\n", scan_calls, scan_ns / 1e9, scan_calls ? scan_ns / (double)scan_calls : 0.0);
+    lf2_log_writef(LF2_LOG_INFO, "imports",
+                   "gscan: %ld calls, %.3f s inside gscan, %.0f ns/call (timer overhead included)\n", scan_calls,
+                   scan_ns / 1e9, scan_calls ? scan_ns / (double)scan_calls : 0.0);
     if (!scan_calls) {
         lf2_log_writef(LF2_LOG_INFO, "imports", "gscan: no parse span -- the data load never ran in this route\n");
         return;
     }
-    const double span = (double)(scan_last.tv_sec - scan_first.tv_sec) + (double)(scan_last.tv_nsec - scan_first.tv_nsec) / 1e9;
+    const double span =
+        (double)(scan_last.tv_sec - scan_first.tv_sec) + (double)(scan_last.tv_nsec - scan_first.tv_nsec) / 1e9;
     const double slept = (sleep_ns_at_last - sleep_ns_at_first) / 1e9;
-    lf2_log_writef(LF2_LOG_INFO, "imports", "gscan: parse span %.3f s (first to last call), %.1f%% of it inside gscan\n", span, span > 0 ? 100.0 * (scan_ns / 1e9) / span : 0.0);
+    lf2_log_writef(LF2_LOG_INFO, "imports",
+                   "gscan: parse span %.3f s (first to last call), %.1f%% of it inside gscan\n", span,
+                   span > 0 ? 100.0 * (scan_ns / 1e9) / span : 0.0);
     lf2_log_writef(LF2_LOG_INFO, "imports",
                    "load:  %.3f s span = %.3f s slept (%ld Sleep calls) + %.3f s not sleeping"
                    " -- %.1f%% of the load is Sleep\n",
-                   span, slept, sleep_calls_at_last - sleep_calls_at_first, span - slept, span > 0 ? 100.0 * slept / span : 0.0);
+                   span, slept, sleep_calls_at_last - sleep_calls_at_first, span - slept,
+                   span > 0 ? 100.0 * slept / span : 0.0);
     lf2_log_writef(LF2_LOG_INFO, "imports", "sleep call sites (guest return address), during the load:\n");
     for (int k = 0; k < sleep_nsites; k++) {
         const long during = sleep_site_at_last[k] - sleep_site_at_first[k];
-        lf2_log_writef(LF2_LOG_INFO, "imports", "  ra=%08x  %8ld during load  %8ld total\n", sleep_site[k], during, sleep_site_n[k]);
+        lf2_log_writef(LF2_LOG_INFO, "imports", "  ra=%08x  %8ld during load  %8ld total\n", sleep_site[k], during,
+                       sleep_site_n[k]);
     }
     if (!sleep_nsites) lf2_log_writef(LF2_LOG_INFO, "imports", "  (none -- Sleep was never called)\n");
 }
@@ -887,7 +878,8 @@ static int gscan_inner(FILE *fh, const char *input, const char *fmt, uint32_t ar
     void *p[SCAN_MAX];
     for (int i = 0; i < SCAN_MAX; i++) p[i] = slots[i];
 
-    const int got = fh ? fscanf(fh, fmt, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]) : sscanf(input, fmt, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]);
+    const int got = fh ? fscanf(fh, fmt, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11])
+                       : sscanf(input, fmt, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]);
 
     if (got <= 0) return got;
 
@@ -996,7 +988,8 @@ static void h_MultiByteToWideChar(void)
     } /* size query */
 
     uint32_t written = 0;
-    for (; written < n && written < cch; written++) ST16(dst + written * 2, LD8(src + written)); /* the game's text is 8-bit */
+    for (; written < n && written < cch; written++)
+        ST16(dst + written * 2, LD8(src + written)); /* the game's text is 8-bit */
     ret_stdcall(6, written);
 }
 
@@ -1008,13 +1001,14 @@ static void h_localtime64(void)
     int64_t t = (int64_t)LD32(ARG(0)) | ((int64_t)LD32(ARG(0) + 4) << 32);
     time_t tt = (time_t)t;
     struct tm *g = localtime(&tt);
-    const int v[9] = {g->tm_sec, g->tm_min, g->tm_hour, g->tm_mday, g->tm_mon, g->tm_year, g->tm_wday, g->tm_yday, g->tm_isdst};
+    const int v[9] = {g->tm_sec,  g->tm_min,  g->tm_hour, g->tm_mday, g->tm_mon,
+                      g->tm_year, g->tm_wday, g->tm_yday, g->tm_isdst};
     for (int i = 0; i < 9; i++) ST32(buf + (uint32_t)i * 4, (uint32_t)v[i]);
     ret_cdecl(buf);
 }
 static void h_getcwd(void)
 {
-    if (ARG(0) && getcwd((char *)(g_mem + ARG(0)), ARG(1))) ret_cdecl(ARG(0));
+    if (ARG(0) && getcwd((char *)guest_write_pointer(ARG(0), ARG(1)), ARG(1))) ret_cdecl(ARG(0));
     else ret_cdecl(0);
 }
 static void h_chdir(void)
@@ -1047,7 +1041,7 @@ static void h_mmioClose(void)
 static void h_mmioRead(void)
 {
     FILE *fh = file_of(ARG(0));
-    long n = fh ? (long)fread(g_mem + ARG(1), 1, ARG(2), fh) : -1;
+    long n = !fh ? -1 : ARG(2) ? (long)fread(guest_write_pointer(ARG(1), ARG(2)), 1, ARG(2), fh) : 0;
     ret_stdcall(3, (uint32_t)n);
 }
 
@@ -1060,7 +1054,8 @@ static void h_mmioDescend(void)
         return;
     }
 
-    const uint32_t want = (flags & (MMIO_FINDRIFF | MMIO_FINDLIST | MMIO_FINDCHUNK)) ? LD32(ck + ((flags & MMIO_FINDCHUNK) ? 0 : 8)) : 0;
+    const uint32_t want =
+        (flags & (MMIO_FINDRIFF | MMIO_FINDLIST | MMIO_FINDCHUNK)) ? LD32(ck + ((flags & MMIO_FINDCHUNK) ? 0 : 8)) : 0;
 
     for (;;) {
         uint8_t hdr[8];
@@ -1068,8 +1063,10 @@ static void h_mmioDescend(void)
             ret_stdcall(4, MMIOERR_CHUNKNOTFOUND);
             return;
         }
-        const uint32_t id = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8) | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
-        const uint32_t size = (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
+        const uint32_t id =
+            (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8) | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
+        const uint32_t size =
+            (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
 
         uint32_t type = 0;
         const int is_container = (flags & (MMIO_FINDRIFF | MMIO_FINDLIST)) != 0;
@@ -1128,7 +1125,7 @@ static void h_CreateFileA(void)
 static void h_WriteFile(void)
 {
     FILE *fh = file_of(ARG(0));
-    size_t n = fh ? fwrite(g_mem + ARG(1), 1, ARG(2), fh) : 0;
+    size_t n = fh && ARG(2) ? fwrite(guest_pointer(ARG(1), ARG(2)), 1, ARG(2), fh) : 0;
     if (ARG(3)) ST32(ARG(3), (uint32_t)n);
     ret_stdcall(5, fh ? 1 : 0);
 }
@@ -1157,7 +1154,9 @@ static void h_GetLocalTime(void)
     time_t t = time(NULL);
     struct tm *g = localtime(&t);
     const uint32_t p = ARG(0);
-    const uint16_t v[8] = {(uint16_t)(g->tm_year + 1900), (uint16_t)(g->tm_mon + 1), (uint16_t)g->tm_wday, (uint16_t)g->tm_mday, (uint16_t)g->tm_hour, (uint16_t)g->tm_min, (uint16_t)g->tm_sec, 0};
+    const uint16_t v[8] = {
+        (uint16_t)(g->tm_year + 1900), (uint16_t)(g->tm_mon + 1), (uint16_t)g->tm_wday, (uint16_t)g->tm_mday,
+        (uint16_t)g->tm_hour,          (uint16_t)g->tm_min,       (uint16_t)g->tm_sec,  0};
     for (int i = 0; i < 8; i++) ST16(p + (uint32_t)i * 2, v[i]);
     ret_stdcall(1, 0);
 }

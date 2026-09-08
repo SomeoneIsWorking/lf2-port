@@ -137,7 +137,7 @@ void fn_004148a0(void)
 
     const uint32_t arg = LD32(R(ESP) + 4);
     char source[1024];
-    snprintf(source, sizeof source, "%s", lf2_host_path((const char *)(g_mem + arg)));
+    snprintf(source, sizeof source, "%s", lf2_host_path(guest_string(arg)));
     const char *destination = lf2_host_path("data\\temporary.txt");
     if (!decrypt_file(source, destination)) {
         lf2_jit_call_original(0x004148a0);
@@ -161,8 +161,8 @@ void fn_00414a30(void)
     }
 
     char source[1024];
-    snprintf(source, sizeof source, "%s", lf2_host_path((const char *)g_mem + LD32(R(ESP) + 4)));
-    const char *destination = lf2_host_path((const char *)g_mem + LD32(R(ESP) + 8));
+    snprintf(source, sizeof source, "%s", lf2_host_path(guest_string(LD32(R(ESP) + 4))));
+    const char *destination = lf2_host_path(guest_string(LD32(R(ESP) + 8)));
     if (!decrypt_file(source, destination)) {
         lf2_jit_call_original(0x00414a30);
         return;

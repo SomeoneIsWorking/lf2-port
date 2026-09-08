@@ -272,7 +272,7 @@ static void upload(Tex *t, const uint8_t *base, int w, int h, int pitch)
 static Tex *tex_for(uint32_t pixels, int w, int h, int pitch, int keyed, uint32_t key_lo, uint32_t key_hi)
 {
     if (w <= 0 || h <= 0) return NULL;
-    const uint8_t *base = g_mem + pixels;
+    const uint8_t *base = guest_pointer(pixels, (size_t)pitch * (size_t)h);
     const uint32_t content = sample_hash(base, w, h, pitch);
 
     for (int i = 0; i < ntexes; i++) {

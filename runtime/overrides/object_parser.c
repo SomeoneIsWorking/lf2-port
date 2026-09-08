@@ -152,15 +152,17 @@ static void dump_object(uint32_t object)
         lf2_log_writef(LF2_LOG_INFO, "object-parser", "object parser: cannot write %s\n", path);
         return;
     }
-    fwrite(g_mem + object, 1, OBJECT_BYTES, file);
+    fwrite(guest_pointer(object, OBJECT_BYTES), 1, OBJECT_BYTES, file);
     for (uint32_t i = 0; i < FRAME_COUNT; ++i) {
         const uint32_t frame = object + i * FRAME_STRIDE;
         const uint32_t sound = LD32(frame + FRAME_SOUND_PATH);
-        if (sound) fwrite(g_mem + sound, 1, strlen((const char *)g_mem + sound) + 1, file);
+        if (sound) fwrite(guest_string(sound), 1, strlen(guest_string(sound)) + 1, file);
         const uint32_t itr_count = LD32(frame + FRAME_ITR_COUNT);
-        if (itr_count) fwrite(g_mem + LD32(frame + FRAME_ITR_POINTER), 80, itr_count, file);
+        if (itr_count)
+            fwrite(guest_pointer(LD32(frame + FRAME_ITR_POINTER), (size_t)80 * itr_count), 80, itr_count, file);
         const uint32_t bdy_count = LD32(frame + FRAME_BDY_COUNT);
-        if (bdy_count) fwrite(g_mem + LD32(frame + FRAME_BDY_POINTER), 40, bdy_count, file);
+        if (bdy_count)
+            fwrite(guest_pointer(LD32(frame + FRAME_BDY_POINTER), (size_t)40 * bdy_count), 40, bdy_count, file);
     }
     const uint32_t checksum = LD32(CHECKSUM);
     fwrite(&checksum, sizeof checksum, 1, file);
@@ -191,7 +193,8 @@ void fn_0040ef70(void)
     call_prefix_super(object, id, type, presenter);
     correct_prefix_eof_checksum(text, frames, size);
     if (!object_parser_load_frames(object, frames, (size_t)((text + size) - frames))) {
-        lf2_log_writef(LF2_LOG_INFO, "object-parser", "object parser: malformed frame data in %s\n", g_mem + path);
+        lf2_log_writef(LF2_LOG_INFO, "object-parser", "object parser: malformed frame data in %s\n",
+                       guest_string(path));
         abort();
     }
     free(text);

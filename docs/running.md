@@ -90,7 +90,16 @@ positive/negative unit tests. It covers:
 - retained native renderer, audio, input, UI, configuration, and package tests.
 
 Maintainer evidence uses Clang without rejecting GCC or AppleClang for users.
-Touched C/C++ is checked with the tracked clang-format and clang-tidy policy.
+Touched C/C++ uses the tracked clang-format and clang-tidy policy. The sparse
+memory milestone's combined native gate passes 51 tests with only the existing
+shader check skipped (MSL compiler unavailable). Its direct lint audit exposed a
+verification defect: `check_cpp_quality.py` supplies a regex-looking literal
+filename to `--line-filter`, hiding diagnostics. Without that filter, the
+`clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling` checker
+rejects bounded standard `memcpy`, `memset`, and formatted I/O and recommends
+optional Annex K APIs unavailable on the supported libc. This remains an open
+lint-policy/tooling boundary; the filtered green result is not full lint evidence.
+No checker exclusion or replacement byte-copy loop was introduced to hide it.
 
 ### Separately built oracle target
 

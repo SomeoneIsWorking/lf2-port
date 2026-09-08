@@ -3,9 +3,9 @@
 #include "native_override.h"
 
 #include <stdio.h>
+#include <string.h>
 
 Cpu cpu;
-uint8_t *g_mem;
 uint32_t g_rwatch_lo, g_rwatch_hi;
 
 static uint8_t bytes[65536] = {
@@ -86,7 +86,9 @@ static int check_call(uint32_t expected)
 
 int main(void)
 {
-    g_mem = bytes;
+    guest_memory_init();
+    guest_memory_map(0, sizeof bytes);
+    memcpy(guest_write_pointer(0, sizeof bytes), bytes, sizeof bytes);
     call(0x2000);
     if (check_call(10)) return 1;
     call(0x1000);

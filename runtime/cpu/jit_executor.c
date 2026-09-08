@@ -28,7 +28,6 @@ typedef struct {
 } CallRequest;
 
 static X86pJitEngine *engine;
-static X86pMem memory;
 static X86pCpu jit_cpu;
 static const CallBoundary *active_boundary;
 
@@ -96,13 +95,10 @@ static void ensure_engine(void)
         lf2_log_write(LF2_LOG_ERROR, "jit", "x86port has no JIT backend for this host architecture");
         abort();
     }
-    memory.host = g_mem;
-    memory.lo = 0;
-    memory.size = UINT32_MAX;
     x86p_cpu_reset(&jit_cpu);
     jit_cpu.fs_base = TIB_BASE;
     char reason[256] = {0};
-    engine = x86p_jit_engine_create(&memory, JIT_CODE_BYTES, JIT_CACHE_BLOCKS, reason, sizeof reason);
+    engine = x86p_jit_engine_create(guest_memory_view(), JIT_CODE_BYTES, JIT_CACHE_BLOCKS, reason, sizeof reason);
     if (!engine) {
         lf2_log_write(LF2_LOG_ERROR, "jit", reason[0] ? reason : "x86port JIT creation failed without a reason");
         abort();

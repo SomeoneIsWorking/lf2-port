@@ -351,7 +351,7 @@ static void h_joyGetDevCaps(void)
     ST16(caps + 0, 0x045E); /* wMid  */
     ST16(caps + 2, 0x028E); /* wPid  */
     const char *name = SDL_GetGamepadName(pad);
-    snprintf((char *)(g_mem + caps + 4), 32, "%s", name ? name : "Gamepad");
+    snprintf((char *)guest_write_pointer(caps + 4, 32), 32, "%s", name ? name : "Gamepad");
 
     ST32(caps + 36, AXIS_MIN);
     ST32(caps + 40, AXIS_MAX); /* X */

@@ -67,6 +67,11 @@ endif()
 
 set(LF2_NATIVE_RUNTIME_SOURCES
     runtime/cpu/guest.c
+    runtime/cpu/guest_memory.c
+    runtime/cpu/guest_arena.c
+    runtime/win32/guest_heap.c
+    runtime/video/surface_memory.c
+    runtime/video/frame_capture.c
     runtime/cpu/rwatch.c
     runtime/win32/imports.c
     runtime/win32/paths.c
@@ -81,6 +86,7 @@ set(LF2_NATIVE_RUNTIME_SOURCES
     ${LF2_MUSIC_DECODER}
     runtime/win32/dshow.c
     runtime/win32/gdi.c
+    runtime/win32/gdi_bitmap.c
     runtime/app/loadprof.c
     runtime/app/game_selection.cpp
     runtime/app/installer_extract.cpp
@@ -185,11 +191,25 @@ if(TARGET x86port_runtime)
     target_link_libraries(lf2 PRIVATE x86port_runtime)
 endif()
 
-add_executable(test_jit_calls tests/test_jit_calls.c runtime/cpu/jit_executor.c)
+add_executable(test_jit_calls tests/test_jit_calls.c runtime/cpu/jit_executor.c runtime/cpu/guest_memory.c)
 target_include_directories(test_jit_calls PRIVATE
     runtime/cpu runtime/win32 runtime/overrides runtime/app runtime/log)
 target_link_libraries(test_jit_calls PRIVATE x86port_runtime lf2_diagnostics lf2_environment)
 add_test(NAME jit_calls COMMAND test_jit_calls)
+
+add_executable(test_guest_memory tests/test_guest_memory.c runtime/cpu/guest_memory.c runtime/cpu/guest_arena.c)
+target_compile_definitions(test_guest_memory PRIVATE LF2_TEST_SPARSE_MEMORY=1)
+target_include_directories(test_guest_memory PRIVATE runtime/cpu runtime/app runtime/log)
+target_link_libraries(test_guest_memory PRIVATE x86port_runtime lf2_diagnostics lf2_environment)
+add_test(NAME guest_memory COMMAND test_guest_memory)
+
+add_executable(test_gdi_bitmap tests/test_gdi_bitmap.c runtime/win32/gdi_bitmap.c runtime/cpu/guest_memory.c)
+target_compile_definitions(test_gdi_bitmap PRIVATE LF2_TEST_SPARSE_MEMORY=1)
+target_include_directories(test_gdi_bitmap PRIVATE runtime/cpu runtime/app runtime/log runtime/win32)
+target_link_libraries(test_gdi_bitmap PRIVATE SDL3::SDL3 x86port_runtime lf2_diagnostics lf2_environment)
+add_test(NAME gdi_bitmap COMMAND test_gdi_bitmap ${CMAKE_BINARY_DIR}/gdi-bitmap.bmp)
+
+
 
 # The hand-woven stage geometry (issue #62) travels BESIDE THE BINARY.
 #
