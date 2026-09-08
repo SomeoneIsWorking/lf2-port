@@ -47,6 +47,13 @@ ANDROID_PORT = SourceDependency(
     marker="tools/android_port.py",
 )
 
+WEB_PORT = SourceDependency(
+    name="web-port",
+    repository="https://github.com/SomeoneIsWorking/web-port.git",
+    revision="a66e52df035f1221d09f7e892a7822b628ab8a98",
+    marker="tools/web_port.py",
+)
+
 
 class DependencyError(RuntimeError):
     """A pinned checkout is absent, mutable, or not the declared dependency."""
@@ -60,14 +67,8 @@ def _run_git(arguments: Sequence[str], cwd: Path | None = None) -> str:
             "`sudo dnf install git`, `sudo apt install git`, or `brew install git`"
         )
     try:
-        result = subprocess.run(
-            [git, *arguments],
-            cwd=cwd,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
+        result = subprocess.run([git, *arguments], cwd=cwd, text=True,
+                                capture_output=True, check=False)
     except OSError as error:
         raise DependencyError(f"git could not run: {error}") from error
     if result.returncode:
@@ -217,3 +218,8 @@ def resolve_runtime_dependencies(
         dependency.name: resolve_checkout(root, dependency, environment)
         for dependency in RUNTIME_DEPENDENCIES
     }
+
+
+def resolve_web_dependency(root: Path, environment: Mapping[str, str] = os.environ) -> Path:
+    """Resolve the exact shared browser dependency only for the web builder."""
+    return resolve_checkout(root, WEB_PORT, environment)

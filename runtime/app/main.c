@@ -31,6 +31,23 @@ void dshow_register(void);
 
 static int prepare_game_data(int argc, char **argv, GameData *game)
 {
+#ifdef __EMSCRIPTEN__
+    if (argc > 1 && strcmp(argv[1], "--import") == 0) {
+        char executable[GAME_DATA_PATH_CAPACITY];
+        char error[GAME_DATA_ERROR_CAPACITY];
+        if (!game_selection_resolve("/opfs/incoming/input.zip", executable, sizeof executable, error, sizeof error)) {
+            snprintf(game->error, sizeof game->error, "%s", error);
+            return 0;
+        }
+        if (!game_data_validate_executable(executable, game) || !game_data_activate(game)) return 0;
+        if (!config_set("game_dir", game->root) || !config_save()) {
+            snprintf(game->error, sizeof game->error, "the imported LF2 install could not be saved");
+            return 0;
+        }
+        remove("/opfs/incoming/input.zip");
+        return 1;
+    }
+#endif
     const int force_selection = argc > 1 && strcmp(argv[1], "--select-game") == 0;
     const char *explicit_executable =
         force_selection ? NULL : (argc > 1 ? argv[1] : lf2_environment_get(LF2_ENV_GAME_EXE));

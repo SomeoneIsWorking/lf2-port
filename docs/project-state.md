@@ -44,7 +44,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S018 | `shared/x86port` supplies the x86-64 product JIT and bounded fallback contract | partial | — | G001, G003 |
 | S019 | `shared/x86port` supplies a qualified ARM64 product JIT backend for macOS and Android | partial | — | G001, G003 |
 | S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
-| S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | blocked | S005, S015 | G001, G003 |
+| S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | partial | S005, S015 | G001, G003 |
 
 ## Capability details
 
@@ -215,12 +215,17 @@ inapplicable to this port's current delivery goals.
 
 ### S021 — Browser native/JIT delivery
 
-Sparse guest backing and complete native pointer spans are implemented and have
-focused synthetic coverage, including bounded bitmap/resource decoding. They
-retain the desktop JIT adapter and avoid a browser-sized 4 GiB allocation.
+The Emscripten build now packages the native/JIT runtime with Lucent's OPFS
+staging and service-worker isolation resources. The local asset-free package
+contains `lf2.js` and `lf2.wasm`; WebLua verified the setup page, secure
+cross-origin isolation after the service-worker reload, persistent-storage
+initialization, and the no-install state without console or network errors.
+The package is ready for the GitHub Pages workflow and never contains game
+files.
 
-Gap: x86port must qualify translated stores that modify cached/current code,
-including an instruction-boundary exit from the active translation. The LF2 web
-build and worker startup, persistent import flow, WebGPU presentation, browser
-interaction and GitHub Pages deployment remain unverified. Native compilation
-and sparse mapping tests are not browser gameplay evidence.
+Gap: a real LF2 install has not yet been imported in a browser, so translated
+gameplay, WebGPU presentation, and persisted-install restart remain unverified.
+x86port must also qualify translated stores that modify cached/current code,
+including an instruction-boundary exit from the active translation. Pages
+deployment is still a remote workflow gate, not established by the local
+package alone.
