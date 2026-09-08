@@ -139,14 +139,18 @@ has passed the representative gameplay/release gate.
 
 The ARM64 package builder, landscape policy, private installer/folder/ZIP setup,
 touch routing, controller/touch presentation policy, updater, and signed-build
-checks exist. The API24 arm64 debug APK now assembles through the shared Android
+checks exist. The API24 arm64 debug APK assembles through the shared Android
 prefix with NDK28.2 Clang and Java25. Its native ELF entry, packaged runtime
 libraries, and exclusion of original game files pass inspection. Lucent owns
-SAF staging and validated contained-directory publication. This is build and
-package evidence, not an Android OS/gameplay observation.
+SAF staging and validated contained-directory publication. A local Cuttlefish
+ARM64 run installed that APK, staged the exact `game/` tree into app-private
+storage, reached the retail mode menu through the ARM64 product JIT, and showed
+the authored touch overlay; the process remained alive while presenting frames.
 
-Gap: LF2 has no qualified ARM64 gameplay run, and signed physical-device
-correctness, audio, lifecycle, and sustained performance evidence remains absent.
+Gap: the run bypassed the system picker because the headless DocumentsUI surface
+did not stay foregrounded, so interruption/recreation of a real SAF import is
+still unverified. Signed physical-device correctness, audio/lifecycle checks,
+and sustained performance evidence remain absent.
 
 ### S014 — Network play
 
@@ -194,21 +198,24 @@ contract.
 
 ### S019 — ARM64 product JIT
 
-The pinned `x86port` supplies an AArch64 backend and LF2 now links it into an
-Android APK. Representative LF2 gameplay, executable-memory and lifecycle
-qualification on Android and Apple Silicon remain unverified. Shared synthetic
-CPU results and successful APK assembly cannot establish those title contracts;
-bounded fallback coverage cannot qualify the backend.
+The pinned `x86port` supplies an AArch64 backend and LF2 links it into an Android
+APK. The Cuttlefish ARM64 run reached the retail mode menu through
+`x86p_jit_engine_run`, with the native stack in `SDL_RenderPresent` and no crash;
+this is product execution evidence rather than an APK-only inspection. A
+representative interactive match, executable-memory/cache lifecycle checks, and
+Apple Silicon qualification remain unverified. Bounded fallback coverage cannot
+qualify the backend.
 
 ### S020 — Asset-free CI
 
 The workflow builds LF2's real Linux x86-64 native/JIT product and runs focused
 execution-boundary, product-symbol, configuration, structure, format, and lint
 tests from exact full-history source inputs with read-only repository
-permissions and no `lf2.exe`.
+permissions and no `lf2.exe`. The first remote CI and Browser release runs
+passed at `ad01e8d` (CI run 34197382110; Pages run 34197382067).
 
-Gap: the first remote run is pending landing. macOS ARM64 and Android product
-jobs remain to be wired and executed through the shared build owners; their
+Gap: macOS ARM64 and Android product jobs remain to be wired and executed
+through the shared build owners; their
 missing release qualification is recorded in S012, S013, and S019. Windows is
 the comparison baseline rather than an intended shipping host and is therefore
 inapplicable to this port's current delivery goals.
@@ -221,7 +228,8 @@ contains `lf2.js` and `lf2.wasm`; WebLua verified the setup page, secure
 cross-origin isolation after the service-worker reload, persistent-storage
 initialization, and the no-install state without console or network errors.
 The package is ready for the GitHub Pages workflow and never contains game
-files.
+files. The Browser release workflow deployed the asset-free package at
+`https://someoneisworking.github.io/lf2-port/` (run 34197382067).
 
 Gap: a real LF2 install has not yet been imported in a browser, so translated
 gameplay, WebGPU presentation, and persisted-install restart remain unverified.
