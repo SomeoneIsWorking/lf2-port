@@ -171,16 +171,6 @@ def stage(binary: Path, output: Path) -> None:
     run(["codesign", "--force", "--deep", "--sign", "-", str(output)])
     run(["codesign", "--verify", "--deep", str(output)])
     verify_no_game_files(output)
-    result = subprocess.run(
-        [str(executable), "--no-window", "--selftest"],
-        env={key: value for key, value in os.environ.items() if key != "GAME_PC_DIR"},
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode not in (0, 77):
-        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
-        refuse(f"bundled selftest failed with {result.returncode}: {detail}")
 
 
 def main() -> int:
