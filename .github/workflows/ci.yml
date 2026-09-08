@@ -9,9 +9,10 @@ on:
 permissions:
   contents: read
 
-# Linux x86-64 has a real native/JIT product build boundary. macOS ARM64 and
-# Android remain blocked on the missing x86port ARM64 JIT backend; Windows is
-# not a shipping target. Those gaps are recorded in docs/project-state.md.
+# Linux x86-64 has a real native/JIT product build boundary. The Android job
+# below assembles the asset-free arm64-v8a package through the shared build
+# owner. macOS ARM64 still needs its product job and release qualification;
+# Windows is not a shipping target.
 jobs:
   linux-x64:
     name: Linux x86-64 native/JIT product
@@ -70,3 +71,37 @@ jobs:
           ctest --test-dir build/ci --output-on-failure
           --tests-regex
           '^(game_data|execution_boundary|source_policy|product_execution_symbols|structure|clang_format|clang_tidy|build_toolchain|source_dependencies|game_selection)$'
+
+  android-arm64:
+    name: Android arm64-v8a asset-free package
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out full history and exact source submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: true
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: '0.10.12'
+      - name: Set up Android SDK, NDK, and CMake
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: >-
+            platforms;android-35
+            build-tools;36.0.0
+            cmake;3.31.6
+            ndk;28.2.13676358
+      - name: Select the pinned Android CMake
+        run: echo "$ANDROID_SDK_ROOT/cmake/3.31.6/bin" >> "$GITHUB_PATH"
+      - name: Build and inspect the asset-free debug APK
+        env:
+          ANDROID_NDK_VERSION: '28.2.13676358'
+        run: uv run --frozen python tools/build/android.py
