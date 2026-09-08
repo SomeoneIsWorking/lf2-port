@@ -16,12 +16,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BUILD = ROOT / "build" / "clang"
 DEFAULT_WORK = ROOT / "build" / "appimage"
-LINUXDEPLOY_SHA256 = "421ca71d5c69ea97c6309276232990d43df1dcece0edfaa26bbf926ff96ed12e"
+LINUXDEPLOY_SHA256 = "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
 APPIMAGETOOL_SHA256 = "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 APPIMAGE_RUNTIME_SHA256 = "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf"
 APPIMAGE_UPDATE_SHA256 = "52a58d7edf49eecf62b9d04e574406509cf58f204f0616b72724df03b1f3d37e"
 LINUXDEPLOY_URL = (
-    "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/"
+    "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/"
     "linuxdeploy-x86_64.AppImage"
 )
 APPIMAGETOOL_URL = (
