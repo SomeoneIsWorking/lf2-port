@@ -10,6 +10,11 @@ on:
         description: 'Release tag (for example v0.1.0)'
         required: false
         default: 'v0.1.0'
+      publish:
+        description: 'Publish the collected artifacts as a GitHub release'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -176,6 +181,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/') || inputs.publish
     needs: [linux-appimage, macos-app, android-apk]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
