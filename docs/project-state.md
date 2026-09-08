@@ -211,14 +211,16 @@ qualify the backend.
 The workflow builds LF2's real Linux x86-64 native/JIT product and runs focused
 execution-boundary, product-symbol, configuration, structure, format, and lint
 tests from exact full-history source inputs with read-only repository
-permissions and no `lf2.exe`. The first remote CI and Browser release runs
-passed at `ad01e8d` (CI run 34197382110; Pages run 34197382067).
+permissions and no `lf2.exe`. Its Android arm64-v8a job now assembles the
+asset-free debug APK through `tools/build/android.py`, the pinned Android
+profile, and the shared Android dependency prefix; it does not claim device
+runtime evidence. The first remote Linux and Browser runs passed at
+`ad01e8d` (CI run 34197382110; Pages run 34197382067).
 
-Gap: macOS ARM64 and Android product jobs remain to be wired and executed
-through the shared build owners; their
-missing release qualification is recorded in S012, S013, and S019. Windows is
-the comparison baseline rather than an intended shipping host and is therefore
-inapplicable to this port's current delivery goals.
+Gap: macOS ARM64 product CI and Android device/runtime qualification remain
+open; the Android package and local Cuttlefish evidence are recorded in S013
+and S019. Windows is the comparison baseline rather than an intended shipping
+host and is therefore inapplicable to this port's current delivery goals.
 
 ### S021 — Browser native/JIT delivery
 
