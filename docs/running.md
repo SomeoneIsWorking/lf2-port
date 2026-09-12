@@ -144,6 +144,16 @@ physical-device evidence for touch/controller switching, orientation,
 audio/lifecycle correctness, loading, memory, sustained frame-time percentiles,
 and thermal behavior.
 
+The release workflow builds an asset-free Linux AppImage, Apple Silicon `.app`
+ZIP, and signed Android APK from one `vMAJOR.MINOR.PATCH` tag. A tag push publishes
+the GitHub prerelease only after all three package jobs pass and the publisher
+checks the exact package set and checksums. A manual dispatch on `main` is a
+package smoke build and does not publish. To repair a tag's publication, dispatch
+the workflow **at that same tag ref** with `publish=true`; the workflow rejects
+a requested tag that differs from its source ref. Branch smoke packages use
+the unpublishable `0.0.0` version. Update LF2's entry in the
+sibling `pages` repository from the published release and current feature state.
+
 ## Android shared build and runtime owners
 
 `uv run --frozen python tools/build/android.py` assembles the native/JIT APK using

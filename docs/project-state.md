@@ -137,9 +137,13 @@ stages the native binary, its non-system dylib closure, `stages/`, and an
 ad-hoc signed `.app`; the release workflow now exercises that packager on an
 Apple Silicon runner. The combined Linux, Android, and macOS ARM64 CI run
 `34214371352` passed the native/JIT and quality gates on all three hosts.
+Release package run `34216452485` produced a macOS `.app` ZIP artifact, but it
+was a manual package check and did not publish a GitHub Release. The v0.1.9
+GitHub Release predates that workflow and contains no macOS package.
 
 Gap: issue #100's real Metal acceptance and the representative macOS
 gameplay/release gate remain open despite the passing native/quality CI job.
+The next release tag must publish the verified package set from the same commit.
 
 ### S013 — Android release and touch controls
 
@@ -158,10 +162,11 @@ A previous clean local rebuild pinned `shared/android-port` at
 `6735dc557b2ae56d735ce8140867b8375567d9e6` and produced
 `build/release/LF2-Port-0.1.0-android-arm64-debug.apk`; its recorded FFmpeg
 contract keeps AArch64 NEON enabled with hidden internal symbols.
-The current source pin is `3f4fda2a9b6e5919d42df8ed4aef15348ed6a875`,
+The current source pin is `3585be1bb615a8b693131000ea71376b77458c37`,
 which moves the Activity, SAF importer, foreground progress, and service to
-the shared Android framework. Hosted CI run `34691013242` built and inspected
-an asset-free arm64-v8a APK with that pin; its Linux and macOS jobs also passed.
+the shared Android framework and verifies a staged file's source prefix before
+resuming an interrupted SAF copy. Hosted CI run `34691013242` built and inspected
+an asset-free arm64-v8a APK with the earlier framework pin; its Linux and macOS jobs also passed.
 The Lucent submodule now pins `93275f46cd9e1efe25d21928bc575cf37de190d5`,
 which removes its old Android Java; the LF2 logging and game-selection targets
 build with Clang and both focused tests pass.
