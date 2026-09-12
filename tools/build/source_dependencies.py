@@ -34,7 +34,7 @@ JIT_COMMON = SourceDependency(
 X86PORT = SourceDependency(
     name="x86port",
     repository="https://github.com/SomeoneIsWorking/x86port.git",
-    revision="cd4590fadcbfde9fb54d52423179bdb71df13e9c",
+    revision="2607945babec9ec667b5eef6b54232b704860cb7",
     marker="src/x86port/jit_engine.h",
 )
 
