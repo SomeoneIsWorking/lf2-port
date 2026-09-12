@@ -234,10 +234,11 @@ The pinned `x86port` at `2607945babec9ec667b5eef6b54232b704860cb7` supplies an
 AArch64 backend and LF2 links it into an Android
 APK. The Cuttlefish ARM64 run reached the retail mode menu through
 `x86p_jit_engine_run`, with the native stack in `SDL_RenderPresent` and no crash;
-this is product execution evidence rather than an APK-only inspection. A
-representative interactive match, executable-memory/cache lifecycle checks, and
-Apple Silicon qualification remain unverified. Bounded fallback coverage cannot
-qualify the backend.
+this is product execution evidence rather than an APK-only inspection.
+
+Gap: a representative interactive match, executable-memory/cache lifecycle
+checks, and Apple Silicon qualification remain unverified. Bounded fallback
+coverage cannot qualify the backend.
 
 ### S020 — Asset-free CI
 
@@ -263,13 +264,15 @@ staging and service-worker isolation resources. The local asset-free package
 contains `lf2.js` and `lf2.wasm`; WebLua verified the setup page, secure
 cross-origin isolation after the service-worker reload, persistent-storage
 initialization, and the no-install state without console or network errors.
-The package is ready for the GitHub Pages workflow and never contains game
-files. The Browser release workflow deployed the asset-free package at
-`https://someoneisworking.github.io/lf2-port/` (run `34686202323`, commit
-`2e681fe`).
+The browser package contains no game files. Source run `34686595646` built it at
+`c488073`; central `pages` run `34689838606` deployed the same artifact at
+`https://someoneisworking.github.io/lf2-port/`. The old project Pages site is
+disabled, and the live `publication.json` names the source run. WebLua verified
+the central setup page, `crossOriginIsolated=true`, a WASM runtime, and no console
+errors or failed network requests.
 
 Gap: a real LF2 install has not yet been imported in a browser, so translated
 gameplay, WebGPU presentation, and persisted-install restart remain unverified.
 x86port must also qualify translated stores that modify cached/current code,
-including an instruction-boundary exit from the active translation. Pages
-deployment is verified by run `34216936080`; browser gameplay remains open.
+including an instruction-boundary exit from the active translation. Browser
+gameplay remains open.
