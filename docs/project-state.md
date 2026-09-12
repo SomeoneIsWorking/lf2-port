@@ -137,13 +137,11 @@ stages the native binary, its non-system dylib closure, `stages/`, and an
 ad-hoc signed `.app`; the release workflow now exercises that packager on an
 Apple Silicon runner. The combined Linux, Android, and macOS ARM64 CI run
 `34214371352` passed the native/JIT and quality gates on all three hosts.
-Release package run `34216452485` produced a macOS `.app` ZIP artifact, but it
-was a manual package check and did not publish a GitHub Release. The v0.1.9
-GitHub Release predates that workflow and contains no macOS package.
+Release run `34693726029` published the Apple Silicon `.app` ZIP alongside
+the Linux AppImage and signed Android APK at `v0.1.10` from source `ab46291`.
 
 Gap: issue #100's real Metal acceptance and the representative macOS
 gameplay/release gate remain open despite the passing native/quality CI job.
-The next release tag must publish the verified package set from the same commit.
 
 ### S013 — Android release and touch controls
 
@@ -174,6 +172,10 @@ build with Clang and both focused tests pass.
 The asset-free Android package job passed in CI at run `34216452485` alongside
 the Linux AppImage and Apple Silicon `.app` package jobs; this checks the build,
 APK-content, and package-boundary paths only.
+Release run `34693726029` published the `v0.1.10` arm64-v8a APK. Its published
+SHA-256 matches `SHA256SUMS.txt`, its package version is `0.1.10`, and its
+signing certificate matches the earlier v0.1.9 release identity
+(`34db88707c35dba45cb073772cfbd5ffe08e0d44c13bebc36e589d01f9a38768`).
 
 Gap: the run bypassed the system picker because the headless DocumentsUI surface
 did not stay foregrounded, so interruption/recreation of a real SAF import is
