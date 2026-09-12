@@ -46,8 +46,9 @@ static void jit_from_view(void)
     jit_cpu.eip = cpu.eip;
 }
 
-static int intercept(const X86pCpu *state, void *user)
+static int intercept(const X86pCpu *state, void *user, void *run_user)
 {
+    (void)run_user;
     const CallBoundary *boundary = user;
     if (state->eip == boundary->return_address || state->eip >= IMPORT_SENTINEL) return 1;
     return lf2_native_override_find(state->eip, boundary->excluded_override) != NULL;
@@ -127,8 +128,9 @@ static void dispatch_intercept(uint32_t address)
     jit_from_view();
 }
 
-static X86pJitDispatchResult dispatch_inline(X86pCpu *state, void *user)
+static X86pJitDispatchResult dispatch_inline(X86pCpu *state, void *user, void *run_user)
 {
+    (void)run_user;
     const CallBoundary *boundary = user;
     const uint32_t address = state->eip;
     if (address == boundary->return_address || lf2_native_override_find(address, boundary->excluded_override)) {
@@ -151,7 +153,7 @@ static void execute(CallRequest request)
     ensure_engine();
     jit_from_view();
     jit_cpu.eip = request.guest_address;
-    const CallBoundary boundary = {
+    CallBoundary boundary = {
         .return_address = LD32(R(ESP)),
         .excluded_override = request.excluded_override,
     };
@@ -164,7 +166,8 @@ static void execute(CallRequest request)
 
     for (unsigned slice = 0; slice < JIT_MAX_SLICES_PER_CALL; ++slice) {
         reason[0] = '\0';
-        const X86pJitRunStatus status = x86p_jit_engine_run(engine, &jit_cpu, JIT_SLICE_STEPS, reason, sizeof reason);
+        const X86pJitRunStatus status =
+            x86p_jit_engine_run(engine, &jit_cpu, &boundary, JIT_SLICE_STEPS, reason, sizeof reason);
         if (status == kX86pRunBudget) continue;
         if (status != kX86pRunIntercept) fail("JIT execution stopped", jit_cpu.eip, status, reason);
         if (jit_cpu.eip == boundary.return_address) {
