@@ -60,6 +60,7 @@ CPU-migration prerequisite.
 | Process logging | Accept explicit typed LF2 records and delegate sink/filter/format policy to Lucent; product modules never write standard streams directly | `runtime/log/`, `third_party/lucent/` | `lf2_log.cpp` | `AGENTS.md` |
 | Build and launch | Locked Python provisioning/build policy, immutable shared-runtime pins, and a slim zero-argument shell shim | `bootstrap.py`, `run.sh`, `tools/build/`, `CMakeLists.txt` | `run.sh` -> `bootstrap.py`; `tools/build/source_dependencies.py` | `docs/running.md` |
 | Packaging | AppImage and title Android assembly/signing/updater/content policy; Android profiles consume shared/android-port native dependencies, runtime staging, JDK selection and APK runtime checks | `tools/build/`, `platforms/`, `CMakeLists.txt` | `appimage.py`, `android.py` | `docs/running.md` |
+| Browser package | Build the asset-free native/JIT WASM product and upload its CI artifact; sibling `pages` owns public deployment | `tools/build_web.py`, `.github/workflows/browser-package.yml`, `web/`, `src/web/` | `build_web.py` | `docs/project-state.md` |
 | Runtime route verification | State-anchored interactive scenarios, capture/analyzer helpers, and positive/negative reachability evidence | `tools/e2e.py`, `tools/routes/` | `tools/e2e.py` | `docs/migration.md` |
 | Offline verification | Unit, format, lint, structure, asset, package, and pure production-seam checks | `tests/`, `tools/build/` | CTest and repository Python verifier | `AGENTS.md` |
 | Asset-free CI | Build the Linux x86-64 native/JIT product and run focused boundary/quality tests from exact full-history inputs without `lf2.exe` or other game assets | `.github/workflows/ci.yml` | GitHub Actions -> `tools/build/build.py` and focused CTest | `docs/project-state.md` |
@@ -79,6 +80,7 @@ CPU-migration prerequisite.
 | Settings presentation for an existing option | `runtime/ui/` |
 | Cross-platform logging behavior | Lucent; LF2-specific explicit record adaptation stays in `runtime/log/` |
 | Product launch/build/provisioning policy | Python owner in `bootstrap.py` or `tools/build/`; never `run.sh` |
+| Browser package or release handoff | `tools/build_web.py` and `.github/workflows/browser-package.yml`; public hosting belongs to sibling `pages` |
 | Shared x86port/jit-common revision, checkout validation, or provisioning | `tools/build/source_dependencies.py` |
 | Repeatable gameplay scenario or runtime discriminator | `tools/routes/`, registered once in `tools/e2e.py` |
 | Binary-derived fact or native replacement grounding | `docs/re-frontier.md`, a claim, or one issue according to the fact's consumer |
