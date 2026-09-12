@@ -160,8 +160,8 @@ A previous clean local rebuild pinned `shared/android-port` at
 contract keeps AArch64 NEON enabled with hidden internal symbols.
 The current source pin is `3f4fda2a9b6e5919d42df8ed4aef15348ed6a875`,
 which moves the Activity, SAF importer, foreground progress, and service to
-the shared Android framework; the focused Android builder and package-content
-test passes. This new pin has not yet produced a rebuilt APK.
+the shared Android framework. Hosted CI run `34691013242` built and inspected
+an asset-free arm64-v8a APK with that pin; its Linux and macOS jobs also passed.
 The Lucent submodule now pins `93275f46cd9e1efe25d21928bc575cf37de190d5`,
 which removes its old Android Java; the LF2 logging and game-selection targets
 build with Clang and both focused tests pass.
