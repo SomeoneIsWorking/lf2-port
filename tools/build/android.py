@@ -128,13 +128,15 @@ def android_version_name(environment: Mapping[str, str] = os.environ) -> str:
     return version
 
 
-def android_version_code(version: str) -> int:
+def android_version_code(version: str, *, release: bool = True) -> int:
     parts = [int(part) for part in version.split(".")]
     if len(parts) != 3 or any(part > 999 for part in parts):
         refuse("Android version components must each be between 0 and 999")
     code = parts[0] * 1_000_000 + parts[1] * 1_000 + parts[2]
     if code < 1:
-        refuse("Android version 0.0.0 cannot be published")
+        if release:
+            refuse("Android version 0.0.0 cannot be published")
+        return 1  # Android requires a positive code even for an unpublishable smoke APK.
     return code
 
 
@@ -275,7 +277,9 @@ def build_apk(
     if signing:
         environment.update(signing)
     version = android_version_name(environment)
-    environment["LF2_ANDROID_VERSION_CODE"] = str(android_version_code(version))
+    environment["LF2_ANDROID_VERSION_CODE"] = str(
+        android_version_code(version, release=release)
+    )
     profile = package_profile(project.parent)
     environment["LF2_ANDROID_JNI_LIBS"] = str(profile.jni_libs)
     environment["LF2_ANDROID_MIN_SDK"] = str(profile.api)

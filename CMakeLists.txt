@@ -422,6 +422,8 @@ add_test(NAME appimage_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_appimage.py)
 add_test(NAME android_tool COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tests/test_android.py)
+add_test(NAME release_packages COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_release_packages.py)
 
 # ---- RmlUi (issue #70) ----
 #

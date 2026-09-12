@@ -43,6 +43,7 @@ def main() -> int:
     )
     assert ANDROID.android_version_code("0.1.3") == 1003
     assert ANDROID.android_version_code("1.0.0") == 1_000_000
+    assert ANDROID.android_version_code("0.0.0", release=False) == 1
     expect_refused(
         lambda: ANDROID.android_version_name(
             {"LF2_ANDROID_VERSION_NAME": "../release"}
