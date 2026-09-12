@@ -37,7 +37,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S011 | Menus and character selection use modern anti-aliased host text | verified | — | G002 |
 | S012 | The macOS native/JIT build and Metal renderer are release-qualified | partial | S005, S019 | G003 |
 | S013 | The Android ARM64 native/JIT build provides touch controls and private installer/folder/ZIP setup | partial | S005, S019 | G003 |
-| S014 | Network play from the original game is available natively | missing | S005 | G002 |
+| S014 | Custom LAN multiplayer supports remote player inputs | missing | S005, deterministic session state and frame ownership | G002 |
 | S015 | Representative gameplay conforms through the native/JIT product on each released host | missing | S005, S016 | G001, G002, G003 |
 | S016 | Gameplay defaults to JIT, exposes no explicit interpreter mode, and accounts for bounded fallback by reason and coverage | partial | S018 | G001, G003 |
 | S017 | Retired title-specific execution interfaces and toolchains remain absent | verified | — | G001 |
@@ -45,6 +45,8 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S019 | `shared/x86port` supplies a qualified ARM64 product JIT backend for macOS and Android | partial | — | G001, G003 |
 | S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
 | S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | partial | S005, S015 | G001, G003 |
+| S022 | Internet multiplayer discovers sessions through Firebase and carries gameplay peer-to-peer | missing | S014, signaling and traversal | G002 |
+| S023 | Rollback netplay restores and resimulates exact game state | missing | S014, deterministic stepping and complete state snapshots | G002 |
 
 ## Capability details
 
@@ -167,8 +169,25 @@ and sustained performance evidence remain absent.
 
 ### S014 — Network play
 
-Missing capability: the original network mode is not ported; the current HLE
-surface reports that no network is available.
+Missing capability: no remote player can yet join a running game. LF2's old
+Winsock protocol is not the intended path. `runtime/netplay/packet.{c,h}` now
+defines and tests a strict, transport-independent hello/input-frame wire
+contract for the game's eight slots and seven buttons. LAN discovery,
+connection/session lifetime, synchronized simulation, and runtime input
+injection remain unimplemented. `lan_socket.{c,h}` has a loopback UDP exchange
+test with the encoded packet, but that is not a gameplay test.
+
+### S022 — Internet peer discovery and transport
+
+Missing capability: no Firebase session discovery/signaling or peer-to-peer
+gameplay channel exists. This builds on a working LAN game session rather than
+using the original game's unavailable server path.
+
+### S023 — Rollback
+
+Missing capability: the JIT/native product has no complete state snapshot,
+restoration, deterministic frame-step, or replay conformance evidence. Do not
+enable speculative rollback on top of unsynchronized game instances.
 
 ### S015 — Representative gameplay conformance
 

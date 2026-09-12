@@ -318,6 +318,22 @@ add_test(NAME bindings_write COMMAND test_bindings write ${LF2_BINDINGS_TEST_CON
 add_test(NAME bindings_read COMMAND test_bindings read ${LF2_BINDINGS_TEST_CONFIG})
 set_tests_properties(bindings_read PROPERTIES DEPENDS bindings_write)
 
+add_executable(test_netplay_packet tests/test_netplay_packet.c runtime/netplay/packet.c)
+target_include_directories(test_netplay_packet PRIVATE runtime/netplay)
+target_compile_options(test_netplay_packet PRIVATE -Wall -Wextra -Werror)
+add_test(NAME netplay_packet COMMAND test_netplay_packet)
+
+if(NOT EMSCRIPTEN)
+    add_executable(test_lan_socket tests/test_lan_socket.c
+        runtime/netplay/packet.c runtime/netplay/lan_socket.c)
+    target_include_directories(test_lan_socket PRIVATE runtime/netplay)
+    target_compile_options(test_lan_socket PRIVATE -Wall -Wextra -Werror)
+    if(WIN32)
+        target_link_libraries(test_lan_socket PRIVATE ws2_32)
+    endif()
+    add_test(NAME lan_socket COMMAND test_lan_socket)
+endif()
+
 add_executable(test_config tests/test_config.c runtime/app/config.c runtime/app/user_paths.c)
 target_include_directories(test_config PRIVATE runtime/app)
 target_link_libraries(test_config PRIVATE lucent::lucent)

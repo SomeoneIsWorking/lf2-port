@@ -62,11 +62,12 @@ Success conditions:
   UI.
 - Keyboard, controller, touch, two-player assignment, hot-plug, and persistent
   remapping are verified with representative physical devices.
-- Original network play is either implemented faithfully through its native
-  owner or remains plainly reported as missing; it is not hidden behind a
-  generic compatibility claim.
+- Custom multiplayer runs LAN-first without depending on LF2's original
+  network protocol or servers. Internet play uses Firebase for session
+  discovery/signaling and peer-to-peer gameplay transport; rollback is used
+  only after deterministic stepping and complete state restoration are proven.
 
-Contributing state items: S001–S003, S006–S011, S014–S015.
+Contributing state items: S001–S003, S006–S011, S014–S015, S022–S023.
 
 ## G003 — Deliver lawful, portable desktop and Android releases
 
