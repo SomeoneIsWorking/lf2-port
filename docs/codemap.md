@@ -54,6 +54,7 @@ CPU-migration prerequisite.
 | Video presentation | Completed-frame lifecycle, classic/native renderer, texture ownership, lighting, stage geometry, and diagnostics | `runtime/video/`, `runtime/shaders/`, `stages/` | `host_frame.c`, `render.c`, `engine.c`; `frame_capture.c` owns state-anchored image and guest-memory captures | `docs/stage-geometry.md` |
 | Audio | DirectSound guest surface, mixer, and platform music decode | `runtime/audio/` | `dsound.c`, `mixer.c`, `music_decode_*` | `docs/platform-boundary.md` |
 | Input | Keyboard, gamepad, touch state, stable action bindings, and device ownership | `runtime/input/` | `bindings.c`, `keyboard.c`, `gamepad.c`, `touch_input.cpp` | `docs/running.md` |
+| Custom multiplayer | LF2 session identity and input-frame wire contract plus explicit-IP LAN datagrams; independent of guest Winsock | `runtime/netplay/` | `packet.h`, `lan_socket.h` | `docs/project-state.md` |
 | Host UI | RmlUi document/backends, setup dialog, device art, and touch presentation; edits configuration but does not own it | `runtime/ui/` | `settings_ui.cpp`, `setup_ui.c`, `touch_controls.c` | `AGENTS.md` |
 | Platform integration | Android title JNI/window policy and setup wording; Lucent owns Activity lifetime, SAF bounded staging and contained-directory publication. `Lf2StageAssets` owns bundled title stage extraction | `runtime/platform/`, `platforms/` | `android_bridge.c`, `window_policy.c` | `docs/running.md` |
 | Process logging | Accept explicit typed LF2 records and delegate sink/filter/format policy to Lucent; product modules never write standard streams directly | `runtime/log/`, `third_party/lucent/` | `lf2_log.cpp` | `AGENTS.md` |
@@ -74,6 +75,7 @@ CPU-migration prerequisite.
 | Win32/CRT/GDI/COM behavior visible to any LF2 guest call | `runtime/win32/` or the existing host subsystem it forwards to |
 | Drawing, textures, lighting, frame lifetime, or GPU diagnostics | `runtime/video/` |
 | Persistent user option, default, or environment override | `runtime/app/config.*`, `runtime/app/options.*`, and typed keys in `runtime/app/environment*` |
+| LF2 multiplayer session or input-frame protocol | `runtime/netplay/`; feed the established per-frame input owner only after session synchronization is proven |
 | Settings presentation for an existing option | `runtime/ui/` |
 | Cross-platform logging behavior | Lucent; LF2-specific explicit record adaptation stays in `runtime/log/` |
 | Product launch/build/provisioning policy | Python owner in `bootstrap.py` or `tools/build/`; never `run.sh` |
@@ -93,6 +95,7 @@ lf2/
 │   ├── video/       renderer and completed-frame ownership
 │   ├── audio/       DirectSound and native mixing/decode
 │   ├── input/       keyboard, controllers, touch, action bindings
+│   ├── netplay/     custom session and input-frame protocol
 │   ├── ui/          RmlUi/setup/touch presentation
 │   ├── platform/    platform runtime glue
 │   ├── log/         LF2-to-Lucent adapter
