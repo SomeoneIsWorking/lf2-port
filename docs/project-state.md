@@ -145,18 +145,26 @@ gameplay/release gate remain open despite the passing native/quality CI job.
 
 The ARM64 package builder, landscape policy, private installer/folder/ZIP setup,
 touch routing, controller/touch presentation policy, updater, and signed-build
-checks exist. The API24 arm64 debug APK assembles through the shared Android
+checks exist. The previous API24 arm64 debug APK assembled through the shared Android
 prefix with NDK28.2 Clang and Java25. Its native ELF entry, packaged runtime
-libraries, and exclusion of original game files pass inspection. Lucent owns
-SAF staging and validated contained-directory publication. A local Cuttlefish
+libraries, and exclusion of original game files pass inspection. Shared
+`android-port` owns SAF staging and validated contained-directory publication.
+A local Cuttlefish
 ARM64 run installed that APK, staged the exact `game/` tree into app-private
 storage, reached the retail mode menu through the ARM64 product JIT, and showed
 the authored touch overlay; the process remained alive while presenting frames.
 
-A clean local rebuild pinned `shared/android-port` at
+A previous clean local rebuild pinned `shared/android-port` at
 `6735dc557b2ae56d735ce8140867b8375567d9e6` and produced
 `build/release/LF2-Port-0.1.0-android-arm64-debug.apk`; its recorded FFmpeg
 contract keeps AArch64 NEON enabled with hidden internal symbols.
+The current source pin is `3f4fda2a9b6e5919d42df8ed4aef15348ed6a875`,
+which moves the Activity, SAF importer, foreground progress, and service to
+the shared Android framework; the focused Android builder and package-content
+test passes. This new pin has not yet produced a rebuilt APK.
+The Lucent submodule now pins `93275f46cd9e1efe25d21928bc575cf37de190d5`,
+which removes its old Android Java; the LF2 logging and game-selection targets
+build with Clang and both focused tests pass.
 
 The asset-free Android package job passed in CI at run `34216452485` alongside
 the Linux AppImage and Apple Silicon `.app` package jobs; this checks the build,

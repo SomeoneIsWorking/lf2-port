@@ -231,9 +231,7 @@ def assemble_project(work: Path, prefix: Path, native: Path) -> Path:
         shutil.copy2(template / name, project / name)
     shutil.copytree(template / "app", project / "app")
     shared = shared_android()
-    shared.stage_gradle_runtime(
-        prefix, project, ROOT / "third_party/lucent/platforms/android/java"
-    )
+    shared.stage_gradle_runtime(prefix, project)
     wrapper_properties = project / "gradle/wrapper/gradle-wrapper.properties"
     shutil.copy2(template / "gradle-wrapper.properties", wrapper_properties)
     assets = project / "app/src/main/assets"

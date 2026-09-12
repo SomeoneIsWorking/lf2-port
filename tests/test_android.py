@@ -119,8 +119,14 @@ def main() -> int:
     ).read_text()
     assert "savePickerState()" in activity
     assert "restorePickerState(" in activity
-    assert "LucentImportProgress" in activity
-    assert "LucentImportService" in manifest
+    assert "extends AndroidActivity" in activity
+    assert "AndroidDocumentImport" in activity
+    assert "AndroidImportProgress" in activity
+    assert "AndroidImportService" in manifest
+    assert "io.github.someoneisworking.lucent" not in activity + manifest
+    builder = (ROOT / "tools" / "build" / "android.py").read_text()
+    assert "stage_gradle_runtime(prefix, project)" in builder
+    assert "third_party/lucent/platforms/android/java" not in builder
     assert "android.permission.FOREGROUND_SERVICE_DATA_SYNC" in manifest
     assert "enforceLf2WindowPolicy" in activity
     assert "ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE" in activity

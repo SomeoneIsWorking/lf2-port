@@ -6,17 +6,17 @@ import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.os.Build;
 
-import io.github.someoneisworking.lucent.LucentActivity;
-import io.github.someoneisworking.lucent.LucentDocumentImport;
-import io.github.someoneisworking.lucent.LucentImportProgress;
+import io.github.someoneisworking.android.AndroidActivity;
+import io.github.someoneisworking.android.AndroidDocumentImport;
+import io.github.someoneisworking.android.AndroidImportProgress;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.Locale;
 
 /** LF2 setup wording, native validation handoff, and title window/update policy. */
-public final class Lf2Activity extends LucentActivity {
-    private static final String PICKER_STATE = "lucent-picker";
+public final class Lf2Activity extends AndroidActivity {
+    private static final String PICKER_STATE = "android-picker";
     private static final int REQUEST_GAME_TREE = 2001;
     private static final int REQUEST_GAME_FILE = 2002;
     private static final int MAX_FILES = 50_000;
@@ -24,10 +24,10 @@ public final class Lf2Activity extends LucentActivity {
 
     private boolean selectionPending;
     private UpdateManager updateManager;
-    private LucentDocumentImport importer;
-    private LucentImportProgress importProgress;
+    private AndroidDocumentImport importer;
+    private AndroidImportProgress importProgress;
     // Main-thread callbacks publish this result before waking the native validation thread.
-    private volatile LucentDocumentImport.Result pendingImport;
+    private volatile AndroidDocumentImport.Result pendingImport;
 
     private static native void nativeGameTreeResult(String executable, String error);
 
@@ -38,14 +38,17 @@ public final class Lf2Activity extends LucentActivity {
 
     @Override
     protected void onCreate(Bundle state) {
-        importer = new LucentDocumentImport(this,
-                new LucentDocumentImport.Limits(MAX_FILES, MAX_BYTES, 64 * 1024));
+        importer = new AndroidDocumentImport(this,
+                new AndroidDocumentImport.Limits(MAX_FILES, MAX_BYTES, 64 * 1024));
         selectionPending = importer.restorePickerState(
                 state == null ? null : state.getBundle(PICKER_STATE), importCallback());
-        importProgress = new LucentImportProgress(this, 2003, "lf2_game_import",
+        importProgress = new AndroidImportProgress(this, 2003, "lf2_game_import",
                 "Game File Installation", "Installing Little Fighter 2", Lf2Activity.class);
-        importer.setProgressListener((entries, bytes, name) -> {
-            if (importer.active()) importProgress.update(entries + " files, " + bytes + " bytes — " + name);
+        importer.setProgressListener((entries, bytes, totalBytes, name) -> {
+            if (importer.active()) {
+                importProgress.update(entries + " files, " + bytes + " bytes — " + name,
+                        bytes, totalBytes);
+            }
         });
         importer.cleanStaleImports();
         try {
@@ -119,10 +122,10 @@ public final class Lf2Activity extends LucentActivity {
         }
     }
 
-    private LucentDocumentImport.Callback importCallback() {
-        return new LucentDocumentImport.Callback() {
+    private AndroidDocumentImport.Callback importCallback() {
+        return new AndroidDocumentImport.Callback() {
             @Override
-            public void onImported(LucentDocumentImport.Result result) {
+            public void onImported(AndroidDocumentImport.Result result) {
                 acceptImported(result);
             }
 
@@ -138,7 +141,7 @@ public final class Lf2Activity extends LucentActivity {
         };
     }
 
-    private void acceptImported(LucentDocumentImport.Result result) {
+    private void acceptImported(AndroidDocumentImport.Result result) {
         pendingImport = result;
         String name = result.documentName.toLowerCase(Locale.ROOT);
         if (!result.isTree && name.equals("lf2.exe")) {
