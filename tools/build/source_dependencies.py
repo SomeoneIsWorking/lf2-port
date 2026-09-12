@@ -43,7 +43,7 @@ RUNTIME_DEPENDENCIES = (JIT_COMMON, X86PORT)
 ANDROID_PORT = SourceDependency(
     name="android-port",
     repository="https://github.com/SomeoneIsWorking/android-port.git",
-    revision="1161a40733d527674f10069800efca1a1dcb42b1",
+    revision="6735dc557b2ae56d735ce8140867b8375567d9e6",
     marker="tools/android_port.py",
 )
 

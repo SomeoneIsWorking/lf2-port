@@ -151,6 +151,11 @@ ARM64 run installed that APK, staged the exact `game/` tree into app-private
 storage, reached the retail mode menu through the ARM64 product JIT, and showed
 the authored touch overlay; the process remained alive while presenting frames.
 
+A clean local rebuild pinned `shared/android-port` at
+`6735dc557b2ae56d735ce8140867b8375567d9e6` and produced
+`build/release/LF2-Port-0.1.0-android-arm64-debug.apk`; its recorded FFmpeg
+contract keeps AArch64 NEON enabled with hidden internal symbols.
+
 The asset-free Android package job passed in CI at run `34216452485` alongside
 the Linux AppImage and Apple Silicon `.app` package jobs; this checks the build,
 APK-content, and package-boundary paths only.
