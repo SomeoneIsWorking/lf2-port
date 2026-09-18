@@ -125,16 +125,16 @@ int android_bridge_enforce_window_policy(void)
     return 0;
 }
 
-SetupUiResult android_bridge_choose_game_tree(const char *message, char *output, size_t capacity)
+GamePickResult android_bridge_choose_game_tree(const char *message, char *output, size_t capacity)
 {
-    if (!ensure_selection_state() || !output || capacity == 0) return SETUP_UI_ERROR;
+    if (!ensure_selection_state() || !output || capacity == 0) return GAME_PICK_ERROR;
     output[0] = 0;
 
     SDL_LockMutex(selection.mutex);
     if (selection.waiting) {
         SDL_UnlockMutex(selection.mutex);
         lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: a game-tree selection is already active\n");
-        return SETUP_UI_ERROR;
+        return GAME_PICK_ERROR;
     }
     selection.waiting = 1;
     selection.complete = 0;
@@ -149,7 +149,7 @@ SetupUiResult android_bridge_choose_game_tree(const char *message, char *output,
         selection.waiting = 0;
         SDL_UnlockMutex(selection.mutex);
         lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: %s\n", call_error);
-        return SETUP_UI_ERROR;
+        return GAME_PICK_ERROR;
     }
 
     SDL_LockMutex(selection.mutex);
@@ -176,8 +176,8 @@ SetupUiResult android_bridge_choose_game_tree(const char *message, char *output,
         lf2_log_writef(LF2_LOG_INFO, "android_bridge", "android: game-tree import failed: %s\n", selection.error);
     selection.waiting = 0;
     SDL_UnlockMutex(selection.mutex);
-    if (failed || (selected && !output[0])) return SETUP_UI_ERROR;
-    return selected ? SETUP_UI_SELECTED : SETUP_UI_CANCELLED;
+    if (failed || (selected && !output[0])) return GAME_PICK_ERROR;
+    return selected ? GAME_PICK_SELECTED : GAME_PICK_CANCELLED;
 }
 
 int android_bridge_commit_game_tree(const char *staging_root, char *output, size_t capacity, char *error,

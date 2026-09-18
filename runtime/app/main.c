@@ -7,7 +7,7 @@
 #include "port_entry.h"
 #include "game_data.h"
 #include "game_selection.h"
-#include "setup_ui.h"
+#include "setup_screen.h"
 #ifdef __ANDROID__
 #include "android_bridge.h"
 #endif
@@ -78,16 +78,13 @@ static int prepare_game_data(int argc, char **argv, GameData *game)
     }
 
     for (;;) {
-        char selection[GAME_DATA_PATH_CAPACITY];
         char executable[GAME_DATA_PATH_CAPACITY];
-        const SetupUiResult choice = setup_ui_choose_game(game->error, selection, sizeof selection);
-        if (choice != SETUP_UI_SELECTED) return 0;
-#ifdef __ANDROID__
-        if (!game_selection_resolve_staged(selection, executable, sizeof executable, game->error, sizeof game->error))
-#else
-        if (!game_selection_resolve(selection, executable, sizeof executable, game->error, sizeof game->error))
-#endif
-            continue;
+        /* The screen resolves and validates before it returns, so a wrong file
+         * is answered inside it; reaching here means the player chose a real
+         * LF2 v2.0a install and only this port's own bookkeeping is left. */
+        const SetupScreenResult choice =
+            setup_screen_run(game->error, executable, sizeof executable, game->error, sizeof game->error);
+        if (choice != SETUP_SCREEN_RESOLVED) return 0;
         if (!game_data_validate_executable(executable, game)) continue;
 #ifdef __ANDROID__
         char committed_root[GAME_DATA_PATH_CAPACITY];
