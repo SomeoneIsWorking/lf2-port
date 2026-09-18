@@ -140,7 +140,9 @@ set(LF2_NATIVE_RUNTIME_SOURCES
     runtime/ui/rmlui_input.cpp
     runtime/ui/rmlui_backend.cpp
     runtime/ui/rmlui_system.cpp
-    runtime/ui/setup_ui.c
+    runtime/ui/setup_screen.cpp
+    runtime/ui/setup_screen_policy.cpp
+    runtime/platform/game_picker.c
     runtime/ui/touch_controls.c
     third_party/RmlUi/Backends/RmlUi_Platform_SDL.cpp
     runtime/app/main.c)
@@ -451,6 +453,21 @@ else()
     message(FATAL_ERROR "third_party/RmlUi is missing -- run `git submodule update --init --recursive`")
 endif()
 
+# ---- setup-ui ----
+#
+# The first-run setup screen is the shared one -- the same module Benefactor
+# shows -- so the two ports do not each grow their own way of asking a player
+# for the files they own. It is added after RmlUi and SDL3 so it reuses the
+# RmlUi::RmlUi and SDL3 targets this build already selected rather than
+# configuring a second copy of either.
+if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/setup-ui/CMakeLists.txt")
+    set(SETUP_UI_TITLE "Little Fighter 2 setup" CACHE STRING "" FORCE)
+    add_subdirectory(third_party/setup-ui EXCLUDE_FROM_ALL)
+    target_link_libraries(lf2 PRIVATE setup_ui::setup_ui)
+else()
+    message(FATAL_ERROR "third_party/setup-ui is missing -- run `git submodule update --init --recursive`")
+endif()
+
 if(TARGET SDL3_image::SDL3_image)
     set(SDL3_image_FOUND TRUE)
 else()
@@ -560,6 +577,21 @@ target_compile_options(test_game_selection PRIVATE -Wall -Wextra)
 add_test(NAME game_selection
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_game_selection.py"
             "$<TARGET_FILE:test_game_selection>" "${CMAKE_BINARY_DIR}")
+
+# The first-run setup screen's own policy: what LF2 asks a player for, and what
+# it makes of the answer. Built against the same fixture executable identity as
+# test_game_selection above, so the accept path is exercised without the real
+# game's bytes; the screen's window and input belong to shared/setup-ui and are
+# tested there.
+add_executable(test_setup_screen tests/test_setup_screen.cpp
+               runtime/ui/setup_screen_policy.cpp
+               runtime/app/game_selection.cpp runtime/app/installer_extract.cpp runtime/app/game_data.c)
+target_include_directories(test_setup_screen PRIVATE runtime/app runtime/ui)
+target_link_libraries(test_setup_screen PRIVATE setup_ui::setup_ui lucent::lucent lucent::zip ZLIB::ZLIB BZip2::BZip2)
+target_compile_definitions(test_setup_screen PRIVATE
+    LF2_EXPECTED_EXE_SIZE=7 LF2_EXPECTED_EXE_CRC32=0x05e540eeu)
+target_compile_options(test_setup_screen PRIVATE -Wall -Wextra)
+add_test(NAME setup_screen COMMAND test_setup_screen)
 
 # The hand-woven stage geometry loader (issue #62). It takes no game data -- the caller resolves
 # a layer name to a span -- so it needs no guest and no GPU, only SDL's headers for MeshVertex.

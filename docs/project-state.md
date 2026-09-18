@@ -75,7 +75,15 @@ verification on shipping hardware and then re-conformance in the JIT product.
 ### S004 — Linux AppImage setup
 
 The native setup path accepts the original installer, extracted tree, executable,
-or bounded ZIP and validates the complete LF2 tree through a first-run dialog.
+or bounded ZIP and validates the complete LF2 tree through a first-run screen.
+That screen is `shared/setup-ui` drawn with RmlUi inside the port's own window,
+the same module Benefactor shows, rather than a system message box: it asks for
+one location, resolves and validates it before the port starts, and reports a
+wrong choice on the screen so the player can simply choose again. Captured at
+1280x720 (1x), 2340x1080 (landscape handset, density 3.0), and 1080x2340
+(portrait) from the pinned checkout; `tests/test_setup_screen.cpp` exercises the
+shipping config and validator, including the accept path against the fixture
+executable identity.
 
 Gap: the package still needs a clean-machine install-and-play gate containing
 the JIT-default product and reporting bounded fallback coverage.
@@ -145,7 +153,8 @@ gameplay/release gate remain open despite the passing native/quality CI job.
 
 ### S013 — Android release and touch controls
 
-The ARM64 package builder, landscape policy, private installer/folder/ZIP setup,
+The ARM64 package builder, landscape policy, private installer/folder/ZIP setup
+behind the same shared setup screen the desktop shows,
 touch routing, controller/touch presentation policy, updater, and signed-build
 checks exist. The previous API24 arm64 debug APK assembled through the shared Android
 prefix with NDK28.2 Clang and Java25. Its native ELF entry, packaged runtime

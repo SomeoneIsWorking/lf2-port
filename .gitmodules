@@ -4,3 +4,6 @@
 [submodule "third_party/lucent"]
 	path = third_party/lucent
 	url = https://github.com/SomeoneIsWorking/lucent.git
+[submodule "third_party/setup-ui"]
+	path = third_party/setup-ui
+	url = https://github.com/SomeoneIsWorking/setup-ui.git
