@@ -9,7 +9,7 @@ p { line-height: 1.5; color: #cbd1e1; }
 button:disabled, input:disabled + * { opacity: .5; cursor: default; }
 input { display: none; }
 progress { width: 100%; accent-color: #94a8ff; }
-#canvas { display: none; width: 100vw; height: 100vh; touch-action: none; image-rendering: pixelated; }
+#canvas { display: none; width: 100vw; width: 100dvw; height: 100vh; height: 100dvh; image-rendering: pixelated; }
 body.playing { display: block; overflow: hidden; }
 body.playing #setup { display: none; }
 body.playing #canvas { display: block; }
