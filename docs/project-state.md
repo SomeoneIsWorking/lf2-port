@@ -283,7 +283,7 @@ inapplicable to this port's current delivery goals.
 
 ### S021 — Browser native/JIT delivery
 
-The Emscripten build now packages the native/JIT runtime with Lucent's OPFS
+The Emscripten build now packages the native/JIT runtime with shared web-port's OPFS
 staging and service-worker isolation resources. The local asset-free package
 contains `lf2.js` and `lf2.wasm`; WebLua verified the setup page, secure
 cross-origin isolation after the service-worker reload, persistent-storage

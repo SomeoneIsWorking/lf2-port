@@ -281,7 +281,11 @@ if(EMSCRIPTEN)
     set_source_files_properties(runtime/app/main.c PROPERTIES
         COMPILE_DEFINITIONS main=lf2_native_main)
     target_sources(lf2 PRIVATE src/web/web_main.cpp)
-    target_link_libraries(lf2 PRIVATE lucent::web)
+    if(NOT LF2_WEB_PORT_SOURCE)
+        message(FATAL_ERROR "lf2: web build requires shared/web-port source")
+    endif()
+    include("${LF2_WEB_PORT_SOURCE}/cmake/WebRuntime.cmake")
+    target_link_libraries(lf2 PRIVATE web_port::runtime)
     target_link_options(lf2 PRIVATE
         -pthread -sPROXY_TO_PTHREAD=1 -sPTHREAD_POOL_SIZE=16
         -sASYNCIFY=1 -sOFFSCREENCANVAS_SUPPORT=1
