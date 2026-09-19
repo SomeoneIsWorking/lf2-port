@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: SomeoneIsWorking/web-port
-          ref: faee8c598779f602b21b66755e95b74789896186
+          ref: 7409d60fd3a9aa9ab3781c6812fd1de6109d0d7f
           path: vendor/shared/web-port
           fetch-depth: 1
           submodules: recursive

@@ -1,4 +1,5 @@
 import {prepareApplication} from "./isolation.mjs";
+import {claimCanvasGestures} from "./canvas.mjs";
 import {FileStager, persistentStorage} from "./storage.mjs";
 
 const archive = document.querySelector("#archive");
@@ -10,6 +11,12 @@ const note = document.querySelector("#storage-note");
 const canvas = document.querySelector("#canvas");
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 let moduleReady;
+
+/* A browser owns scroll, pinch, long-press and overscroll on any element the
+ * page has not claimed. `touch-action: none` used to be declared here in the
+ * stylesheet; shared web-port now owns the whole policy, including the
+ * selection, callout and overscroll cases this page never covered. */
+claimCanvasGestures(canvas);
 
 function setStatus(message, failed = false) {
   status.textContent = message;

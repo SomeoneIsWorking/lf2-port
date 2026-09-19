@@ -295,6 +295,15 @@ disabled, and the live `publication.json` names the source run. WebLua verified
 the central setup page, `crossOriginIsolated=true`, a WASM runtime, and no console
 errors or failed network requests.
 
+Browser gestures on the canvas are now claimed through shared web-port's
+`claimCanvasGestures` rather than a lone `touch-action` declaration in this
+page's stylesheet. Driving a real emulated touch device at 390x844 against the
+packaged page, a twelve-step drag up the canvas leaves the document unscrolled
+with `touch-action` and `user-select` both `none`; selection, the long-press
+callout, the native bitmap drag and document overscroll are covered too, none of
+which the local declaration handled. The canvas is sized with `100dvh` rather
+than `100vh`, so its lower edge is not under a mobile address bar.
+
 Gap: a real LF2 install has not yet been imported in a browser, so translated
 gameplay, WebGPU presentation, and persisted-install restart remain unverified.
 x86port must also qualify translated stores that modify cached/current code,
