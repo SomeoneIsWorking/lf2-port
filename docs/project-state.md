@@ -288,8 +288,8 @@ staging and service-worker isolation resources. The local asset-free package
 contains `lf2.js` and `lf2.wasm`; WebLua verified the setup page, secure
 cross-origin isolation after the service-worker reload, persistent-storage
 initialization, and the no-install state without console or network errors.
-The browser package contains no game files. Source run `34686595646` built it at
-`c488073`; central `pages` run `34689838606` deployed the same artifact at
+The browser package contains no game files. Source run `35441971535` built it at
+`2bbd617`; the central `pages` deployment serves that artifact at
 `https://someoneisworking.github.io/lf2-port/`. The old project Pages site is
 disabled, and the live `publication.json` names the source run. WebLua verified
 the central setup page, `crossOriginIsolated=true`, a WASM runtime, and no console
