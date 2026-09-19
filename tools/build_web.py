@@ -49,7 +49,7 @@ def main() -> int:
         str(emcmake), "cmake", "-S", str(ROOT), "-B", str(build), "-G", "Ninja",
         "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         "-DCMAKE_C_FLAGS=-pthread", "-DCMAKE_CXX_FLAGS=-pthread",
-        "-DLUCENT_BUILD_WEB=ON", f"-DLF2_FFMPEG_ROOT={prefix}",
+        f"-DLF2_WEB_PORT_SOURCE={web_port}", f"-DLF2_FFMPEG_ROOT={prefix}",
         f"-DX86PORT_DIR={runtime['x86port']}",
         f"-DX86PORT_JITCOMMON_DIR={runtime['jit-common']}",
         f"-DCMAKE_PREFIX_PATH={prefix}", f"-DCMAKE_FIND_ROOT_PATH={prefix}",
@@ -64,8 +64,7 @@ def main() -> int:
     subprocess.run(["cmake", "--build", str(build), "--target", "lf2", "-j", str(args.jobs)],
                    cwd=ROOT, env=environment, check=True)
     package = [sys.executable, str(web_port / "tools/package.py"),
-               "--destination", str(ROOT / "build/release/web"),
-               "--lucent", str(ROOT / "third_party/lucent")]
+               "--destination", str(ROOT / "build/release/web")]
     for name in ("lf2.js", "lf2.wasm"):
         package.extend(["--file", f"{name}={build / name}"])
     for name in ("index.html", "app.mjs", "style.css", "manifest.webmanifest"):

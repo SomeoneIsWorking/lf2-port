@@ -50,7 +50,7 @@ ANDROID_PORT = SourceDependency(
 WEB_PORT = SourceDependency(
     name="web-port",
     repository="https://github.com/SomeoneIsWorking/web-port.git",
-    revision="a66e52df035f1221d09f7e892a7822b628ab8a98",
+    revision="faee8c598779f602b21b66755e95b74789896186",
     marker="tools/web_port.py",
 )
 
