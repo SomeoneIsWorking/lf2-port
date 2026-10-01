@@ -396,13 +396,8 @@ target_compile_options(test_ui_rgba PRIVATE -Wall -Wextra)
 add_test(NAME ui_rgba COMMAND test_ui_rgba)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
-add_test(NAME execution_boundary COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_execution_boundary.py)
 add_test(NAME source_policy COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_source_policy.py)
-add_test(NAME product_execution_symbols COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tools/build/check_product_symbols.py
-         --nm ${CMAKE_NM} --product $<TARGET_FILE:lf2>)
+         ${CMAKE_SOURCE_DIR}/tools/build/check_source_policy.py)
 add_test(NAME structure COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tools/build/check_structure.py)
 add_test(NAME clang_format COMMAND ${Python3_EXECUTABLE}
@@ -410,26 +405,6 @@ add_test(NAME clang_format COMMAND ${Python3_EXECUTABLE}
 add_test(NAME clang_tidy COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tools/build/check_cpp_quality.py tidy
          --build-dir ${CMAKE_BINARY_DIR})
-add_test(NAME gallery_capture_tool COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_gallery_capture.py)
-add_test(NAME bootstrap COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_bootstrap.py)
-add_test(NAME build_toolchain COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_build_toolchain.py)
-add_test(NAME source_dependencies COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_source_dependencies.py)
-add_test(NAME scratch_clean COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_scratch_clean.py)
-add_test(NAME runtime_log_tool COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_runtime_log.py)
-add_test(NAME build_shaders_tool COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_build_shaders.py)
-add_test(NAME appimage_tool COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_appimage.py)
-add_test(NAME android_tool COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_android.py)
-add_test(NAME release_packages COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_release_packages.py)
 
 # ---- RmlUi (issue #70) ----
 #

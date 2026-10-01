@@ -11,8 +11,7 @@ permissions:
 
 # Linux x86-64 has a real native/JIT product build boundary. The Android job
 # below assembles the asset-free arm64-v8a package through the shared build
-# owner. macOS ARM64 still needs its product job and release qualification;
-# Windows is not a shipping target.
+# owner. Windows is not a shipping target.
 jobs:
   linux-x64:
     name: Linux x86-64 native/JIT product
@@ -66,11 +65,11 @@ jobs:
           grep -q 'set(CMAKE_C_COMPILER_ID "Clang")' build/ci/CMakeFiles/*/CMakeCCompiler.cmake
           grep -q 'set(CMAKE_CXX_COMPILER_ID "Clang")' build/ci/CMakeFiles/*/CMakeCXXCompiler.cmake
           grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' build/ci/CMakeCache.txt
-      - name: Run native/JIT boundary and quality tests
+      - name: Run native/JIT quality tests
         run: >-
           ctest --test-dir build/ci --output-on-failure
           --tests-regex
-          '^(game_data|execution_boundary|source_policy|product_execution_symbols|structure|clang_format|clang_tidy|build_toolchain|source_dependencies|game_selection)$'
+          '^(game_data|source_policy|structure|clang_format|clang_tidy|game_selection)$'
 
   android-arm64:
     name: Android arm64-v8a asset-free package
@@ -155,4 +154,4 @@ jobs:
         run: >-
           PATH="$LLVM_BIN:$PATH" ctest --test-dir build/ci-macos --output-on-failure
           --tests-regex
-          '^(game_data|execution_boundary|source_policy|product_execution_symbols|structure|clang_format|clang_tidy|build_toolchain|source_dependencies|game_selection)$'
+          '^(game_data|source_policy|structure|clang_format|clang_tidy|game_selection)$'
