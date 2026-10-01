@@ -405,6 +405,15 @@ add_test(NAME clang_format COMMAND ${Python3_EXECUTABLE}
 add_test(NAME clang_tidy COMMAND ${Python3_EXECUTABLE}
          ${CMAKE_SOURCE_DIR}/tools/build/check_cpp_quality.py tidy
          --build-dir ${CMAKE_BINARY_DIR})
+# What reaches the player: fresh-clone setup and the shipped packages.
+add_test(NAME bootstrap COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_bootstrap.py)
+add_test(NAME appimage_tool COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_appimage.py)
+add_test(NAME android_tool COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_android.py)
+add_test(NAME release_packages COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_SOURCE_DIR}/tests/test_release_packages.py)
 
 # ---- RmlUi (issue #70) ----
 #
