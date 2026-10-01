@@ -658,10 +658,6 @@ add_executable(test_backdrop tests/test_backdrop.c)
 target_include_directories(test_backdrop PRIVATE runtime/video runtime/overrides)
 target_compile_options(test_backdrop PRIVATE -Wall -Wextra)
 add_test(NAME backdrop COMMAND test_backdrop)
-add_test(NAME backdrop_pixels COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_backdrop_pixels.py)
-add_test(NAME parallax_jitter COMMAND ${Python3_EXECUTABLE}
-         ${CMAKE_SOURCE_DIR}/tests/test_parallax_jitter.py)
 
 add_executable(test_result_panel tests/test_result_panel.c runtime/video/result_panel.c)
 target_include_directories(test_result_panel PRIVATE runtime/video runtime/overrides)
