@@ -64,9 +64,9 @@ CPU-migration prerequisite.
 | Browser gesture reachability | Give the game canvas the browser's own scroll, pinch, callout and overscroll gestures, through the shared owner rather than a local declaration | `web/app.mjs`, `web/style.css`, shared `web-port` `platforms/web/canvas.mjs` | `claimCanvasGestures` | `docs/project-state.md` |
 | Browser package | Build the asset-free native/JIT WASM product with shared web-port storage and isolation, and upload its CI artifact; sibling `pages` owns public deployment | `tools/build_web.py`, `.github/workflows/browser-package.yml`, `web/`, `src/web/`, shared `web-port` runtime | `build_web.py` | `docs/project-state.md` |
 | Runtime route verification | State-anchored interactive scenarios, capture/analyzer helpers, and positive/negative reachability evidence | `tools/e2e.py`, `tools/routes/` | `tools/e2e.py` | `docs/migration.md` |
-| Offline verification | Unit, format, lint, structure, asset, package, and pure production-seam checks | `tests/`, `tools/build/` | CTest and repository Python verifier | `AGENTS.md` |
+| Offline verification | Unit, format, lint, structure, asset, and package checks | `tests/`, `tools/build/` | CTest and repository Python checks | `AGENTS.md` |
 | Asset-free CI | Build the Linux x86-64 native/JIT product and run focused boundary/quality tests from exact full-history inputs without `lf2.exe` or other game assets | `.github/workflows/ci.yml` | GitHub Actions -> `tools/build/build.py` and focused CTest | `docs/project-state.md` |
-| Reverse engineering | Shared Python/Jython Ghidra automation, address/name metadata, traces, and binary-derived evidence | `tools/re/`, `re/`, `docs/info/`, `docs/re-frontier.md` | `tools/re/ghidra_scripts/DecompDump.py` and project information tools | `docs/isa-scope.md` |
+| Reverse engineering | Shared Python Ghidra automation, address/name metadata, traces, and the binary-grounding chain behind native replacements | `tools/re/`, `re/`, `docs/re-frontier.md` | `tools/re/ghidra_scripts/DecompDump.py` and `shared/re-harness`'s `re_frontier.py` | `docs/isa-scope.md` |
 
 ## Where does new work go?
 
@@ -85,7 +85,7 @@ CPU-migration prerequisite.
 | Browser package or release handoff | `tools/build_web.py` and `.github/workflows/browser-package.yml`; public hosting belongs to sibling `pages` |
 | Shared x86port/jit-common revision, checkout validation, or provisioning | `tools/build/source_dependencies.py` |
 | Repeatable gameplay scenario or runtime discriminator | `tools/routes/`, registered once in `tools/e2e.py` |
-| Binary-derived fact or native replacement grounding | `docs/re-frontier.md`, a claim, or one issue according to the fact's consumer |
+| Binary-derived fact or native replacement grounding | `docs/re-frontier.md` for the replacement chain, `docs/isa-scope.md` for instruction coverage, or one open issue |
 
 ## Source tree
 
@@ -107,6 +107,6 @@ lf2/
 ├── platforms/       package/platform metadata and composition
 ├── stages/          optional authored native stage geometry
 ├── tests/           product seams and separately built test target (diagnostics included)
-├── tools/           Python build, verification, packaging, and RE tooling
-└── docs/            intent, state, migration, ownership, evidence, and RE facts
+├── tools/           Python build, packaging, RE, and runtime route tooling
+└── docs/            intent, state, migration, ownership, and RE facts
 ```

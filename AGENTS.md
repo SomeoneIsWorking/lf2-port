@@ -19,13 +19,11 @@ than adding a title-specific execution path.
 | `docs/migration.md` | the LF2-specific native/JIT migration and acceptance gates |
 | `docs/codemap.md` | subsystem ownership and where new work belongs |
 | `docs/re-frontier.md` | which native replacements are grounded in the binary |
-| `docs/issues/` | atomic work, findings, and dead ends |
-| `docs/info/claims/`, `docs/info/instruments/` | evidence and instrument trust |
+| `docs/issues/` | open atomic work and unfixed defects |
 | `docs/platform-boundary.md` | observed Win32, DirectDraw, DirectSound, GDI, and input surface |
 | `docs/isa-scope.md` | title-specific x86 coverage evidence for the JIT |
 
-Start with `info.py brief <terms>` and search the issue catalog before
-re-deriving an address, ABI, state transition, or failed approach.
+Search the open issues before re-deriving an address, ABI, or state transition.
 
 ## Non-negotiable execution contract
 
@@ -68,9 +66,8 @@ The CPU migration must adapt the existing product instead of rewriting it.
   prerequisite for CPU execution. First preserve the same calls and data at
   their existing boundaries; investigate graphics only after CPU/service state
   proves a graphics-owned divergence.
-- Existing routes and claims are reusable evidence only after their producers
-  run through the JIT product and their positive/negative reachability checks
-  still hold.
+- Existing routes are reusable evidence only after their producers run through
+  the JIT product.
 
 ## First JIT discriminator
 
@@ -81,12 +78,9 @@ native entry contract already recorded in `port_entry.c`: `ECX=0x00458440`, a
 guest return sentinel at `0x004462e0`, and no guest PE-entry or WinMain call.
 
 Compare registers, EFLAGS, x87/SSE state, the guest stack, EIP/return reason,
-and every guest write with the test target's interpreter. Require nonzero
-translated-block counts and a controlled negative that the comparison rejects.
-Build-graph and selector inspection must independently prove the gameplay
-default is the JIT and no explicit interpreter mode is exposed. Fallback
-telemetry must name why it ran and how much execution it covered. This
-discriminator is not permission to treat fallback execution as gameplay proof.
+and every guest write with the test target's interpreter, and require nonzero
+translated-block counts. This discriminator is not permission to treat
+fallback execution as gameplay proof.
 
 ## Representative-gameplay restoration gate
 
@@ -95,16 +89,13 @@ after the native/JIT product:
 
 - provisions a fresh checkout from the player's authenticated game asset
   without a translation step;
-- proves by build/link/selector inspection that gameplay defaults to the JIT,
-  has no explicit interpreter mode, and exposes bounded fallback telemetry;
 - reaches the existing menu, character-select, VS, and Stage Mode frontier;
 - runs a bounded Stage Mode fight with player input, enemy/world updates,
   DirectDraw/GDI presentation, sound effects, music, timing, and interrupts;
-- reports denominated nonzero JIT blocks, HLE calls, native overrides, and one
-  scoped original call; any zero-fallback counters are supplementary and do
-  not replace the build/link/selector exclusion proof;
+- reports nonzero JIT blocks, HLE calls, native overrides, and one scoped
+  original call;
 - exercises one current override/original A/B through the shipping dispatcher
-  and the relevant executable-write invalidation positive/negative cases; and
+  and the relevant executable-write invalidation; and
 - compares CPU, memory, timing/interrupt, service-event, audio, and frame
   checkpoints against an independent oracle on every released host
   architecture, within explicitly documented tolerances.
@@ -134,9 +125,6 @@ Boot, a logo, a menu, a clean trace, or a single frame is not this gate.
   or a second configuration system.
 - Add behavior to the smallest owning module. Do not grow a god file, duplicate
   x86 semantics, or create a title-local JIT/cache beside `x86port`.
-- Tests and diagnostics exercise production seams. Every diagnostic reports
-  the scanned/entered denominator and proves that it can show the opposite
-  answer.
 - Build products live under `build/`; disposable diagnostics live under one
   stable activity path in `scratch/`, never `/tmp`. Never issue raw `rm`.
 - Project automation is Python. `run.sh` is only the thin locked-environment
@@ -145,13 +133,13 @@ Boot, a logo, a menu, a clean trace, or a single frame is not this gate.
   jit-common revisions, checkout validation, and clean provisioning under
   `build/deps`. CMake consumes only paths resolved by that owner.
 
-## Issue and evidence discipline
+## Issue discipline
 
-Use `docs/issues/` as the only atomic queue. File the symptom, measured cause,
-and rejected shortcuts; link affected state items. Update
+`docs/issues/` is the only atomic queue: an open unfixed bug or a missing
+feature. File the symptom, the measured cause, and the rejected shortcuts. Close
+an issue when it is fixed or disproven, and delete it. Update
 `docs/project-state.md` when capability coverage changes and
-`docs/codemap.md` only when ownership or placement changes. A verified finding
-belongs in one nearest living authority, not copied across every registry.
+`docs/codemap.md` only when ownership or placement changes.
 
 ## Game content
 

@@ -1,311 +1,41 @@
 # Project state
 
-This is the factual capability inventory for the intended LF2 native/JIT
-product. Goals are in `docs/project-goals.md`; execution order and gates are in
-`docs/migration.md`; atomic work is in `docs/issues/`.
-
-## Comparison baseline
-
-The user-facing baseline is the unmodified Windows release of *Little Fighter
-2 v2.0a* running on Windows or through Wine: fixed-resolution 4:3 DirectDraw,
-original keyboard/joystick configuration, and manual game-file setup.
-
-The implementation baseline is the repository's previously verified native
-host behavior: boot, menus, matches, audio, and host enhancements. Those
-observations identify the frontier the native/JIT product must re-establish
-independently.
-
-## Current focus
-
-S005 is the current focus: expand `shared/x86port` JIT coverage while
-preserving the native entry, HLE, override, and host subsystem boundaries.
-
-## Capability inventory
-
-| ID | Capability or outcome | State | Factual dependency | Goals |
-| --- | --- | --- | --- | --- |
-| S001 | The intended product boots, navigates menus, and plays VS and Stage Mode with audio | partial | S005 | G001, G002 |
-| S002 | High-resolution rendering preserves the game's pixel-art presentation | verified | — | G002 |
-| S003 | Keyboard and controller actions are remappable and persist across runs | partial | — | G002 |
-| S004 | The Linux AppImage provides no-terminal first-run game-file setup | partial | S005, S016 | G003 |
-| S005 | Native overrides plus `x86port` JIT execute the authenticated LF2 image at runtime | partial | S018 | G001 |
-| S006 | Widescreen and ultrawide expand the visible stage instead of stretching the 4:3 picture | verified | S002 | G002 |
-| S007 | Native character lighting and cast shadows are configurable in the port menu | verified | S002 | G002 |
-| S008 | Two physical controllers join as two local players without manual slot setup | partial | S003 | G002 |
-| S009 | Controllers connect, disconnect, and reconnect without restarting the game | partial | S003 | G002 |
-| S010 | Borderless, windowed, fullscreen, and Alt+Enter display switching work | verified | S002 | G002 |
-| S011 | Menus and character selection use modern anti-aliased host text | verified | — | G002 |
-| S012 | The macOS native/JIT build and Metal renderer are release-qualified | partial | S005, S019 | G003 |
-| S013 | The Android ARM64 native/JIT build provides touch controls and private installer/folder/ZIP setup | partial | S005, S019 | G003 |
-| S014 | Custom LAN multiplayer supports remote player inputs | missing | S005, deterministic session state and frame ownership | G002 |
-| S015 | Representative gameplay conforms through the native/JIT product on each released host | missing | S005, S016 | G001, G002, G003 |
-| S016 | Gameplay defaults to JIT, exposes no explicit interpreter mode, and accounts for bounded fallback by reason and coverage | partial | S018 | G001, G003 |
-| S017 | Retired title-specific execution interfaces and toolchains remain absent | verified | — | G001 |
-| S018 | `shared/x86port` supplies the x86-64 product JIT and bounded fallback contract | partial | — | G001, G003 |
-| S019 | `shared/x86port` supplies a qualified ARM64 product JIT backend for macOS and Android | partial | — | G001, G003 |
-| S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
-| S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | partial | S005, S015 | G001, G003 |
-| S022 | Internet multiplayer discovers sessions through Firebase and carries gameplay peer-to-peer | missing | S014, signaling and traversal | G002 |
-| S023 | Rollback netplay restores and resimulates exact game state | missing | S014, deterministic stepping and complete state snapshots | G002 |
-
-## Capability details
-
-### S001 — Playable game flow
-
-The pre-migration product reached boot, menus, character selection, VS matches,
-Stage Mode, sound effects, and WMA background music.
-
-Gap: none of that frontier has been re-established through the intended JIT
-product. Earlier observations are not current product evidence.
-
-### S002 — High-resolution presentation
-
-Evidence: the native renderer presents at modern output resolutions while
-keeping game sprites nearest-filtered; focused renderer routes and curated
-captures establish the owning host subsystem independently of CPU translation.
-
-### S003 — Persistent input bindings
-
-The native input path and RmlUi port menu implement device-independent keyboard
-and controller actions plus persistent bindings.
-
-Gap: representative physical-controller behavior still needs end-to-end
-verification on shipping hardware and then re-conformance in the JIT product.
-
-### S004 — Linux AppImage setup
-
-The native setup path accepts the original installer, extracted tree, executable,
-or bounded ZIP and validates the complete LF2 tree through a first-run screen.
-That screen is `shared/setup-ui` drawn with RmlUi inside the port's own window,
-the same module Benefactor shows, rather than a system message box: it asks for
-one location, resolves and validates it before the port starts, and reports a
-wrong choice on the screen so the player can simply choose again. Captured at
-1280x720 (1x), 2340x1080 (landscape handset, density 3.0), and 1080x2340
-(portrait) from the pinned checkout; `tests/test_setup_screen.cpp` exercises the
-shipping config and validator, including the accept path against the fixture
-executable identity.
-
-Gap: the package still needs a clean-machine install-and-play gate containing
-the JIT-default product and reporting bounded fallback coverage.
-
-### S005 — Native/JIT execution
-
-The x86-64 product now adapts the existing guest memory/PE state, imports, COM,
-and native overrides to `x86port_runtime`. Native calls use runtime addresses;
-scoped original calls disable only their current override. Recursive calls now
-restore the enclosing interception context, with a production-adapter regression
-covering ordinary calls, nested HLE and scoped originals. A ten-frame silent
-Clang run against x86port `e1522b2` completed startup and reached the mode menu,
-then exited normally with 734,144 entered JIT blocks and zero refusals.
-Issue #128 records the exact discriminator and remaining conformance boundary.
-
-Gap: re-establish the complete gameplay frontier and independent conformance.
-
-### S006 — Widescreen and ultrawide
-
-Evidence: 16:9 and ultrawide match captures show additional stage area with
-preserved source geometry, and focused routes exercise the native view, camera,
-parallax, backdrop, and walk-bound owners.
-
-### S007 — Lighting and shadows
-
-Evidence: the native renderer and RmlUi settings expose character lighting and
-cast-shadow controls through the running host presentation path.
-
-### S008 — Two-controller local play
-
-The native input owner supports four controller slots and automatically assigns
-a second pad to Player 2.
-
-Gap: the two-controller path lacks a current physical-hardware run and must then
-pass through the JIT gameplay product.
-
-### S009 — Controller hot-plug
-
-The native device owner handles connect, disconnect, and reconnect events with
-stable action bindings.
-
-Gap: the lifecycle lacks representative physical-controller evidence and must
-then pass through the JIT gameplay product.
-
-### S010 — Window modes
-
-Evidence: borderless, windowed, fullscreen, and Alt+Enter switching are owned by
-the native window/display path and have focused route coverage.
-
-### S011 — Anti-aliased text
-
-Evidence: native menu and character-selection text uses SDL_ttf with embedded
-redistributable fonts; original bitmap-authored game panels remain original.
-
-### S012 — macOS release
-
-The native macOS build and Metal shader path exist. `tools/build/macos.py`
-stages the native binary, its non-system dylib closure, `stages/`, and an
-ad-hoc signed `.app`; the release workflow now exercises that packager on an
-Apple Silicon runner. The combined Linux, Android, and macOS ARM64 CI run
-`34214371352` passed the native/JIT and quality gates on all three hosts.
-Release run `34693726029` published the Apple Silicon `.app` ZIP alongside
-the Linux AppImage and signed Android APK at `v0.1.10` from source `ab46291`.
-
-Gap: issue #100's real Metal acceptance and the representative macOS
-gameplay/release gate remain open despite the passing native/quality CI job.
-
-### S013 — Android release and touch controls
-
-The ARM64 package builder, landscape policy, private installer/folder/ZIP setup
-behind the same shared setup screen the desktop shows,
-touch routing, controller/touch presentation policy, updater, and signed-build
-checks exist. The previous API24 arm64 debug APK assembled through the shared Android
-prefix with NDK28.2 Clang and Java25. Its native ELF entry, packaged runtime
-libraries, and exclusion of original game files pass inspection. Shared
-`android-port` owns SAF staging and validated contained-directory publication.
-A local Cuttlefish
-ARM64 run installed that APK, staged the exact `game/` tree into app-private
-storage, reached the retail mode menu through the ARM64 product JIT, and showed
-the authored touch overlay; the process remained alive while presenting frames.
-
-A previous clean local rebuild pinned `shared/android-port` at
-`6735dc557b2ae56d735ce8140867b8375567d9e6` and produced
-`build/release/LF2-Port-0.1.0-android-arm64-debug.apk`; its recorded FFmpeg
-contract keeps AArch64 NEON enabled with hidden internal symbols.
-The current source pin is `3585be1bb615a8b693131000ea71376b77458c37`,
-which moves the Activity, SAF importer, foreground progress, and service to
-the shared Android framework and verifies a staged file's source prefix before
-resuming an interrupted SAF copy. Hosted CI run `34691013242` built and inspected
-an asset-free arm64-v8a APK with the earlier framework pin; its Linux and macOS jobs also passed.
-The Lucent submodule now pins `93275f46cd9e1efe25d21928bc575cf37de190d5`,
-which removes its old Android Java; the LF2 logging and game-selection targets
-build with Clang and both focused tests pass.
-
-The asset-free Android package job passed in CI at run `34216452485` alongside
-the Linux AppImage and Apple Silicon `.app` package jobs; this checks the build,
-APK-content, and package-boundary paths only.
-Release run `34693726029` published the `v0.1.10` arm64-v8a APK. Its published
-SHA-256 matches `SHA256SUMS.txt`, its package version is `0.1.10`, and its
-signing certificate matches the earlier v0.1.9 release identity
-(`34db88707c35dba45cb073772cfbd5ffe08e0d44c13bebc36e589d01f9a38768`).
-
-Gap: the run bypassed the system picker because the headless DocumentsUI surface
-did not stay foregrounded, so interruption/recreation of a real SAF import is
-still unverified. Signed physical-device correctness, audio/lifecycle checks,
-and sustained performance evidence remain absent.
-
-### S014 — Network play
-
-Missing capability: no remote player can yet join a running game. LF2's old
-Winsock protocol is not the intended path. `runtime/netplay/packet.{c,h}` now
-defines and tests a strict, transport-independent hello/input-frame wire
-contract for the game's eight slots and seven buttons. LAN discovery,
-connection/session lifetime, synchronized simulation, and runtime input
-injection remain unimplemented. `lan_socket.{c,h}` has a loopback UDP exchange
-test with the encoded packet, but that is not a gameplay test.
-
-### S022 — Internet peer discovery and transport
-
-Missing capability: no Firebase session discovery/signaling or peer-to-peer
-gameplay channel exists. This builds on a working LAN game session rather than
-using the original game's unavailable server path.
-
-### S023 — Rollback
-
-Missing capability: the JIT/native product has no complete state snapshot,
-restoration, deterministic frame-step, or replay conformance evidence. Do not
-enable speculative rollback on top of unsynchronized game instances.
-
-### S015 — Representative gameplay conformance
-
-Missing capability: pass the bounded Stage Mode restoration scenario in
-`docs/migration.md`, including CPU/memory state, timing/interrupts, service
-events, rendering, audio, native overrides, scoped original calls, denominated
-JIT coverage, controlled negatives, and released-host performance.
-
-### S016 — JIT-default execution policy
-
-Evidence: LF2's consumer CMake requires `x86port_runtime`, and x86port does not
-expose its top-level-only `x86port_test_oracle` target to this build. The live
-unsupported-instruction run aborted because the pinned runtime has no bounded
-fallback contract. The Clang-built x86-64 product symbol audit inspected 8,972
-symbol lines, found the required LF2/JIT entry points, and excluded the test
-oracle; its controlled negative rejects that oracle symbol.
-
-Gap: add and pass JIT-default selector, reason-coded fallback, and coverage
-audits on every release configuration and architecture. Fallback execution
-does not prove gameplay or performance for the affected region.
-
-### S017 — Retired-interface removal
-
-Evidence: the source tree contains only the native/JIT execution model.
-`tests/test_source_policy.py` scans all first-party source, documentation, and
-tools for the exact retired interfaces and proves the negative path.
-`tests/test_execution_boundary.py` requires the adapter, `x86port_runtime`, and
-the typed native-address registry; removing the adapter fails the policy.
-
-### S018 — x86-64 product JIT
-
-The `x86port_runtime` product library is integrated and supplies runtime
-interception, code invalidation, denominated block statistics, and explicit
-unsupported-instruction refusal without exposing the test oracle. LF2 owns the
-typed native-address table and scoped original-call policy.
-
-Gap: ten-frame startup evidence now passes; full gameplay and conformance
-remain unverified. The shared direct engine also lacks the bounded fallback
-contract.
-
-### S019 — ARM64 product JIT
-
-The pinned `x86port` at `2607945babec9ec667b5eef6b54232b704860cb7` supplies an
-AArch64 backend and LF2 links it into an Android
-APK. The Cuttlefish ARM64 run reached the retail mode menu through
-`x86p_jit_engine_run`, with the native stack in `SDL_RenderPresent` and no crash;
-this is product execution evidence rather than an APK-only inspection.
-
-Gap: a representative interactive match, executable-memory/cache lifecycle
-checks, and Apple Silicon qualification remain unverified. Bounded fallback
-coverage cannot qualify the backend.
-
-### S020 — Asset-free CI
-
-The workflow builds LF2's real Linux x86-64 native/JIT product and runs focused
-execution-boundary, product-symbol, configuration, structure, format, and lint
-tests from exact full-history source inputs with read-only repository
-permissions and no `lf2.exe`. Its Android arm64-v8a job now assembles the
-asset-free debug APK through `tools/build/android.py`, the pinned Android
-profile, and the shared Android dependency prefix; it does not claim device
-runtime evidence. The first remote Linux and Browser runs passed at
-`ad01e8d` (CI run 34197382110; Pages run 34197382067), and the combined Linux,
-Android, and macOS ARM64 package run passed at `34216452485`.
-
-Gap: Android device/runtime qualification remains open; the Android package
-and local Cuttlefish evidence are recorded in S013 and S019. Windows is the
-comparison baseline rather than an intended shipping host and is therefore
-inapplicable to this port's current delivery goals.
-
-### S021 — Browser native/JIT delivery
-
-The Emscripten build now packages the native/JIT runtime with shared web-port's OPFS
-staging and service-worker isolation resources. The local asset-free package
-contains `lf2.js` and `lf2.wasm`; WebLua verified the setup page, secure
-cross-origin isolation after the service-worker reload, persistent-storage
-initialization, and the no-install state without console or network errors.
-The browser package contains no game files. Source run `35441971535` built it at
-`2bbd617`; the central `pages` deployment serves that artifact at
-`https://someoneisworking.github.io/lf2-port/`. The old project Pages site is
-disabled, and the live `publication.json` names the source run. WebLua verified
-the central setup page, `crossOriginIsolated=true`, a WASM runtime, and no console
-errors or failed network requests.
-
-Browser gestures on the canvas are now claimed through shared web-port's
-`claimCanvasGestures` rather than a lone `touch-action` declaration in this
-page's stylesheet. Driving a real emulated touch device at 390x844 against the
-packaged page, a twelve-step drag up the canvas leaves the document unscrolled
-with `touch-action` and `user-select` both `none`; selection, the long-press
-callout, the native bitmap drag and document overscroll are covered too, none of
-which the local declaration handled. The canvas is sized with `100dvh` rather
-than `100vh`, so its lower edge is not under a mobile address bar.
-
-Gap: a real LF2 install has not yet been imported in a browser, so translated
-gameplay, WebGPU presentation, and persisted-install restart remain unverified.
-x86port must also qualify translated stores that modify cached/current code,
-including an instruction-boundary exit from the active translation. Browser
-gameplay remains open.
+One row per capability. `verified` / `partial` / `blocked` / `missing`. Goals
+are in `docs/project-goals.md`, execution order in `docs/migration.md`, atomic
+work in `docs/issues/`, and which native replacements are grounded in the
+binary in `docs/re-frontier.md`.
+
+**Comparison baseline:** the unmodified Windows release of *Little Fighter 2
+v2.0a* on Windows or Wine — fixed 4:3 DirectDraw, original keyboard/joystick
+configuration, manual game-file setup. Every user-visible delta (widescreen,
+controller joining, host text, display modes, browser and Android delivery) is
+its own row below.
+
+**Current focus:** expand `shared/x86port` JIT coverage so the authenticated LF2
+image runs through the product JIT (issue #128).
+
+| ID | Capability | State | Evidence or gap |
+| --- | --- | --- | --- |
+| S001 | Boot, menus, character select, VS and Stage Mode with audio | partial | Ten-frame silent Clang run reached the mode menu through the product JIT (734,144 blocks, zero refusals); no match re-established |
+| S002 | High-resolution rendering keeps pixel art crisp | verified | Native renderer presents at modern output resolutions with nearest-filtered sprites |
+| S003 | Remappable keyboard/controller actions persist | partial | Bindings and RmlUi menu persist; no physical-controller run through the JIT product |
+| S004 | Linux AppImage first-run game-file setup without a terminal | partial | Installer/tree/exe/ZIP selection validated through the shared setup screen; no clean-machine install-and-play gate |
+| S005 | Native overrides plus `x86port` JIT run the authenticated image | partial | `x86port_runtime` linked, scoped original calls and recursive-context restore covered; gameplay frontier not re-established (#128) |
+| S006 | Widescreen/ultrawide widen the view instead of stretching | verified | 16:9 and ultrawide captures show extra stage area with preserved source geometry |
+| S007 | Character lighting and cast shadows configurable | verified | Native renderer and RmlUi settings expose both controls |
+| S008 | Two physical controllers join as two local players | partial | Second pad auto-assigns to Player 2; no current hardware run |
+| S009 | Controller connect/disconnect/reconnect | partial | Device owner handles events with stable bindings; no hardware evidence |
+| S010 | Borderless, windowed, fullscreen, Alt+Enter | verified | Native window/display path owns the switching |
+| S011 | Host text is anti-aliased | verified | SDL_ttf with embedded Liberation fonts; original bitmap panels stay original |
+| S012 | macOS native/JIT build and Metal renderer release-qualified | partial | Packaged and CI-built; real Metal acceptance and macOS gameplay gate open (#100) |
+| S013 | Android ARM64 package with touch controls and private setup | partial | Signed APK published at v0.1.10, Cuttlefish reached the mode menu; real SAF interruption and physical-device evidence absent |
+| S014 | LAN multiplayer carries remote inputs | missing | Wire contract and loopback socket exist; discovery, session lifetime, input injection do not |
+| S015 | Representative gameplay conforms on each released host | missing | Bounded Stage Mode restoration scenario in `docs/migration.md` not run |
+| S016 | Gameplay defaults to the JIT with no interpreter mode and bounded fallback | partial | Product links `x86port_runtime` and never selects the test oracle; no bounded fallback contract in the shared runtime |
+| S017 | Retired title-specific execution interfaces stay absent | verified | `tools/build/check_source_policy.py` fails on any retired interface reappearing |
+| S018 | `x86port` supplies the x86-64 product JIT | partial | Runtime interception, invalidation, block statistics and explicit unsupported-instruction refusal work; bounded fallback missing |
+| S019 | `x86port` supplies a qualified ARM64 product JIT | partial | AArch64 backend runs to the mode menu on Cuttlefish; Apple Silicon qualification and cache-lifecycle checks open |
+| S020 | Asset-free Linux x86-64 CI builds the product and runs the quality gate | partial | Workflow builds the real product and runs game data, source policy, structure, format, lint and selection tests from full-history inputs |
+| S021 | Browser WASM runs the same native/JIT game with persistent files | partial | Asset-free package deployed to Pages; WebLua verified isolation, storage and gestures, no real LF2 import yet |
+| S022 | Internet multiplayer discovers sessions and plays peer-to-peer | missing | No Firebase signaling or peer channel |
+| S023 | Rollback netplay restores and resimulates exact state | missing | No complete snapshot, restore, or deterministic frame step |

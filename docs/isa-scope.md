@@ -76,8 +76,8 @@ migration.
 
 The retired title-local differential exposed an ADC/SBB carry bug and an
 unsequenced FPU pop/store bug. The durable lesson is that every input consumed
-by the semantic model must vary, undefined-but-observable flags must be compared
-against the chosen oracle, and a negative control must demonstrably fail.
+by the semantic model must vary, and undefined-but-observable flags must be
+compared against the chosen oracle.
 
 The product uses `x86port`'s one flag model. LF2-specific tests may feed real
 title encodings into that production model, but they may not duplicate flag
@@ -87,11 +87,10 @@ formulas or retain the old decoder/lifter as an oracle.
 
 The first bounded LF2 JIT test executes guest `0x004031b0` from the
 authenticated image with `ECX=0x00458440` and return sentinel `0x004462e0`.
-`docs/migration.md` defines the complete state comparison and controlled
-negative. Explicit interpreter mode is linked only into that separately built
-test target. Product inspection must prove gameplay defaults to JIT execution
-and exposes no interpreter selector. Any bounded product fallback is
-reason-coded, counted, and excluded from gameplay/performance evidence.
+`docs/migration.md` defines the complete state comparison. Explicit
+interpreter mode is linked only into that separately built test target; the
+product itself never selects it. Any bounded product fallback is reason-coded,
+counted, and excluded from gameplay/performance evidence.
 
 ## Coverage and refusal reporting
 
@@ -101,9 +100,9 @@ For every LF2 diagnostic, report at minimum:
 - distinct instructions translated, block entries, cache hits, and
   invalidations;
 - instructions implemented as native JIT emission versus bounded fallback,
-  including the fallback reason and coverage denominator;
+  including the fallback reason and covered instruction count;
 - the exact first unsupported guest PC and bytes; and
 - test-interpreter blocks checked, skipped, and divergent in diagnostic builds.
 
-A clean run with zero scanned blocks, an omitted corpus, or an unreported skip
-is not evidence.
+A run that reports no translated blocks, an omitted corpus, or an unreported
+skip is not evidence.

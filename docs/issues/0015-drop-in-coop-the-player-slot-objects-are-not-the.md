@@ -1,0 +1,67 @@
+---
+id: 15
+title: Drop-in coop: the joined-players mask and the player record are found; the active-object list is not
+status: closed
+symptom: a device that is not assigned to a player cannot join a stage that is already running
+tags: coop,drop-in,players,re,groundwork
+created: 2026-08-05
+updated: 2026-09-09
+---
+
+### Reopened (2026-08-05)
+CORRECTION -- the two "findings" below were measured on the CHARACTER SELECT screen, not in
+a match, because the click route used for them lands in VS mode and its char-select screen
+looks nothing like a match in the .data the hook reads. The instrument was fine; the state
+it was pointed at was wrong. Both conclusions are withdrawn.
+What is actually true, all measured in a running match:
+1. THE JOINED-PLAYERS BITMASK IS 0x00451288. Diffing .data across a character-select join
+   gives 0 -> 1, and across a SECOND join 1 -> 3. A count would have gone 1 -> 2; a mask goes
+   1 -> 3. (0x00450bd4 also moved on the first join and was ruled out on the second, where it
+   went 2 -> 0: a cycling value, not state.)
+2. THE PER-SLOT RECORD IS THE FIGHTER. `this+404+4i` in fn_00419a60, 0x420 apart, the same
+   objects as the character-select cursors at 0x00458c94. In a match a playing slot and an
+   idle one differ in 32 dwords of 264, and they read like a fighter:
+     +0x010 / +0x018   position, as ints
+     +0x05c / +0x06c   position, as floats
+     +0x2fc            HP      (436 hurt vs 500 full)
+     +0x300            MP
+     +0x354            99 on an idle slot, 0 on a playing one
+     +0x364            the chosen character (10 vs 0) -- the same field charselect_mouse uses
+     +0x368            a per-slot pointer
+     +0x418            5 vs 0
+3. FIGHTERS ARE NOT ALLOCATED AT MATCH START. Heap-diffing across "Fight!" changes only 95
+   dwords in 26.7 M, and the clusters land inside the slot records themselves (+0x10..0xb8
+   and +0x2fc..0x418 of slot 0). So match start INITIALISES pre-existing records; there is no
+   spawn to call.
+4. AND AN INITIALISED RECORD IS NOT SUFFICIENT. Two negatives, both run:
+     - setting a mask bit mid-match does nothing at all (the mask is read at match start);
+     - setting the bit AND cloning a playing slot's whole record onto an idle one, with its
+       own +0x368 and a shifted position, still produces no third fighter -- nothing draws,
+       nothing collides, the HUD stays at two.
+So what remains is the list of ACTIVE objects: the thing the game iterates to update and draw,
+which a player has to be in. That is the next step, and it is the only one left before
+drop-in is mechanical.
+Instruments, all in the ported input gather (the one place with `this`): LF2_COOP_DEBUG (slot
+table on change), LF2_COOP_DIFF=<frame> (playing vs idle record), LF2_COOP_SNAP=<a>,<b> (one
+slot across two frames -- note it cannot span a join, because the gather only runs in-match),
+LF2_COOP_TEST=<frame> (the mask + clone probe above).
+METHOD NOTE worth keeping: LF2_COOP_DIFF must be pointed at a frame that is VERIFIABLY a
+match. Dump the frame alongside it. A diff of two idle records looks like a clean, confident
+result -- two differing dwords -- and says nothing.
+
+### Note (2026-08-05)
+NEXT LEAD, and where a fresh session should start.
+.data records nothing that looks like a registration at match start: the four-way diff across
+"Fight!" gives 8 dwords, all small counters/timers (0x00452170, 0x00452180, 0x00452194,
+0x004554e0, 0x00457bc8..0x00457bd0, 0x00457cfc). So whatever list a fighter has to be in is
+on the heap, not in .data.
+The heap diff across "Fight!" has one cluster that is not a player record: 1052 bytes at
+0x25f149a0. Its CHANGED-OFFSET PATTERN matches the player record's layout closely -- +0x10,
++0x18, +0x5c, +0x6c, +0x70..0x7c, +0x308, +0x418, ending at 0x418 against a 0x420 stride --
+which reads like a second object of the same type. That is the shape of a world-object array
+separate from the eight player records, and it is the first thing to confirm.
+Not confirmed: it is not on the 0x420 grid of the player array
+((0x25f149a0 - 0x25f11c40) / 0x420 is not an integer), so if it is the same type it belongs
+to a different array with its own base. Find that base and its count, and the question
+becomes whether adding an entry there (plus the mask bit and the record init already known)
+is what puts a fighter in the world.
