@@ -128,7 +128,7 @@ and the gate that restores product runs are specified in
 | `runtime/overrides/` | title-specific native behavior and runtime override registrations |
 | `runtime/video/`, `runtime/audio/`, `runtime/input/`, `runtime/ui/` | native host subsystems |
 | `platforms/` | package/platform composition |
-| `tools/` | Python provisioning, verification, packaging, and RE tools |
+| `tools/` | Python provisioning, build, packaging, RE, and runtime route tools |
 | `docs/` | goals, state, migration, ownership, evidence, and RE notes |
 | `game/` | player-owned extracted tree; gitignored |
 

@@ -1,0 +1,72 @@
+---
+id: 25
+title: Keyboard and mouse routes cannot be screen-keyed, so four tests still aim at moving targets
+status: closed
+symptom: smoke, mouse, widescreen and pause_dropout schedule every press by bare frame number, including presses aimed at the mode menu, character select, the overlay and the match -- the exact drift issue #18 was about
+tags: testing,virtual-pad,instrument,routes
+created: 2026-08-06
+updated: 2026-09-09
+---
+
+### Note (2026-08-06)
+FOUND BY THE NEW REPORT, on the first run after the shared module went in, which is the
+argument for having built it: the recorded mouse runtime scenario's FIRST CLICK IS DEAD.
+    scripted input: screen charselect first up at frame 1352
+    LF2_CLICK_SCRIPT: 5 of 5 items fired
+The route is "403,228:900" (commented "launcher: game start"), then 1350, 1450, 1600, 1750.
+The post-load panel does not appear until frame 1352 -- one frame after the SECOND click. So
+the click at 900 does nothing at all, the click at 1350 (commented "mode menu: Stage mode")
+is what starts the game, and every later click is doing the job the comment gives the one
+before it. A click-only run with just "403,228:900" and 500 further frames never leaves the
+launcher: 27 vram allocations, 0 input gathers, no screen.
+The test PASSES, and passed before this was noticed, because the remaining numbers happen to
+land somewhere workable. That is the failure this issue is about, in its purest form: five
+items fired, every assertion green, and the route is not doing what it says. Note also that
+the pad route starts the game from a press at frame 900 and reaches the panel at 906 -- so
+the difference is the mouse path, not the frame.
+NOT YET ESTABLISHED, and it should be before the route is rewritten: WHY the click at
+(403,228) hits nothing. The game's own front-end hit test brackets y into bands starting at
+274 (menu.c records 274..300, 305..330, 336..361 for items 1..3), and 228 is above all of
+them -- but so is the 241 of the click that DOES work, so the port's own item table is the
+thing to read, not the game's. Do not "fix" the route by moving the coordinate until that is
+understood: a click that works for a reason nobody has established is the same bug again.
+
+### Note (2026-08-06)
+CORRECTION and PROGRESS, 2026-08-06.
+CORRECTION: it is THREE routes, not four. the recorded widescreen runtime scenario has no scripted input at
+all -- it drives LF2_WINDOW_SIZE and LF2_WINDOW_RESIZE, whose frames land in the launcher
+before any screen exists, where a frame number is exactly the right thing. My first survey
+counted it by grepping for four-digit numbers, which is the sort of sizing-from-a-grep this
+project already has a rule against. The affected set is smoke, mouse and pause_dropout.
+DONE: the shared module (runtime/app/script.c, commit df3d148) and the recorded pause_dropout runtime scenario,
+which is now keyed to charselect/overlay for pad one and entirely to @match for pad two --
+every one of pad two's presses is about the match, and a join landing before the match starts
+claims nothing, so the pause that follows would be a pause with no drop-out in it. Green in
+102 s. Its LF2_QUIT_AFTER went 2900 -> 3200 for headroom, since the quit frame is still a
+frame number and a route that now floats later must not be truncated by it.
+LEFT: smoke and mouse, and both are blocked on the same unanswered question -- WHAT ACTUALLY
+STARTS THE GAME on a mouse/keyboard route. Measured so far, and none of it fits the comments:
+  - The click at (403,228) sets the game's own click flag (0x00457580 goes 0 -> 1, at guest
+    ret 0x0043bc3a) and the game's own mouse X reaches 403 (0x004546f0 -> 0x193). So the
+    click and the position BOTH arrive, and the game still does not start.
+  - 0x004546f0 then oscillates 403 -> 0 every frame, zeroed at the same guest site that
+    consumes the click.
+  - (403,228) is not an invented coordinate: it is MAIN_MENU[0] in runtime/overrides/menu.c,
+    the port's own "game start" item, and the PAD drives the front end by writing exactly
+    that position plus the click flag -- and the pad route works.
+So a click and a pad confirm put the same two values in the same two places and only one of
+them starts the game. That difference is the thing to find, and it is worth finding: it is
+also the reason a mouse route needs five clicks where a pad route needs one press.
+DO NOT convert smoke or mouse to @charselect until this is understood. Their anchors would be
+derived from a route whose first input does nothing, which is how the current numbers came to
+be off by one screen in the first place.
+
+### Note (2026-08-06)
+CORRECTION, 2026-08-06: the note above claiming "the recorded mouse runtime scenario's FIRST CLICK IS DEAD" is
+RETRACTED. It is not dead -- it starts the game. See issue #27, which carries the measurement
+and the retraction: a lone click on the launcher takes the top-level mode word to 2 within
+fifty frames and the game goes on to load and draw its mode menu.
+What misled me was reading "screens reached -- NONE" as "the click did nothing", when it only
+means the port's post-load panel signal never fired. mouse_test's own comments were closer to
+
+(full record: git history)

@@ -61,7 +61,7 @@ New execution evidence comes from:
 - the original LF2 v2.0a executable under Wine or another independent oracle;
 - direct binary analysis;
 - focused tests against `x86port`'s production decoder/JIT; or
-- the separately built test oracle with an explicit controlled negative.
+- the separately built test oracle.
 
 Instruction semantics are fixed in `shared/x86port`, never at one LF2 address.
 
@@ -73,8 +73,8 @@ Instruction semantics are fixed in `shared/x86port`, never at one LF2 address.
   guest memory layout.
 - `runtime/app/port_entry.c` as native entry. Guest PE entry `0x00445560` and
   WinMain `0x0043cf40` stay bypassed.
-- Bounded native initialization and every native override still grounded in
-  `docs/re-frontier.md`.
+- Bounded native initialization and every native override grounded in the
+  binary evidence recorded in `docs/re-frontier.md`.
 - Win32/CRT/GDI/DirectDraw/DirectShow/DirectSound/input/socket HLE and COM
   callbacks.
 - Renderer, audio, input, UI, configuration, packaging, and platform modules.
@@ -120,12 +120,7 @@ A separately built test target must:
 4. Compare EIP, general registers, EFLAGS/lazy-flag meaning, x87/SSE state,
    stack balance, return reason, and every guest-memory write.
 5. Report translated blocks/instructions and any fallback entries with
-   denominators and reason categories.
-6. Run a controlled negative that changes one post-state or semantic and proves
-   the comparison fails at the first differing field/address.
-
-Build and selector inspection separately prove that gameplay defaults to JIT
-and exposes no explicit interpreter mode.
+   reason categories.
 
 ## Expansion order
 
@@ -163,12 +158,10 @@ tree:
   state-anchored input;
 - exercises DirectDraw/GDI presentation, sound effects, music, guest time, and
   normal quit through their preserved owners;
-- reports nonzero JIT, HLE, native-override, and scoped-original work with
-  denominators;
+- reports nonzero JIT, HLE, native-override, and scoped-original work;
 - reports every fallback entry by reason and coverage, while requiring the
   gameplay/performance assertions to be proven on JIT-executed regions;
-- proves executable-write invalidation and override transition positives and
-  negatives; and
+- proves executable-write invalidation and override transitions; and
 - compares CPU, memory, timing, service events, audio, and frame checkpoints
   against an independent oracle on each released host architecture.
 

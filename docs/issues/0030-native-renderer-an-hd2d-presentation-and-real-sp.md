@@ -1,0 +1,72 @@
+---
+id: 30
+title: Native renderer: an HD2D presentation and real sprite-cast shadows
+status: closed
+symptom: the port draws exactly what LF2 drew -- flat blits onto a software surface with the game's own fake shadow ellipse. Wanted: a native renderer with an HD2D look (depth, lighting, bloom/DOF over the pixel art) and shadows actually cast from the sprites
+tags: reported,rendering,renderer,hd2d,shadows,feature
+created: 2026-08-06
+updated: 2026-09-09
+---
+
+### Note (2026-08-06)
+TWO THINGS FROM THE SAME DAY'S WORK THAT BEAR DIRECTLY ON THIS, 2026-08-06.
+1. CLAIM C010 SAYS THE PORT HAS NO ALPHA/BLEND PATH AT ALL -- 'a per-object fade cannot be
+   expressed with the game's own drawing'. Everything is an opaque or colour-keyed copy. Bloom,
+   depth of field and a soft cast shadow are all blend operations, so the FIRST thing the
+   native renderer has to bring is a blend stage. Note that C010 is currently flagged STALE by
+   `info.py claim check` (six commits to runtime/video/ddraw.c since it was verified) -- re-verify
+   it rather than citing it, and either way the conclusion for this issue is the same.
+2. THE BACKGROUND IS NOW A CLEAN SEAM TO BUILD ON. runtime/overrides/background.c owns the
+   whole layer pass, and it already has, per layer and per frame: the picture, the destination,
+   the parallax offset, the repeat step, and the animation frame. A renderer that wants the
+   background as textured quads with depth can take them from there instead of reconstructing
+   them from the blit stream -- and a parallax RATE is a depth cue that needs no invention,
+   since it is literally how far the layer moves relative to the camera.
+   Issue #28 is resolved and #23 is down to one deliberate hole: the black beside a
+   non-looping layer in a very wide view. That hole is left for THIS issue on purpose. The
+   right fill is a lit backdrop the renderer generates, not a repeated bitmap the compositor
+   invents -- so it should be designed as part of the HD2D pass rather than patched before it.
+
+### Note (2026-08-06)
+FIRST SCOPING MEASUREMENT, 2026-08-06 -- 'does every sprite reach one chokepoint?' is
+answered for the in-match frame, and the answer is much better than the entry assumed.
+METHOD: LF2_BLT_FRAME=2250 on a VS match at 1600x550 (Brokeback Clif), which logs every blit
+composing that presented frame together with the guest return address that issued it. Each
+address resolved against the retail function map. 137 blits, all of them accounted for:
+    105 + 22 = 127   fn_0043f010   the clip draw -- ALREADY AN OVERRIDE (text.c)
+              8      fn_0043f310   109 bytes; hud.c already names it as the HUD's two bars
+              1      fn_0043e940   95 bytes; not yet identified
+              1      fn_00401250   50 bytes; the full-screen COLORFILL that backs the frame
+So a match frame is drawn through FOUR functions, one of which the port already replaces and
+two of which are under 110 bytes. That is a chokepoint, and it means a renderer can be fed
+from named draw calls rather than from reconstructed blit rectangles.
+WHAT THIS DOES NOT ESTABLISH, and must not be read as establishing:
+  - It is ONE frame of ONE stage in ONE mode. The front end, the character-select screen and
+    the other stages have not been counted. A path used only by the menu would not appear.
+  - It counts blits reaching surf_Blt. surf_BltFast and direct writes through Lock are
+    separate paths in runtime/video/ddraw.c and were NOT counted here; the frame hook does not see
+    them, so their absence from this list says nothing at all about whether they are used.
+    Counting all three per run is the next measurement, and it needs a counter rather than a
+    per-frame dump.
+THE SECOND UNKNOWN IS UNTOUCHED: whether a sprite's z is reachable at the draw. fn_0043f010's
+six arguments are (x, y, clip index, picture, ?, ?) -- no depth among them, which is what the
+entry feared. The depth sort happens upstream in fn_0041a5a0, so the link from a draw back to
+the object it belongs to is the thing to map next.
+
+### Note (2026-08-06)
+SECOND SCOPING MEASUREMENT, 2026-08-06: IS A SPRITE'S DEPTH REACHABLE AT THE DRAW? Yes,
+and by a pattern this port already uses. This was the unknown the entry called the one that
+decides the architecture, so it is worth the detail.
+READ OUT OF fn_0041a5a0 (2173 bytes, the stage's object pass):
+  0041a5d0  walks 400 slots of the EXISTS byte array at this+4 -- the same byte hud.c
+            raises for a joining player -- and collects the live indices into a local list
+  0041a610  bubble-sorts that list on  [ [this + idx*4 + 0x194] + 0x18 ]
+            so this+0x194 is the OBJECT POINTER TABLE and +0x18 is the SORT KEY
+  0041a670  walks the sorted list with EAX = the object pointer, reading +0x8, +0x70, +0x98
+  and it calls fn_0043f010 SEVEN times in the body -- the sprite kinds of one object.
+So the object pointer is live at every draw in the pass, and the depth the game itself sorts
+on is one dereference from it. A renderer does not have to recover depth from the blit; the
+pass can hand it over.
++0x18 IS THE SORT KEY, MEASURED. That it is the Z AXIS is an inference from the game being
+
+(full record: git history)

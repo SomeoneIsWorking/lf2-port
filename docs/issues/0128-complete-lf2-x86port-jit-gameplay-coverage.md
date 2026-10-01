@@ -34,8 +34,7 @@ yet reached the complete LF2 gameplay path.
 
 Native call sites use `lf2_jit_call`/`lf2_jit_call_original` and the typed
 runtime override registry. CMake requires `x86port_runtime`; the consumer cannot
-see `x86port_test_oracle`. `tests/test_execution_boundary.py` guards the
-positive product boundary, while `tests/test_source_policy.py` prevents exact
+see `x86port_test_oracle`. `tools/build/check_source_policy.py` prevents exact
 retired execution interfaces from returning anywhere in first-party source,
 documentation, or tools.
 

@@ -1,4 +1,4 @@
-# Running and verification contract
+# Running the port
 
 ## Current execution state
 
@@ -16,23 +16,11 @@ compares complete state and writes with the separately built test oracle.
 
 ## Focused boundary validation
 
-From the repository root:
-
-```sh
-uv run --frozen python tests/test_execution_boundary.py
-uv run --frozen python tests/test_source_policy.py
-uv run --frozen python ../../shared/re-harness/tools/project_state.py --root .
-uv run --frozen python ../../shared/re-harness/tools/codemap.py check .
-git diff --check
-```
-
-The execution test requires the product JIT adapter, `x86port_runtime`, the
-typed native-address registry, and no explicit gameplay interpreter selector.
-The source-policy test scans all first-party source, documentation, and tooling;
-it rejects retired execution interfaces, non-launcher shell automation, Java
-tool scripts, product environment reads outside the typed owner, and product
-diagnostics outside the LF2/Lucent logger. Its controlled negatives prove each
-class can fail. None of these commands runs the game.
+`ctest` is the gate. From a configured build directory it runs the product unit
+tests plus the source-policy, structure, clang-format and clang-tidy checks;
+`uv run --frozen python tools/build/check_source_policy.py` and
+`uv run --frozen python tools/build/check_structure.py` run the two repository
+checks on their own. None of them runs the game.
 
 ## Shipping launcher contract
 
@@ -77,37 +65,26 @@ the previous valid selection.
 
 ### Product-seam suite
 
-The normal suite exercises production modules directly and includes formatting,
-Clang-Tidy, structure limits, portable configuration, package content, and
-positive/negative unit tests. It covers:
+`ctest` exercises production modules directly and includes formatting,
+Clang-Tidy, structure limits, and portable configuration. Touched C/C++ uses the
+tracked clang-format and clang-tidy policy. Maintainer evidence uses Clang
+without rejecting GCC or AppleClang for users.
 
-- LF2 memory/PE adaptation to canonical `x86port` state;
-- import, native-override, scoped-original, return-sentinel, and invalidation
-  dispatch;
-- JIT-default product composition with no explicit interpreter selector;
-- bounded fallback reason/coverage accounting once that shared contract exists;
-- exact unsupported-instruction reports; and
-- retained native renderer, audio, input, UI, configuration, and package tests.
-
-Maintainer evidence uses Clang without rejecting GCC or AppleClang for users.
-Touched C/C++ uses the tracked clang-format and clang-tidy policy. The sparse
-memory milestone's combined native gate passes 51 tests with only the existing
-shader check skipped (MSL compiler unavailable). Its direct lint audit exposed a
-verification defect: `check_cpp_quality.py` supplies a regex-looking literal
-filename to `--line-filter`, hiding diagnostics. Without that filter, the
+`check_cpp_quality.py` supplies a regex-looking literal filename to
+`--line-filter`, hiding diagnostics. Without that filter the
 `clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling` checker
 rejects bounded standard `memcpy`, `memset`, and formatted I/O and recommends
 optional Annex K APIs unavailable on the supported libc. This remains an open
-lint-policy/tooling boundary; the filtered green result is not full lint evidence.
-No checker exclusion or replacement byte-copy loop was introduced to hide it.
+lint-policy/tooling boundary; the filtered green result is not full lint
+evidence. No checker exclusion or replacement byte-copy loop was introduced to
+hide it.
 
 ### Separately built oracle target
 
 Diagnostic-only explicit interpreter execution belongs in a separate target.
 It initializes independent JIT and oracle state from the same authenticated
-image, compares complete architectural state and writes, reports denominators,
-and stops at the first divergence. A controlled negative must produce the
-opposite answer before a clean result is trusted.
+image, compares complete architectural state and writes, and stops at the first
+divergence.
 
 ### Serialized gameplay scenarios
 
@@ -124,8 +101,6 @@ performance for the affected region.
 
 - Lucent is the one process logger. `runtime/log/` accepts explicit complete LF2
   records; it does not own timestamps, channels, sinks, or serialization.
-- Every discriminator reports observed denominators and demonstrates a
-  controlled opposite result.
 - `runtime/app/config.*` owns persisted player settings;
   `runtime/app/environment.*` is the only product environment reader;
   `runtime/app/user_paths.*` owns the LF2 user-data location.
