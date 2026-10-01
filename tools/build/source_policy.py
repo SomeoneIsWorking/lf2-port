@@ -7,12 +7,7 @@ import re
 
 ENVIRONMENT_OWNER = "runtime/app/environment.c"
 LOGGER_OWNER = "runtime/log/lf2_log.cpp"
-POLICY_OWNERS = frozenset(
-    {
-        "tools/build/product_symbols.py",
-        "tools/build/source_policy.py",
-    }
-)
+POLICY_OWNERS = frozenset({"tools/build/source_policy.py"})
 FIRST_PARTY_DIRECTORIES = ("docs", "platforms", "runtime", "tests", "tools")
 FIRST_PARTY_ROOT_FILES = (
     "AGENTS.md",
