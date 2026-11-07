@@ -27,14 +27,14 @@ class SourceDependency:
 JIT_COMMON = SourceDependency(
     name="jit-common",
     repository="https://github.com/SomeoneIsWorking/jit-common.git",
-    revision="4c58336f5d187d556755c20c983b5dc168f8f9b1",
+    revision="d68ccedf47abedc9c8a844400a7c5ba16027d0d0",
     marker="src/jitcommon/block_cache.h",
 )
 
 X86PORT = SourceDependency(
     name="x86port",
     repository="https://github.com/SomeoneIsWorking/x86port.git",
-    revision="2607945babec9ec667b5eef6b54232b704860cb7",
+    revision="d2c2cf565d428b4616d89ea44f23afd142d893d8",
     marker="src/x86port/jit_engine.h",
 )
 
@@ -43,14 +43,14 @@ RUNTIME_DEPENDENCIES = (JIT_COMMON, X86PORT)
 ANDROID_PORT = SourceDependency(
     name="android-port",
     repository="https://github.com/SomeoneIsWorking/android-port.git",
-    revision="3585be1bb615a8b693131000ea71376b77458c37",
+    revision="a1461d9b9014251ebe67b3f439e506488776942c",
     marker="tools/android_port.py",
 )
 
 WEB_PORT = SourceDependency(
     name="web-port",
     repository="https://github.com/SomeoneIsWorking/web-port.git",
-    revision="7409d60fd3a9aa9ab3781c6812fd1de6109d0d7f",
+    revision="d2eb6960390eec0f85387da37a8bd99af95d04f5",
     marker="tools/web_port.py",
 )
 

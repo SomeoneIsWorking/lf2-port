@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: SomeoneIsWorking/web-port
-          ref: 7409d60fd3a9aa9ab3781c6812fd1de6109d0d7f
+          ref: d2eb6960390eec0f85387da37a8bd99af95d04f5
           path: vendor/shared/web-port
           fetch-depth: 1
           submodules: recursive
@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: SomeoneIsWorking/x86port
-          ref: 2607945babec9ec667b5eef6b54232b704860cb7
+          ref: d2c2cf565d428b4616d89ea44f23afd142d893d8
           path: vendor/shared/x86port
           fetch-depth: 1
           submodules: recursive
@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: SomeoneIsWorking/jit-common
-          ref: 4c58336f5d187d556755c20c983b5dc168f8f9b1
+          ref: d68ccedf47abedc9c8a844400a7c5ba16027d0d0
           path: vendor/shared/jit-common
           fetch-depth: 1
           submodules: recursive
@@ -55,7 +55,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: SomeoneIsWorking/port-assets
-          ref: 330c1bf146bd97ecc6af49e637476a677f0e55a0
+          ref: e34f49fae18c1abc573d149700acc2245e805615
           path: vendor/shared/port-assets
           fetch-depth: 1
           submodules: recursive

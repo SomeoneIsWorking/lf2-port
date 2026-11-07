@@ -56,7 +56,7 @@ PORT_ASSET_FILES = (
     Path("sets/devices/keyboard.svg"),
     Path("sets/devices/gamepad.svg"),
 )
-PORT_ASSETS_REVISION = "330c1bf146bd97ecc6af49e637476a677f0e55a0"
+PORT_ASSETS_REVISION = "e34f49fae18c1abc573d149700acc2245e805615"
 SUBMODULE_INPUTS = (
     Path("third_party/RmlUi/CMakeLists.txt"),
     Path("third_party/lucent/CMakeLists.txt"),

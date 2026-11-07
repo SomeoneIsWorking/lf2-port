@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: SomeoneIsWorking/port-assets
-          ref: 330c1bf146bd97ecc6af49e637476a677f0e55a0
+          ref: e34f49fae18c1abc573d149700acc2245e805615
           path: build/deps/port-assets
           fetch-depth: 0
           persist-credentials: false
@@ -88,7 +88,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: SomeoneIsWorking/port-assets
-          ref: 330c1bf146bd97ecc6af49e637476a677f0e55a0
+          ref: e34f49fae18c1abc573d149700acc2245e805615
           path: build/deps/port-assets
           fetch-depth: 0
           persist-credentials: false
@@ -132,7 +132,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: SomeoneIsWorking/port-assets
-          ref: 330c1bf146bd97ecc6af49e637476a677f0e55a0
+          ref: e34f49fae18c1abc573d149700acc2245e805615
           path: build/deps/port-assets
           fetch-depth: 0
           persist-credentials: false

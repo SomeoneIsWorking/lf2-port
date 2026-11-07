@@ -166,15 +166,15 @@ storage, reached the retail mode menu through the ARM64 product JIT, and showed
 the authored touch overlay; the process remained alive while presenting frames.
 
 A previous clean local rebuild pinned `shared/android-port` at
-`6735dc557b2ae56d735ce8140867b8375567d9e6` and produced
+`44fdd6c9dd35b66b81d3afa960c8e20d1e6e15f3` and produced
 `build/release/LF2-Port-0.1.0-android-arm64-debug.apk`; its recorded FFmpeg
 contract keeps AArch64 NEON enabled with hidden internal symbols.
-The current source pin is `3585be1bb615a8b693131000ea71376b77458c37`,
+The current source pin is `a1461d9b9014251ebe67b3f439e506488776942c`,
 which moves the Activity, SAF importer, foreground progress, and service to
 the shared Android framework and verifies a staged file's source prefix before
 resuming an interrupted SAF copy. Hosted CI run `34691013242` built and inspected
 an asset-free arm64-v8a APK with the earlier framework pin; its Linux and macOS jobs also passed.
-The Lucent submodule now pins `93275f46cd9e1efe25d21928bc575cf37de190d5`,
+The Lucent submodule now pins `885e9579f43ac9dcceb2fc64a0de7552f6cbb2cd`,
 which removes its old Android Java; the LF2 logging and game-selection targets
 build with Clang and both focused tests pass.
 
@@ -254,7 +254,7 @@ contract.
 
 ### S019 — ARM64 product JIT
 
-The pinned `x86port` at `2607945babec9ec667b5eef6b54232b704860cb7` supplies an
+The pinned `x86port` at `d2c2cf565d428b4616d89ea44f23afd142d893d8` supplies an
 AArch64 backend and LF2 links it into an Android
 APK. The Cuttlefish ARM64 run reached the retail mode menu through
 `x86p_jit_engine_run`, with the native stack in `SDL_RenderPresent` and no crash;
