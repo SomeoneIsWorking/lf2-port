@@ -140,3 +140,5 @@ LF2 does not carry a second implementation.
 
 [MIT](LICENSE) covers this repository's original code and documentation only.
 It grants no rights to Little Fighter 2 or its assets.
+
+Built with AI assistance (Claude and other LLMs).
