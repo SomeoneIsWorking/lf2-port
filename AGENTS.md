@@ -1,150 +1,71 @@
-# LF2 port — working agreement
+# LF2 port — agent guidance
 
 Little Fighter 2 v2.0a is becoming one native/dynarec product. Hand-written
 native owners provide the host shell, Win32/DirectX services, renderer, audio,
-input, UI, and selected game behavior. Every other guest instruction must run
-on demand from the player's authenticated `lf2.exe` through `shared/x86port`'s
-JIT.
+input, UI, and selected game behavior. Every other guest instruction runs on
+demand from the player's authenticated `lf2.exe` through `shared/x86port`'s
+JIT, consumed by the x86-64 executor adapter through `x86port_runtime`.
+Execution policy: the `dynarec-port`, `dynarec-runtime` and `dynarec-overrides`
+skills.
 
-The x86-64 executor adapter consumes `x86port_runtime` and currently refuses at
-the first unsupported instruction during startup. Extend the shared JIT rather
-than adding a title-specific execution path.
+## Authorities
 
-## Read before non-trivial work
+Read `docs/project-state.md`, then `docs/migration.md`, before non-trivial work.
 
 | Authority | Answers |
 | --- | --- |
 | `docs/project-goals.md` | durable product outcomes and success conditions |
 | `docs/project-state.md` | verified, partial, blocked, and missing capabilities; current focus |
-| `docs/migration.md` | the LF2-specific native/JIT migration and acceptance gates |
+| `docs/migration.md` | the LF2 native/JIT migration: ownership boundary, first JIT discriminator (constructor `0x004031b0`), representative-gameplay restoration gate |
 | `docs/codemap.md` | subsystem ownership and where new work belongs |
 | `docs/re-frontier.md` | which native replacements are grounded in the binary |
 | `docs/issues/` | open atomic work and unfixed defects |
 | `docs/platform-boundary.md` | observed Win32, DirectDraw, DirectSound, GDI, and input surface |
 | `docs/isa-scope.md` | title-specific x86 coverage evidence for the JIT |
 
-Search the open issues before re-deriving an address, ABI, or state transition.
+## Ownership
 
-## Non-negotiable execution contract
-
-- The gameplay product is native code plus the `x86port` JIT. The player's
-  executable is runtime data and no title-specific guest implementation is a
-  build input.
-- JIT execution is the gameplay default. A bounded interpreter fallback may
-  handle only a failed/unsupported compilation or an unsafe translated exit;
-  every fallback is reason-coded and counted. An explicit interpreter mode is
-  diagnostic-only, and fallback coverage is never gameplay or performance
-  proof.
 - `x86port` owns x86 decode, architectural state, instruction semantics,
   dynamic translation, executable memory, and translated-block lifetime. LF2
-  must not fork those responsibilities.
+  does not fork those responsibilities.
 - LF2 owns exact executable identity, PE mapping, title callbacks, the native
   override table, Win32/HLE services, and product policy.
-- Override lookup uses runtime guest address and image identity. A native
-  override can make a scoped original call through the JIT without recursively
-  selecting itself. Changing override state invalidates captured call paths.
-- Unsupported guest behavior reports its guest PC and decoded bytes. Until the
-  shared runtime supplies the bounded fallback contract, it refuses rather
-  than becoming a no-op or guessed translation.
 - Differential evidence comes from Wine/the original executable, binary
   analysis, or the separately built test oracle.
 
-## Preserve the working seams
+## Layout
 
-The CPU migration must adapt the existing product instead of rewriting it.
+The CPU migration adapts the existing product instead of rewriting it.
 
-- `runtime/app/port_entry.c` remains the native process entry. The guest PE
-  entry and WinMain remain bypassed; bounded native initialization remains.
-- `runtime/cpu/` retains the 4 GiB guest address space, PE loading, and memory
+- `runtime/app/port_entry.c` is the native process entry. The guest PE entry
+  and WinMain stay bypassed; bounded native initialization remains.
+- `runtime/cpu/` holds the 4 GiB guest address space, PE loading, and memory
   access policy, adapted once to `x86port`'s CPU/memory interface.
-- `runtime/win32/` retains the Win32, CRT, GDI, DirectDraw COM, DirectShow,
+- `runtime/win32/` is the Win32, CRT, GDI, DirectDraw COM, DirectShow,
   DirectSound, input, and socket/HLE service boundary.
-- `runtime/overrides/` retains the verified native behavior and ABI facts. It
-  uses address-based runtime dispatch and scoped original calls.
+- `runtime/overrides/` holds the verified native behavior and ABI facts, using
+  address-based runtime dispatch and scoped original calls.
 - `runtime/video/`, `runtime/audio/`, `runtime/input/`, `runtime/ui/`, and
-  `runtime/platform/` remain peer host subsystems. A renderer refactor is not a
-  prerequisite for CPU execution. First preserve the same calls and data at
-  their existing boundaries; investigate graphics only after CPU/service state
-  proves a graphics-owned divergence.
+  `runtime/platform/` are peer host subsystems. A renderer refactor is not a
+  prerequisite for CPU execution; graphics is investigated only after
+  CPU/service state proves a graphics-owned divergence.
 - Existing routes are reusable evidence only after their producers run through
   the JIT product.
-
-## First JIT discriminator
-
-Before any gameplay product run, a separately built test target must map the
-authenticated LF2 v2.0a executable through the production memory owner and
-execute guest constructor `0x004031b0` through `x86port`'s JIT. Preserve the
-native entry contract already recorded in `port_entry.c`: `ECX=0x00458440`, a
-guest return sentinel at `0x004462e0`, and no guest PE-entry or WinMain call.
-
-Compare registers, EFLAGS, x87/SSE state, the guest stack, EIP/return reason,
-and every guest write with the test target's interpreter, and require nonzero
-translated-block counts. This discriminator is not permission to treat
-fallback execution as gameplay proof.
-
-## Representative-gameplay restoration gate
-
-The deleted execution path is not part of this gate. Gameplay is restored only
-after the native/JIT product:
-
-- provisions a fresh checkout from the player's authenticated game asset
-  without a translation step;
-- reaches the existing menu, character-select, VS, and Stage Mode frontier;
-- runs a bounded Stage Mode fight with player input, enemy/world updates,
-  DirectDraw/GDI presentation, sound effects, music, timing, and interrupts;
-- reports nonzero JIT blocks, HLE calls, native overrides, and one scoped
-  original call;
-- exercises one current override/original A/B through the shipping dispatcher
-  and the relevant executable-write invalidation; and
-- compares CPU, memory, timing/interrupt, service-event, audio, and frame
-  checkpoints against an independent oracle on every released host
-  architecture, within explicitly documented tolerances.
-
-Boot, a logo, a menu, a clean trace, or a single frame is not this gate.
-
-## Ownership and quality guardrails
-
-- Follow this repository's cohesive-owner map in `docs/codemap.md`: the entry
-  point composes lifecycle, execution, platform, and presentation owners; it
-  does not absorb their implementations. Split new work by its narrowest
-  responsibility and keep dependencies flowing through the mapped interfaces.
-  New runtime source is capped at 1,200 lines, existing oversized files may not
-  grow, and 2,000+ lines require extraction before extension.
-  `tools/build/check_structure.py` remains the mechanical authority and must
-  cover new first-party modules.
-- Lucent is the only process logger. Product modules call LF2's typed logger
-  bridge explicitly; they never write `stderr`/`stdout` or rely on a forced
-  macro that disguises stdio. Timestamps, channels, sinks, and serialization
-  stay in Lucent. Emit one record per call site.
 - `runtime/app/config.*` owns typed settings and persistence;
   `runtime/app/environment.*` owns the typed maintainer-override key set and
-  is the only product source allowed to read the process environment;
+  is the only product source that reads the process environment;
   `runtime/app/user_paths.*` owns the LF2 path below Lucent's OS user-data
   directory; `runtime/ui/` edits configuration but does not own it. `LF2_*`
-  environment variables are diagnostic/maintainer overrides, never features
-  or a second configuration system.
-- Add behavior to the smallest owning module. Do not grow a god file, duplicate
-  x86 semantics, or create a title-local JIT/cache beside `x86port`.
-- Build products live under `build/`; disposable diagnostics live under one
-  stable activity path in `scratch/`, never `/tmp`. Never issue raw `rm`.
-- Project automation is Python. `run.sh` is only the thin locked-environment
-  launcher.
+  environment variables are diagnostic/maintainer overrides, never features.
+- Product modules log through LF2's typed Lucent logger bridge.
 - `tools/build/source_dependencies.py` owns the immutable x86port and
   jit-common revisions, checkout validation, and clean provisioning under
   `build/deps`. CMake consumes only paths resolved by that owner.
-
-## Issue discipline
-
-`docs/issues/` is the only atomic queue: an open unfixed bug or a missing
-feature. File the symptom, the measured cause, and the rejected shortcuts. Close
-an issue when it is fixed or disproven, and delete it. Update
-`docs/project-state.md` when capability coverage changes and
-`docs/codemap.md` only when ownership or placement changes.
+- `tools/build/check_structure.py` caps new runtime source at 1,200 lines,
+  freezes existing oversized files, and requires extraction before extending a
+  2,000+ line file; it must cover new first-party modules.
 
 ## Game content
 
-Never commit or package `lf2.exe`, the installer, extracted game data, raw
-instruction-byte exports, or anything from which the original program can be
-reconstructed. Source and packaged builds accept player-owned game files and
-validate the exact LF2 v2.0a identity. Curated documentation screenshots are
-the only tracked visual-output exception.
+Source and packaged builds accept player-owned game files and validate the
+exact LF2 v2.0a identity.

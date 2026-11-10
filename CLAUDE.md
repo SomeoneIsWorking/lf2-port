@@ -1,4 +1,3 @@
-# LF2 repository guidance
+# CLAUDE.md
 
-The single project instruction authority is [`AGENTS.md`](AGENTS.md). Read it
-with `docs/project-state.md`, then `docs/migration.md`, before making changes.
+See **[AGENTS.md](AGENTS.md)**, the single guidance document for this repository.
