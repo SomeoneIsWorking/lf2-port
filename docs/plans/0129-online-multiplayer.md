@@ -12,7 +12,9 @@ updated: 2026-11-11
 The user, 2026-11-11: "how can we integrate zerotier support for my multiplayer games ... OpenSU, Little
 Fighter, X-Men, whatever else that is multiplayer capable", and "last time I tried to use zero tier, I
 couldn't set it up ... maybe you can do something where the setup is handled automatically". And:
-"Lf2 would probably need a new rollback netcode".
+"Lf2 would probably need a new rollback netcode". And: "Firebase for you know a fixed discovery point
+online", and "Make the framework capable of multiple solutions imo, Incase firebase doesn't work out, but
+all solutions should require no extra install like a VPN client like tailscale".
 
 ## Decided
 
@@ -25,8 +27,9 @@ couldn't set it up ... maybe you can do something where the setup is handled aut
   libzt (Apache 2.0 since its BSL change date, 2026-01-01). The rollback engine's traffic goes over it.
   LAN play (S014) uses the same engine over plain UDP on every interface.
 - **Discovery:** Lucent discovery, built by the lucent-online session behind one `Directory` interface
-  (`publish`, `list`, `withdraw`): Nostr first (expiring signed events on public relays), a self-hosted
-  lobby on `lucent::http::Server` later. Firebase was considered and dropped. Play by a shared code
+  (`publish`, `list`, `withdraw`), several backends queried at once and merged, an unreachable one
+  degrading to the others: Nostr (expiring signed events on public relays), a self-hosted lobby on
+  `lucent::http::Server`, and Firebase Realtime Database. None needs an install. Play by a shared code
   (invite and reply) needs no discovery and always works. Anyone can read a listing, so security stays
   in the session layer.
 - **Players** install nothing: no ZeroTier app, account, root or VPN permission, on desktop or Android.

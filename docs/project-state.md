@@ -45,7 +45,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S019 | `shared/x86port` supplies a qualified ARM64 product JIT backend for macOS and Android | partial | — | G001, G003 |
 | S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
 | S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | partial | S005, S015 | G001, G003 |
-| S022 | Internet multiplayer joins by ZeroTier code through the embedded Lucent ZeroTier node, with no install or account; play by code always works, and Lucent discovery (Nostr; self-hosted lobby later) lists open sessions | missing | S014, Lucent ZeroTier and discovery components | G002 |
+| S022 | Internet multiplayer joins by ZeroTier code through the embedded Lucent ZeroTier node, with no install or account; play by code always works, and Lucent discovery (Nostr, a self-hosted lobby, Firebase) lists open sessions | missing | S014, Lucent ZeroTier and discovery components | G002 |
 | S023 | Rollback netplay restores and resimulates exact game state | missing | S005, Lucent rollback engine, plan 0129 save/load/step/input hooks | G002 |
 
 ## Capability details
@@ -204,7 +204,7 @@ test with the encoded packet, but that is not a gameplay test.
 ### S022 — Internet play by ZeroTier code
 
 Missing capability: a player types a friend's code, or picks an open session
-from Lucent discovery (Nostr; a self-hosted lobby later), and joins by the
+from Lucent discovery (Nostr, a self-hosted lobby, Firebase), and joins by the
 10-hex-digit ZeroTier node ID. Play by code needs no discovery. The port embeds a ZeroTier node through the optional Lucent
 component (libzt) on a controller-less ad-hoc network, so nobody installs an
 app, makes an account or grants root or VPN permission; ZeroTier's roots relay

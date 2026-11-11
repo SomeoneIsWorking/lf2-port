@@ -65,7 +65,8 @@ Success conditions:
 - Custom multiplayer runs on new rollback netcode, the shared Lucent engine,
   without LF2's original network protocol or servers. LAN play works on every
   interface; internet play joins by ZeroTier code through an embedded node,
-  with sessions also listed through Lucent discovery, and nothing for the
+  with sessions also listed through Lucent discovery (Nostr, a self-hosted
+  lobby, Firebase), and nothing for the
   player to install or set up.
 
 Contributing state items: S001–S003, S006–S011, S014–S015, S022–S023.
