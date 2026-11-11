@@ -163,6 +163,7 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
   now guest time; `rand`/`srand` were host libc, now MSVCR80's generator in `crt_random.c`.
   `tools/routes/determinism_test.py`: two hidden runs of the smoke inputs give identical logic and
   media digests on every common logic frame (200, boot through character select, the S005 frontier).
-  Open: the runs end at different logic-frame counts (205 vs 200) for the same 2160 presented frames,
-  so presents per logic frame still vary; the digest now logs the presented count to find where.
+  The differing run lengths seen first were the tool's own timeout cutting slow runs short; with clean
+  exits required, 299 logic frames match on logic, media and presents.
+  Digesting every span costs about 1.5 s a frame, so the rollback hash must cover dirty pages only.
   Time zone still reaches `localtime`; a session must agree on it.

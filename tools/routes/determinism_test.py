@@ -19,11 +19,12 @@ from runtime_log import payload_line
 from smoke_test import KEY_SCRIPT
 
 
-FRAMES = 2160
+# Presented frames; each digests every guest span, about a second and a half per frame.
+FRAMES = 300
 STATE = re.compile(r"^frame (\d+) logic=([0-9a-f]{16}) media=([0-9a-f]{16}) presented=(\d+)$")
 
 
-def run_once(build: Path, game: Path, log_path: Path) -> list[tuple[int, str, str, str]]:
+def run_once(build: Path, game: Path, log_path: Path) -> tuple[int, list[tuple[int, str, str, str]]]:
     env = os.environ.copy()
     env.update(
         SDL_AUDIODRIVER="dummy",
@@ -34,15 +35,15 @@ def run_once(build: Path, game: Path, log_path: Path) -> list[tuple[int, str, st
         LF2_KEY_SCRIPT=KEY_SCRIPT,
         LF2_QUIT_AFTER=str(FRAMES),
     )
-    command = ["timeout", "-k", "5", "300", str(build / "lf2"), "lf2.exe"]
+    command = ["timeout", "-k", "5", "900", str(build / "lf2"), "lf2.exe"]
     with log_path.open("w") as output:
-        subprocess.run(command, cwd=game, env=env, stdout=output, stderr=subprocess.STDOUT, check=False)
+        result = subprocess.run(command, cwd=game, env=env, stdout=output, stderr=subprocess.STDOUT, check=False)
     states = []
     for line in log_path.read_text(errors="replace").splitlines():
         match = STATE.match(payload_line(line))
         if match:
             states.append((int(match.group(1)), match.group(2), match.group(3), match.group(4)))
-    return states
+    return result.returncode, states
 
 
 def first_difference(first: list, second: list, column: int) -> int | None:
@@ -60,8 +61,11 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     print(f"two runs of {FRAMES} frames with the smoke route's inputs...")
-    first = run_once(build, game, out / "run1.log")
-    second = run_once(build, game, out / "run2.log")
+    first_exit, first = run_once(build, game, out / "run1.log")
+    second_exit, second = run_once(build, game, out / "run2.log")
+    if first_exit or second_exit:
+        print(f"  FAIL  a run did not quit at frame {FRAMES} (exit {first_exit}, {second_exit}); see {out}")
+        return 1
     if not first or not second:
         print(f"  FAIL  no frame-state lines (run1={len(first)}, run2={len(second)}); see {out}")
         return 1
