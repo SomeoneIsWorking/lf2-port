@@ -347,9 +347,6 @@ target_include_directories(test_netplay_packet PRIVATE runtime/netplay)
 target_compile_options(test_netplay_packet PRIVATE -Wall -Wextra -Werror)
 add_test(NAME netplay_packet COMMAND test_netplay_packet)
 
-    add_test(NAME lan_socket COMMAND test_lan_socket)
-endif()
-
 add_executable(test_config tests/test_config.c runtime/app/config.c runtime/app/user_paths.c)
 target_include_directories(test_config PRIVATE runtime/app)
 target_link_libraries(test_config PRIVATE lucent::lucent)
