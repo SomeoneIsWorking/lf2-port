@@ -4,6 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum {
     LF2_NETPLAY_PLAYER_SLOTS = 8,
     LF2_NETPLAY_BUTTON_MASK = 0x7f,
@@ -37,5 +41,9 @@ typedef struct {
  * lengths, reserved bits, player slots, and buttons. */
 size_t lf2_netplay_packet_encode(const Lf2NetplayPacket *packet, uint8_t *out, size_t capacity);
 int lf2_netplay_packet_decode(const uint8_t *bytes, size_t size, Lf2NetplayPacket *out);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

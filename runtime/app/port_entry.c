@@ -4,6 +4,8 @@
 #include "boot_guest.h"
 #include "environment.h"
 #include "frame_state.h"
+#include "online_session.h"
+#include "overrides.h"
 #include "guest.h"
 #include "hostwin.h"
 #include "jit_executor.h"
@@ -202,6 +204,9 @@ static void advance_frame_counter(void)
 
 static int run_main_loop(uint32_t previous_tick)
 {
+#ifdef LF2_ONLINE
+    lf2_online_start();
+#endif
     const int log_state = lf2_environment_get(LF2_ENV_STATE_HASH) != NULL;
     uint32_t logic_frame = 0;
     while (!hostwin_quit_requested()) {
@@ -222,6 +227,9 @@ static int run_main_loop(uint32_t previous_tick)
             if (elapsed > 100) previous_tick = now - 100;
             run_game_frame();
             if (log_state) lf2_frame_state_log(logic_frame, hostwin_frames());
+#ifdef LF2_ONLINE
+            lf2_online_frame(logic_frame, input_local_buttons());
+#endif
             logic_frame++;
             previous_tick += interval;
         }

@@ -37,7 +37,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S011 | Menus and character selection use modern anti-aliased host text | verified | — | G002 |
 | S012 | The macOS native/JIT build and Metal renderer are release-qualified | partial | S005, S019 | G003 |
 | S013 | The Android ARM64 native/JIT build provides touch controls and private installer/folder/ZIP setup | partial | S005, S019 | G003 |
-| S014 | Custom LAN multiplayer supports remote player inputs, on every interface including virtual LANs (ZeroTier, Tailscale) | missing | S005, plan 0129 hooks, Lucent rollback engine, Lucent interface enumeration | G002 |
+| S014 | Custom LAN multiplayer supports remote player inputs, on every interface including virtual LANs (ZeroTier, Tailscale) | partial | S005, plan 0129 hooks, Lucent rollback engine, Lucent interface enumeration | G002 |
 | S015 | Representative gameplay conforms through the native/JIT product on each released host | missing | S005, S016 | G001, G002, G003 |
 | S016 | Gameplay defaults to JIT, exposes no explicit interpreter mode, and accounts for bounded fallback by reason and coverage | partial | S018 | G001, G003 |
 | S017 | Retired title-specific execution interfaces and toolchains remain absent | verified | — | G001 |
@@ -45,7 +45,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S019 | `shared/x86port` supplies a qualified ARM64 product JIT backend for macOS and Android | partial | — | G001, G003 |
 | S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
 | S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | partial | S005, S015 | G001, G003 |
-| S022 | Internet multiplayer joins by ZeroTier code through the embedded Lucent ZeroTier node, with no install or account; play by code always works, and Lucent discovery (Nostr, a self-hosted lobby, Firebase) lists open sessions | missing | S014, Lucent ZeroTier and discovery components | G002 |
+| S022 | Internet multiplayer joins by ZeroTier code through the embedded Lucent ZeroTier node, with no install or account; play by code always works, and Lucent discovery (Nostr, a self-hosted lobby, Firebase) lists open sessions | partial | S014, Lucent ZeroTier and discovery components | G002 |
 | S023 | Rollback netplay restores and resimulates exact game state | missing | S005, Lucent rollback engine, plan 0129 save/load/step/input hooks | G002 |
 
 ## Capability details
@@ -193,13 +193,18 @@ and sustained performance evidence remain absent.
 
 ### S014 — Network play
 
-Missing capability: no remote player can yet join a running game. LF2's old
-Winsock protocol is not the intended path. `runtime/netplay/packet.{c,h}` now
-defines and tests a strict, transport-independent hello/input-frame wire
-contract for the game's eight slots and seven buttons. LAN discovery,
-connection/session lifetime, synchronized simulation, and runtime input
-injection remain unimplemented. `lan_socket.{c,h}` has a loopback UDP exchange
-test with the encoded packet, but that is not a gameplay test.
+Two LF2s meet by a pasted invite code over Lucent's peer-to-peer transport
+(`runtime/netplay/online_session.cpp`, `lucent::online`): the path is
+authenticated, a peer running a different `lf2.exe` is refused, and one input
+frame crosses each way. `tools/routes/online_meeting_test.py` shows it with two
+hidden instances in separate rootless network namespaces joined by one veth
+cable. Until the Online menu exists, `LF2_ONLINE=host` or `LF2_ONLINE=<invite>`
+starts a meeting.
+
+Gap: no remote player plays yet. Frames are played by the shared rollback
+engine once it lands, on LF2's save, load, advance and set-input hooks
+(`docs/plans/0129-online-multiplayer.md`). Desktop only: Android needs OpenSSL
+provisioned for `lucent::online`.
 
 ### S022 — Internet play by ZeroTier code
 

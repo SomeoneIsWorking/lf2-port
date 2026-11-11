@@ -111,6 +111,8 @@ performance for the affected region.
 - `LF2_STATE_HASH` logs one `frame-state` line per logic frame with the logic
   and media digests (`runtime/netplay/frame_state.h`); two runs with the same
   inputs must log identical lines.
+- `LF2_ONLINE=host` shows an invite code in the log; `LF2_ONLINE=<invite>` joins
+  it (`runtime/netplay/online_session.h`). A maintainer path until the Online menu.
 - `LF2_WALL_EPOCH=<unix seconds>` fixes the guest calendar's epoch so two runs
   see the same dates (`runtime/win32/guest_clock.h`).
 

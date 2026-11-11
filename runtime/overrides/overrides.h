@@ -120,6 +120,9 @@ enum { NOTICE_X = 725, NOTICE_Y = 5 }; /* the game's own constants for the notic
 /* input.c: which player the keyboard claimed, or -1. The mouse drives the same one, so the
  * two never disagree about who they are. */
 int keyboard_player(void);
+/* This machine's keyboard player at the last gather: bit b is button b (up, down, left, right, attack,
+ * jump, defend). */
+uint8_t input_local_buttons(void);
 
 /* runtime/win32/win32.c */
 int hostwin_pointer(int *x, int *y);

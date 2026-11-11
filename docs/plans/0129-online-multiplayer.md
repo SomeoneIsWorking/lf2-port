@@ -167,3 +167,8 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
   exits required, 299 logic frames match on logic, media and presents.
   Digesting every span costs about 1.5 s a frame, so the rollback hash must cover dirty pages only.
   Time zone still reaches `localtime`; a session must agree on it.
+- 2026-11-11: S014/S022 meeting. Lucent pinned at `282e224` with `lucent::online` on desktop.
+  `tools/routes/online_meeting_test.py`: host and friend in separate rootless network namespaces meet
+  by invite code over the direct path, both report the same `lf2.exe`, and one input frame crosses each
+  way. `lan_socket.*` is deleted, superseded by Lucent's transport. Next: the ZeroTier backend
+  (`lucent::zerotier`, libzt fork `6e74b65`), then the rollback hooks.

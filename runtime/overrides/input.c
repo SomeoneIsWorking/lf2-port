@@ -34,6 +34,12 @@ enum { RECORDING = 0x0044f1af, MASK_MIRROR = 0x0044d040 };
 static const uint8_t BTN_BIT[7] = {0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02};
 
 static long in_frames, in_live, in_padded, in_presses;
+static uint8_t local_buttons;
+
+uint8_t input_local_buttons(void)
+{
+    return local_buttons;
+}
 
 void input_report(void)
 {
@@ -259,6 +265,10 @@ void fn_00419a60(void)
 
         memcpy(dev_prev[d], btn[d], 7);
     }
+
+    local_buttons = 0;
+    for (int b = 0; b < 7; b++)
+        if (present[0] && btn[0][b]) local_buttons |= (uint8_t)(1u << b);
 
     coop_debug_tick(self);
 
