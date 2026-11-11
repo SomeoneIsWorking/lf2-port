@@ -135,6 +135,8 @@ static void ensure_init(void)
 {
     if (initialised) return;
     initialised = 1;
+    /* A scripted pad is no one at the keyboard: a hidden tool window never has focus. */
+    if (scripted_run()) SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
         lf2_log_writef(LF2_LOG_INFO, "gamepad", "gamepad subsystem unavailable: %s\n", SDL_GetError());
         return;

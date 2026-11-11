@@ -197,3 +197,9 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
   reported frame, no desync. Gaps: idle inputs only and no rewind yet in a two-peer run; audio during
   resimulation; frames that create COM objects cannot be loaded; the lazy guest buffer behind
   `localtime`; a session starts at boot only; no Online menu.
+- 2026-11-12: real rewinds. `online_meeting_test.py` gives each player its own pad script and puts
+  `netem delay 60ms 20ms loss 10%` on the cable; both peers resimulate about 100 to 200 frames with
+  equal final hashes and no desync, six runs of six. A scripted pad now plays without window focus
+  (SDL drops joystick input to an unfocused app, and a hidden window has none). Two instances from one
+  install corrupted each other's object data through `data\temporary.txt` (issue 0130); the test gives
+  each its own install. Reports are bounded by Lucent `26004e4`'s `finalized_frame()`.

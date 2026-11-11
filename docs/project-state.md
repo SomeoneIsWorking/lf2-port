@@ -203,7 +203,8 @@ separate rootless network namespaces joined by one veth cable: equal final
 hashes on every reported frame, no desync. Until the Online menu exists,
 `LF2_ONLINE=host` or `LF2_ONLINE=<invite>` starts a meeting.
 
-Gap: the test plays idle inputs, so no remote press has yet steered a fighter;
+Gap: the scripted presses are menu directions, so no remote press has yet
+steered a fighter; two instances from one install collide (issue 0130);
 a session starts at boot only; host keys and mouse are withheld during one.
 Desktop only: Android needs OpenSSL provisioned for `lucent::online`.
 
@@ -227,10 +228,12 @@ the executable identity. Not in the browser build. Design and phases:
 
 Shown: snapshots through the guest write journal reload exactly
 (`tools/routes/rollback_test.py`: every frame rerun from its snapshot matches a
-plain run over 299 frames), and the online session runs on `lucent::rollback`.
+plain run over 299 frames), and the online session runs on `lucent::rollback`:
+with different scripted pads per player and a cable that delays and drops
+packets, both peers rewind (about 100 to 200 frames resimulated) and keep equal
+final hashes (`tools/routes/online_meeting_test.py`).
 
-Gap: no rewind has happened in a two-peer run yet (0 frames resimulated on a
-quiet link); audio replays during resimulation; a frame that creates COM objects
+Gap: audio replays during resimulation; a frame that creates COM objects
 cannot be loaded back; the route reaches character select only (S005). Hooks
 and design: `docs/plans/0129-online-multiplayer.md`.
 

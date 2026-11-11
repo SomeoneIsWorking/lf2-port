@@ -2,9 +2,10 @@
 """Two LF2s meet by a pasted code, directly or over ZeroTier alone.
 
 The host shows an invite, the friend joins it, both authenticate the path, check that the other
-runs the same lf2.exe, and play through the rollback engine: each logs a final state hash every
-sixty frames, and the two must agree on every frame both reached. Direct: each in its own network namespace joined
-by one cable. `--zerotier`: the direct path off, both on a lab with only Lucent's lab ZeroTier root
+runs the same lf2.exe, and play through the rollback engine with different scripted pads: each logs
+a final state hash every sixty frames, and the two must agree on every frame both reached. Direct:
+each in its own network namespace joined by one cable that delays and drops packets, so late inputs
+must rewind and resimulate frames. `--zerotier`: the direct path off, both on a lab with only Lucent's lab ZeroTier root
 to reach each other through. The namespaces belong to a user namespace of this user's, so nothing
 needs root.
 """
@@ -15,6 +16,7 @@ import argparse
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -33,6 +35,17 @@ FINAL = re.compile(r"^frame (\d+) final hash ([0-9a-f]{16}), (\d+) frames resimu
 # Final hashes both peers must log before the run counts as played.
 REPORTS = 5
 DEADLINE_S = 240
+# The cable's impairment, both ways: inputs arrive frames late, so a changed one rewinds.
+NETEM = "delay 60ms 20ms loss 10%"
+
+
+def pad_script(buttons: tuple[str, ...], first: int, every: int) -> str:
+    """Directions only, so no press confirms a menu item such as Quit."""
+    return ",".join(f"{buttons[i % len(buttons)]}:{first + i * every}" for i in range(400))
+
+
+PADS = {"host": pad_script(("down", "up", "right", "left"), 20, 11),
+        "friend": pad_script(("left", "down", "right", "up"), 27, 13)}
 
 
 def in_user_namespace() -> bool:
@@ -72,6 +85,9 @@ def wire(host: Machine, friend: Machine) -> None:
     friend.ip(f"addr add {FRIEND_ADDRESS} dev lab1")
     host.ip("link set lab0 up")
     friend.ip("link set lab1 up")
+    for machine, device in ((host, "lab0"), (friend, "lab1")):
+        subprocess.run([*machine.prefix, "tc", "qdisc", "add", "dev", device, "root", "netem", *NETEM.split()],
+                       check=True)
 
 
 def lab(machine: Machine) -> None:
@@ -96,11 +112,19 @@ def start_root(machine: Machine, build: Path, out: Path) -> tuple[subprocess.Pop
     raise RuntimeError(f"the lab root wrote no root set; see {out / 'root.log'}")
 
 
+def own_install(game: Path, destination: Path) -> Path:
+    """A copy of the install per machine: the game decrypts every .dat through data/temporary.txt
+    in its own directory, so two instances loading at once from one install read each other's."""
+    shutil.copytree(game, destination, dirs_exist_ok=True, symlinks=True,
+                    ignore=shutil.ignore_patterns("scratch", "temporary.txt"))
+    return destination
+
+
 def tagged_lines(log: Path, tag: str) -> list[str]:
     if not log.is_file():
         return []
     return [payload_line(line) for line in log.read_text(errors="replace").splitlines()
-            if f"] [{tag}] " in line]
+            if f"] [{tag}] " in line or f"] [{tag}:" in line]
 
 
 def online_lines(log: Path) -> list[str]:
@@ -174,7 +198,8 @@ def main() -> int:
         homes = {name: out / f"{name}-home" for name in ("host", "friend")}
         for home in homes.values():
             home.mkdir(exist_ok=True)
-        processes.append(host.start(command, game, {**env, "LF2_ONLINE": "host",
+        installs = {name: own_install(game, out / f"{name}-game") for name in ("host", "friend")}
+        processes.append(host.start(command, installs["host"], {**env, "LF2_ONLINE": "host", "LF2_VIRTUAL_PAD": PADS["host"],
                                                     "XDG_CONFIG_HOME": str(homes["host"])}, host_log))
         deadline = time.monotonic() + DEADLINE_S
         invite = None
@@ -185,7 +210,7 @@ def main() -> int:
             print(f"  FAIL  the host showed no invite code; see {host_log}")
             return 1
         print("  ok    the host showed an invite code")
-        processes.append(friend.start(command, game, {**env, "LF2_ONLINE": invite,
+        processes.append(friend.start(command, installs["friend"], {**env, "LF2_ONLINE": invite, "LF2_VIRTUAL_PAD": PADS["friend"],
                                                       "XDG_CONFIG_HOME": str(homes["friend"])}, friend_log))
         while time.monotonic() < deadline and not (played(host_log) and played(friend_log)):
             if any(process.poll() is not None for process in processes):
@@ -208,6 +233,12 @@ def main() -> int:
         common = sorted(set(host_hashes) & set(friend_hashes))
         agree = len(common) >= REPORTS and all(host_hashes[f][0] == friend_hashes[f][0] for f in common)
         print(f"  {'ok  ' if agree else 'FAIL'}  both reached {len(common)} reports with equal final hashes")
+        resimulated = {name: max((r for _, r in hashes.values()), default=0)
+                       for name, hashes in (("host", host_hashes), ("friend", friend_hashes))}
+        rewound = options.zerotier or all(resimulated.values())
+        print(f"  {'ok  ' if rewound else 'FAIL'}  frames resimulated: host {resimulated['host']},"
+              f" friend {resimulated['friend']}" + (" (lab root, no impairment)" if options.zerotier else ""))
+        agree = agree and rewound
         for frame in common[:3] + common[-2:]:
             print(f"          frame {frame}: host {host_hashes[frame][0]} friend {friend_hashes[frame][0]}"
                   f" (resimulated {host_hashes[frame][1]}/{friend_hashes[frame][1]})")

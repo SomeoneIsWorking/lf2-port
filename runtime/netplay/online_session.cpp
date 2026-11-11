@@ -234,9 +234,10 @@ class OnlineSession {
 
     void report_hashes()
     {
-        while (const std::optional<std::uint64_t> hash = session_->final_hash(next_report_)) {
+        while (next_report_ < session_->finalized_frame()) {
             lf2_log_writef(LF2_LOG_INFO, "online", "frame %lld final hash %016llx, %lld frames resimulated",
-                           static_cast<long long>(next_report_), static_cast<unsigned long long>(*hash),
+                           static_cast<long long>(next_report_),
+                           static_cast<unsigned long long>(session_->final_hash(next_report_).value()),
                            static_cast<long long>(session_->resimulated_frames()));
             next_report_ += kHashReportFrames;
         }
