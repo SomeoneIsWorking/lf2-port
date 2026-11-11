@@ -3,8 +3,10 @@
 #include "com.h"
 #include "guest_heap.h"
 #include "guest_journal.h"
+#include "hostwin.h"
 #include "jit_executor.h"
 #include "lf2_log.h"
+#include "session_inputs.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -17,6 +19,41 @@ void refresh_page(std::uint32_t address, std::uint32_t size, void *context)
     static_cast<StateHash *>(context)->refresh(address, size);
 }
 
+struct Section {
+    std::size_t (*size)();
+    void (*save)(void *);
+    void (*load)(const void *);
+};
+
+constexpr std::array<Section, 3> kHostSections{{
+    {hostwin_messages_size, hostwin_messages_save, hostwin_messages_load},
+    {input_state_size, input_state_save, input_state_load},
+    {coop_state_size, coop_state_save, coop_state_load},
+}};
+
+void save_sections(std::vector<std::uint8_t> &out)
+{
+    std::size_t total = 0;
+    for (const Section &section : kHostSections) {
+        total += section.size();
+    }
+    out.resize(total);
+    std::size_t at = 0;
+    for (const Section &section : kHostSections) {
+        section.save(out.data() + at);
+        at += section.size();
+    }
+}
+
+void load_sections(const std::vector<std::uint8_t> &in)
+{
+    std::size_t at = 0;
+    for (const Section &section : kHostSections) {
+        section.load(in.data() + at);
+        at += section.size();
+    }
+}
+
 } // namespace
 
 std::unique_ptr<RollbackState> RollbackState::start()
@@ -25,6 +62,11 @@ std::unique_ptr<RollbackState> RollbackState::start()
         return nullptr;
     }
     return std::unique_ptr<RollbackState>(new RollbackState());
+}
+
+RollbackState::~RollbackState()
+{
+    guest_journal_stop();
 }
 
 void RollbackState::refresh_open_pages()
@@ -41,8 +83,10 @@ void RollbackState::save(int slot)
     saved.random = *crt_random_guest();
     saved.clock = guest_clock_state();
     saved.mapping = guest_memory_mapping_state();
+    saved.loop = main_loop_state();
     saved.heap_next = guest_heap_next();
     saved.com_objects = com_object_count();
+    save_sections(saved.sections);
     saved.valid = true;
     std::uint64_t oldest = saved.mark;
     for (const Slot &each : slots_) {
@@ -72,6 +116,8 @@ void RollbackState::load(int slot)
     lf2_jit_load_cpu(&saved.cpu);
     *crt_random_guest() = saved.random;
     guest_clock_restore(saved.clock);
+    main_loop_restore(saved.loop);
+    load_sections(saved.sections);
     for (Slot &each : slots_) {
         if (each.mark > saved.mark) {
             each.valid = false;

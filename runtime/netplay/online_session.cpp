@@ -2,15 +2,23 @@
 
 #include "environment.h"
 #include "lf2_log.h"
+#include "game_runtime.h"
+#include "guest_clock.h"
+#include "hostwin.h"
+#include "main_loop.h"
 #include "packet.h"
+#include "session_inputs.h"
 #include "user_paths.h"
 
 #include <lucent/content.h>
 #include <lucent/p2p/connector.h>
 #include <lucent/p2p/reliable_link.h>
 #include <lucent/p2p/zerotier.h>
+#include <lucent/rollback/session.h>
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <array>
 #include <fstream>
 #include <iterator>
@@ -32,24 +40,29 @@ constexpr std::string_view kKeyLabel = "lf2-online";
 constexpr std::string_view kSessionPurpose = "lf2-session";
 // LF2's port, which names its ZeroTier ad-hoc network.
 constexpr std::uint16_t kZeroTierPort = 41702;
-constexpr std::uint8_t kHelloKind = LF2_NETPLAY_HELLO;
-constexpr std::uint8_t kInputKind = LF2_NETPLAY_INPUT;
+constexpr std::uint8_t kHelloKind = 1;
+constexpr std::uint8_t kRollbackKind = 3;
+constexpr std::size_t kRollbackMessageBytes = 4096;
+// A final hash is logged this often, for a check that both peers played the same frames.
+constexpr std::int64_t kHashReportFrames = 60;
 
 lucent::p2p::LinkCaps link_caps()
 {
     lucent::p2p::LinkCaps caps{};
     caps[kHelloKind] = LF2_NETPLAY_HELLO_BYTES;
-    caps[kInputKind] = LF2_NETPLAY_INPUT_BYTES;
+    caps[kRollbackKind] = kRollbackMessageBytes;
     return caps;
 }
 
-std::string encode(const Lf2NetplayPacket &packet)
+std::string encode(const Lf2NetplayHello &hello)
 {
     std::array<std::uint8_t, LF2_NETPLAY_HELLO_BYTES> bytes{};
-    const std::size_t size = lf2_netplay_packet_encode(&packet, bytes.data(), bytes.size());
+    const std::size_t size = lf2_netplay_hello_encode(&hello, bytes.data(), bytes.size());
     return {reinterpret_cast<const char *>(bytes.data()), size};
 }
 
+// Two peers meet before either guest boots, agree on the session, the executable and the host's
+// calendar, and then play every frame through the rollback engine.
 class OnlineSession {
   public:
     OnlineSession(lucent::content::Sha256 executable, std::unique_ptr<Connector> connector)
@@ -57,47 +70,72 @@ class OnlineSession {
     {
     }
 
-    void frame(std::uint32_t frame, std::uint8_t local_buttons)
+    // Blocks until the peers agree or the meeting fails; true when they play.
+    bool meet()
     {
-        if (!link_) {
-            meet();
-            return;
+        while (!link_) {
+            const Connector::View view = connector_->view();
+            if (view.step == Connector::Step::Failed) {
+                lf2_log_writef(LF2_LOG_ERROR, "online", "the meeting failed (reason %d)",
+                               static_cast<int>(view.failure));
+                return false;
+            }
+            if (!view.code.empty() && view.code != shown_code_) {
+                shown_code_ = view.code;
+                lf2_log_writef(LF2_LOG_INFO, "online", "%s code: %s",
+                               view.step == Connector::Step::Replying ? "reply" : "invite", shown_code_.c_str());
+            }
+            if (view.step == Connector::Step::Connected) {
+                connect();
+            } else {
+                std::this_thread::sleep_for(10ms);
+            }
         }
-        link_->pump(0ms);
-        while (std::optional<lucent::p2p::LinkMessage> message = link_->take()) {
-            take(*message);
+        while (!peer_verified_) {
+            if (!pump(10ms)) {
+                return false;
+            }
         }
-        if (link_->broken() || link_->silent()) {
-            lf2_log_write(LF2_LOG_ERROR, "online", "the peer's link broke or went silent; the session is over");
-            link_.reset();
-            connection_.reset();
-            return;
-        }
-        if (peer_verified_ && !input_sent_) {
-            send_input(frame, local_buttons);
+        return start_play();
+    }
+
+    [[nodiscard]] bool playing() const noexcept
+    {
+        return session_ != nullptr;
+    }
+
+    // One logic frame of the session, waiting while the peer is too far behind. false on quit.
+    bool advance()
+    {
+        for (;;) {
+            if (!pump(0ms)) {
+                return end_play();
+            }
+            hostwin_pump();
+            const std::uint8_t local = input_sample_local() & 0x7fU;
+            const lucent::rollback::Status status = session_->tick(std::span<const std::uint8_t>{&local, 1});
+            link_->send(kRollbackKind, session_->message_for(0));
+            if (runtime_->quit()) {
+                return false;
+            }
+            if (status == lucent::rollback::Status::Desynced) {
+                lf2_log_writef(LF2_LOG_ERROR, "online", "desync at frame %lld; the session is over",
+                               static_cast<long long>(session_->desync_frame().value_or(-1)));
+                return end_play();
+            }
+            if (status == lucent::rollback::Status::Advanced) {
+                report_hashes();
+                return true;
+            }
+            if (!pump(1ms)) {
+                return end_play();
+            }
         }
     }
 
   private:
-    void meet()
+    void connect()
     {
-        const Connector::View view = connector_->view();
-        if (view.step == Connector::Step::Failed) {
-            if (!reported_failure_) {
-                lf2_log_writef(LF2_LOG_ERROR, "online", "the meeting failed (reason %d)",
-                               static_cast<int>(view.failure));
-                reported_failure_ = true;
-            }
-            return;
-        }
-        if (!view.code.empty() && view.code != shown_code_) {
-            shown_code_ = view.code;
-            lf2_log_writef(LF2_LOG_INFO, "online", "%s code: %s",
-                           view.step == Connector::Step::Replying ? "reply" : "invite", shown_code_.c_str());
-        }
-        if (view.step != Connector::Step::Connected) {
-            return;
-        }
         connection_ = connector_->take();
         const Role own = connection_->role;
         const Role other = own == Role::Host ? Role::Friend : Role::Host;
@@ -107,60 +145,101 @@ class OnlineSession {
                       link_caps());
         const lucent::p2p::crypto::Bytes session = connection_->keys.key(kSessionPurpose, Role::Host);
         std::copy_n(session.begin(), session_id_.size(), session_id_.begin());
-        slot_ = own == Role::Host ? 0 : 1;
-        lf2_log_writef(LF2_LOG_INFO, "online", "connected as %s, player slot %u", own == Role::Host ? "host" : "friend",
-                       slot_);
+        host_ = own == Role::Host;
+        lf2_log_writef(LF2_LOG_INFO, "online", "connected as %s, player slot %d", host_ ? "host" : "friend",
+                       host_ ? 0 : 1);
 
-        Lf2NetplayPacket hello{};
-        hello.type = LF2_NETPLAY_HELLO;
-        std::copy(session_id_.begin(), session_id_.end(), hello.data.hello.session_id);
-        std::copy(executable_.begin(), executable_.end(), hello.data.hello.executable_sha256);
+        Lf2NetplayHello hello{};
+        std::copy(session_id_.begin(), session_id_.end(), hello.session_id);
+        std::copy(executable_.begin(), executable_.end(), hello.executable_sha256);
+        if (host_) {
+            const GuestCalendar calendar = guest_clock_calendar();
+            hello.epoch_ns = calendar.epoch_ns;
+            hello.utc_offset_s = calendar.utc_offset_s;
+        }
         link_->send(kHelloKind, encode(hello));
+    }
+
+    // false once the link is gone.
+    bool pump(std::chrono::milliseconds wait)
+    {
+        link_->pump(wait);
+        while (std::optional<lucent::p2p::LinkMessage> message = link_->take()) {
+            take(*message);
+        }
+        if (link_->broken() || link_->silent()) {
+            lf2_log_write(LF2_LOG_ERROR, "online", "the peer's link broke or went silent; the session is over");
+            return false;
+        }
+        return true;
     }
 
     void take(const lucent::p2p::LinkMessage &message)
     {
-        Lf2NetplayPacket packet{};
-        if (!lf2_netplay_packet_decode(reinterpret_cast<const std::uint8_t *>(message.body.data()), message.body.size(),
-                                       &packet) ||
-            packet.type != message.kind) {
-            lf2_log_write(LF2_LOG_ERROR, "online", "the peer sent a malformed packet; ignoring it");
+        if (message.kind == kRollbackKind && session_) {
+            session_->receive(0, message.body);
             return;
         }
-        if (packet.type == LF2_NETPLAY_HELLO) {
-            take_hello(packet);
-        } else if (peer_verified_) {
-            lf2_log_writef(LF2_LOG_INFO, "online", "frame %u received: slot %u buttons 0x%02x", packet.data.input.frame,
-                           packet.data.input.player_slot, packet.data.input.buttons);
+        Lf2NetplayHello hello{};
+        if (message.kind != kHelloKind ||
+            !lf2_netplay_hello_decode(reinterpret_cast<const std::uint8_t *>(message.body.data()), message.body.size(),
+                                      &hello)) {
+            lf2_log_write(LF2_LOG_ERROR, "online", "the peer sent a malformed message; ignoring it");
+            return;
         }
+        take_hello(hello);
     }
 
-    void take_hello(const Lf2NetplayPacket &packet)
+    void take_hello(const Lf2NetplayHello &hello)
     {
-        if (!std::equal(session_id_.begin(), session_id_.end(), packet.data.hello.session_id)) {
+        if (!std::equal(session_id_.begin(), session_id_.end(), hello.session_id)) {
             lf2_log_write(LF2_LOG_ERROR, "online", "the peer's hello names another session; refusing it");
             return;
         }
-        if (!std::equal(executable_.begin(), executable_.end(), packet.data.hello.executable_sha256)) {
+        if (!std::equal(executable_.begin(), executable_.end(), hello.executable_sha256)) {
             lf2_log_write(LF2_LOG_ERROR, "online", "the peer runs a different lf2.exe; refusing the session");
+            return;
+        }
+        if (!host_ && !guest_clock_adopt_calendar(GuestCalendar{hello.epoch_ns, hello.utc_offset_s})) {
             return;
         }
         peer_verified_ = true;
         lf2_log_write(LF2_LOG_INFO, "online", "the peer runs the same lf2.exe");
     }
 
-    void send_input(std::uint32_t frame, std::uint8_t local_buttons)
+    bool start_play()
     {
-        Lf2NetplayPacket input{};
-        input.type = LF2_NETPLAY_INPUT;
-        std::copy(session_id_.begin(), session_id_.end(), input.data.input.session_id);
-        input.data.input.frame = frame;
-        input.data.input.player_slot = slot_;
-        input.data.input.buttons = local_buttons & LF2_NETPLAY_BUTTON_MASK;
-        link_->send(kInputKind, encode(input));
-        input_sent_ = true;
-        lf2_log_writef(LF2_LOG_INFO, "online", "frame %u sent: slot %u buttons 0x%02x", frame, slot_,
-                       input.data.input.buttons);
+        std::unique_ptr<RollbackState> state = RollbackState::start();
+        if (!state) {
+            lf2_log_write(LF2_LOG_ERROR, "online", "no rollback state on this platform; playing offline");
+            return false;
+        }
+        runtime_ = std::make_unique<GameRuntime>(std::move(state));
+        lucent::rollback::Config config;
+        config.slots = 2;
+        config.input_bytes = 1;
+        config.local_slots = {host_ ? 0 : 1};
+        config.max_rollback = RollbackState::kSlots - 1;
+        session_ = std::make_unique<lucent::rollback::Session>(config, *runtime_, 1);
+        lf2_log_write(LF2_LOG_INFO, "online", "playing through the rollback engine");
+        return true;
+    }
+
+    bool end_play()
+    {
+        session_.reset();
+        runtime_.reset();
+        return main_loop_advance() != 0;
+    }
+
+    void report_hashes()
+    {
+        while (const std::optional<std::uint64_t> hash = session_->final_hash(next_report_)) {
+            lf2_log_writef(LF2_LOG_INFO, "online", "frame %lld final hash %016llx, %lld frames resimulated",
+                           static_cast<long long>(next_report_), static_cast<unsigned long long>(*hash),
+                           static_cast<long long>(session_->resimulated_frames()));
+            next_report_ += kHashReportFrames;
+        }
     }
 
     lucent::content::Sha256 executable_;
@@ -171,10 +250,11 @@ class OnlineSession {
     std::optional<lucent::p2p::ReliableLink> link_;
     std::array<std::uint8_t, 16> session_id_{};
     std::string shown_code_;
-    std::uint8_t slot_ = 0;
+    bool host_ = false;
     bool peer_verified_ = false;
-    bool input_sent_ = false;
-    bool reported_failure_ = false;
+    std::unique_ptr<GameRuntime> runtime_;
+    std::unique_ptr<lucent::rollback::Session> session_;
+    std::int64_t next_report_ = kHashReportFrames;
 };
 
 // The process's one ZeroTier node, which outlives the session that dials through it.
@@ -262,11 +342,17 @@ extern "C" void lf2_online_start(void)
         lf2_log_write(LF2_LOG_INFO, "online", "joining the invite");
     }
     session = std::make_unique<OnlineSession>(*executable, std::move(connector));
+    if (!session->meet()) {
+        session.reset();
+    }
 }
 
-extern "C" void lf2_online_frame(uint32_t frame, uint8_t local_buttons)
+extern "C" int lf2_online_playing(void)
 {
-    if (lf2::netplay::session) {
-        lf2::netplay::session->frame(frame, local_buttons);
-    }
+    return lf2::netplay::session && lf2::netplay::session->playing() ? 1 : 0;
+}
+
+extern "C" int lf2_online_advance(void)
+{
+    return lf2::netplay::session->advance() ? 1 : 0;
 }

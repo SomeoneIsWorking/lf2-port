@@ -2,6 +2,7 @@
 #define LF2_WIN32_GUEST_CLOCK_H
 
 #include <stdint.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,9 +24,19 @@ typedef struct {
 } GuestClockState;
 GuestClockState guest_clock_state(void);
 void guest_clock_restore(GuestClockState state);
-/* The guest's calendar: an epoch fixed once, advanced by guest time. Unix epoch, nanoseconds.
- * The epoch is the host's time at first use, or LF2_WALL_EPOCH (seconds) for runs that must agree. */
+/* The guest's calendar: an epoch and a UTC offset fixed once, advanced by guest time. They are the
+ * host's at first use (the epoch LF2_WALL_EPOCH seconds for runs that must agree), or a session's. */
+typedef struct {
+    int64_t epoch_ns;
+    int32_t utc_offset_s;
+} GuestCalendar;
+GuestCalendar guest_clock_calendar(void);
+/* A session's peers share one calendar; 0, logged, once the guest has read its own. */
+int guest_clock_adopt_calendar(GuestCalendar calendar);
+/* Unix time in nanoseconds. */
 int64_t guest_clock_wall_ns(void);
+/* The guest's local time for a Unix second, at the calendar's UTC offset. */
+void guest_clock_local_time(int64_t seconds, struct tm *out);
 /* A wait the guest asked for advances its clock by at least that long. */
 void guest_clock_credit_ms(uint32_t ms);
 

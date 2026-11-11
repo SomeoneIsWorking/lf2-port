@@ -6,6 +6,7 @@
 
 #include "environment.h"
 #include "overrides.h"
+#include "session_inputs.h"
 #include "world.h"
 
 #include "guest.h"
@@ -319,6 +320,34 @@ static struct coop_pos sel_pos[PLAYER_SLOTS];
  * slot the game's own character selection filled is not ours to empty, and a pad being
  * unplugged is not a reason to delete a fighter somebody else's device is driving. */
 static int coop_owned[PLAYER_SLOTS];
+
+#define COOP_STATE(X) X(sel_active) X(sel_pick) X(sel_shown) X(sel_flash0) X(sel_since) X(sel_flashes) X(sel_pos) X(coop_owned)
+#define COOP_SIZE(name) +sizeof name
+
+size_t coop_state_size(void)
+{
+    return 0 COOP_STATE(COOP_SIZE);
+}
+
+void coop_state_save(void *out)
+{
+    uint8_t *at = out;
+#define COOP_SAVE(name)                                                                                                \
+    memcpy(at, name, sizeof name);                                                                                     \
+    at += sizeof name;
+    COOP_STATE(COOP_SAVE)
+#undef COOP_SAVE
+}
+
+void coop_state_load(const void *in)
+{
+    const uint8_t *at = in;
+#define COOP_LOAD(name)                                                                                                \
+    memcpy(name, at, sizeof name);                                                                                     \
+    at += sizeof name;
+    COOP_STATE(COOP_LOAD)
+#undef COOP_LOAD
+}
 
 /* Returns 1 if the slot ended up in the world. `pos_out`, when given, receives the position
  * the fighter was built at, so a caller that will rebuild it in place has it. */

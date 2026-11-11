@@ -5,6 +5,7 @@
  */
 
 #include "overrides.h"
+#include "session_inputs.h"
 #include "world.h"
 
 #include "guest.h"
@@ -34,12 +35,6 @@ enum { RECORDING = 0x0044f1af, MASK_MIRROR = 0x0044d040 };
 static const uint8_t BTN_BIT[7] = {0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02};
 
 static long in_frames, in_live, in_padded, in_presses;
-static uint8_t local_buttons;
-
-uint8_t input_local_buttons(void)
-{
-    return local_buttons;
-}
 
 void input_report(void)
 {
@@ -68,6 +63,33 @@ enum { MAX_DEV = 1 + GAMEPAD_MAX_DEVICES }; /* the keyboard, then every host pad
 static int dev_player[MAX_DEV] = {-1, -1, -1, -1, -1};
 static unsigned char dev_prev[MAX_DEV][7];
 
+/* In a session the pool is the session's slots, so every peer's gather sees the same devices. */
+static uint8_t session_buttons[MAX_DEV];
+static int session_devices;
+
+void input_use_session(const uint8_t *buttons, int count)
+{
+    session_devices = count < MAX_DEV ? count : MAX_DEV;
+    for (int d = 0; d < session_devices; d++) session_buttons[d] = buttons[d];
+}
+
+size_t input_state_size(void)
+{
+    return sizeof dev_player + sizeof dev_prev;
+}
+
+void input_state_save(void *out)
+{
+    memcpy(out, dev_player, sizeof dev_player);
+    memcpy((uint8_t *)out + sizeof dev_player, dev_prev, sizeof dev_prev);
+}
+
+void input_state_load(const void *in)
+{
+    memcpy(dev_player, in, sizeof dev_player);
+    memcpy(dev_prev, (const uint8_t *)in + sizeof dev_player, sizeof dev_prev);
+}
+
 /* Which player the keyboard claimed, or -1. The mouse drives the same one, so the two
  * never disagree about who they are. */
 int keyboard_player(void)
@@ -92,7 +114,7 @@ int device_for_player(int slot)
     return -1;
 }
 
-static int device_buttons(int dev, unsigned char out[7])
+static int host_device_buttons(int dev, unsigned char out[7])
 {
     /* This gather reads host devices directly rather than Win32 key messages. Mirror the UI
      * input block here so a visible global document cannot also drive the menu or fighter
@@ -116,6 +138,26 @@ static int device_buttons(int dev, unsigned char out[7])
         return 1; /* a keyboard is always there */
     }
     return gamepad_player_buttons(dev - 1, out);
+}
+
+uint8_t input_sample_local(void)
+{
+    uint8_t buttons = 0;
+    for (int d = 0; d < MAX_DEV; d++) {
+        unsigned char held[7];
+        if (!host_device_buttons(d, held)) continue;
+        for (int b = 0; b < 7; b++)
+            if (held[b]) buttons |= (uint8_t)(1u << b);
+    }
+    return buttons;
+}
+
+static int device_buttons(int dev, unsigned char out[7])
+{
+    if (!session_devices) return host_device_buttons(dev, out);
+    if (dev >= session_devices) return 0;
+    for (int b = 0; b < 7; b++) out[b] = (unsigned char)((session_buttons[dev] >> b) & 1u);
+    return 1;
 }
 
 void fn_00419a60(void)
@@ -265,10 +307,6 @@ void fn_00419a60(void)
 
         memcpy(dev_prev[d], btn[d], 7);
     }
-
-    local_buttons = 0;
-    for (int b = 0; b < 7; b++)
-        if (present[0] && btn[0][b]) local_buttons |= (uint8_t)(1u << b);
 
     coop_debug_tick(self);
 

@@ -874,8 +874,9 @@ static void h_localtime64(void)
     static uint32_t buf;
     if (!buf) buf = guest_alloc(36);
     int64_t t = (int64_t)LD32(ARG(0)) | ((int64_t)LD32(ARG(0) + 4) << 32);
-    time_t tt = (time_t)t;
-    struct tm *g = localtime(&tt);
+    struct tm local;
+    guest_clock_local_time(t, &local);
+    const struct tm *g = &local;
     const int v[9] = {g->tm_sec,  g->tm_min,  g->tm_hour, g->tm_mday, g->tm_mon,
                       g->tm_year, g->tm_wday, g->tm_yday, g->tm_isdst};
     for (int i = 0; i < 9; i++) ST32(buf + (uint32_t)i * 4, (uint32_t)v[i]);
@@ -1027,8 +1028,9 @@ static void h_TerminateProcess(void)
 static void h_GetLocalTime(void)
 {
     const int64_t wall = guest_clock_wall_ns();
-    time_t t = (time_t)(wall / 1000000000ll);
-    struct tm *g = localtime(&t);
+    struct tm local;
+    guest_clock_local_time(wall / 1000000000ll, &local);
+    const struct tm *g = &local;
     const uint32_t p = ARG(0);
     const uint16_t v[8] = {(uint16_t)(g->tm_year + 1900), (uint16_t)(g->tm_mon + 1),
                            (uint16_t)g->tm_wday,          (uint16_t)g->tm_mday,

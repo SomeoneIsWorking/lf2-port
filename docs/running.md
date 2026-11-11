@@ -112,7 +112,9 @@ performance for the affected region.
   and media digests (`runtime/netplay/frame_state.h`); two runs with the same
   inputs must log identical lines.
 - `LF2_ONLINE=host` shows an invite code in the log; `LF2_ONLINE=<invite>` joins
-  it (`runtime/netplay/online_session.h`). A maintainer path until the Online menu.
+  it (`runtime/netplay/online_session.h`) before boot; the two then play from boot through
+  the rollback engine, each logging a final state hash every 60 frames. A maintainer path until the
+  Online menu.
 - `LF2_ONLINE_ZEROTIER_ONLY` turns off the direct path so a meeting must cross
   the embedded ZeroTier node; `LF2_ZEROTIER_ROOTS=<file>` replaces ZeroTier's
   public roots with a root set file (a lab root;

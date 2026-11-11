@@ -99,6 +99,10 @@ int main(void)
     guest_journal_for_each_open_page(count_page, NULL);
     CHECK(visited == 1);
 
+    guest_journal_stop();
+    bytes[3] = 1; /* writable again, with nothing kept */
+    CHECK(!guest_journal_active());
+
     printf("guest journal: ok\n");
     return 0;
 }

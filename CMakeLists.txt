@@ -107,6 +107,8 @@ set(LF2_NATIVE_RUNTIME_SOURCES
     runtime/app/config.c
     runtime/app/user_paths.c
     runtime/app/game_data.c
+    runtime/app/guest_calls.c
+    runtime/app/main_loop.c
     runtime/app/port_entry.c
     runtime/app/update.c
     runtime/platform/window_policy.c
@@ -271,7 +273,8 @@ target_link_libraries(lf2 PRIVATE SDL3::SDL3 lf2_environment lf2_diagnostics luc
                                   $<$<BOOL:${LF2_M}>:${LF2_M}>)
 if(TARGET lucent::online)
     target_sources(lf2 PRIVATE runtime/netplay/online_session.cpp runtime/netplay/packet.c
-                               runtime/netplay/rollback_state.cpp runtime/netplay/rollback_check.cpp)
+                               runtime/netplay/rollback_state.cpp runtime/netplay/rollback_check.cpp
+                               runtime/netplay/game_runtime.cpp)
     target_link_libraries(lf2 PRIVATE lucent::online lucent::zerotier)
     target_compile_definitions(lf2 PRIVATE LF2_ONLINE=1)
 endif()

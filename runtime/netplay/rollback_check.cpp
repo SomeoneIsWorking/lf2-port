@@ -3,6 +3,7 @@
 #include "guest_journal.h"
 #include "hostwin.h"
 #include "lf2_log.h"
+#include "main_loop.h"
 #include "rollback_state.h"
 
 #include <cstdlib>
@@ -21,17 +22,24 @@ class RollbackCheck {
   public:
     explicit RollbackCheck(std::unique_ptr<RollbackState> state) : state_(std::move(state))
     {
+        hostwin_set_input_mode(HOST_INPUT_AT_BOUNDARY);
     }
 
-    void frame(void (*run_frame)(), std::uint32_t frame)
+    bool frame(std::uint32_t frame)
     {
+        hostwin_pump();
         state_->save(0);
         hostwin_set_presenting(0);
-        run_frame();
+        const bool ran = main_loop_advance() != 0;
         hostwin_set_presenting(1);
+        if (!ran) {
+            return false;
+        }
         const std::uint64_t first = state_->hash();
         state_->load(0);
-        run_frame();
+        if (main_loop_advance() == 0) {
+            return false;
+        }
         const std::uint64_t second = state_->hash();
         guest_journal_for_each_open_page(count_page, &pages_);
         ++frames_;
@@ -46,6 +54,7 @@ class RollbackCheck {
                            static_cast<unsigned long long>(frames_), static_cast<unsigned long long>(differing_),
                            static_cast<unsigned long long>(pages_ / frames_));
         }
+        return true;
     }
 
   private:
@@ -60,7 +69,7 @@ std::unique_ptr<RollbackCheck> check;
 } // namespace
 } // namespace lf2::netplay
 
-extern "C" void lf2_rollback_check_frame(void (*run_frame)(void), uint32_t frame)
+extern "C" int lf2_rollback_check_frame(uint32_t frame)
 {
     using lf2::netplay::check;
     if (!check) {
@@ -71,5 +80,5 @@ extern "C" void lf2_rollback_check_frame(void (*run_frame)(void), uint32_t frame
         }
         check = std::make_unique<lf2::netplay::RollbackCheck>(std::move(state));
     }
-    check->frame(run_frame, frame);
+    return check->frame(frame) ? 1 : 0;
 }

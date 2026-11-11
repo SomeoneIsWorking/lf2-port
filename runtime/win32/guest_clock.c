@@ -1,7 +1,6 @@
 #include "guest_clock.h"
 
 #include "environment.h"
-#include "hostwin.h"
 #include "lf2_log.h"
 
 #include <stdlib.h>
@@ -37,26 +36,50 @@ void guest_clock_restore(GuestClockState state)
     offset_ns = state.offset_ns;
 }
 
-static int64_t wall_epoch_ns;
-static int wall_epoch_set;
+static GuestCalendar calendar;
+static int calendar_fixed;
 
-static void fix_wall_epoch(void)
+static void fix_calendar(void)
 {
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
     const char *fixed = lf2_environment_get(LF2_ENV_WALL_EPOCH);
-    if (fixed) {
-        wall_epoch_ns = (int64_t)strtoll(fixed, NULL, 10) * 1000000000ll;
-    } else {
-        struct timespec now;
-        clock_gettime(CLOCK_REALTIME, &now);
-        wall_epoch_ns = (int64_t)now.tv_sec * 1000000000ll + now.tv_nsec - (int64_t)guest_clock_ns();
+    const time_t seconds = fixed ? (time_t)strtoll(fixed, NULL, 10) : now.tv_sec;
+    struct tm local;
+    localtime_r(&seconds, &local);
+    calendar.utc_offset_s = (int32_t)local.tm_gmtoff;
+    calendar.epoch_ns = fixed ? (int64_t)seconds * 1000000000ll
+                              : (int64_t)now.tv_sec * 1000000000ll + now.tv_nsec - (int64_t)guest_clock_ns();
+    calendar_fixed = 1;
+}
+
+GuestCalendar guest_clock_calendar(void)
+{
+    if (!calendar_fixed) fix_calendar();
+    return calendar;
+}
+
+int guest_clock_adopt_calendar(GuestCalendar shared)
+{
+    if (calendar_fixed) {
+        lf2_log_writef(LF2_LOG_ERROR, "guest-clock", "the guest already read its calendar; cannot adopt a session's");
+        return 0;
     }
-    wall_epoch_set = 1;
+    calendar = shared;
+    calendar_fixed = 1;
+    return 1;
 }
 
 int64_t guest_clock_wall_ns(void)
 {
-    if (!wall_epoch_set) fix_wall_epoch();
-    return wall_epoch_ns + (int64_t)guest_clock_ns();
+    return guest_clock_calendar().epoch_ns + (int64_t)guest_clock_ns();
+}
+
+void guest_clock_local_time(int64_t seconds, struct tm *out)
+{
+    const time_t shifted = (time_t)(seconds + guest_clock_calendar().utc_offset_s);
+    gmtime_r(&shifted, out);
+    out->tm_isdst = 0;
 }
 
 void guest_clock_credit_ms(uint32_t ms)
@@ -98,7 +121,7 @@ void guest_clock_note_read(const char *api, uint32_t return_address)
     clk_site_n[k]++;
     if (clk_run > clk_site_max_run[k]) {
         clk_site_max_run[k] = clk_run;
-        clk_site_max_at[k] = hostwin_frames();
+        clk_site_max_at[k] = (long)frames;
     }
 }
 

@@ -22,6 +22,8 @@ typedef int (*GuestSpanFilter)(uint32_t address);
 
 /* Tracks every mapped guest span the filter keeps, from now on. 0, logged, where the platform cannot. */
 int guest_journal_start(GuestSpanFilter tracked);
+/* Every page writable again, every pre-image dropped. */
+void guest_journal_stop(void);
 int guest_journal_active(void);
 /* The host page size the journal tracks. */
 uint32_t guest_journal_page_size(void);

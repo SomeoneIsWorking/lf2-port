@@ -4,6 +4,8 @@
 #include "boot_guest.h"
 #include "environment.h"
 #include "frame_state.h"
+#include "guest_calls.h"
+#include "main_loop.h"
 #ifdef LF2_ONLINE
 #include "rollback_check.h"
 #endif
@@ -17,7 +19,6 @@
 #include <stdio.h>
 
 enum {
-    IAT_SLEEP = 0x00447098,
     IAT_INITIALIZE_CRITICAL_SECTION = 0x004470b4,
     IAT_SRAND = 0x004470ec,
     IAT_SPRINTF = 0x00447174,
@@ -25,16 +26,12 @@ enum {
     IAT_LOCALTIME64 = 0x004471a8,
     IAT_LOAD_CURSOR = 0x004471dc,
     IAT_SET_CURSOR = 0x004471f8,
-    IAT_TIME_GET_TIME = 0x00447250,
     IAT_CO_INITIALIZE = 0x004472b4,
 
     AD_CRITICAL_SECTION = 0x004554a4,
     FRAME_SURFACE = 0x00455608,
     WINDOW_HANDLE = 0x004546f4,
     WORLD = 0x00458b00,
-    FRAME_COUNTER = 0x00458580,
-    FRAME_ARGUMENT = 0x00451dac,
-    FAST_PACING = 0x0044d02c,
     UPDATE_DAYS = 0x0044d788,
     BUILD_DATE = 0x00451d48,
     UPDATE_DATE = 0x00458350,
@@ -42,35 +39,6 @@ enum {
     KEY_STATE = 0x00455378,
     INITIAL_MUSIC = 0x00447744,
 };
-
-static void push_arguments(const uint32_t *args, unsigned count)
-{
-    while (count) PUSH32(args[--count]);
-}
-
-static uint32_t call_guest_cdecl(uint32_t guest_address, const uint32_t *args, unsigned count, uint32_t return_address)
-{
-    push_arguments(args, count);
-    PUSH32(return_address);
-    lf2_jit_call(guest_address);
-    R(ESP) += 4 * count;
-    return R(EAX);
-}
-
-static uint32_t call_import(uint32_t iat, const uint32_t *args, unsigned count, int caller_cleans,
-                            uint32_t return_address)
-{
-    push_arguments(args, count);
-    PUSH32(return_address);
-    dispatch(LD32(iat));
-    if (caller_cleans) R(ESP) += 4 * count;
-    return R(EAX);
-}
-
-static uint32_t call_guest_no_args(uint32_t guest_address, uint32_t return_address)
-{
-    return call_guest_cdecl(guest_address, NULL, 0, return_address);
-}
 
 static void construct_guest_globals(void)
 {
@@ -83,17 +51,6 @@ static void construct_guest_globals(void)
     call_guest_no_args(0x00414440, 0x004462f0);
     R(ECX) = WORLD;
     call_guest_no_args(0x00419e40, 0x00446300);
-}
-
-static uint32_t guest_time_ms(void)
-{
-    return call_import(IAT_TIME_GET_TIME, NULL, 0, 0, 0x0043d162);
-}
-
-static void guest_sleep(uint32_t milliseconds)
-{
-    const uint32_t args[] = {milliseconds};
-    call_import(IAT_SLEEP, args, 1, 0, 0x0043d1ef);
 }
 
 static void format_date(uint32_t destination, uint32_t tm)
@@ -186,77 +143,34 @@ static void construct_global_sounds(void)
     }
 }
 
-static void run_game_frame(void)
+static int run_main_loop(void)
 {
-    const uint32_t args[] = {LD32(FRAME_ARGUMENT)};
-    call_guest_cdecl(0x0043e9a0, args, 1, 0x0043d187);
-    if ((int32_t)R(EAX) < 0) call_guest_no_args(0x0043e890, 0x0043d193);
-}
-
-static void pump_guest_messages(void)
-{
-    call_guest_no_args(0x0043d230, 0x0043d152);
-}
-
-static void advance_frame_counter(void)
-{
-    uint32_t frame = LD32(FRAME_COUNTER) + 1;
-    if (frame >= 60) frame = 0;
-    ST32(FRAME_COUNTER, frame);
-}
-
-static int run_main_loop(uint32_t previous_tick)
-{
-#ifdef LF2_ONLINE
-    lf2_online_start();
-#endif
+    main_loop_start();
     const int log_state = lf2_environment_get(LF2_ENV_STATE_HASH) != NULL;
 #ifdef LF2_ONLINE
     const int rollback_check = lf2_environment_get(LF2_ENV_ROLLBACK_CHECK) != NULL;
 #endif
-    uint32_t logic_frame = 0;
-    while (!hostwin_quit_requested()) {
-        pump_guest_messages();
-        if (hostwin_quit_requested()) break;
-
-        /* DUE MEANS >=, NOT >. On Windows this loop's clock is wall time and never rests
-         * exactly on the period, so the game's own `diff > interval` cannot jam. The guest
-         * clock here is quantised -- presented frames plus credited sleeps -- and CAN rest
-         * exactly on the period, where `>` neither runs the frame nor leaves a positive
-         * remainder to sleep away: measured, the loop span forever at elapsed == interval ==
-         * remaining == 0. The same trap in the game's own pacer is why h_Sleep credits a
-         * sleep as ms + 1; this loop needs the floor stated directly. */
-        const uint32_t interval = LD32(FAST_PACING) ? 33 : 3;
-        uint32_t now = guest_time_ms();
-        uint32_t elapsed = now - previous_tick;
-        if (elapsed >= interval) {
-            if (elapsed > 100) previous_tick = now - 100;
+    for (uint32_t logic_frame = 0;; logic_frame++) {
 #ifdef LF2_ONLINE
-            if (rollback_check) lf2_rollback_check_frame(run_game_frame, logic_frame);
-            else run_game_frame();
+        int ran;
+        if (lf2_online_playing()) ran = lf2_online_advance();
+        else if (rollback_check) ran = lf2_rollback_check_frame(logic_frame);
+        else ran = main_loop_advance();
 #else
-            run_game_frame();
+        const int ran = main_loop_advance();
 #endif
-            if (log_state) lf2_frame_state_log(logic_frame, hostwin_frames());
-#ifdef LF2_ONLINE
-            lf2_online_frame(logic_frame, input_local_buttons());
-#endif
-            logic_frame++;
-            previous_tick += interval;
-        }
-
-        now = guest_time_ms();
-        const int32_t remaining = (int32_t)(previous_tick - now + interval);
-        if (remaining > 0) guest_sleep((uint32_t)(remaining > 5 ? 5 : remaining));
-        advance_frame_counter();
+        if (!ran) return 0;
+        if (log_state) lf2_frame_state_log(logic_frame, hostwin_frames());
     }
-    return 0;
 }
 
 int port_entry_run(void)
 {
     lf2_log_writef(LF2_LOG_INFO, "port_entry",
                    "startup: entering native port entry (guest PE entry and WinMain bypassed)\n");
+#ifdef LF2_ONLINE
+    lf2_online_start();
+#endif
     construct_guest_globals();
     startup_init_step_begin(STARTUP_INIT_WINDOW, "window");
     const int window_ok = initialise_window();
@@ -287,10 +201,10 @@ int port_entry_run(void)
     boot_guest_load_data(WORLD, frame_surface);
     lf2_log_writef(LF2_LOG_INFO, "port_entry", "startup: native data initialization complete\n");
     construct_global_sounds();
-    run_game_frame();
+    main_loop_run_game_frame();
     startup_init_ready();
 
     const uint32_t music_args[] = {INITIAL_MUSIC};
     call_guest_cdecl(0x00402020, music_args, 1, 0x0043d061);
-    return run_main_loop(guest_time_ms());
+    return run_main_loop();
 }

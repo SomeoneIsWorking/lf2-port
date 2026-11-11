@@ -46,7 +46,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
 | S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | partial | S005, S015 | G001, G003 |
 | S022 | Internet multiplayer joins by ZeroTier code through the embedded Lucent ZeroTier node, with no install or account; play by code always works, and Lucent discovery (Nostr, a self-hosted lobby, Firebase) lists open sessions | partial | S014, Lucent ZeroTier and discovery components | G002 |
-| S023 | Rollback netplay restores and resimulates exact game state | missing | S005, Lucent rollback engine, plan 0129 save/load/step/input hooks | G002 |
+| S023 | Rollback netplay restores and resimulates exact game state | partial | S005, Lucent rollback engine, plan 0129 save/load/step/input hooks | G002 |
 
 ## Capability details
 
@@ -195,16 +195,17 @@ and sustained performance evidence remain absent.
 
 Two LF2s meet by a pasted invite code over Lucent's peer-to-peer transport
 (`runtime/netplay/online_session.cpp`, `lucent::online`): the path is
-authenticated, a peer running a different `lf2.exe` is refused, and one input
-frame crosses each way. `tools/routes/online_meeting_test.py` shows it with two
-hidden instances in separate rootless network namespaces joined by one veth
-cable. Until the Online menu exists, `LF2_ONLINE=host` or `LF2_ONLINE=<invite>`
-starts a meeting.
+authenticated, a peer running a different `lf2.exe` is refused, the friend
+adopts the host's calendar, and both play from boot through `lucent::rollback`
+with LF2 as its `Runtime` (`runtime/netplay/game_runtime.cpp`).
+`tools/routes/online_meeting_test.py` shows it with two hidden instances in
+separate rootless network namespaces joined by one veth cable: equal final
+hashes on every reported frame, no desync. Until the Online menu exists,
+`LF2_ONLINE=host` or `LF2_ONLINE=<invite>` starts a meeting.
 
-Gap: no remote player plays yet. Frames are played by the shared rollback
-engine once it lands, on LF2's save, load, advance and set-input hooks
-(`docs/plans/0129-online-multiplayer.md`). Desktop only: Android needs OpenSSL
-provisioned for `lucent::online`.
+Gap: the test plays idle inputs, so no remote press has yet steered a fighter;
+a session starts at boot only; host keys and mouse are withheld during one.
+Desktop only: Android needs OpenSSL provisioned for `lucent::online`.
 
 ### S022 — Internet play by ZeroTier code
 
@@ -224,11 +225,14 @@ the executable identity. Not in the browser build. Design and phases:
 
 ### S023 — Rollback
 
-Missing capability: the JIT/native product has no complete state snapshot,
-restoration, deterministic frame-step, or replay conformance evidence. The
-rollback engine is the title-neutral Lucent component psxport builds first;
-LF2 supplies save, load, advance-one-frame and set-input hooks
-(`docs/plans/0129-online-multiplayer.md`) and writes no engine of its own.
+Shown: snapshots through the guest write journal reload exactly
+(`tools/routes/rollback_test.py`: every frame rerun from its snapshot matches a
+plain run over 299 frames), and the online session runs on `lucent::rollback`.
+
+Gap: no rewind has happened in a two-peer run yet (0 frames resimulated on a
+quiet link); audio replays during resimulation; a frame that creates COM objects
+cannot be loaded back; the route reaches character select only (S005). Hooks
+and design: `docs/plans/0129-online-multiplayer.md`.
 
 ### S015 — Representative gameplay conformance
 

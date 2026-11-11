@@ -293,6 +293,18 @@ static void h_GetSystemMetrics(void)
  * Keyboard state is served from SDL directly via GetKeyState, which is the game's main
  * input path. */
 static int quit_posted;
+static HostInputMode input_mode = HOST_INPUT_LIVE;
+
+void hostwin_set_input_mode(HostInputMode mode)
+{
+    input_mode = mode;
+}
+
+static int is_input_message(uint32_t msg)
+{
+    return msg == WM_KEYDOWN_FWD || msg == WM_KEYUP_FWD || msg == WM_MOUSEMOVE || msg == WM_LBUTTONDOWN ||
+           msg == WM_LBUTTONUP;
+}
 
 /* LF2_WINDOW_RESIZE=<frame>:<w>x<h>[,...] -- resize the window part-way through a run.
  *
@@ -618,6 +630,7 @@ static void push_message(uint32_t msg, uint32_t wparam, uint32_t lparam)
     /* The port's own ledger is updated first, then the message is dropped if the port owns
      * the key -- so the pause menu still sees Escape while the game never does. */
     if ((msg == WM_KEYDOWN_FWD || msg == WM_KEYUP_FWD) && port_owns_key(wparam)) return;
+    if (input_mode == HOST_INPUT_WITHHELD && is_input_message(msg)) return;
     queue_message(msg, wparam, lparam);
 }
 
@@ -645,6 +658,35 @@ static void queue_startup_messages(void)
         startup_queue[startup_count].lparam = msgs[i].l;
         startup_count++;
     }
+}
+
+size_t hostwin_messages_size(void)
+{
+    return sizeof msg_ring + sizeof ring_head + sizeof ring_tail + sizeof startup_head;
+}
+
+void hostwin_messages_save(void *out)
+{
+    uint8_t *at = out;
+    memcpy(at, msg_ring, sizeof msg_ring);
+    at += sizeof msg_ring;
+    memcpy(at, &ring_head, sizeof ring_head);
+    at += sizeof ring_head;
+    memcpy(at, &ring_tail, sizeof ring_tail);
+    at += sizeof ring_tail;
+    memcpy(at, &startup_head, sizeof startup_head);
+}
+
+void hostwin_messages_load(const void *in)
+{
+    const uint8_t *at = in;
+    memcpy(msg_ring, at, sizeof msg_ring);
+    at += sizeof msg_ring;
+    memcpy(&ring_head, at, sizeof ring_head);
+    at += sizeof ring_head;
+    memcpy(&ring_tail, at, sizeof ring_tail);
+    at += sizeof ring_tail;
+    memcpy(&startup_head, at, sizeof startup_head);
 }
 
 /* PeekMessage's last argument decides whether the message is consumed: PM_NOREMOVE (0)
@@ -677,7 +719,7 @@ static int next_queued_message(uint32_t p, int remove)
 
 static void h_PeekMessageA(void)
 {
-    hostwin_pump();
+    if (input_mode == HOST_INPUT_LIVE) hostwin_pump();
     static int msg_debug = -1;
     if (env_flag(LF2_ENV_MSG_DEBUG, &msg_debug)) {
         static uint8_t seen[8];
@@ -702,7 +744,7 @@ static void h_PeekMessageA(void)
 
 static void h_GetMessageA(void)
 {
-    hostwin_pump();
+    if (input_mode == HOST_INPUT_LIVE) hostwin_pump();
     static int msg_debug = -1;
     if (env_flag(LF2_ENV_MSG_DEBUG, &msg_debug)) {
         static long n;
@@ -854,10 +896,10 @@ static int port_owns_key(uint32_t vk)
 
 static void h_GetKeyState(void)
 {
-    hostwin_pump();
+    if (input_mode == HOST_INPUT_LIVE) hostwin_pump();
     static int key_debug = -1;
     if (env_flag(LF2_ENV_KEY_DEBUG, &key_debug)) keydebug_note(ARG(0) & 0xff);
-    if (port_owns_key(ARG(0))) {
+    if (port_owns_key(ARG(0)) || input_mode == HOST_INPUT_WITHHELD) {
         ret_stdcall(1, 0);
         return;
     }

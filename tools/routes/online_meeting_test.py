@@ -2,7 +2,8 @@
 """Two LF2s meet by a pasted code, directly or over ZeroTier alone.
 
 The host shows an invite, the friend joins it, both authenticate the path, check that the other
-runs the same lf2.exe, and trade one input frame. Direct: each in its own network namespace joined
+runs the same lf2.exe, and play through the rollback engine: each logs a final state hash every
+sixty frames, and the two must agree on every frame both reached. Direct: each in its own network namespace joined
 by one cable. `--zerotier`: the direct path off, both on a lab with only Lucent's lab ZeroTier root
 to reach each other through. The namespaces belong to a user namespace of this user's, so nothing
 needs root.
@@ -28,7 +29,10 @@ FRIEND_ADDRESS = "10.88.0.2/24"
 LAB_ADDRESS = "10.77.0.1"
 ROOT_PORT = 39993
 INVITE = re.compile(r"^invite code: (\S+)$")
-DEADLINE_S = 180
+FINAL = re.compile(r"^frame (\d+) final hash ([0-9a-f]{16}), (\d+) frames resimulated$")
+# Final hashes both peers must log before the run counts as played.
+REPORTS = 5
+DEADLINE_S = 240
 
 
 def in_user_namespace() -> bool:
@@ -111,10 +115,17 @@ def first_invite(log: Path) -> str | None:
     return None
 
 
-def exchanged(log: Path) -> bool:
-    lines = online_lines(log)
-    return any(line.startswith("frame ") and " received: " in line for line in lines) and \
-        any(line.startswith("frame ") and " sent: " in line for line in lines)
+def final_hashes(log: Path) -> dict[int, tuple[str, int]]:
+    hashes = {}
+    for line in online_lines(log):
+        match = FINAL.match(line)
+        if match:
+            hashes[int(match.group(1))] = (match.group(2), int(match.group(3)))
+    return hashes
+
+
+def played(log: Path) -> bool:
+    return len(final_hashes(log)) >= REPORTS
 
 
 def stop(process: subprocess.Popen[bytes]) -> None:
@@ -176,7 +187,7 @@ def main() -> int:
         print("  ok    the host showed an invite code")
         processes.append(friend.start(command, game, {**env, "LF2_ONLINE": invite,
                                                       "XDG_CONFIG_HOME": str(homes["friend"])}, friend_log))
-        while time.monotonic() < deadline and not (exchanged(host_log) and exchanged(friend_log)):
+        while time.monotonic() < deadline and not (played(host_log) and played(friend_log)):
             if any(process.poll() is not None for process in processes):
                 break
             time.sleep(0.2)
@@ -184,16 +195,23 @@ def main() -> int:
         for name, log in (("host", host_log), ("friend", friend_log)):
             lines = online_lines(log)
             same = "the peer runs the same lf2.exe" in lines
-            traded = exchanged(log)
             path = expected_path in tagged_lines(log, "p2p")
+            desync = any(line.startswith("desync") for line in lines)
             print(f"  {'ok  ' if path else 'FAIL'}  {name}: {expected_path}")
             print(f"  {'ok  ' if same else 'FAIL'}  {name}: the peer runs the same lf2.exe")
-            print(f"  {'ok  ' if traded else 'FAIL'}  {name}: sent and received one input frame")
+            print(f"  {'ok  ' if not desync else 'FAIL'}  {name}: no desync")
             for line in lines:
-                if line.startswith(("connected", "frame ")):
+                if line.startswith("connected"):
                     print(f"          {line}")
-            passed = passed and path and same and traded
-        return 0 if passed else 1
+            passed = passed and same and path and not desync
+        host_hashes, friend_hashes = final_hashes(host_log), final_hashes(friend_log)
+        common = sorted(set(host_hashes) & set(friend_hashes))
+        agree = len(common) >= REPORTS and all(host_hashes[f][0] == friend_hashes[f][0] for f in common)
+        print(f"  {'ok  ' if agree else 'FAIL'}  both reached {len(common)} reports with equal final hashes")
+        for frame in common[:3] + common[-2:]:
+            print(f"          frame {frame}: host {host_hashes[frame][0]} friend {friend_hashes[frame][0]}"
+                  f" (resimulated {host_hashes[frame][1]}/{friend_hashes[frame][1]})")
+        return 0 if passed and agree else 1
     finally:
         for process in processes:
             stop(process)

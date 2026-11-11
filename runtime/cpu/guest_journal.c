@@ -14,6 +14,9 @@ int guest_journal_start(GuestSpanFilter tracked)
     lf2_log_writef(LF2_LOG_WARNING, "guest-journal", "this platform has no guest write journal");
     return 0;
 }
+void guest_journal_stop(void)
+{
+}
 int guest_journal_active(void)
 {
     return 0;
@@ -55,6 +58,7 @@ void guest_journal_track(uint32_t address, uint32_t size)
 
 #else
 
+#include <errno.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -98,9 +102,16 @@ static uint8_t *page_host(uint32_t page)
     return g_mem + ((uint64_t)page << page_shift);
 }
 
+/* Async-signal-safe: the fault handler protects pages too. */
 static void protect(uint32_t page, int prot)
 {
-    if (mprotect(page_host(page), page_size, prot) != 0) fatal("guest-journal: mprotect failed\n");
+    if (mprotect(page_host(page), page_size, prot) == 0) return;
+    char message[] = "guest-journal: mprotect failed, errno 000\n";
+    const int error = errno;
+    message[sizeof message - 3] = (char)('0' + error % 10);
+    message[sizeof message - 4] = (char)('0' + error / 10 % 10);
+    message[sizeof message - 5] = (char)('0' + error / 100 % 10);
+    fatal(message);
 }
 
 /* Keeps a clean page's pre-image and makes it writable. 0 for a page the journal does not track. */
@@ -172,9 +183,9 @@ int guest_journal_start(GuestSpanFilter tracked)
     page_size = (uint32_t)size;
     page_shift = (uint32_t)__builtin_ctz(page_size);
     capacity = CAPACITY_BYTES >> page_shift;
-    page_state = reserve(ADDRESS_SPACE >> page_shift);
-    images = reserve(CAPACITY_BYTES);
-    entry_page = reserve(capacity * sizeof *entry_page);
+    if (!page_state) page_state = reserve(ADDRESS_SPACE >> page_shift);
+    if (!images) images = reserve(CAPACITY_BYTES);
+    if (!entry_page) entry_page = reserve(capacity * sizeof *entry_page);
     if (!page_state || !images || !entry_page) {
         lf2_log_writef(LF2_LOG_WARNING, "guest-journal", "cannot reserve the journal's %llu MB",
                        (unsigned long long)(CAPACITY_BYTES >> 20));
@@ -194,6 +205,21 @@ int guest_journal_start(GuestSpanFilter tracked)
     guest_memory_for_each_span(track_span, NULL);
     lf2_log_writef(LF2_LOG_INFO, "guest-journal", "tracking guest writes in %u-byte pages", page_size);
     return 1;
+}
+
+void guest_journal_stop(void)
+{
+    if (!active) return;
+    active = 0;
+    for (uint64_t page = 0; page < (ADDRESS_SPACE >> page_shift); page++) {
+        if (atomic_load(&page_state[page]) == PAGE_UNTRACKED) continue;
+        protect((uint32_t)page, PROT_READ | PROT_WRITE);
+        atomic_store(&page_state[page], PAGE_UNTRACKED);
+    }
+    sigaction(SIGSEGV, &previous_segv, NULL);
+    sigaction(SIGBUS, &previous_bus, NULL);
+    head = open_from = 0;
+    atomic_store(&tail, 0);
 }
 
 int guest_journal_active(void)

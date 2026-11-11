@@ -55,6 +55,7 @@ void guest_memory_init(void)
 void guest_memory_shutdown(void)
 {
     if (!initialized) return;
+    guest_journal_stop();
     x86p_sparse_destroy(memory.sparse);
     while (allocations) {
         GuestAllocation *next = allocations->next;

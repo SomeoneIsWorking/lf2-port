@@ -21,6 +21,16 @@ typedef struct {
 
 extern HostWin hw;
 void hostwin_pump(void);
+/* How host input reaches the guest. Live: the guest's own message and key-state calls pump host
+ * events, as on Windows. At the boundary: events are pumped only between frames, so a frame's
+ * messages and key states are its inputs and the message queue is snapshot state. Withheld: as at
+ * the boundary, and no local key or mouse input reaches the guest, as a session's peer cannot see it. */
+typedef enum { HOST_INPUT_LIVE, HOST_INPUT_AT_BOUNDARY, HOST_INPUT_WITHHELD } HostInputMode;
+void hostwin_set_input_mode(HostInputMode mode);
+/* The messages queued for the guest, as a snapshot section. */
+size_t hostwin_messages_size(void);
+void hostwin_messages_save(void *out);
+void hostwin_messages_load(const void *in);
 /* Surfaces are 32-bit XRGB; the palette parameter this used to take was dead from
  * the point the 8-bit assumption was dropped, and every caller passed NULL. */
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch);

@@ -188,3 +188,12 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
   run's over 299 frames; 11 to 12 logic pages written a frame. Restoring surfaces would have cost 4400
   pages a frame. No frame on this route allocates, so heap and mapping restores are covered by
   `test_guest_journal` only. Next: the Lucent `Runtime` over this state, then the input hook.
+- 2026-11-11: phases 3 and 4. `main_loop.c` advances one logic frame; `session_inputs.h` feeds the
+  gather's devices from the session's slots and makes device claims, late-join selections and the
+  window message queue snapshot sections; host keys and mouse are withheld in a session.
+  `game_runtime.cpp` is LF2's `lucent::rollback::Runtime`. The meeting now happens before boot; the
+  hello (wire version 2) carries the executable hash and the host's calendar, which the friend adopts.
+  `online_meeting_test.py`, direct and `--zerotier`: both peers log equal final hashes on every
+  reported frame, no desync. Gaps: idle inputs only and no rewind yet in a two-peer run; audio during
+  resimulation; frames that create COM objects cannot be loaded; the lazy guest buffer behind
+  `localtime`; a session starts at boot only; no Online menu.
