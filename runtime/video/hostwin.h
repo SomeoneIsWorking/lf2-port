@@ -5,6 +5,10 @@
 #include <SDL3/SDL.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     SDL_Window *window;
     SDL_Renderer *renderer;
@@ -26,18 +30,17 @@ void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch);
 void frame_source_note(uint32_t pixels, int off);
 uint32_t frame_source_pixels(void);
 
-#endif
-
 void audio_report(void);
 int music_load(const char *path);
 void music_start(void);
 void music_stop(void);
 void music_set_volume(int32_t centibels);
 long hostwin_frames(void);
+/* A resimulated frame runs without being shown. */
+void hostwin_set_presenting(int presenting);
 /* Resolve one frame specification through the same screen-anchor owner used by captures. */
 int hostwin_frame_selected(const char *spec, long frame);
-int lf2_loading_now(void);          /* runtime/win32/imports.c */
-enum { GUEST_FRAME_NS = 33333333 }; /* the guest clock's tick, shared with guest_clock.c */
+int lf2_loading_now(void); /* runtime/win32/imports.c */
 /* The window changed size (or was just created): recompute the composition from its PIXEL
  * width and re-point everything that depends on it. In runtime/video/ddraw.c, because that is
  * where the surfaces and the presentation live. */
@@ -141,3 +144,9 @@ void pause_menu_drop_out(void);
 void pause_menu_leave_match(void);
 void pause_report(void);
 void controls_hint_enable(int on);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

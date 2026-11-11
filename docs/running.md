@@ -118,6 +118,10 @@ performance for the affected region.
   public roots with a root set file (a lab root;
   `tools/routes/online_meeting_test.py --zerotier` runs one). The node's identity lives in
   the user-data `zerotier/` directory, so a player's code stays the same.
+- `LF2_ROLLBACK_CHECK` runs every frame unshown, loads it back from its snapshot
+  and runs it again shown, logging any frame whose two runs end differently
+  (`runtime/netplay/rollback_check.h`); `tools/routes/rollback_test.py` compares
+  it with a plain run.
 - `LF2_WALL_EPOCH=<unix seconds>` fixes the guest calendar's epoch so two runs
   see the same dates (`runtime/win32/guest_clock.h`).
 

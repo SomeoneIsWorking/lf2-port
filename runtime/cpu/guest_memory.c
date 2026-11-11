@@ -1,4 +1,5 @@
 #include "guest_memory.h"
+#include "guest_journal.h"
 #include "cpu.h"
 #include "memory_sparse.h"
 #include "jit_executor.h"
@@ -78,6 +79,7 @@ void guest_memory_map(uint32_t address, uint32_t size)
         if (!allocation) memory_failure("host allocation failed", address, size);
         *allocation = (GuestAllocation){.next = allocations, .host = NULL, .address = address, .size = size};
         allocations = allocation;
+        guest_journal_track(address, size);
         return;
     }
     uint8_t *host = calloc(size, 1);
@@ -104,6 +106,22 @@ void guest_memory_for_each_span(GuestSpanVisitor visit, void *context)
     for (const GuestAllocation *allocation = allocations; allocation; allocation = allocation->next) {
         const uint8_t *host = allocation->host ? allocation->host : g_mem + allocation->address;
         visit(allocation->address, allocation->size, host, context);
+    }
+}
+
+GuestMappingState guest_memory_mapping_state(void)
+{
+    return (GuestMappingState){.newest = allocations};
+}
+
+void guest_memory_mapping_restore(GuestMappingState state)
+{
+    if (memory.sparse) memory_failure("mapping restore on sparse memory", 0, 0);
+    while (allocations != state.newest) {
+        if (!allocations) memory_failure("mapping restore to a span list this one never held", 0, 0);
+        GuestAllocation *next = allocations->next;
+        free(allocations);
+        allocations = next;
     }
 }
 
@@ -165,5 +183,6 @@ void guest_memory_before_write(uint32_t address, size_t size)
 {
     if (size > UINT32_MAX || (uint64_t)address + size > UINT64_C(0x100000000))
         memory_failure("invalid write span", address, size);
+    guest_journal_note_write(address, size);
     lf2_jit_invalidate(address, (uint32_t)size);
 }

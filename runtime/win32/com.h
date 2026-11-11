@@ -13,6 +13,10 @@
 
 #include "guest.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum { COM_SENTINEL = 0xF1000000u };
 
 enum { IF_DDRAW, IF_SURFACE, IF_CLIPPER, IF_PALETTE, IF_DSOUND, IF_DSBUFFER,
@@ -38,6 +42,8 @@ extern int com_cur_iface, com_cur_method;
 
 void     com_init(void);
 uint32_t com_create(int iface, void *host);   /* -> guest object address */
+/* Objects created so far; a snapshot cannot yet roll their host side back. */
+int com_object_count(void);
 void    *com_host(uint32_t self);
 void     com_call(uint32_t sentinel);
 void     com_ret(int nargs, uint32_t hresult);
@@ -48,5 +54,9 @@ uint32_t guest_call(uint32_t addr, const uint32_t *args, int nargs);
 enum { DD_OK = 0, E_FAIL = 0x80004005u, E_NOINTERFACE = 0x80004002u };
 
 void com_release_report(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* COM_H */

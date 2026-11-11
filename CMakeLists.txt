@@ -73,6 +73,7 @@ endif()
 
 set(LF2_NATIVE_RUNTIME_SOURCES
     runtime/cpu/guest.c
+    runtime/cpu/guest_journal.c
     runtime/cpu/guest_memory.c
     runtime/cpu/guest_arena.c
     runtime/win32/guest_heap.c
@@ -203,19 +204,24 @@ if(TARGET x86port_runtime)
     target_link_libraries(lf2 PRIVATE x86port_runtime)
 endif()
 
-add_executable(test_jit_calls tests/test_jit_calls.c runtime/cpu/jit_executor.c runtime/cpu/guest_memory.c)
+add_executable(test_jit_calls tests/test_jit_calls.c runtime/cpu/jit_executor.c runtime/cpu/guest_memory.c runtime/cpu/guest_journal.c)
 target_include_directories(test_jit_calls PRIVATE
     runtime/cpu runtime/win32 runtime/overrides runtime/app runtime/log)
 target_link_libraries(test_jit_calls PRIVATE x86port_runtime lf2_diagnostics lf2_environment)
 add_test(NAME jit_calls COMMAND test_jit_calls)
 
-add_executable(test_guest_memory tests/test_guest_memory.c runtime/cpu/guest_memory.c runtime/cpu/guest_arena.c)
+add_executable(test_guest_memory tests/test_guest_memory.c runtime/cpu/guest_memory.c runtime/cpu/guest_journal.c runtime/cpu/guest_arena.c)
 target_compile_definitions(test_guest_memory PRIVATE LF2_TEST_SPARSE_MEMORY=1)
 target_include_directories(test_guest_memory PRIVATE runtime/cpu runtime/app runtime/log)
 target_link_libraries(test_guest_memory PRIVATE x86port_runtime lf2_diagnostics lf2_environment)
 add_test(NAME guest_memory COMMAND test_guest_memory)
 
-add_executable(test_gdi_bitmap tests/test_gdi_bitmap.c runtime/win32/gdi_bitmap.c runtime/cpu/guest_memory.c)
+add_executable(test_guest_journal tests/test_guest_journal.c runtime/cpu/guest_memory.c runtime/cpu/guest_journal.c)
+target_include_directories(test_guest_journal PRIVATE runtime/cpu runtime/app runtime/log)
+target_link_libraries(test_guest_journal PRIVATE x86port_runtime lf2_diagnostics lf2_environment)
+add_test(NAME guest_journal COMMAND test_guest_journal)
+
+add_executable(test_gdi_bitmap tests/test_gdi_bitmap.c runtime/win32/gdi_bitmap.c runtime/cpu/guest_memory.c runtime/cpu/guest_journal.c)
 target_compile_definitions(test_gdi_bitmap PRIVATE LF2_TEST_SPARSE_MEMORY=1)
 target_include_directories(test_gdi_bitmap PRIVATE runtime/cpu runtime/app runtime/log runtime/win32)
 target_link_libraries(test_gdi_bitmap PRIVATE SDL3::SDL3 x86port_runtime lf2_diagnostics lf2_environment)
@@ -264,7 +270,8 @@ find_package(BZip2 REQUIRED)
 target_link_libraries(lf2 PRIVATE SDL3::SDL3 lf2_environment lf2_diagnostics lucent::zip ZLIB::ZLIB BZip2::BZip2
                                   $<$<BOOL:${LF2_M}>:${LF2_M}>)
 if(TARGET lucent::online)
-    target_sources(lf2 PRIVATE runtime/netplay/online_session.cpp runtime/netplay/packet.c)
+    target_sources(lf2 PRIVATE runtime/netplay/online_session.cpp runtime/netplay/packet.c
+                               runtime/netplay/rollback_state.cpp runtime/netplay/rollback_check.cpp)
     target_link_libraries(lf2 PRIVATE lucent::online lucent::zerotier)
     target_compile_definitions(lf2 PRIVATE LF2_ONLINE=1)
 endif()

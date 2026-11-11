@@ -58,10 +58,9 @@ all solutions should require no extra install like a VPN client like tailscale".
 
 The same image, start state and per-frame inputs give the same guest state on every peer.
 
-- **Clock.** Guest time is `presented frames * GUEST_FRAME_NS + guest_clock_offset_ns`
-  (`runtime/win32/imports.c`), never the wall. Two gaps: it counts *presented* frames, so a resimulated
-  frame that is not presented does not advance it; and the offset is host state outside guest memory.
-  Guest time moves to a logic-frame counter that the snapshot owns.
+- **Clock.** Guest time is `guest frames * GUEST_FRAME_NS + offset` (`runtime/win32/guest_clock.c`),
+  never the wall. Guest frames count the frames the guest presented whether or not the host showed
+  them, so a resimulated frame advances it; both words are in the snapshot.
 - **Random numbers.** `h_rand`/`h_srand` call the host libc, whose generator differs between glibc,
   bionic and libSystem and whose state no snapshot sees. They become MSVCR80's generator
   (`holdrand = holdrand * 214013 + 2531011; return (holdrand >> 16) & 0x7fff`) with snapshot-owned state.
@@ -100,22 +99,25 @@ device sampling and slot writing split into two owners there so a session can re
 
 ### Save and load: a complete, fast snapshot
 
-A snapshot holds everything the next frame reads:
+A snapshot (`runtime/netplay/rollback_state.cpp`) holds everything the next frame reads:
 
-- every writable guest region (PE data, heap and arenas, stack, TIB, COM objects; surfaces only if logic
-  reads them, which is to be shown, not assumed), saved as the pages dirtied since a base through the
-  guest-memory prewrite notification `guest_memory` already raises;
-- CPU state at the boundary;
-- host state the guest reads: heap allocator metadata, the logic-frame clock, the generator, native
-  override state, timers, and DirectSound buffer state and play position.
+- every logic span (PE data, heap, stack, TIB, COM objects) through the write journal
+  (`runtime/cpu/guest_journal.c`): between saves the pages are read-only, the first write to one from
+  translated or host code faults and keeps its pre-image, and a load puts the pre-images back and
+  invalidates translations over them. Syscalls writing guest memory note the write through
+  `guest_write_pointer` first. Surfaces and sound buffers are left out: every frame draws them again
+  from logic, shown by the rerun check's media digests matching a plain run.
+- CPU state at the boundary (`lf2_jit_save_cpu`);
+- host state the guest reads: the clock, the generator, the mapped-span list and the heap's next
+  address. Still outside it: COM host objects (a load across a frame that created one aborts), native
+  override state (`coop.c`, `input.c`), DirectSound buffer state and play position, and the message
+  pump between frames.
 
 The same state owner serves issue 0127's durable snapshot (Android process recreation): one set of
 title-owned sections, kept in memory per frame for rollback and serialized only for recovery.
 
-Save and load happen at the frame boundary above. Load refuses unless the executor is at depth zero.
-No code page is
-restored, so translated code stays valid. Cost is measured in bytes and pages per frame and must leave
-room for one save plus several resimulated frames inside a 33 ms frame.
+Save and load happen at the frame boundary above and abort unless the executor is at depth zero. Cost
+is counted in pages written per frame.
 
 ### Hash: desync detection
 
@@ -179,3 +181,10 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
 - 2026-11-11: Lucent `dc64034`. `online_meeting_test.py --zerotier`: direct path off, a dummy `lab0`
   carrying `lucent_zerotier_root`, both instances log `connected over ZeroTier`, see the same `lf2.exe`
   and trade a frame. Next: the rollback hooks on `lucent::rollback::Runtime`.
+- 2026-11-11: phase 2. Save and load through the write journal; the state hash is one formula per
+  4 KiB guest page, kept current from the pages each frame wrote, and the determinism digest uses it
+  (300 frames now take seconds, not minutes). `tools/routes/rollback_test.py`: every frame runs unshown,
+  loads back and reruns shown, with no frame differing and every logic and media digest equal to a plain
+  run's over 299 frames; 11 to 12 logic pages written a frame. Restoring surfaces would have cost 4400
+  pages a frame. No frame on this route allocates, so heap and mapping restores are covered by
+  `test_guest_journal` only. Next: the Lucent `Runtime` over this state, then the input hook.

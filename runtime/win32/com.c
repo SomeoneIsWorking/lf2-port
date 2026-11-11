@@ -58,6 +58,11 @@ uint32_t com_create(int iface, void *host)
     return self;
 }
 
+int com_object_count(void)
+{
+    return nobjects;
+}
+
 void *com_host(uint32_t self)
 {
     uint32_t i = LD32(self + 4);

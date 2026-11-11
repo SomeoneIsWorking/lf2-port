@@ -11,6 +11,11 @@ enum { MEM_SIZE = 0x500000, STACK = 0x1000, EVENT = 0x2000, STATE = 0x3000 };
 Cpu cpu;
 uint8_t *g_mem;
 uint32_t g_rwatch_lo, g_rwatch_hi;
+void guest_journal_note_write(uint32_t address, size_t size)
+{
+    (void)address;
+    (void)size;
+}
 
 static uint32_t requested_vk;
 

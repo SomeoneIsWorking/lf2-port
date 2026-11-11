@@ -7,9 +7,22 @@
 extern "C" {
 #endif
 
-/* Guest time: presented frames at GUEST_FRAME_NS each, plus the waits credited instead of slept.
- * It never reads the wall, so the game's timeline is a property of its frames, not the host. */
+enum { GUEST_FRAME_NS = 33333333 }; /* the guest clock's tick */
+
+/* Guest time: the frames the guest presented at GUEST_FRAME_NS each, plus the waits credited
+ * instead of slept. It never reads the wall, so the game's timeline is a property of its frames. */
 uint64_t guest_clock_ns(void);
+/* Frames the guest presented, whether or not the host showed them (a resimulated frame is not shown). */
+uint64_t guest_clock_frames(void);
+void guest_clock_frame_presented(void);
+
+/* What a snapshot keeps of the clock. */
+typedef struct {
+    uint64_t frames;
+    uint64_t offset_ns;
+} GuestClockState;
+GuestClockState guest_clock_state(void);
+void guest_clock_restore(GuestClockState state);
 /* The guest's calendar: an epoch fixed once, advanced by guest time. Unix epoch, nanoseconds.
  * The epoch is the host's time at first use, or LF2_WALL_EPOCH (seconds) for runs that must agree. */
 int64_t guest_clock_wall_ns(void);

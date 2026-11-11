@@ -19,12 +19,13 @@ from runtime_log import payload_line
 from smoke_test import KEY_SCRIPT
 
 
-# Presented frames; each digests every guest span, about a second and a half per frame.
+# Logic frames; each digests every guest span.
 FRAMES = 300
 STATE = re.compile(r"^frame (\d+) logic=([0-9a-f]{16}) media=([0-9a-f]{16}) presented=(\d+)$")
 
 
-def run_once(build: Path, game: Path, log_path: Path) -> tuple[int, list[tuple[int, str, str, str]]]:
+def run_once(build: Path, game: Path, log_path: Path,
+             extra: dict[str, str] | None = None) -> tuple[int, list[tuple[int, str, str, str]]]:
     env = os.environ.copy()
     env.update(
         SDL_AUDIODRIVER="dummy",
@@ -35,6 +36,7 @@ def run_once(build: Path, game: Path, log_path: Path) -> tuple[int, list[tuple[i
         LF2_KEY_SCRIPT=KEY_SCRIPT,
         LF2_QUIT_AFTER=str(FRAMES),
     )
+    env.update(extra or {})
     command = ["timeout", "-k", "5", "900", str(build / "lf2"), "lf2.exe"]
     with log_path.open("w") as output:
         result = subprocess.run(command, cwd=game, env=env, stdout=output, stderr=subprocess.STDOUT, check=False)

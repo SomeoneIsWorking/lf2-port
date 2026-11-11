@@ -10,6 +10,7 @@
 
 #include "guest.h"
 #include "guest_map.h"
+#include "guest_clock.h"
 #include "hostwin.h"
 #include "jit_executor.h"
 #include "lf2_log.h"
@@ -476,7 +477,7 @@ int coop_select_begin(uint32_t self, int slot, int dev)
 
     /* Where the cycle STARTS. LF2_COOP_CHAR pins it, and says so when it names a character
      * the roster does not have rather than silently starting somewhere else. */
-    int start = (int)(((unsigned long)(hostwin_frames() + dev)) % (unsigned long)roster_n);
+    int start = (int)(((unsigned long)((long)guest_clock_frames() + dev)) % (unsigned long)roster_n);
     const char *ch = lf2_environment_get(LF2_ENV_COOP_CHAR);
     if (ch && atoi(ch) > 0) {
         const int want = atoi(ch);
@@ -503,8 +504,8 @@ int coop_select_begin(uint32_t self, int slot, int dev)
     sel_active[slot] = 1;
     sel_pick[slot] = start;
     sel_shown[slot] = 1;
-    sel_flash0[slot] = hostwin_frames();
-    sel_since[slot] = hostwin_frames();
+    sel_flash0[slot] = (long)guest_clock_frames();
+    sel_since[slot] = (long)guest_clock_frames();
     sel_flashes[slot] = 0;
     lf2_log_writef(LF2_LOG_INFO, "coop",
                    "coop select: slot %d is choosing -- %d characters on the roster, "
@@ -524,7 +525,7 @@ int coop_select_begin(uint32_t self, int slot, int dev)
 void coop_select_tick(uint32_t self, int slot, const unsigned char btn[7], const unsigned char prev[7])
 {
     if (!sel_active[slot]) return;
-    const long f = hostwin_frames();
+    const long f = (long)guest_clock_frames();
     /* The press that CLAIMED the slot is still down on the frame selection began; treating
      * it as a lock-in would end the choice before the player saw it start. */
     if (f == sel_since[slot]) return;

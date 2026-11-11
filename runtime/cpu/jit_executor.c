@@ -191,6 +191,26 @@ void lf2_jit_call_original(uint32_t guest_address)
     execute((CallRequest){.guest_address = guest_address, .excluded_override = guest_address});
 }
 
+void lf2_jit_save_cpu(X86pCpu *out)
+{
+    if (active_boundary) {
+        lf2_log_writef(LF2_LOG_ERROR, "jit", "CPU saved inside a guest call at %08x", jit_cpu.eip);
+        abort();
+    }
+    jit_from_view();
+    *out = jit_cpu;
+}
+
+void lf2_jit_load_cpu(const X86pCpu *in)
+{
+    if (active_boundary) {
+        lf2_log_writef(LF2_LOG_ERROR, "jit", "CPU loaded inside a guest call at %08x", jit_cpu.eip);
+        abort();
+    }
+    jit_cpu = *in;
+    view_from_jit();
+}
+
 void lf2_jit_invalidate(uint32_t guest_address, uint32_t length)
 {
     if (!engine || length == 0) return;

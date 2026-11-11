@@ -7,12 +7,34 @@
 #include <stdlib.h>
 #include <time.h>
 
+static uint64_t frames;
 /* Owed for waits the port credited instead of sleeping (see h_Sleep). */
 static uint64_t offset_ns;
 
 uint64_t guest_clock_ns(void)
 {
-    return (uint64_t)hostwin_frames() * (uint64_t)GUEST_FRAME_NS + offset_ns;
+    return frames * (uint64_t)GUEST_FRAME_NS + offset_ns;
+}
+
+uint64_t guest_clock_frames(void)
+{
+    return frames;
+}
+
+void guest_clock_frame_presented(void)
+{
+    frames++;
+}
+
+GuestClockState guest_clock_state(void)
+{
+    return (GuestClockState){.frames = frames, .offset_ns = offset_ns};
+}
+
+void guest_clock_restore(GuestClockState state)
+{
+    frames = state.frames;
+    offset_ns = state.offset_ns;
 }
 
 static int64_t wall_epoch_ns;

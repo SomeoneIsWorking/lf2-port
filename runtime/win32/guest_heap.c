@@ -13,6 +13,16 @@ uint32_t guest_heap_used(void)
     return heap.next - GUEST_HEAP_BASE;
 }
 
+uint32_t guest_heap_next(void)
+{
+    return heap.next;
+}
+
+void guest_heap_restore(uint32_t next)
+{
+    heap.next = next;
+}
+
 uint32_t guest_calloc(uint32_t count, uint32_t size)
 {
     const uint64_t bytes = (uint64_t)count * size;

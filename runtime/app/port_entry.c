@@ -4,6 +4,9 @@
 #include "boot_guest.h"
 #include "environment.h"
 #include "frame_state.h"
+#ifdef LF2_ONLINE
+#include "rollback_check.h"
+#endif
 #include "online_session.h"
 #include "overrides.h"
 #include "guest.h"
@@ -208,6 +211,9 @@ static int run_main_loop(uint32_t previous_tick)
     lf2_online_start();
 #endif
     const int log_state = lf2_environment_get(LF2_ENV_STATE_HASH) != NULL;
+#ifdef LF2_ONLINE
+    const int rollback_check = lf2_environment_get(LF2_ENV_ROLLBACK_CHECK) != NULL;
+#endif
     uint32_t logic_frame = 0;
     while (!hostwin_quit_requested()) {
         pump_guest_messages();
@@ -225,7 +231,12 @@ static int run_main_loop(uint32_t previous_tick)
         uint32_t elapsed = now - previous_tick;
         if (elapsed >= interval) {
             if (elapsed > 100) previous_tick = now - 100;
+#ifdef LF2_ONLINE
+            if (rollback_check) lf2_rollback_check_frame(run_game_frame, logic_frame);
+            else run_game_frame();
+#else
             run_game_frame();
+#endif
             if (log_state) lf2_frame_state_log(logic_frame, hostwin_frames());
 #ifdef LF2_ONLINE
             lf2_online_frame(logic_frame, input_local_buttons());

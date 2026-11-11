@@ -1,49 +1,95 @@
 #include "frame_state.h"
 
 #include "crt_random.h"
+#include "guest_clock.h"
 #include "guest_map.h"
 #include "guest_memory.h"
+#include "jit_executor.h"
 #include "lf2_log.h"
 
-#include <lucent/content.h>
+#include "cpu.h"
 
-#include <cstddef>
+#include <cstdlib>
 #include <cstring>
-#include <span>
-#include <vector>
 
 namespace lf2::netplay {
 namespace {
 
-class DigestBuilder {
+constexpr std::uint32_t kPageShift = 12;
+constexpr std::size_t kPageCount = std::size_t{1} << (32 - kPageShift);
+static_assert(kStatePageSize == 1U << kPageShift);
+
+std::uint64_t mix(std::uint64_t value)
+{
+    value ^= value >> 33U;
+    value *= 0xff51afd7ed558ccdULL;
+    value ^= value >> 33U;
+    value *= 0xc4ceb9fe1a85ec53ULL;
+    value ^= value >> 33U;
+    return value;
+}
+
+std::uint64_t page_hash(std::uint32_t address, const std::uint8_t *bytes)
+{
+    std::uint64_t value = 0x9e3779b97f4a7c15ULL ^ address;
+    for (std::uint32_t offset = 0; offset < kStatePageSize; offset += sizeof(std::uint64_t)) {
+        std::uint64_t word = 0;
+        std::memcpy(&word, bytes + offset, sizeof word);
+        value = (value ^ word) * 0x100000001b3ULL;
+    }
+    return mix(value);
+}
+
+class Mixer {
   public:
-    void add(std::span<const std::byte> bytes)
+    void add(std::uint64_t part)
     {
-        const lucent::content::Sha256 digest = lucent::content::sha256(bytes);
-        const auto *first = reinterpret_cast<const std::byte *>(digest.data());
-        parts_.insert(parts_.end(), first, first + digest.size());
+        value_ = mix(value_ ^ part);
     }
-
-    void add_word(std::uint32_t value)
+    [[nodiscard]] std::uint64_t value() const
     {
-        std::byte bytes[sizeof value];
-        std::memcpy(bytes, &value, sizeof value);
-        parts_.insert(parts_.end(), bytes, bytes + sizeof value);
-    }
-
-    [[nodiscard]] std::uint64_t finish() const
-    {
-        const lucent::content::Sha256 digest = lucent::content::sha256(parts_);
-        std::uint64_t value = 0;
-        for (std::size_t i = 0; i < sizeof value; i++) {
-            value = (value << 8U) | digest[i];
-        }
-        return value;
+        return value_;
     }
 
   private:
-    std::vector<std::byte> parts_;
+    std::uint64_t value_ = 0x2545f4914f6cdd1dULL;
 };
+
+// The guest-visible state that lives on the host. x87 register contents are left out: their host
+// format differs between hosts, and no frame leaves values on the x87 stack.
+std::uint64_t host_state_hash()
+{
+    Mixer mixer;
+    X86pCpu cpu;
+    lf2_jit_save_cpu(&cpu);
+    for (const std::uint32_t reg : cpu.reg) {
+        mixer.add(reg);
+    }
+    mixer.add(cpu.eip);
+    mixer.add(cpu.df);
+    mixer.add(cpu.mxcsr);
+    mixer.add(cpu.tsc);
+    mixer.add(cpu.fs_base);
+    mixer.add(cpu.gs_base);
+    mixer.add(cpu.x87.top);
+    mixer.add(cpu.x87.control);
+    mixer.add(cpu.x87.status);
+    for (const std::uint8_t tag : cpu.x87.tag) {
+        mixer.add(tag);
+    }
+    mixer.add(crt_random_guest()->holdrand);
+    const GuestClockState clock = guest_clock_state();
+    mixer.add(clock.frames);
+    mixer.add(clock.offset_ns);
+    return mixer.value();
+}
+
+struct SpanWalk {
+    StateHash *hash;
+    std::size_t count = 0;
+};
+
+} // namespace
 
 bool is_media(std::uint32_t address)
 {
@@ -51,29 +97,87 @@ bool is_media(std::uint32_t address)
            (address >= GUEST_PCM_BASE && address < GUEST_PCM_END);
 }
 
-struct Builders {
-    DigestBuilder logic;
-    DigestBuilder media;
-};
-
-void visit_span(std::uint32_t address, std::uint32_t size, const std::uint8_t *host, void *context)
+StateHash::StateHash(HashScope scope) : scope_(scope), pages_(kPageCount), member_(kPageCount)
 {
-    auto &builders = *static_cast<Builders *>(context);
-    DigestBuilder &target = is_media(address) ? builders.media : builders.logic;
-    target.add_word(address);
-    target.add_word(size);
-    target.add(std::span(reinterpret_cast<const std::byte *>(host), size));
+    track_spans();
 }
 
-} // namespace
+void StateHash::add_page(std::uint32_t page)
+{
+    const std::uint32_t address = page << kPageShift;
+    if (member_[page] || (scope_ == HashScope::Logic && is_media(address))) {
+        return;
+    }
+    member_[page] = true;
+    pages_[page] = page_hash(address, g_mem + address);
+    (is_media(address) ? media_sum_ : logic_sum_) += pages_[page];
+}
+
+void StateHash::track_spans()
+{
+    std::size_t count = 0;
+    guest_memory_for_each_span([](std::uint32_t, std::uint32_t, const std::uint8_t *,
+                                  void *context) { ++*static_cast<std::size_t *>(context); },
+                               &count);
+    if (count == spans_seen_) {
+        return;
+    }
+    spans_seen_ = count;
+    guest_memory_for_each_span(
+        [](std::uint32_t address, std::uint32_t size, const std::uint8_t *, void *context) {
+            auto &self = *static_cast<StateHash *>(context);
+            const std::uint32_t last = static_cast<std::uint32_t>((std::uint64_t{address} + size - 1) >> kPageShift);
+            for (std::uint64_t page = address >> kPageShift; page <= last; ++page) {
+                self.add_page(static_cast<std::uint32_t>(page));
+            }
+        },
+        this);
+}
+
+void StateHash::refresh(std::uint32_t address, std::uint32_t size)
+{
+    if (size == 0) {
+        return;
+    }
+    const std::uint32_t last = static_cast<std::uint32_t>((std::uint64_t{address} + size - 1) >> kPageShift);
+    for (std::uint64_t index = address >> kPageShift; index <= last; ++index) {
+        const auto page = static_cast<std::uint32_t>(index);
+        if (!member_[page]) {
+            continue;
+        }
+        const std::uint32_t at = page << kPageShift;
+        const std::uint64_t fresh = page_hash(at, g_mem + at);
+        std::uint64_t &sum = is_media(at) ? media_sum_ : logic_sum_;
+        sum += fresh - pages_[page];
+        pages_[page] = fresh;
+    }
+}
+
+std::uint64_t StateHash::logic()
+{
+    track_spans();
+    Mixer logic;
+    logic.add(logic_sum_);
+    logic.add(host_state_hash());
+    return logic.value();
+}
+
+std::uint64_t StateHash::media()
+{
+    if (scope_ != HashScope::LogicAndMedia) {
+        lf2_log_writef(LF2_LOG_ERROR, "frame-state", "media hash asked of a logic-only state hash");
+        std::abort();
+    }
+    track_spans();
+    return mix(media_sum_);
+}
+
 } // namespace lf2::netplay
 
 extern "C" Lf2FrameDigest lf2_frame_state_digest(void)
 {
-    lf2::netplay::Builders builders;
-    guest_memory_for_each_span(lf2::netplay::visit_span, &builders);
-    builders.logic.add_word(crt_random_guest()->holdrand);
-    return Lf2FrameDigest{builders.logic.finish(), builders.media.finish()};
+    lf2::netplay::StateHash hash{lf2::netplay::HashScope::LogicAndMedia};
+    return Lf2FrameDigest{hash.logic(), hash.media()};
 }
 
 extern "C" void lf2_frame_state_log(uint32_t frame, long presented)
