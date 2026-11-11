@@ -18,12 +18,17 @@ couldn't set it up ... maybe you can do something where the setup is handled aut
 
 - **Netcode:** new rollback netcode, not LF2's original network play. The rollback engine is one
   title-neutral Lucent component (input exchange, prediction, rewind and resimulate, input delay, desync
-  detection) that psxport builds and proves first with Crash Bash; GGPO (MIT) and its forks are its prior
-  art. LF2 writes no engine of its own and supplies four hooks: save the guest state, load it, advance one
+  detection) that the lucent-online session builds, proven first with psxport's Crash Bash; GGPO (MIT)
+  and its forks are its prior art. LF2 writes no engine of its own and supplies four hooks: save the guest state, load it, advance one
   frame, set each player's input.
 - **Transport:** an embedded ZeroTier node, the optional Lucent component the xmen2 agent is building on
   libzt (Apache 2.0 since its BSL change date, 2026-01-01). The rollback engine's traffic goes over it.
   LAN play (S014) uses the same engine over plain UDP on every interface.
+- **Discovery:** Lucent discovery, built by the lucent-online session behind one `Directory` interface
+  (`publish`, `list`, `withdraw`): Nostr first (expiring signed events on public relays), a self-hosted
+  lobby on `lucent::http::Server` later. Firebase was considered and dropped. Play by a shared code
+  (invite and reply) needs no discovery and always works. Anyone can read a listing, so security stays
+  in the session layer.
 - **Players** install nothing: no ZeroTier app, account, root or VPN permission, on desktop or Android.
 - **Joining:** a controller-less ad-hoc network (`ff` + port range + `000000`). A player's code is their
   10-hex-digit node ID, addressable offline; ZeroTier's roots relay when no direct path exists.
@@ -58,7 +63,9 @@ The same image, start state and per-frame inputs give the same guest state on ev
   bionic and libSystem and whose state no snapshot sees. They become MSVCR80's generator
   (`holdrand = holdrand * 214013 + 2531011; return (holdrand >> 16) & 0x7fff`) with snapshot-owned state.
   That is also a fidelity fix: the game's recordings depend on it.
-- **Seed.** `_time64` reads the wall clock. The session's start state fixes the seed.
+- **Seed.** `port_entry.c:initialise_window` seeds with `srand(guest_time_ms())`, the guest clock, so
+  the seed is already deterministic. `_time64` (wall clock) feeds only the build and update date
+  strings in `initialise_dates`; that they never reach logic is to be shown.
 - **Host-varying imports.** Every HLE return that can differ between machines is either routed through
   the session's inputs or shown not to reach logic: keyboard messages and `GetAsyncKeyState` (LF2's
   function keys pause, restart and change speed), cursor and mouse, focus and activation, DirectSound
@@ -72,7 +79,16 @@ The same image, start state and per-frame inputs give the same guest state on ev
 - **Suppressed frames.** A resimulated frame runs the guest frame with presentation and audio
   suppressed and still advances the logic clock.
 
-### Set each player's input: a fixed frame boundary
+### The frame boundary
+
+The native entry owns the main loop: `port_entry.c:run_main_loop` pumps guest messages
+(`0x0043d230`) and then calls the guest frame `0x0043e9a0` from the top level, once per logic frame.
+Between two calls no guest frame is on the host stack, so `advance` is one `run_game_frame` and save
+and load happen between frames with the executor's interception depth at zero, asserted. The guest
+message pump is a host-varying input of its own: in a session, keyboard messages that reach logic come
+from the session's inputs or are withheld.
+
+### Set each player's input
 
 `fn_00419a60` (native override, `runtime/overrides/input.c`) is the one per-frame gather that turns
 devices into each slot's seven buttons. It is the boundary: local devices produce the local player's
@@ -90,8 +106,8 @@ A snapshot holds everything the next frame reads:
 - host state the guest reads: heap allocator metadata, the logic-frame clock, the generator, native
   override state, timers, and DirectSound buffer state and play position.
 
-Save and load happen at the gather boundary, reached from the same guest call chain every frame. Load
-refuses unless guest `ESP` and the executor's interception depth equal the snapshot's. No code page is
+Save and load happen at the frame boundary above. Load refuses unless the executor is at depth zero.
+No code page is
 restored, so translated code stays valid. Cost is measured in bytes and pages per frame and must leave
 room for one save plus several resimulated frames inside a 33 ms frame.
 
@@ -105,8 +121,9 @@ frame is reported with both states saved and traced to its owner.
 - **Authentication.** ZeroTier authenticates node identities, so a datagram's source node ID is the
   peer's. On the public ad-hoc network the host admits only codes its player accepted, and the hello
   refuses a peer whose executable SHA-256 differs. LAN applies the same admission to addresses.
-- **Player flow.** The port menu gains Online: *your code* (the node ID, from the node identity persisted
-  in OS user data), a field for a friend's code, and a LAN list. The ZeroTier node starts when the player
+- **Player flow.** The port menu gains Online: open sessions from Lucent discovery, *your code* (the
+  node ID, from the node identity persisted in OS user data), a field for a friend's code, and a LAN
+  list. Hosting publishes the session through the `Directory`. The ZeroTier node starts when the player
   opens Online; no setting or environment variable gates it.
 
 ## Phases
@@ -115,18 +132,31 @@ Each phase is proven in the running product with two instances, each in its own 
 namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roots for internet).
 
 1. **Determinism on reachable screens.** MSVCR80 generator, logic-frame clock, snapshot-owned host state.
-   A per-frame state hash at the gather; two processes from boot with the same inputs log identical
+   A per-frame state hash at the frame boundary; two processes from boot with the same inputs log identical
    hashes through every frame S005 reaches.
-2. **Save and load** at the gather boundary: save, step, load, step again gives identical hashes; cost
+2. **Save and load** at the frame boundary: save, step, load, step again gives identical hashes; cost
    measured.
 3. **Input hook:** local sampling split from slot writing; a scripted input source replaces devices and
    two processes stay hash-identical.
 4. **LAN (S014):** consume the Lucent rollback engine over host UDP between two namespaces.
 5. **Internet (S022):** the same over the Lucent ZeroTier component, two namespaces with no shared route,
    joined by code.
-6. **Rollback in a match (S023)** once S005 reaches gameplay; then the Online menu.
+6. **Discovery (S022):** Lucent discovery lists the host's session and the reader joins by its code.
+7. **Rollback in a match (S023)** once S005 reaches gameplay; then the Online menu.
 
 ## Progress
 
-- 2026-11-11: plan written. Lucent component names and APIs requested from the xmen2 agent (ZeroTier)
-  and the psxport agent (rollback engine).
+- 2026-11-11: plan written. Provisional Lucent APIs, neither built yet: `lucent::zerotier`
+  (`Node::start`, `code()`, `open_datagram(port)`, send to a code) from the xmen2 agent, and
+  `lucent::rollback::Session` with a consumer `Runtime` (`save(slot)`, `load(slot)`, `setInputs`,
+  `advance`, `hash`) from psxport; LF2 is one byte per slot, eight slots.
+- 2026-11-11: phase 1 started. Host time reached guest state three ways, each fixed at its owner:
+  `_time64`/`GetLocalTime`/`GetSystemTimeAsFileTime` read the wall (`BUILD_DATE`, `UPDATE_DATE` and a
+  `struct tm` differed between runs), now the guest calendar in `runtime/win32/guest_clock.c` (an epoch
+  fixed once, advanced by guest time); `lf2_loading_now` chose the Sleep credit from `CLOCK_MONOTONIC`,
+  now guest time; `rand`/`srand` were host libc, now MSVCR80's generator in `crt_random.c`.
+  `tools/routes/determinism_test.py`: two hidden runs of the smoke inputs give identical logic and
+  media digests on every common logic frame (200, boot through character select, the S005 frontier).
+  Open: the runs end at different logic-frame counts (205 vs 200) for the same 2160 presented frames,
+  so presents per logic frame still vary; the digest now logs the presented count to find where.
+  Time zone still reaches `localtime`; a session must agree on it.

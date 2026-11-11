@@ -137,20 +137,33 @@ static void apply_initial_window_size(void)
     hw.win_h = h;
 }
 
-static void apply_window_mode(void)
+static const char *window_mode(void)
 {
     const char *mode = lf2_environment_get(LF2_ENV_WINDOW);
-    if (!mode) mode = "windowed";
+    return mode ? mode : "windowed";
+}
+
+/* "hidden" is the tool mode: an unmapped window on the user's session, everything else unchanged. */
+static SDL_WindowFlags window_creation_flags(void)
+{
+    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    if (strcmp(window_mode(), "hidden") == 0) flags |= SDL_WINDOW_HIDDEN;
+    return flags;
+}
+
+static void apply_window_mode(void)
+{
+    const char *mode = window_mode();
 
     if (strcmp(mode, "borderless") == 0) {
         SDL_SetWindowBordered(hw.window, false);
     } else if (strcmp(mode, "fullscreen") == 0) {
         SDL_SetWindowBordered(hw.window, false);
         SDL_SetWindowFullscreen(hw.window, true);
-    } else if (strcmp(mode, "windowed") != 0) {
+    } else if (strcmp(mode, "windowed") != 0 && strcmp(mode, "hidden") != 0) {
         lf2_log_writef(LF2_LOG_INFO, "win32",
                        "LF2_WINDOW: unknown mode \"%s\" "
-                       "(windowed, borderless, fullscreen)\n",
+                       "(windowed, borderless, fullscreen, hidden)\n",
                        mode);
     }
 }
@@ -191,8 +204,7 @@ static void h_CreateWindowExA(void)
      * panel: at 200% a 794x550-point window is a 1588x1100 drawable, which is a world scale of
      * 2 and the game's own 794 columns of world -- the picture the player asked for, drawn at
      * twice the resolution rather than blown up to it. */
-    hw.window =
-        SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    hw.window = SDL_CreateWindow("Little Fighter 2", hw.win_w, hw.win_h, window_creation_flags());
     if (!hw.window) {
         lf2_log_writef(LF2_LOG_INFO, "win32", "SDL_CreateWindow: %s\n", SDL_GetError());
         abort();
@@ -203,7 +215,8 @@ static void h_CreateWindowExA(void)
      * write, while the game owns a real native window. */
     if (!android_bridge_enforce_window_policy()) abort();
 #endif
-    lf2_log_writef(LF2_LOG_INFO, "win32", "startup: window created visible\n");
+    lf2_log_writef(LF2_LOG_INFO, "win32", "startup: window created %s\n",
+                   (SDL_GetWindowFlags(hw.window) & SDL_WINDOW_HIDDEN) ? "hidden" : "visible");
     /* THE GPU RENDERER BY NAME, not whichever SDL picks. SDL's default order puts the
      * OpenGL backend first, and that one has no SDL_GPUDevice -- so SDL_GPURenderState, and
      * with it every shader the HD2D pass is made of, is simply unavailable on it. The

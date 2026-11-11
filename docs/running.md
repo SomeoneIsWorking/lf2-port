@@ -106,6 +106,13 @@ performance for the affected region.
   `runtime/app/user_paths.*` owns the LF2 user-data location.
 - Environment variables are maintainer/diagnostic overrides only and never
   select a CPU engine.
+- `LF2_WINDOW=hidden` is the tool mode: an unmapped window on the user's
+  session. Combine it with `LF2_UNPACED` and `LF2_QUIT_AFTER=<frames>`.
+- `LF2_STATE_HASH` logs one `frame-state` line per logic frame with the logic
+  and media digests (`runtime/netplay/frame_state.h`); two runs with the same
+  inputs must log identical lines.
+- `LF2_WALL_EPOCH=<unix seconds>` fixes the guest calendar's epoch so two runs
+  see the same dates (`runtime/win32/guest_clock.h`).
 
 ## Release qualification
 

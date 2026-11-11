@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct X86pMem X86pMem;
 
 extern uint8_t *g_mem;
@@ -14,6 +18,9 @@ void guest_memory_init(void);
 void guest_memory_shutdown(void);
 void guest_memory_map(uint32_t address, uint32_t size);
 void guest_memory_before_write(uint32_t address, size_t size);
+/* Every mapped span, newest first; the order is the allocation order, the same on every run. */
+typedef void (*GuestSpanVisitor)(uint32_t address, uint32_t size, const uint8_t *host, void *context);
+void guest_memory_for_each_span(GuestSpanVisitor visit, void *context);
 const X86pMem *guest_memory_view(void);
 int guest_memory_ready(void);
 uint8_t *guest_memory_resolve(uint32_t address, size_t size);
@@ -45,5 +52,9 @@ static inline uint8_t *guest_write_pointer(uint32_t address, size_t size)
     return g_mem + address;
 #endif
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -3,6 +3,7 @@
  * with that completed frame. */
 #include "lf2_log.h"
 #include "environment.h"
+#include "guest_clock.h"
 #include "hostwin.h"
 
 #include "com.h"

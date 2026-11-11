@@ -73,8 +73,13 @@ void guest_memory_map(uint32_t address, uint32_t size)
 {
     if (!initialized || !size || (uint64_t)address + size > UINT64_C(0x100000000))
         memory_failure("invalid allocation span", address, size);
-    if (!memory.sparse) return;
     GuestAllocation *allocation = calloc(1, sizeof *allocation);
+    if (!memory.sparse) {
+        if (!allocation) memory_failure("host allocation failed", address, size);
+        *allocation = (GuestAllocation){.next = allocations, .host = NULL, .address = address, .size = size};
+        allocations = allocation;
+        return;
+    }
     uint8_t *host = calloc(size, 1);
     if (!allocation || !host) {
         free(allocation);
@@ -92,6 +97,14 @@ void guest_memory_map(uint32_t address, uint32_t size)
     }
     *allocation = (GuestAllocation){.next = allocations, .host = host, .address = address, .size = size};
     allocations = allocation;
+}
+
+void guest_memory_for_each_span(GuestSpanVisitor visit, void *context)
+{
+    for (const GuestAllocation *allocation = allocations; allocation; allocation = allocation->next) {
+        const uint8_t *host = allocation->host ? allocation->host : g_mem + allocation->address;
+        visit(allocation->address, allocation->size, host, context);
+    }
 }
 
 const X86pMem *guest_memory_view(void)

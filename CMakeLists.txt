@@ -74,6 +74,9 @@ set(LF2_NATIVE_RUNTIME_SOURCES
     runtime/video/frame_capture.c
     runtime/cpu/rwatch.c
     runtime/win32/imports.c
+    runtime/win32/crt_random.c
+    runtime/win32/guest_clock.c
+    runtime/netplay/frame_state.cpp
     runtime/win32/paths.c
     runtime/win32/com.c
     runtime/win32/win32.c
@@ -186,6 +189,7 @@ target_include_directories(lf2 PRIVATE
     runtime runtime/cpu runtime/win32 runtime/video runtime/audio runtime/input runtime/app runtime/log runtime/ui
     runtime/platform
     runtime/overrides
+    runtime/netplay
     ${CMAKE_SOURCE_DIR}/third_party/RmlUi/Backends)
 # RmlUi's SDL backends pick SDL2 vs SDL3 by this macro (Backends/RmlUi_Platform_SDL.h).
 target_compile_definitions(lf2 PRIVATE RMLUI_SDL_VERSION_MAJOR=3)
@@ -323,6 +327,11 @@ set(LF2_BINDINGS_TEST_CONFIG "${CMAKE_BINARY_DIR}/test-bindings.cfg")
 add_test(NAME bindings_write COMMAND test_bindings write ${LF2_BINDINGS_TEST_CONFIG})
 add_test(NAME bindings_read COMMAND test_bindings read ${LF2_BINDINGS_TEST_CONFIG})
 set_tests_properties(bindings_read PROPERTIES DEPENDS bindings_write)
+
+add_executable(test_crt_random tests/test_crt_random.c runtime/win32/crt_random.c)
+target_include_directories(test_crt_random PRIVATE runtime/win32)
+target_compile_options(test_crt_random PRIVATE -Wall -Wextra -Werror)
+add_test(NAME crt_random COMMAND test_crt_random)
 
 add_executable(test_netplay_packet tests/test_netplay_packet.c runtime/netplay/packet.c)
 target_include_directories(test_netplay_packet PRIVATE runtime/netplay)

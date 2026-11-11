@@ -2,6 +2,8 @@
 #include "port_entry.h"
 
 #include "boot_guest.h"
+#include "environment.h"
+#include "frame_state.h"
 #include "guest.h"
 #include "hostwin.h"
 #include "jit_executor.h"
@@ -200,6 +202,8 @@ static void advance_frame_counter(void)
 
 static int run_main_loop(uint32_t previous_tick)
 {
+    const int log_state = lf2_environment_get(LF2_ENV_STATE_HASH) != NULL;
+    uint32_t logic_frame = 0;
     while (!hostwin_quit_requested()) {
         pump_guest_messages();
         if (hostwin_quit_requested()) break;
@@ -217,6 +221,8 @@ static int run_main_loop(uint32_t previous_tick)
         if (elapsed >= interval) {
             if (elapsed > 100) previous_tick = now - 100;
             run_game_frame();
+            if (log_state) lf2_frame_state_log(logic_frame, hostwin_frames());
+            logic_frame++;
             previous_tick += interval;
         }
 

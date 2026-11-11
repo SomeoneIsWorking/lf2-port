@@ -37,7 +37,7 @@ long hostwin_frames(void);
 /* Resolve one frame specification through the same screen-anchor owner used by captures. */
 int hostwin_frame_selected(const char *spec, long frame);
 int lf2_loading_now(void);          /* runtime/win32/imports.c */
-enum { GUEST_FRAME_NS = 33333333 }; /* the guest clock's tick, shared with imports.c */
+enum { GUEST_FRAME_NS = 33333333 }; /* the guest clock's tick, shared with guest_clock.c */
 /* The window changed size (or was just created): recompute the composition from its PIXEL
  * width and re-point everything that depends on it. In runtime/video/ddraw.c, because that is
  * where the surfaces and the presentation live. */
@@ -75,7 +75,6 @@ void bg_geom_report(void);
 void mode_force_report(void); /* LF2_MODE: which mode a scripted run entered, and whether it did */
 /* LF2_CAMERA: was the wide view actually re-centred? */ /* LF2_AUDIO_PAN: the audible span vs
                                                             the picture (issue #39) */
-void clock_sites_report(void);                           /* LF2_CLOCK_SITES: who reads the clock, and who spins on it */
 /* The scripted-input exit report lives in runtime/app/script.h (script_report). */
 void window_resize_report(void); /* any LF2_WINDOW_RESIZE step the run never reached */
 void glyph_hint_set(int ch);

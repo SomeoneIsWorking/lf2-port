@@ -15,6 +15,7 @@ import sys
 
 ROUTES = (
     ("smoke", "the port boots, loads its data and reaches a match"),
+    ("determinism", "two runs with the same inputs log identical per-frame state digests"),
     ("settings", "mapped controller navigation reaches RmlUi Controls and both shared SVG device icons"),
     ("ui_escape", "physical SDL keyboard and pointer control RmlUi; no scripted-key substitute"),
     ("ui_global", "the same RmlUi shell opens on menu, selection, overlay, and match screens"),

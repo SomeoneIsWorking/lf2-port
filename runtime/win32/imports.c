@@ -10,6 +10,8 @@
 #include "hostwin.h"
 #include "guest_map.h"
 #include "paths.h"
+#include "crt_random.h"
+#include "guest_clock.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -40,9 +42,7 @@ typedef void (*Handler)(void);
 static void h_GetSystemTimeAsFileTime(void)
 {
     /* Windows epoch is 1601-01-01, in 100 ns ticks. */
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    uint64_t ft = (uint64_t)ts.tv_sec * 10000000ull + (uint64_t)ts.tv_nsec / 100ull + 116444736000000000ull;
+    uint64_t ft = (uint64_t)(guest_clock_wall_ns() / 100) + 116444736000000000ull;
     uint32_t out = ARG(0);
     ST32(out, (uint32_t)ft);
     ST32(out + 4, (uint32_t)(ft >> 32));
@@ -50,11 +50,7 @@ static void h_GetSystemTimeAsFileTime(void)
 }
 
 int lf2_loading_now(void); /* defined with the file handlers below */
-long hostwin_frames(void); /* runtime/video/ddraw.c */
 
-/* See "the guest clock" below: the offset the port owes the guest for waits it
- * decided not to take. Declared here because h_Sleep is what pays into it. */
-static uint64_t guest_clock_offset_ns;
 extern long load_skipped_sleeps;
 
 /* Sleep requested, accumulated so the load span can be split into "sleeping" versus
@@ -68,89 +64,6 @@ static long sleep_site_n[SLEEP_SITES];
 static long sleep_site_at_first[SLEEP_SITES], sleep_site_at_last[SLEEP_SITES];
 static int sleep_nsites;
 
-/* ---- LF2_CLOCK_SITES -- who looks at the clock, and who looks at it WITHOUT SLEEPING ----
- *
- * The question this exists to answer is issue #18's: a virtual guest clock, advanced only by
- * the game's own sleeps, hung until a microsecond was credited per READ as well -- so some
- * loop watches the clock and never sleeps, and with a clock that only sleeps advance, it
- * waits for a time that can never arrive. A microsecond a read makes it terminate, but it
- * also distorts the timeline, so the loop wants finding rather than papering over.
- *
- * CALL COUNT ALONE WOULD NOT FIND IT, which is why this measures something else as well. The
- * frame pacer reads the clock constantly and is perfectly well behaved, because it sleeps
- * between reads. What distinguishes a spin is the RUN: how many reads a site made since the
- * last Sleep of any kind. A well-behaved deadline loop's run is a handful; a spin's is
- * enormous. Both are reported, so a site cannot look innocent on one and be caught on the
- * other.
- *
- * The negative is reported too: a run with the variable set that names NO site says so, with
- * the number of reads it did see, rather than printing an empty list that reads like "there
- * is no spin". */
-enum { CLOCK_SITES = 24 };
-static uint32_t clk_site[CLOCK_SITES];
-static long clk_site_n[CLOCK_SITES];          /* total reads from this site */
-static long clk_site_max_run[CLOCK_SITES];    /* longest burst with no Sleep in it */
-static long clk_site_max_at[CLOCK_SITES];     /* and the presented frame it happened on --
-                                               * "during the load" and "during play" are
-                                               * different diagnoses and this is what tells
-                                               * them apart */
-static const char *clk_site_api[CLOCK_SITES]; /* which of the three it came through */
-static int clk_nsites;
-static long clk_reads_total, clk_run, clk_dropped;
-
-static void clock_read_note(const char *api)
-{
-    static int on = -1;
-    if (on < 0) on = lf2_environment_get(LF2_ENV_CLOCK_SITES) != NULL;
-    if (!on) return;
-
-    clk_reads_total++;
-    clk_run++;
-    const uint32_t ra = LD32(R(ESP));
-    int k = 0;
-    for (; k < clk_nsites; k++)
-        if (clk_site[k] == ra) break;
-    if (k == clk_nsites) {
-        if (clk_nsites >= CLOCK_SITES) {
-            clk_dropped++;
-            return;
-        }
-        clk_site[clk_nsites] = ra;
-        clk_site_api[clk_nsites] = api;
-        clk_nsites++;
-    }
-    clk_site_n[k]++;
-    if (clk_run > clk_site_max_run[k]) {
-        clk_site_max_run[k] = clk_run;
-        clk_site_max_at[k] = hostwin_frames();
-    }
-}
-
-void clock_sites_report(void)
-{
-    if (!lf2_environment_get(LF2_ENV_CLOCK_SITES)) return;
-    if (clk_reads_total == 0) {
-        lf2_log_writef(LF2_LOG_INFO, "imports",
-                       "clock sites: the guest NEVER read its clock -- no site to name, and "
-                       "nothing here is evidence about spinning\n");
-        return;
-    }
-    lf2_log_writef(LF2_LOG_INFO, "imports",
-                   "clock sites: %ld reads from %d call site(s)%s. `run` is reads since the "
-                   "last Sleep -- a large one is a loop watching the clock without "
-                   "sleeping\n",
-                   clk_reads_total, clk_nsites,
-                   clk_dropped ? " (and more sites than this build can hold; some were DROPPED)" : "");
-    for (int k = 0; k < clk_nsites; k++)
-        lf2_log_writef(LF2_LOG_INFO, "imports", "  from=%08x  %-24s reads=%-9ld longest run=%-7ld at frame %ld\n",
-                       clk_site[k], clk_site_api[k], clk_site_n[k], clk_site_max_run[k], clk_site_max_at[k]);
-    if (clk_dropped)
-        lf2_log_writef(LF2_LOG_INFO, "imports",
-                       "  ... and %ld reads from call sites past the %d this build records, "
-                       "which are NOT in the list above\n",
-                       clk_dropped, CLOCK_SITES);
-}
-
 /* Sleep was a no-op returning immediately, so the game's frame pacing -- which is a
  * Sleep in a loop -- became a spin, pegging a core at ~96% for a 30 fps 2D fighter.
  * Honouring it is also the faithful behaviour: on Windows this blocks the thread, and the
@@ -158,7 +71,7 @@ void clock_sites_report(void)
 static void h_Sleep(void)
 {
     const uint32_t ms = ARG(0);
-    clk_run = 0; /* a Sleep ends any run of clock reads */
+    guest_clock_note_sleep();
     /* LF2_NO_SLEEP restores the old no-op, purely so the cost of honouring Sleep can be
      * A/B measured. Not a tuning knob: skipping it burns a whole core. */
     if (lf2_environment_get(LF2_ENV_NO_SLEEP)) {
@@ -190,7 +103,7 @@ static void h_Sleep(void)
          * it converts it into a spin. Crediting the requested time (a 0 ms sleep is a yield,
          * so it counts as the shortest tick the loop can distinguish) makes the deadline
          * arrive on the next check instead of hundreds of checks later. */
-        guest_clock_offset_ns += (uint64_t)(ms ? ms : 1u) * 1000000ull;
+        guest_clock_credit_ms(ms ? ms : 1u);
         load_skipped_sleeps++;
         ret_stdcall(1, 0);
         return;
@@ -216,7 +129,7 @@ static void h_Sleep(void)
      * before the +1: 59,331,701 clock reads at frame 0 with no Sleep and no frame ever
      * presented, at 99% of a core. A real clock crosses the boundary through overshoot; an
      * exact one has to be told that a sleep is a floor, not an equality. */
-    guest_clock_offset_ns += ((uint64_t)(ms ? ms : 1u) + 1ull) * 1000000ull;
+    guest_clock_credit_ms((ms ? ms : 1u) + 1u);
 
     if (ms == 0) sched_yield();
     else {
@@ -240,57 +153,16 @@ static void h_Sleep(void)
     ret_stdcall(1, 0);
 }
 
-/* ---- the guest clock, and it is the FRAME COUNTER ----
- *
- * Guest time is exactly `presented frames * 33.33 ms` and nothing else. It never reads the
- * wall, so how much of the game's timeline has passed by frame N is a property of the game
- * rather than of how fast or how busy the machine is. That is issue #18: every scripted
- * route is a schedule of presented frames, and with a wall-derived clock the game's progress
- * between two of them depended on load -- measured, a route that reaches a match every time
- * on an idle box reported "screens reached -- NONE" under fourteen busy loops.
- *
- * WHY THE FRAME COUNTER AND NOT A CREDIT PER SLEEP, which was the obvious first answer and
- * is wrong. fn_0043cf40, the game's main loop, paces itself like this:
- *
- *     now = timeGetTime(); elapsed = now - last
- *     if (elapsed <= 33)  { remaining = last + 33 - now; if (remaining > 0) Sleep(min(rem,5)); }
- *     else                { if (elapsed > 100) last = now - 100;   // resync, still overdue
- *                           run the frame; last += 33; ... }       // and round again
- *
- * When it is behind it does NOT sleep -- it runs frames back to back until it catches up. A
- * clock that only sleeps advance therefore never lets it catch up, and it runs frames
- * forever: measured at 111 s of user CPU against 20 s. LF2_CLOCK_SITES named the two reads
- * (0x0043d162 and 0x0043d195, 218,937 reads each) and the frames they peak on -- 8 and 9,
- * the data load, and 2141, the match starting. Every one of those iterations produces a
- * frame, so a clock driven by the frame counter is exactly the one that lets the loop
- * converge, and it converges by doing the work the loop exists to do.
- *
- * The other side of it: with a frame period at or above the game's own 33 ms threshold the
- * loop is always "overdue", so it never sleeps and never waits -- which is why REAL-TIME
- * PACING MOVES TO THE HOST, into the present (runtime/video/ddraw.c). The game runs its loop flat
- * out and the host holds each frame until the wall catches up. That is the ordinary shape of
- * an emulator: the guest counts, the host paces.
- *
- * Not to be confused with SCALING time, which was tried and measured and is worse: running
- * the clock 4x/16x/32x faster during the load gave 3.5 s / 4.7 s / 7.0 s against 3.6 s at
- * 1x. A jumping clock makes the game do more catch-up work, not less. */
-/* The tick is GUEST_FRAME_NS in hostwin.h, shared with the host pacer that honours it. */
-
-static uint64_t guest_ns(void)
-{
-    return (uint64_t)hostwin_frames() * (uint64_t)GUEST_FRAME_NS + guest_clock_offset_ns;
-}
-
 static void h_GetTickCount(void)
 {
-    clock_read_note("GetTickCount");
-    ret_stdcall(0, (uint32_t)(guest_ns() / 1000000ull));
+    guest_clock_note_read("GetTickCount", LD32(R(ESP)));
+    ret_stdcall(0, (uint32_t)(guest_clock_ns() / 1000000ull));
 }
 
 static void h_QueryPerformanceCounter(void)
 {
-    clock_read_note("QueryPerformanceCounter");
-    const uint64_t v = guest_ns();
+    guest_clock_note_read("QueryPerformanceCounter", LD32(R(ESP)));
+    const uint64_t v = guest_clock_ns();
     ST32(ARG(0), (uint32_t)v);
     ST32(ARG(0) + 4, (uint32_t)(v >> 32));
     ret_stdcall(1, 1);
@@ -511,7 +383,7 @@ static char *text_buf[MAX_FILES];
  * signal than the loading screen's presenter: keying off fn_004242e0 engaged for nine
  * frames of an entire run, because that function is the ad grid, not the loader.
  *
- * Time-based rather than a frame counter, so a slow file cannot end the window early. */
+ * Guest-time based rather than a frame counter, so a slow file cannot end the window early. */
 enum { LOAD_MAXSITES = 24 };
 static uint32_t load_site[LOAD_MAXSITES];
 static long load_site_n[LOAD_MAXSITES];
@@ -519,6 +391,7 @@ static char load_site_path[LOAD_MAXSITES][80];
 static int load_nsites;
 
 static uint32_t load_last_open_ms;
+static uint64_t load_last_open_guest_ns;
 static uint32_t load_first_open_ms;
 static long load_files;
 static uint32_t load_active_ms;
@@ -567,9 +440,10 @@ long lf2_load_active_ms(void)
     return (long)load_active_ms;
 }
 
+/* Guest time, so whether a Sleep is credited or taken never depends on how fast the host is. */
 int lf2_loading_now(void)
 {
-    return load_last_open_ms && (now_ms() - load_last_open_ms) < 300u;
+    return load_last_open_guest_ns && guest_clock_ns() - load_last_open_guest_ns < 300000000ull;
 }
 
 static void note_data_open(const char *path)
@@ -582,6 +456,7 @@ static void note_data_open(const char *path)
         const uint32_t t = now_ms();
         if (load_last_open_ms && (t - load_last_open_ms) < 300u) load_active_ms += t - load_last_open_ms;
         load_last_open_ms = t;
+        load_last_open_guest_ns = guest_clock_ns();
         if (!load_first_open_ms) load_first_open_ms = t;
         load_files++;
         /* LF2_LOAD_SITES=1 -- which guest code opens the data. Distinct return addresses,
@@ -942,16 +817,16 @@ static void h_sscanf(void)
 
 static void h_rand(void)
 {
-    ret_cdecl((uint32_t)(rand() & 0x7fff));
+    ret_cdecl(crt_random_next(crt_random_guest()));
 }
 static void h_srand(void)
 {
-    srand(ARG(0));
+    crt_random_seed(crt_random_guest(), ARG(0));
     ret_cdecl(0);
 }
 static void h_time64(void)
 {
-    int64_t t = (int64_t)time(NULL);
+    int64_t t = guest_clock_wall_ns() / 1000000000ll;
     if (ARG(0)) {
         ST32(ARG(0), (uint32_t)t);
         ST32(ARG(0) + 4, (uint32_t)(t >> 32));
@@ -1151,12 +1026,14 @@ static void h_TerminateProcess(void)
 
 static void h_GetLocalTime(void)
 {
-    time_t t = time(NULL);
+    const int64_t wall = guest_clock_wall_ns();
+    time_t t = (time_t)(wall / 1000000000ll);
     struct tm *g = localtime(&t);
     const uint32_t p = ARG(0);
-    const uint16_t v[8] = {
-        (uint16_t)(g->tm_year + 1900), (uint16_t)(g->tm_mon + 1), (uint16_t)g->tm_wday, (uint16_t)g->tm_mday,
-        (uint16_t)g->tm_hour,          (uint16_t)g->tm_min,       (uint16_t)g->tm_sec,  0};
+    const uint16_t v[8] = {(uint16_t)(g->tm_year + 1900), (uint16_t)(g->tm_mon + 1),
+                           (uint16_t)g->tm_wday,          (uint16_t)g->tm_mday,
+                           (uint16_t)g->tm_hour,          (uint16_t)g->tm_min,
+                           (uint16_t)g->tm_sec,           (uint16_t)(wall / 1000000 % 1000)};
     for (int i = 0; i < 8; i++) ST16(p + (uint32_t)i * 2, v[i]);
     ret_stdcall(1, 0);
 }
@@ -1177,8 +1054,8 @@ static void h_CreateThread(void)
 
 static void h_timeGetTime(void)
 {
-    clock_read_note("timeGetTime");
-    ret_stdcall(0, (uint32_t)(guest_ns() / 1000000ull));
+    guest_clock_note_read("timeGetTime", LD32(R(ESP)));
+    ret_stdcall(0, (uint32_t)(guest_clock_ns() / 1000000ull));
 }
 
 /* ---- table ---- */
