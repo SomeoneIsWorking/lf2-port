@@ -1,5 +1,5 @@
 ---
-id: 0074
+id: 0129
 title: Online multiplayer by ZeroTier code over the shared rollback engine
 status: open
 state_items: [S014, S022, S023]
@@ -105,6 +105,9 @@ A snapshot holds everything the next frame reads:
 - CPU state at the boundary;
 - host state the guest reads: heap allocator metadata, the logic-frame clock, the generator, native
   override state, timers, and DirectSound buffer state and play position.
+
+The same state owner serves issue 0127's durable snapshot (Android process recreation): one set of
+title-owned sections, kept in memory per frame for rollback and serialized only for recovery.
 
 Save and load happen at the frame boundary above. Load refuses unless the executor is at depth zero.
 No code page is

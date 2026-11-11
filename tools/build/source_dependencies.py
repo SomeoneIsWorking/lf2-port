@@ -199,7 +199,10 @@ def resolve_checkout(
 
     sibling = root.parent.parent / "shared" / dependency.name
     if sibling.exists():
-        return validate_checkout(dependency, sibling)
+        try:
+            return validate_checkout(dependency, sibling)
+        except DependencyError:
+            pass  # a sibling at another revision is someone's work, not this pin
     return provision_checkout(root, dependency)
 
 

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Configure and build LF2.
 
-The toolchain is whatever CC/CXX say; when they are unset the platform's `cc`
-and `c++` are used. Maintainers select Clang in their invocation rather than
-encoding that policy into the project. A build directory is refused only
+The toolchain is whatever CC/CXX say; when they are unset Clang is used if it
+is on PATH, else the platform's `cc` and `c++`. A build directory is refused only
 when it was configured with a DIFFERENT compiler than this invocation would
 use -- reusing one cache across toolchains corrupts the build, which is a
 hygiene rule about the cache, not a ban on any compiler. RelWithDebInfo keeps
@@ -29,9 +28,13 @@ def pick_compilers(cache: Path) -> tuple[str, str]:
     # An existing cache already owns concrete compiler paths. With no explicit
     # override, keep using them; asking CMake to replace them in-place mixes two
     # toolchains' dependency state. A fresh tree remains platform-neutral.
-    cc = os.environ.get("CC") or cached_compiler(cache, "C") or "cc"
-    cxx = os.environ.get("CXX") or cached_compiler(cache, "CXX") or "c++"
+    cc = os.environ.get("CC") or cached_compiler(cache, "C") or default_compiler("clang", "cc")
+    cxx = os.environ.get("CXX") or cached_compiler(cache, "CXX") or default_compiler("clang++", "c++")
     return cc, cxx
+
+
+def default_compiler(preferred: str, fallback: str) -> str:
+    return preferred if shutil.which(preferred) else fallback
 
 
 def cached_compiler(cache: Path, language: str) -> str | None:

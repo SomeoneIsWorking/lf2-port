@@ -244,5 +244,46 @@ class BootstrapCheckoutTest(unittest.TestCase):
             bootstrap.ensure_port_assets()
 
 
+sys.path.insert(0, str(REPO / "tools" / "build"))
+import build
+import source_dependencies
+
+
+class RuntimeDependencyTest(unittest.TestCase):
+    def test_sibling_off_the_pin_falls_back_to_a_build_local_clone(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO / "scratch") as raw:
+            root = Path(raw) / "pc" / "lf2"
+            root.mkdir(parents=True)
+            sibling = Path(raw) / "shared" / source_dependencies.X86PORT.name
+            sibling.mkdir(parents=True)
+            local = root / "build" / "deps" / source_dependencies.X86PORT.name
+            refused = source_dependencies.DependencyError("at another revision")
+            with mock.patch.object(source_dependencies, "validate_checkout", side_effect=refused), \
+                    mock.patch.object(source_dependencies, "provision_checkout", return_value=local) as provision:
+                resolved = source_dependencies.resolve_checkout(root, source_dependencies.X86PORT, {})
+            self.assertEqual(resolved, local)
+            provision.assert_called_once()
+
+    def test_explicit_checkout_off_the_pin_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO / "scratch") as raw:
+            refused = source_dependencies.DependencyError("at another revision")
+            with mock.patch.object(source_dependencies, "validate_checkout", side_effect=refused):
+                with self.assertRaises(source_dependencies.DependencyError):
+                    source_dependencies.resolve_checkout(
+                        Path(raw), source_dependencies.X86PORT, {"X86PORT_DIR": raw})
+
+
+class CompilerChoiceTest(unittest.TestCase):
+    def test_fresh_tree_prefers_clang(self) -> None:
+        with mock.patch.dict(build.os.environ, {"CC": "", "CXX": ""}), \
+                mock.patch.object(build.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"):
+            self.assertEqual(build.pick_compilers(Path("/nonexistent/CMakeCache.txt")), ("clang", "clang++"))
+
+    def test_fresh_tree_without_clang_uses_the_platform_compiler(self) -> None:
+        with mock.patch.dict(build.os.environ, {"CC": "", "CXX": ""}), \
+                mock.patch.object(build.shutil, "which", return_value=None):
+            self.assertEqual(build.pick_compilers(Path("/nonexistent/CMakeCache.txt")), ("cc", "c++"))
+
+
 if __name__ == "__main__":
     unittest.main()

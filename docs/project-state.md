@@ -37,7 +37,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S011 | Menus and character selection use modern anti-aliased host text | verified | — | G002 |
 | S012 | The macOS native/JIT build and Metal renderer are release-qualified | partial | S005, S019 | G003 |
 | S013 | The Android ARM64 native/JIT build provides touch controls and private installer/folder/ZIP setup | partial | S005, S019 | G003 |
-| S014 | Custom LAN multiplayer supports remote player inputs, on every interface including virtual LANs (ZeroTier, Tailscale) | missing | S005, plan 0074 hooks, Lucent rollback engine, Lucent interface enumeration | G002 |
+| S014 | Custom LAN multiplayer supports remote player inputs, on every interface including virtual LANs (ZeroTier, Tailscale) | missing | S005, plan 0129 hooks, Lucent rollback engine, Lucent interface enumeration | G002 |
 | S015 | Representative gameplay conforms through the native/JIT product on each released host | missing | S005, S016 | G001, G002, G003 |
 | S016 | Gameplay defaults to JIT, exposes no explicit interpreter mode, and accounts for bounded fallback by reason and coverage | partial | S018 | G001, G003 |
 | S017 | Retired title-specific execution interfaces and toolchains remain absent | verified | — | G001 |
@@ -46,7 +46,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
 | S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | partial | S005, S015 | G001, G003 |
 | S022 | Internet multiplayer joins by ZeroTier code through the embedded Lucent ZeroTier node, with no install or account; play by code always works, and Lucent discovery (Nostr; self-hosted lobby later) lists open sessions | missing | S014, Lucent ZeroTier and discovery components | G002 |
-| S023 | Rollback netplay restores and resimulates exact game state | missing | S005, Lucent rollback engine, plan 0074 save/load/step/input hooks | G002 |
+| S023 | Rollback netplay restores and resimulates exact game state | missing | S005, Lucent rollback engine, plan 0129 save/load/step/input hooks | G002 |
 
 ## Capability details
 
@@ -210,7 +210,7 @@ component (libzt) on a controller-less ad-hoc network, so nobody installs an
 app, makes an account or grants root or VPN permission; ZeroTier's roots relay
 when no direct path exists. The session admits accepted codes only and checks
 the executable identity. Not in the browser build. Design and phases:
-`docs/plans/0074-online-multiplayer.md`.
+`docs/plans/0129-online-multiplayer.md`.
 
 ### S023 — Rollback
 
@@ -218,7 +218,7 @@ Missing capability: the JIT/native product has no complete state snapshot,
 restoration, deterministic frame-step, or replay conformance evidence. The
 rollback engine is the title-neutral Lucent component psxport builds first;
 LF2 supplies save, load, advance-one-frame and set-input hooks
-(`docs/plans/0074-online-multiplayer.md`) and writes no engine of its own.
+(`docs/plans/0129-online-multiplayer.md`) and writes no engine of its own.
 
 ### S015 — Representative gameplay conformance
 
