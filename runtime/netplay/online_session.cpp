@@ -3,17 +3,22 @@
 #include "environment.h"
 #include "lf2_log.h"
 #include "packet.h"
+#include "user_paths.h"
 
 #include <lucent/content.h>
 #include <lucent/p2p/connector.h>
 #include <lucent/p2p/reliable_link.h>
+#include <lucent/p2p/zerotier.h>
 
 #include <algorithm>
 #include <array>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace lf2::netplay {
 namespace {
@@ -25,6 +30,8 @@ using lucent::p2p::Role;
 constexpr lucent::p2p::CodePrefixes kPrefixes{"LF2", "LFR"};
 constexpr std::string_view kKeyLabel = "lf2-online";
 constexpr std::string_view kSessionPurpose = "lf2-session";
+// LF2's port, which names its ZeroTier ad-hoc network.
+constexpr std::uint16_t kZeroTierPort = 41702;
 constexpr std::uint8_t kHelloKind = LF2_NETPLAY_HELLO;
 constexpr std::uint8_t kInputKind = LF2_NETPLAY_INPUT;
 
@@ -170,13 +177,55 @@ class OnlineSession {
     bool reported_failure_ = false;
 };
 
+// The process's one ZeroTier node, which outlives the session that dials through it.
+std::unique_ptr<lucent::p2p::ZeroTierNode> zerotier_node;
 std::unique_ptr<OnlineSession> session;
+
+std::optional<std::string> read_file(const char *path)
+{
+    std::ifstream in{path, std::ios::binary};
+    if (!in) {
+        return std::nullopt;
+    }
+    return std::string{std::istreambuf_iterator<char>{in}, {}};
+}
+
+void start_zerotier()
+{
+    char storage[1024];
+    char error[256];
+    if (!user_paths_zerotier_directory(storage, sizeof storage, error, sizeof error)) {
+        lf2_log_writef(LF2_LOG_WARNING, "online", "no ZeroTier: %s; meeting direct only", error);
+        return;
+    }
+    lucent::p2p::ZeroTierConfig config{.storage = storage, .roots = {}, .port = 0, .network_port = kZeroTierPort};
+    if (const char *roots = lf2_environment_get(LF2_ENV_ZEROTIER_ROOTS)) {
+        std::optional<std::string> set = read_file(roots);
+        if (!set) {
+            lf2_log_writef(LF2_LOG_WARNING, "online", "cannot read the ZeroTier root set %s; meeting direct only",
+                           roots);
+            return;
+        }
+        config.roots = std::move(*set);
+    }
+    std::string why;
+    zerotier_node = lucent::p2p::ZeroTierNode::start(config, why);
+    if (!zerotier_node) {
+        lf2_log_writef(LF2_LOG_WARNING, "online", "no ZeroTier: %s; meeting direct only", why.c_str());
+    }
+}
 
 lucent::p2p::ConnectorConfig connector_config()
 {
     lucent::p2p::ConnectorConfig config;
     config.prefixes = kPrefixes;
     config.label = std::string{kKeyLabel};
+    config.zerotier = zerotier_node.get();
+    if (lf2_environment_get(LF2_ENV_ONLINE_ZEROTIER_ONLY)) {
+        config.direct.stun_servers = "";
+        config.direct.router = false;
+        config.direct.interfaces = std::vector<lucent::net::Ipv4Interface>{};
+    }
     return config;
 }
 
@@ -196,6 +245,7 @@ extern "C" void lf2_online_start(void)
         lf2_log_writef(LF2_LOG_ERROR, "online", "cannot hash lf2.exe for the session hello: %s", error.c_str());
         return;
     }
+    start_zerotier();
     std::unique_ptr<lucent::p2p::Connector> connector;
     if (std::string_view{mode} == "host") {
         connector = std::make_unique<lucent::p2p::Connector>(connector_config());

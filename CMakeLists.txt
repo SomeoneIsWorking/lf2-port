@@ -24,9 +24,11 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/lucent/CMakeLists.txt")
     set(LUCENT_CHANNEL_ENV "LF2_LOG_CHANNELS")
     set(LUCENT_LOG_FILE_ENV "LF2_LOG_FILE")
     set(LUCENT_BUILD_ZIP ON)
-    # The peer-to-peer transport needs UDP and OpenSSL: desktop only until Android provisions OpenSSL.
+    # The peer-to-peer transport needs UDP, OpenSSL and libzt (tools/build/libzt.py): desktop only
+    # until Android provisions them.
     if(NOT ANDROID AND NOT EMSCRIPTEN)
         set(LUCENT_BUILD_ONLINE ON)
+        set(LUCENT_BUILD_ZEROTIER ON)
     endif()
     add_subdirectory(third_party/lucent EXCLUDE_FROM_ALL)
 else()
@@ -263,7 +265,7 @@ target_link_libraries(lf2 PRIVATE SDL3::SDL3 lf2_environment lf2_diagnostics luc
                                   $<$<BOOL:${LF2_M}>:${LF2_M}>)
 if(TARGET lucent::online)
     target_sources(lf2 PRIVATE runtime/netplay/online_session.cpp runtime/netplay/packet.c)
-    target_link_libraries(lf2 PRIVATE lucent::online)
+    target_link_libraries(lf2 PRIVATE lucent::online lucent::zerotier)
     target_compile_definitions(lf2 PRIVATE LF2_ONLINE=1)
 endif()
 

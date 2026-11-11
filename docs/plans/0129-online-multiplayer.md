@@ -172,3 +172,7 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
   by invite code over the direct path, both report the same `lf2.exe`, and one input frame crosses each
   way. `lan_socket.*` is deleted, superseded by Lucent's transport. Next: the ZeroTier backend
   (`lucent::zerotier`, libzt fork `6e74b65`), then the rollback hooks.
+- 2026-11-11: the ZeroTier node is in. `tools/build/libzt.py` provisions the libzt fork `6e74b65`
+  once per compiler into the shared Lucent prefix; desktop builds link `lucent::zerotier`, and the
+  connector dials through the node beside the direct path. The direct meeting still passes with a
+  node per instance. Next: a ZeroTier-only meeting through a lab root in the namespaces.

@@ -84,6 +84,7 @@ CPU-migration prerequisite.
 | Product launch/build/provisioning policy | Python owner in `bootstrap.py` or `tools/build/`; never `run.sh` |
 | Browser package or release handoff | `tools/build_web.py` and `.github/workflows/browser-package.yml`; public hosting belongs to sibling `pages` |
 | Shared x86port/jit-common revision, checkout validation, or provisioning | `tools/build/source_dependencies.py` |
+| libzt revision and its shared-prefix provisioning | `tools/build/libzt.py` |
 | Repeatable gameplay scenario or runtime discriminator | `tools/routes/`, registered once in `tools/e2e.py` |
 | Binary-derived fact or native replacement grounding | `docs/re-frontier.md` for the replacement chain, `docs/isa-scope.md` for instruction coverage, or one open issue |
 

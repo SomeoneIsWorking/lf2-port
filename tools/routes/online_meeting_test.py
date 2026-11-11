@@ -111,7 +111,12 @@ def main() -> int:
     try:
         wire(host, friend)
         host_log, friend_log = out / "host.log", out / "friend.log"
-        processes.append(host.start(command, game, {**env, "LF2_ONLINE": "host"}, host_log))
+        # Each machine its own user data, so each has its own ZeroTier identity.
+        homes = {name: out / f"{name}-home" for name in ("host", "friend")}
+        for home in homes.values():
+            home.mkdir(exist_ok=True)
+        processes.append(host.start(command, game, {**env, "LF2_ONLINE": "host",
+                                                    "XDG_CONFIG_HOME": str(homes["host"])}, host_log))
         deadline = time.monotonic() + DEADLINE_S
         invite = None
         while invite is None and time.monotonic() < deadline and processes[0].poll() is None:
@@ -121,7 +126,8 @@ def main() -> int:
             print(f"  FAIL  the host showed no invite code; see {host_log}")
             return 1
         print("  ok    the host showed an invite code")
-        processes.append(friend.start(command, game, {**env, "LF2_ONLINE": invite}, friend_log))
+        processes.append(friend.start(command, game, {**env, "LF2_ONLINE": invite,
+                                                      "XDG_CONFIG_HOME": str(homes["friend"])}, friend_log))
         while time.monotonic() < deadline and not (exchanged(host_log) and exchanged(friend_log)):
             if any(process.poll() is not None for process in processes):
                 break

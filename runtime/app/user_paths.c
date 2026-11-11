@@ -5,19 +5,21 @@
 #include <stdio.h>
 #include <string.h>
 
-static int join_config_path(const char *directory, char *output, size_t capacity, char *error, size_t error_capacity)
+static int join_path(const char *directory, const char *name, char *output, size_t capacity, char *error,
+                     size_t error_capacity)
 {
     const size_t length = strlen(directory);
     const char *separator = length && (directory[length - 1] == '/' || directory[length - 1] == '\\') ? "" : "/";
-    const int written = snprintf(output, capacity, "%s%slf2.cfg", directory, separator);
+    const int written = snprintf(output, capacity, "%s%s%s", directory, separator, name);
     if (written < 0 || (size_t)written >= capacity) {
-        snprintf(error, error_capacity, "settings path is longer than %zu bytes", capacity - 1);
+        snprintf(error, error_capacity, "%s path is longer than %zu bytes", name, capacity - 1);
         return 0;
     }
     return 1;
 }
 
-int user_paths_config_file(char *output, size_t capacity, int create_directory, char *error, size_t error_capacity)
+static int user_path(const char *name, char *output, size_t capacity, int create_directory, char *error,
+                     size_t error_capacity)
 {
     if (!output || capacity == 0 || !error || error_capacity == 0) return 0;
     output[0] = 0;
@@ -32,5 +34,15 @@ int user_paths_config_file(char *output, size_t capacity, int create_directory, 
         snprintf(error, error_capacity, "cannot create the OS user-data directory: %s", directory);
         return 0;
     }
-    return join_config_path(directory, output, capacity, error, error_capacity);
+    return join_path(directory, name, output, capacity, error, error_capacity);
+}
+
+int user_paths_config_file(char *output, size_t capacity, int create_directory, char *error, size_t error_capacity)
+{
+    return user_path("lf2.cfg", output, capacity, create_directory, error, error_capacity);
+}
+
+int user_paths_zerotier_directory(char *output, size_t capacity, char *error, size_t error_capacity)
+{
+    return user_path("zerotier", output, capacity, 1, error, error_capacity);
 }

@@ -18,6 +18,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import libzt
 from source_dependencies import DependencyError, resolve_runtime_dependencies
 
 
@@ -107,6 +108,12 @@ def main() -> int:
         f"x86port={dependencies['x86port']} jit-common={dependencies['jit-common']}"
     )
 
+    try:
+        zerotier = libzt.provision(cc, cxx)
+    except libzt.LibztError as error:
+        raise SystemExit(f"libzt: {error}") from error
+    print(f"libzt: {zerotier}")
+
     subprocess.run(
         [
             "cmake",
@@ -120,6 +127,7 @@ def main() -> int:
             "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
             f"-DX86PORT_DIR={dependencies['x86port']}",
             f"-DX86PORT_JITCOMMON_DIR={dependencies['jit-common']}",
+            f"-DCMAKE_PREFIX_PATH={zerotier}",
         ],
         cwd=ROOT,
         check=True,

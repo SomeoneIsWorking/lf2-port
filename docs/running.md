@@ -113,6 +113,10 @@ performance for the affected region.
   inputs must log identical lines.
 - `LF2_ONLINE=host` shows an invite code in the log; `LF2_ONLINE=<invite>` joins
   it (`runtime/netplay/online_session.h`). A maintainer path until the Online menu.
+- `LF2_ONLINE_ZEROTIER_ONLY` turns off the direct path so a meeting must cross
+  the embedded ZeroTier node; `LF2_ZEROTIER_ROOTS=<file>` replaces ZeroTier's
+  public roots with a root set file (a lab root). The node's identity lives in
+  the user-data `zerotier/` directory, so a player's code stays the same.
 - `LF2_WALL_EPOCH=<unix seconds>` fixes the guest calendar's epoch so two runs
   see the same dates (`runtime/win32/guest_clock.h`).
 
