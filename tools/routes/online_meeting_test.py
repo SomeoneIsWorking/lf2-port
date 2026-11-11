@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Two LF2s, each in its own network namespace joined by one cable, meet by a pasted code.
+"""Two LF2s meet by a pasted code, directly or over ZeroTier alone.
 
 The host shows an invite, the friend joins it, both authenticate the path, check that the other
-runs the same lf2.exe, and trade one input frame. The namespaces belong to a user namespace of
-this user's, so nothing needs root.
+runs the same lf2.exe, and trade one input frame. Direct: each in its own network namespace joined
+by one cable. `--zerotier`: the direct path off, both on a lab with only Lucent's lab ZeroTier root
+to reach each other through. The namespaces belong to a user namespace of this user's, so nothing
+needs root.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
 import re
@@ -21,6 +24,9 @@ from runtime_log import payload_line
 
 HOST_ADDRESS = "10.88.0.1/24"
 FRIEND_ADDRESS = "10.88.0.2/24"
+# libzt binds no loopback, so the ZeroTier lab sits on a dummy interface.
+LAB_ADDRESS = "10.77.0.1"
+ROOT_PORT = 39993
 INVITE = re.compile(r"^invite code: (\S+)$")
 DEADLINE_S = 180
 
@@ -64,11 +70,37 @@ def wire(host: Machine, friend: Machine) -> None:
     friend.ip("link set lab1 up")
 
 
-def online_lines(log: Path) -> list[str]:
+def lab(machine: Machine) -> None:
+    machine.ip("link add lab0 type dummy")
+    machine.ip(f"addr add {LAB_ADDRESS}/24 dev lab0")
+    machine.ip("link set lab0 up")
+
+
+def start_root(machine: Machine, build: Path, out: Path) -> tuple[subprocess.Popen[bytes], Path]:
+    subprocess.run(["cmake", "--build", str(build), "--target", "lucent_zerotier_root"], check=True,
+                   stdout=subprocess.DEVNULL)
+    roots = out / "roots"
+    roots.unlink(missing_ok=True)
+    root = machine.start([str(build / "third_party" / "lucent" / "lucent_zerotier_root"), str(out / "root"),
+                          f"{LAB_ADDRESS}/{ROOT_PORT}", str(roots)], out, os.environ.copy(), out / "root.log")
+    for _ in range(300):
+        if roots.is_file() and roots.stat().st_size:
+            return root, roots
+        if root.poll() is not None:
+            break
+        time.sleep(0.1)
+    raise RuntimeError(f"the lab root wrote no root set; see {out / 'root.log'}")
+
+
+def tagged_lines(log: Path, tag: str) -> list[str]:
     if not log.is_file():
         return []
     return [payload_line(line) for line in log.read_text(errors="replace").splitlines()
-            if "] [online] " in line]
+            if f"] [{tag}] " in line]
+
+
+def online_lines(log: Path) -> list[str]:
+    return tagged_lines(log, "online")
 
 
 def first_invite(log: Path) -> str | None:
@@ -92,6 +124,9 @@ def stop(process: subprocess.Popen[bytes]) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--zerotier", action="store_true", help="meet over ZeroTier alone, through a lab root")
+    options = parser.parse_args()
     if not in_user_namespace():
         os.execvp("unshare", ["unshare", "--user", "--map-current-user", "--keep-caps", "--",
                               sys.executable, *sys.argv])
@@ -99,17 +134,30 @@ def main() -> int:
     root = Path(__file__).resolve().parents[2]
     build = Path(os.environ.get("BUILD") or root / "build" / "clang").resolve()
     game = Path(os.environ.get("GAME") or root / "game").resolve()
-    out = root / "scratch" / "online-meeting"
+    out = root / "scratch" / ("online-meeting-zerotier" if options.zerotier else "online-meeting")
     out.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.update(SDL_AUDIODRIVER="dummy", LF2_WINDOW="hidden", LF2_UNPACED="1", LF2_CONFIG="",
                LF2_QUIT_AFTER="100000")
     command = [str(build / "lf2"), "lf2.exe"]
 
-    host, friend = Machine(), Machine()
     processes: list[subprocess.Popen[bytes]] = []
+    helpers: list[subprocess.Popen[bytes]] = []
+    if options.zerotier:
+        host = friend = Machine()
+        machines = [host]
+    else:
+        host, friend = Machine(), Machine()
+        machines = [host, friend]
+    expected_path = "connected over ZeroTier" if options.zerotier else "connected directly"
     try:
-        wire(host, friend)
+        if options.zerotier:
+            lab(host)
+            root_process, roots = start_root(host, build, out)
+            helpers.append(root_process)
+            env.update(LF2_ONLINE_ZEROTIER_ONLY="1", LF2_ZEROTIER_ROOTS=str(roots))
+        else:
+            wire(host, friend)
         host_log, friend_log = out / "host.log", out / "friend.log"
         # Each machine its own user data, so each has its own ZeroTier identity.
         homes = {name: out / f"{name}-home" for name in ("host", "friend")}
@@ -137,18 +185,23 @@ def main() -> int:
             lines = online_lines(log)
             same = "the peer runs the same lf2.exe" in lines
             traded = exchanged(log)
+            path = expected_path in tagged_lines(log, "p2p")
+            print(f"  {'ok  ' if path else 'FAIL'}  {name}: {expected_path}")
             print(f"  {'ok  ' if same else 'FAIL'}  {name}: the peer runs the same lf2.exe")
             print(f"  {'ok  ' if traded else 'FAIL'}  {name}: sent and received one input frame")
             for line in lines:
                 if line.startswith(("connected", "frame ")):
                     print(f"          {line}")
-            passed = passed and same and traded
+            passed = passed and path and same and traded
         return 0 if passed else 1
     finally:
         for process in processes:
             stop(process)
-        host.close()
-        friend.close()
+        for helper in helpers:
+            helper.terminate()
+            helper.wait()
+        for machine in machines:
+            machine.close()
 
 
 if __name__ == "__main__":

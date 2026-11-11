@@ -176,3 +176,6 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
   once per compiler into the shared Lucent prefix; desktop builds link `lucent::zerotier`, and the
   connector dials through the node beside the direct path. The direct meeting still passes with a
   node per instance. Next: a ZeroTier-only meeting through a lab root in the namespaces.
+- 2026-11-11: Lucent `dc64034`. `online_meeting_test.py --zerotier`: direct path off, a dummy `lab0`
+  carrying `lucent_zerotier_root`, both instances log `connected over ZeroTier`, see the same `lf2.exe`
+  and trade a frame. Next: the rollback hooks on `lucent::rollback::Runtime`.

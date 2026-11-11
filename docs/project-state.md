@@ -208,9 +208,14 @@ provisioned for `lucent::online`.
 
 ### S022 — Internet play by ZeroTier code
 
-Missing capability: a player types a friend's code, or picks an open session
-from Lucent discovery (Nostr, a self-hosted lobby, Firebase), and joins by the
-10-hex-digit ZeroTier node ID. Play by code needs no discovery. The port embeds a ZeroTier node through the optional Lucent
+Shown: with the direct path off (`LF2_ONLINE_ZEROTIER_ONLY`), two LF2s meet by
+invite code over their embedded ZeroTier nodes alone, through Lucent's lab root
+(`tools/routes/online_meeting_test.py --zerotier`).
+
+Gap: no meeting yet through ZeroTier's public roots between two real networks;
+the invite is Lucent's long code, not yet the 10-hex-digit node ID; no Online
+menu and no Lucent discovery (Nostr, a self-hosted lobby, Firebase) listing.
+Play by code needs no discovery. The port embeds a ZeroTier node through the optional Lucent
 component (libzt) on a controller-less ad-hoc network, so nobody installs an
 app, makes an account or grants root or VPN permission; ZeroTier's roots relay
 when no direct path exists. The session admits accepted codes only and checks

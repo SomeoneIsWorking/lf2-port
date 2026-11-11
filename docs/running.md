@@ -115,7 +115,8 @@ performance for the affected region.
   it (`runtime/netplay/online_session.h`). A maintainer path until the Online menu.
 - `LF2_ONLINE_ZEROTIER_ONLY` turns off the direct path so a meeting must cross
   the embedded ZeroTier node; `LF2_ZEROTIER_ROOTS=<file>` replaces ZeroTier's
-  public roots with a root set file (a lab root). The node's identity lives in
+  public roots with a root set file (a lab root;
+  `tools/routes/online_meeting_test.py --zerotier` runs one). The node's identity lives in
   the user-data `zerotier/` directory, so a player's code stays the same.
 - `LF2_WALL_EPOCH=<unix seconds>` fixes the guest calendar's epoch so two runs
   see the same dates (`runtime/win32/guest_clock.h`).
