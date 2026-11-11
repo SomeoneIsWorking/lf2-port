@@ -37,7 +37,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S011 | Menus and character selection use modern anti-aliased host text | verified | — | G002 |
 | S012 | The macOS native/JIT build and Metal renderer are release-qualified | partial | S005, S019 | G003 |
 | S013 | The Android ARM64 native/JIT build provides touch controls and private installer/folder/ZIP setup | partial | S005, S019 | G003 |
-| S014 | Custom LAN multiplayer supports remote player inputs, on every interface including virtual LANs (ZeroTier, Tailscale) | missing | S005, deterministic session state and frame ownership, Lucent interface enumeration | G002 |
+| S014 | Custom LAN multiplayer supports remote player inputs, on every interface including virtual LANs (ZeroTier, Tailscale) | missing | S005, plan 0074 hooks, Lucent rollback engine, Lucent interface enumeration | G002 |
 | S015 | Representative gameplay conforms through the native/JIT product on each released host | missing | S005, S016 | G001, G002, G003 |
 | S016 | Gameplay defaults to JIT, exposes no explicit interpreter mode, and accounts for bounded fallback by reason and coverage | partial | S018 | G001, G003 |
 | S017 | Retired title-specific execution interfaces and toolchains remain absent | verified | — | G001 |
@@ -45,8 +45,8 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S019 | `shared/x86port` supplies a qualified ARM64 product JIT backend for macOS and Android | partial | — | G001, G003 |
 | S020 | Asset-free Linux x86-64 native/JIT product CI runs from exact full-history inputs | partial | `.github/workflows/ci.yml` builds the product and runs focused boundary/quality tests; first remote run is pending landing | G003 |
 | S021 | Browser WebAssembly runs the same native/JIT game with persistent imported files | partial | S005, S015 | G001, G003 |
-| S022 | Internet multiplayer discovers sessions through Firebase and carries gameplay peer-to-peer | missing | S014, signaling and traversal | G002 |
-| S023 | Rollback netplay restores and resimulates exact game state | missing | S014, deterministic stepping and complete state snapshots | G002 |
+| S022 | Internet multiplayer joins a friend by their ZeroTier code through the embedded Lucent ZeroTier node, with no install or account | missing | S014, Lucent ZeroTier component | G002 |
+| S023 | Rollback netplay restores and resimulates exact game state | missing | S005, Lucent rollback engine, plan 0074 save/load/step/input hooks | G002 |
 
 ## Capability details
 
@@ -201,17 +201,23 @@ connection/session lifetime, synchronized simulation, and runtime input
 injection remain unimplemented. `lan_socket.{c,h}` has a loopback UDP exchange
 test with the encoded packet, but that is not a gameplay test.
 
-### S022 — Internet peer discovery and transport
+### S022 — Internet play by ZeroTier code
 
-Missing capability: no Firebase session discovery/signaling or peer-to-peer
-gameplay channel exists. This builds on a working LAN game session rather than
-using the original game's unavailable server path.
+Missing capability: a player joins a friend by the friend's 10-hex-digit
+ZeroTier node ID. The port embeds a ZeroTier node through the optional Lucent
+component (libzt) on a controller-less ad-hoc network, so nobody installs an
+app, makes an account or grants root or VPN permission; ZeroTier's roots relay
+when no direct path exists. The session admits accepted codes only and checks
+the executable identity. Not in the browser build. Design and phases:
+`docs/plans/0074-online-multiplayer.md`.
 
 ### S023 — Rollback
 
 Missing capability: the JIT/native product has no complete state snapshot,
-restoration, deterministic frame-step, or replay conformance evidence. Do not
-enable speculative rollback on top of unsynchronized game instances.
+restoration, deterministic frame-step, or replay conformance evidence. The
+rollback engine is the title-neutral Lucent component psxport builds first;
+LF2 supplies save, load, advance-one-frame and set-input hooks
+(`docs/plans/0074-online-multiplayer.md`) and writes no engine of its own.
 
 ### S015 — Representative gameplay conformance
 
