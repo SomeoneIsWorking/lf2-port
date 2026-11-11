@@ -37,7 +37,7 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 | S011 | Menus and character selection use modern anti-aliased host text | verified | — | G002 |
 | S012 | The macOS native/JIT build and Metal renderer are release-qualified | partial | S005, S019 | G003 |
 | S013 | The Android ARM64 native/JIT build provides touch controls and private installer/folder/ZIP setup | partial | S005, S019 | G003 |
-| S014 | Custom LAN multiplayer supports remote player inputs | missing | S005, deterministic session state and frame ownership | G002 |
+| S014 | Custom LAN multiplayer supports remote player inputs, on every interface including virtual LANs (ZeroTier, Tailscale) | missing | S005, deterministic session state and frame ownership, Lucent interface enumeration | G002 |
 | S015 | Representative gameplay conforms through the native/JIT product on each released host | missing | S005, S016 | G001, G002, G003 |
 | S016 | Gameplay defaults to JIT, exposes no explicit interpreter mode, and accounts for bounded fallback by reason and coverage | partial | S018 | G001, G003 |
 | S017 | Retired title-specific execution interfaces and toolchains remain absent | verified | — | G001 |
