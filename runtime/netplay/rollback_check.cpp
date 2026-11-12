@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <memory>
 #include <utility>
+#include <vector>
 
 namespace lf2::netplay {
 namespace {
@@ -36,6 +37,7 @@ class RollbackCheck {
             return false;
         }
         const std::uint64_t first = state_->hash();
+        const std::vector<RollbackState::PageHash> first_pages = state_->page_hashes();
         state_->load(0);
         if (main_loop_advance() == 0) {
             return false;
@@ -47,6 +49,7 @@ class RollbackCheck {
             ++differing_;
             lf2_log_writef(LF2_LOG_WARNING, "rollback-check", "frame %u differs on rerun: %016llx then %016llx", frame,
                            static_cast<unsigned long long>(first), static_cast<unsigned long long>(second));
+            log_differing_pages(first_pages, state_->page_hashes());
         }
         if (frames_ % 100 == 0) {
             lf2_log_writef(LF2_LOG_INFO, "rollback-check",
@@ -58,6 +61,27 @@ class RollbackCheck {
     }
 
   private:
+    static void log_differing_pages(const std::vector<RollbackState::PageHash> &first,
+                                    const std::vector<RollbackState::PageHash> &second)
+    {
+        std::size_t a = 0;
+        std::size_t b = 0;
+        while (a < first.size() || b < second.size()) {
+            if (b == second.size() || (a < first.size() && first[a].first < second[b].first)) {
+                lf2_log_writef(LF2_LOG_WARNING, "rollback-check", "  page %08x only in the first run",
+                               first[a++].first);
+            } else if (a == first.size() || second[b].first < first[a].first) {
+                lf2_log_writef(LF2_LOG_WARNING, "rollback-check", "  page %08x only in the rerun", second[b++].first);
+            } else {
+                if (first[a].second != second[b].second) {
+                    lf2_log_writef(LF2_LOG_WARNING, "rollback-check", "  page %08x differs", first[a].first);
+                }
+                ++a;
+                ++b;
+            }
+        }
+    }
+
     std::unique_ptr<RollbackState> state_;
     unsigned long long frames_ = 0;
     unsigned long long differing_ = 0;

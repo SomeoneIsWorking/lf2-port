@@ -13,6 +13,7 @@
 #include "engine.h"
 #include "com.h"
 #include "guest.h"
+#include "gdi.h"
 #include "gdi_bitmap.h"
 #include "hostwin.h"
 #include "loadprof.h"
@@ -124,6 +125,45 @@ int gdi_last_bitmap(int *w, int *h, long *loaded_total)
 void gdi_last_bitmap_consume(void)
 {
     gdi_loaded_w = gdi_loaded_h = 0;
+}
+
+typedef struct {
+    int nbitmaps, ndcs;
+    uint32_t dc_bitmap[MAX_GDI];
+    int loaded_w, loaded_h;
+    long loaded_n;
+} GdiState;
+
+size_t gdi_state_size(void)
+{
+    return sizeof(GdiState);
+}
+
+void gdi_state_save(void *out)
+{
+    GdiState state = {.nbitmaps = nbitmaps,
+                      .ndcs = ndcs,
+                      .loaded_w = gdi_loaded_w,
+                      .loaded_h = gdi_loaded_h,
+                      .loaded_n = gdi_loaded_n};
+    memcpy(state.dc_bitmap, dc_bitmap, sizeof dc_bitmap);
+    memcpy(out, &state, sizeof state);
+}
+
+void gdi_state_load(const void *in)
+{
+    GdiState state;
+    memcpy(&state, in, sizeof state);
+    for (int i = state.nbitmaps; i < nbitmaps; i++) {
+        bitmap_free(bitmaps[i]);
+        bitmaps[i] = NULL;
+    }
+    nbitmaps = state.nbitmaps;
+    ndcs = state.ndcs;
+    memcpy(dc_bitmap, state.dc_bitmap, sizeof dc_bitmap);
+    gdi_loaded_w = state.loaded_w;
+    gdi_loaded_h = state.loaded_h;
+    gdi_loaded_n = state.loaded_n;
 }
 
 static void h_CreateCompatibleDC(void)

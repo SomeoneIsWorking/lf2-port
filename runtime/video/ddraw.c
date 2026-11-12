@@ -3,6 +3,7 @@
  * Surface pixels are allocated inside guest memory, so Lock() hands back a plain guest
  * address and the GDI text path can scribble into the same buffer. Everything is 8-bit
  * indexed, which is what the game's BMPs are. */
+#include "gdi.h"
 #include "lf2_log.h"
 #include "environment.h"
 #include "com.h"
@@ -26,8 +27,6 @@
 
 /* runtime/win32/gdi.c -- the picture the game just loaded, so a surface created to hold it can be
  * told from the composition surface (issue #50). */
-int gdi_last_bitmap(int *w, int *h, long *loaded_total);
-void gdi_last_bitmap_consume(void);
 
 #include "loadprof.h"
 

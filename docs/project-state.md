@@ -240,8 +240,7 @@ final hashes (`tools/routes/online_meeting_test.py`).
 Online play rewinds through a VS match load, which creates COM surfaces, with
 equal final hashes on both peers.
 
-Gap: audio replays during resimulation; one frame at the match load reruns
-differently under `LF2_ROLLBACK_CHECK` (issue 0131). Hooks
+Gap: audio replays during resimulation. Hooks
 and design: `docs/plans/0129-online-multiplayer.md`.
 
 ### S015 — Representative gameplay conformance

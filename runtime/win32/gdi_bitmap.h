@@ -11,5 +11,6 @@ typedef struct {
 
 Bitmap *bitmap_load_file(const char *path);
 Bitmap *bitmap_load_resource(const char *name);
+void bitmap_free(Bitmap *bitmap);
 
 #endif

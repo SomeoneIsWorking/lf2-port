@@ -251,3 +251,10 @@ Bitmap *bitmap_load_resource(const char *name)
     const uint32_t rva = rsrc_find(name, &size);
     return rva ? dib_load(IMAGE_BASE + rva, size) : NULL;
 }
+
+void bitmap_free(Bitmap *bitmap)
+{
+    if (!bitmap) return;
+    SDL_free(bitmap->pixels);
+    SDL_free(bitmap);
+}

@@ -1,6 +1,7 @@
 #include "rollback_state.h"
 
 #include "dsound.h"
+#include "gdi.h"
 #include "guest_heap.h"
 #include "guest_journal.h"
 #include "hostwin.h"
@@ -32,7 +33,8 @@ struct Section {
     void (*load)(const void *);
 };
 
-constexpr std::array<Section, 3> kHostSections{{
+constexpr std::array<Section, 4> kHostSections{{
+    {gdi_state_size, gdi_state_save, gdi_state_load},
     {hostwin_messages_size, hostwin_messages_save, hostwin_messages_load},
     {input_state_size, input_state_save, input_state_load},
     {coop_state_size, coop_state_save, coop_state_load},
