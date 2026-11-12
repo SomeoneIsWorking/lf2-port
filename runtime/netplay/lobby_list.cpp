@@ -3,6 +3,7 @@
 #include "lf2_log.h"
 
 #include <algorithm>
+#include <iterator>
 #include <utility>
 
 namespace lf2::netplay {
@@ -165,8 +166,19 @@ void LobbyList::list_now()
             }
         }
     }
+    // A game still listed keeps its row, so a refresh never puts another game under a focused JOIN.
     const std::lock_guard lock{mutex_};
-    listed_ = std::move(merged);
+    std::vector<Listed> ordered;
+    for (Listed &kept : listed_) {
+        const auto found = std::find_if(merged.begin(), merged.end(),
+                                        [&](const Listed &each) { return each.lobby.id == kept.lobby.id; });
+        if (found != merged.end()) {
+            ordered.push_back(std::move(*found));
+            merged.erase(found);
+        }
+    }
+    std::move(merged.begin(), merged.end(), std::back_inserter(ordered));
+    listed_ = std::move(ordered);
 }
 
 void LobbyList::start_ask(const Lobby &lobby)

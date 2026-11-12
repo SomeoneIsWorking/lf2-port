@@ -221,6 +221,8 @@ the invite is Lucent's long code, not yet the 10-hex-digit node ID; open games
 are shown through a lab `lucent_lobby_server` only, not yet through public Nostr
 relays or Firebase. A listed game's invite goes only to a player who asks
 (`runtime/netplay/lobby_list.cpp`), and the page says the address goes with it.
+A refresh keeps each still-listed game on its row; a game that leaves the list
+still moves the rows below it up.
 Play by code needs no discovery. The port embeds a ZeroTier node through the optional Lucent
 component (libzt) on a controller-less ad-hoc network, so nobody installs an
 app, makes an account or grants root or VPN permission; ZeroTier's roots relay
