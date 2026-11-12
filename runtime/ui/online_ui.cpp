@@ -2,6 +2,7 @@
 
 #include "online_session.h"
 #include "options.h"
+#include "script.h"
 
 #include <SDL3/SDL.h>
 
@@ -174,6 +175,9 @@ void OnlinePage::update(Rml::DataModelHandle model, const Rml::String &page)
             lobby_names_[i] = name;
             model.DirtyVariable("online_lobby" + std::to_string(i));
         }
+    }
+    if (page == "online" && count > 0) {
+        script_observe_lobbies();
     }
     const Rml::String lobbies_label = count == 0 ? "No open games yet" : std::to_string(count) + " open";
 

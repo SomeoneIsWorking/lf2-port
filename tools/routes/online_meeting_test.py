@@ -50,8 +50,9 @@ MENU = ["start@modemenu+60", "up@modemenu+90", "south@modemenu+120"]
 # Host: HOST, then down past Your code and Join by code to the listing switch, turned on.
 HOST_MENU = MENU + ["down@modemenu+150", "south@modemenu+180", "down@modemenu+210", "down@modemenu+240",
                     "down@modemenu+270", "south@modemenu+300"]
-# Friend: down past Host, Your code, Join by code, the listing switch and Refresh to the first open game.
-FRIEND_MENU = MENU + [f"down@modemenu+{300 + 30 * i}" for i in range(6)] + ["south@modemenu+500"]
+# Friend: once its page shows an open game, down past Host, Your code, Join by code, the listing
+# switch and Refresh to that game, and join it.
+FRIEND_MENU = MENU + [f"down@lobbies+{30 + 30 * i}" for i in range(6)] + ["south@lobbies+230"]
 # Once both play, the host starts a VS match as player 1: VS mode, its fighter and team, then the
 # computer players, the stage and the start, as leave_match_test.py does for one player.
 HOST_MATCH = ["south@online+60"] + [f"south@charselect+{t}" for t in (58, 118, 178, 238)] + \
@@ -64,12 +65,16 @@ HOST_MOVES = pad_script(("up", "down"), "match", 60, 23, 40)
 FRIEND_MOVES = pad_script(("right",), "match", 60, 7, 30) + "," + pad_script(("left",), "match", 300, 7, 15)
 PADS = {"host": ",".join(HOST_MENU + HOST_MATCH) + "," + HOST_MOVES,
         "friend": ",".join(FRIEND_MENU + FRIEND_MATCH) + "," + FRIEND_MOVES}
-# The friend's page as it opens, after its last move and as it presses JOIN, then player 2 running
-# right while both fighters are in view.
-FRAME_DUMP = "@modemenu+130,@modemenu+460,@modemenu+495,@match+90,@match+110,@match+130"
+# The friend's page as it opens and after the time its moves used to end, then as it joins, then
+# player 2 running right while both fighters are in view.
+FRAME_DUMP = "@modemenu+130,@modemenu+460,@lobbies+225,@match+90,@match+110,@match+130"
 # Player 2's fighter, as LF2_COOP_TRACK logs it.
 TRACK = re.compile(r"^coop track: frame (\d+) entry 1 x=(-?\d+) y=-?\d+ z=(-?\d+)")
 LOBBY_PORT = 8077
+# --held-listing: the friend lists through held_lobby_proxy.py, which shows no open game until the
+# friend has dumped its frame after its last move.
+HELD_PORT = 8078
+HELD_FRAMES = 2
 
 
 def in_user_namespace() -> bool:
@@ -193,6 +198,8 @@ def stop(process: subprocess.Popen[bytes]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--zerotier", action="store_true", help="meet over ZeroTier alone, through a lab root")
+    parser.add_argument("--held-listing", action="store_true",
+                        help="the host's game reaches the friend's list only after the friend's last move")
     options = parser.parse_args()
     if not in_user_namespace():
         os.execvp("unshare", ["unshare", "--user", "--map-current-user", "--keep-caps", "--",
@@ -228,6 +235,14 @@ def main() -> int:
             lobby_address = HOST_ADDRESS.split("/")[0]
         helpers.append(start_lobby_server(host, build, out))
         host_log, friend_log = out / "host.log", out / "friend.log"
+        friend_log.unlink(missing_ok=True)
+        friend_port = LOBBY_PORT
+        if options.held_listing:
+            helpers.append(host.start([sys.executable, str(Path(__file__).with_name("held_lobby_proxy.py")),
+                                       "--port", str(HELD_PORT), "--upstream", f"http://{lobby_address}:{LOBBY_PORT}",
+                                       "--log", str(friend_log), "--frames", str(HELD_FRAMES)],
+                                      out, os.environ.copy(), out / "held.log"))
+            friend_port = HELD_PORT
         # Each machine its own user data, so each has its own ZeroTier identity.
         homes = {name: out / f"{name}-home" for name in ("host", "friend")}
         for home in homes.values():
@@ -241,7 +256,8 @@ def main() -> int:
 
         for name in ("host", "friend"):
             settings[name] = out / f"{name}.cfg"
-            settings[name].write_text(f"lobby_server http://{lobby_address}:{LOBBY_PORT}\nnostr_lobbies off\n")
+            port = friend_port if name == "friend" else LOBBY_PORT
+            settings[name].write_text(f"lobby_server http://{lobby_address}:{port}\nnostr_lobbies off\n")
         processes.append(host.start(command, game, {**env, **frames("host"), "LF2_VIRTUAL_PAD": PADS["host"],
                                                                 "LF2_CONFIG": str(settings["host"]),
                                                                 "XDG_CONFIG_HOME": str(homes["host"])}, host_log))

@@ -1,7 +1,7 @@
 ---
 id: 132
 title: The friend sometimes never asks a listed game for a seat
-status: investigating
+status: resolved
 symptom: One run of four of online_meeting_test.py --zerotier ended with the friend never asking (no [lobby] line) and never joining; the friend's pad pressed JOIN at modemenu+500.
 state_items: S022
 tags: netplay,lobby,test
@@ -9,17 +9,23 @@ created: 2026-11-12
 updated: 2026-11-12
 ---
 
-The host had listed its game (invite at 10:00:22, listing switched on before it) and logged no
-directory failure; the friend opened the ONLINE page at 10:00:27 and logged nothing after the
-ZeroTier node started. Either row 0 was not yet on the friend's list when its pad pressed JOIN,
-or the ask failed on a path that did not log. Both failure paths of `LobbyList::start_ask` and
-`poll_ask` now log, and the test keeps the friend's frame at modemenu+495, so the next occurrence
-shows which.
+Cause: the test, not the product. The friend's route in `tools/routes/online_meeting_test.py`
+pressed its six `down`s at modemenu+300 to +450 and JOIN at +500, timed from the menu rather than
+from the list. `OnlinePage::update` shows a JOIN row only once `LobbyList` has listed the game, and
+RmlUi focus moves only through rows that exist. A listing that reached the friend after the last
+`down` therefore left focus on REFRESH, and the press refreshed, which logs nothing.
 
-Since then seven `--zerotier` runs in a row passed (after the fixes for 0131 and 0133). A passing
-friend logs the same lines up to its ask, so the log alone cannot tell the failure apart. A fit
-for what was seen, not yet shown: the friend's six `down` presses (modemenu+300 to +450) move
-focus only through rows that exist, so a listing that reaches the friend after the last one
-leaves focus on REFRESH and the press at +500 refreshes instead of joining, logging nothing. The
-test now keeps the friend's page at modemenu+130, +460 and +495; a failing run's frames show
-where focus was.
+Shown by `online_meeting_test.py --held-listing`. `tools/routes/held_lobby_proxy.py` answers the
+friend's list requests with no games until the friend has written two frame dumps
+(modemenu+130 and +460). On the old route the friend never asked, and its +460 frame reads
+"No open games yet".
+
+Fix: `script.c` gains the `@lobbies` anchor, the first frame the ONLINE page lists a game
+(`script_observe_lobbies`, called from `OnlinePage::update`). The friend's `down`s and JOIN are
+keyed to it. With the listing held, the route asks and joins, and its frame at the press shows
+JOIN focused on the listed game. Direct and `--zerotier` runs pass 12/12.
+
+While checking what a player sees when the list changes under the cursor, one product defect
+turned up. `LobbyList::list_now` rebuilt the list in directory order, so a refresh could put a
+different game under a focused JOIN row. It now keeps each still-listed game on its row and adds
+new ones after. A game that leaves the list still moves the rows below it up.
