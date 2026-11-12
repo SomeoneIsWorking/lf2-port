@@ -64,8 +64,9 @@ HOST_MOVES = pad_script(("up", "down"), "match", 60, 23, 40)
 FRIEND_MOVES = pad_script(("right",), "match", 60, 7, 30) + "," + pad_script(("left",), "match", 300, 7, 15)
 PADS = {"host": ",".join(HOST_MENU + HOST_MATCH) + "," + HOST_MOVES,
         "friend": ",".join(FRIEND_MENU + FRIEND_MATCH) + "," + FRIEND_MOVES}
-# The friend's page as it presses JOIN, then player 2 running right while both fighters are in view.
-FRAME_DUMP = "@modemenu+495,@match+90,@match+110,@match+130"
+# The friend's page as it opens, after its last move and as it presses JOIN, then player 2 running
+# right while both fighters are in view.
+FRAME_DUMP = "@modemenu+130,@modemenu+460,@modemenu+495,@match+90,@match+110,@match+130"
 # Player 2's fighter, as LF2_COOP_TRACK logs it.
 TRACK = re.compile(r"^coop track: frame (\d+) entry 1 x=(-?\d+) y=-?\d+ z=(-?\d+)")
 LOBBY_PORT = 8077
