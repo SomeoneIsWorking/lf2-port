@@ -240,7 +240,11 @@ final hashes (`tools/routes/online_meeting_test.py`).
 Online play rewinds through a VS match load, which creates COM surfaces, with
 equal final hashes on both peers.
 
-Gap: audio replays during resimulation. Hooks
+A rerun frame's sound calls are held back (`dsound_set_audible`): in the
+two-player match a buffer restarted within 150 ms 2 and 1 times on the two peers,
+against 23 and 37 without it.
+
+Gap: a sound first heard only in a corrected frame is not played. Hooks
 and design: `docs/plans/0129-online-multiplayer.md`.
 
 ### S015 — Representative gameplay conformance

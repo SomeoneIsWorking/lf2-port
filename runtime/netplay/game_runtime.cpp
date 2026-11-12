@@ -1,5 +1,6 @@
 #include "game_runtime.h"
 
+#include "dsound.h"
 #include "hostwin.h"
 #include "main_loop.h"
 #include "session_inputs.h"
@@ -37,9 +38,11 @@ void GameRuntime::setInputs(std::span<const std::uint8_t> all)
 void GameRuntime::advance(bool resimulating)
 {
     hostwin_set_presenting(resimulating ? 0 : 1);
+    dsound_set_audible(resimulating ? 0 : 1);
     if (main_loop_advance() == 0) {
         quit_ = true;
     }
+    dsound_set_audible(1);
     hostwin_set_presenting(1);
 }
 

@@ -213,5 +213,7 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
   friend's pad claims player 2 in character select, and its presses run player 2 across the stage
   on both screens while the host walks player 1; equal final hashes through the match load, direct
   (host 267, friend 291 frames resimulated) and over ZeroTier. Pad items can be keyed `@online`, the
-  first frame the session plays. Open: issues 0131 (a rerun differs at the match load), 0132 (a
-  friend that never asked), 0133 (the text tile pool fills).
+  first frame the session plays. Open: issue 0132 (a friend that never asked).
+- 2026-11-12: rerun frames are silent and leave no draws. `gdi.c`'s handle tables join the snapshot
+  (issue 0131), an unshown frame's display list is reset (issue 0133), and `dsound_set_audible`
+  holds a rerun frame's Play, Stop, seek and volume calls, as `lucent::rollback::Runtime` asks.

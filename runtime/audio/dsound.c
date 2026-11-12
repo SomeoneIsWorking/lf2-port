@@ -61,6 +61,22 @@ long au_multislice_pulls, au_would_drop_frames, au_max_req;
  * never sees them and the sound is silently absent -- indistinguishable from a
  * dropout unless it is counted. */
 long au_unregistered;
+/* Playback calls a rerun frame made and the mixer did not take. */
+long au_held;
+static int audible = 1;
+
+void dsound_set_audible(int on)
+{
+    audible = on;
+}
+
+static int held(int args)
+{
+    if (audible) return 0;
+    au_held++;
+    com_ret(args, DD_OK);
+    return 1;
+}
 
 static FILE *mix_dump;
 static long mix_dump_frames;
@@ -486,6 +502,7 @@ static void dump_src(const SBuf *b)
 
 static void sb_Play(uint32_t self)
 {
+    if (held(4)) return;
     SBuf *b = com_host(self);
     audio_start();
     /* Correlates a Play with the recorded mix: mix_dump_frames is the exact sample
@@ -524,6 +541,7 @@ static void sb_Play(uint32_t self)
 
 static void sb_Stop(uint32_t self)
 {
+    if (held(1)) return;
     SBuf *b = com_host(self);
     ensure_mix_lock();
     SDL_LockMutex(mix_lock);
@@ -561,6 +579,7 @@ static void sb_GetCurrentPosition(uint32_t self)
 
 static void sb_SetCurrentPosition(uint32_t self)
 {
+    if (held(2)) return;
     SBuf *b = com_host(self);
     ensure_mix_lock();
     SDL_LockMutex(mix_lock);
@@ -587,6 +606,7 @@ static void sb_GetStatus(uint32_t self)
 
 static void sb_SetVolume(uint32_t self)
 {
+    if (held(2)) return;
     SBuf *b = com_host(self);
     ensure_mix_lock();
     SDL_LockMutex(mix_lock);
@@ -728,9 +748,9 @@ void audio_report(void)
 {
     lf2_log_writef(LF2_LOG_INFO, "dsound",
                    "audio: buffers=%ld plays=%ld device-pulls=%ld peak=%ld/32767 "
-                   "clipped=%ld/%ld (%.3f%%) music-frames=%ld\n",
+                   "clipped=%ld/%ld (%.3f%%) music-frames=%ld rerun-calls-held=%ld\n",
                    au_bufs, au_plays, au_pulls, au_peak, au_clipped, au_samples,
-                   au_samples ? 100.0 * (double)au_clipped / (double)au_samples : 0.0, au_music_frames);
+                   au_samples ? 100.0 * (double)au_clipped / (double)au_samples : 0.0, au_music_frames, au_held);
     /* Deliberately NOT prefixed "audio:" -- tools/routes/smoke_test.py takes the last line with
      * that prefix, so a second one silently blanked every audio assertion. */
     lf2_log_writef(LF2_LOG_INFO, "dsound",
