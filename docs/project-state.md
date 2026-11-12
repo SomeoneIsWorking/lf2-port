@@ -203,9 +203,11 @@ the friend joins it from the open games. `tools/routes/online_meeting_test.py` s
 with two hidden instances from one install in separate rootless network namespaces
 joined by one veth cable: equal final hashes on every reported frame, no desync.
 
-Gap: the scripted presses are menu directions, so no remote press has yet
-steered a fighter;
-a host that played a match before hosting is unproven; host keys and mouse are withheld during one.
+In the same test the host starts a VS match, the friend's pad claims player 2,
+and the friend's presses run player 2 across the stage on both screens
+(`LF2_COOP_TRACK` and the kept frames), direct and over ZeroTier.
+
+Gap: a host that played a match before hosting is unproven; host keys and mouse are withheld during one.
 Desktop only: Android needs OpenSSL provisioned for `lucent::online`.
 
 ### S022 — Internet play by ZeroTier code
@@ -235,8 +237,11 @@ with different scripted pads per player and a cable that delays and drops
 packets, both peers rewind (about 100 to 200 frames resimulated) and keep equal
 final hashes (`tools/routes/online_meeting_test.py`).
 
-Gap: audio replays during resimulation; a frame that creates COM objects
-cannot be loaded back; the route reaches character select only (S005). Hooks
+Online play rewinds through a VS match load, which creates COM surfaces, with
+equal final hashes on both peers.
+
+Gap: audio replays during resimulation; one frame at the match load reruns
+differently under `LF2_ROLLBACK_CHECK` (issue 0131). Hooks
 and design: `docs/plans/0129-online-multiplayer.md`.
 
 ### S015 — Representative gameplay conformance

@@ -3,8 +3,10 @@
 
 Both players work the port menu with a pad. The host hosts a game and lists it; the friend finds
 it in the open games, served by a lobby server on the lab, and joins it. The friend's game takes
-the host's state, then both play through the rollback engine with different scripted pads: each
-logs a final state hash every sixty frames, and the two must agree on every frame both reached.
+the host's state; the host starts a VS match and the friend's pad claims player 2, then the
+friend walks player 2 while the host walks player 1. Each logs player 2's position and a final
+state hash every sixty frames: player 2 must move on both screens and the hashes agree on every
+frame both reached.
 Direct: each in its own network namespace joined by one cable that delays and drops packets, so
 late inputs must rewind and resimulate frames. `--zerotier`: the direct path off, both on a lab with only Lucent's lab ZeroTier root
 to reach each other through. The namespaces belong to a user namespace of this user's, so nothing
@@ -32,15 +34,15 @@ LAB_ADDRESS = "10.77.0.1"
 ROOT_PORT = 39993
 INVITE = re.compile(r"^invite code: (\S+)$")
 FINAL = re.compile(r"^frame (\d+) final hash ([0-9a-f]{16}), (\d+) frames resimulated$")
-# Final hashes both peers must log before the run counts as played.
-REPORTS = 5
-DEADLINE_S = 240
+# Final hashes both peers must log before the run counts as played: past the friend's last press.
+REPORTS = 32
+DEADLINE_S = 480
 # The cable's impairment, both ways: inputs arrive frames late, so a changed one rewinds.
 NETEM = "delay 60ms 20ms loss 10%"
 
 
-def pad_script(buttons: tuple[str, ...], first: int, every: int) -> str:
-    return ",".join(f"{buttons[i % len(buttons)]}@modemenu+{first + i * every}" for i in range(100))
+def pad_script(buttons: tuple[str, ...], anchor: str, first: int, every: int, count: int) -> str:
+    return ",".join(f"{buttons[i % len(buttons)]}@{anchor}+{first + i * every}" for i in range(count))
 
 
 # The port menu: open it, up to the ONLINE tab, open the page, then down its rows.
@@ -50,9 +52,22 @@ HOST_MENU = MENU + ["down@modemenu+150", "south@modemenu+180", "down@modemenu+21
                     "down@modemenu+270", "south@modemenu+300"]
 # Friend: down past Host, Your code, Join by code, the listing switch and Refresh to the first open game.
 FRIEND_MENU = MENU + [f"down@modemenu+{300 + 30 * i}" for i in range(6)] + ["south@modemenu+500"]
-# Then directions only, so no press confirms a menu item such as Quit; the friend's start as it joins.
-PADS = {"host": ",".join(HOST_MENU) + "," + pad_script(("down", "up", "right", "left"), 1500, 11),
-        "friend": ",".join(FRIEND_MENU) + "," + pad_script(("left", "down", "right", "up"), 600, 13)}
+# Once both play, the host starts a VS match as player 1: VS mode, its fighter and team, then the
+# computer players, the stage and the start, as leave_match_test.py does for one player.
+HOST_MATCH = ["south@online+60"] + [f"south@charselect+{t}" for t in (58, 118, 178, 238)] + \
+    ["up@charselect+298", "up@charselect+358"] + [f"south@charselect+{t}" for t in (418, 618, 838)] + \
+    ["up@overlay+99", "up@overlay+159", "south@overlay+219"]
+# The friend's pad claims player 2 between the host's presses: join, fighter, team.
+FRIEND_MATCH = [f"south@charselect+{t}" for t in (88, 148, 208)]
+# In the match: the host walks player 1 up and down, the friend walks player 2 right, then left.
+HOST_MOVES = pad_script(("up", "down"), "match", 60, 23, 40)
+FRIEND_MOVES = pad_script(("right",), "match", 60, 7, 30) + "," + pad_script(("left",), "match", 300, 7, 15)
+PADS = {"host": ",".join(HOST_MENU + HOST_MATCH) + "," + HOST_MOVES,
+        "friend": ",".join(FRIEND_MENU + FRIEND_MATCH) + "," + FRIEND_MOVES}
+# The friend's page as it presses JOIN, then player 2 running right while both fighters are in view.
+FRAME_DUMP = "@modemenu+495,@match+90,@match+110,@match+130"
+# Player 2's fighter, as LF2_COOP_TRACK logs it.
+TRACK = re.compile(r"^coop track: frame (\d+) entry 1 x=(-?\d+) y=-?\d+ z=(-?\d+)")
 LOBBY_PORT = 8077
 
 
@@ -155,6 +170,15 @@ def final_hashes(log: Path) -> dict[int, tuple[str, int]]:
     return hashes
 
 
+def player_two_x(log: Path) -> list[int]:
+    xs = []
+    for line in tagged_lines(log, "coop-debug"):
+        match = TRACK.match(line)
+        if match:
+            xs.append(int(match.group(2)))
+    return xs
+
+
 def played(log: Path) -> bool:
     return len(final_hashes(log)) >= REPORTS
 
@@ -179,7 +203,7 @@ def main() -> int:
     out = root / "scratch" / ("online-meeting-zerotier" if options.zerotier else "online-meeting")
     out.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env.update(SDL_AUDIODRIVER="dummy", LF2_WINDOW="hidden", LF2_QUIT_AFTER="100000")
+    env.update(SDL_AUDIODRIVER="dummy", LF2_WINDOW="hidden", LF2_QUIT_AFTER="100000", LF2_COOP_TRACK="1")
     command = [str(build / "lf2"), "lf2.exe"]
 
     processes: list[subprocess.Popen[bytes]] = []
@@ -208,10 +232,16 @@ def main() -> int:
         for home in homes.values():
             home.mkdir(exist_ok=True)
         settings = {}
+
+        def frames(name: str) -> dict[str, str]:
+            """Each player's frames in <out>/<name>-frames, FRAMES=<LF2_FRAME_DUMP spec> or FRAME_DUMP."""
+            (out / f"{name}-frames").mkdir(exist_ok=True)
+            return {"LF2_FRAME_DUMP": os.environ.get("FRAMES", FRAME_DUMP), "LF2_DUMP_DIR": str(out / f"{name}-frames")}
+
         for name in ("host", "friend"):
             settings[name] = out / f"{name}.cfg"
             settings[name].write_text(f"lobby_server http://{lobby_address}:{LOBBY_PORT}\nnostr_lobbies off\n")
-        processes.append(host.start(command, game, {**env, "LF2_VIRTUAL_PAD": PADS["host"],
+        processes.append(host.start(command, game, {**env, **frames("host"), "LF2_VIRTUAL_PAD": PADS["host"],
                                                                 "LF2_CONFIG": str(settings["host"]),
                                                                 "XDG_CONFIG_HOME": str(homes["host"])}, host_log))
         deadline = time.monotonic() + DEADLINE_S
@@ -223,10 +253,7 @@ def main() -> int:
             print(f"  FAIL  the host showed no invite code; see {host_log}")
             return 1
         print("  ok    the host showed an invite code")
-        # FRIEND_FRAMES=<LF2_FRAME_DUMP spec> keeps the friend's frames in <out>/friend-frames.
-        frames = {"LF2_FRAME_DUMP": os.environ["FRIEND_FRAMES"], "LF2_DUMP_DIR": str(out / "friend-frames")} \
-            if os.environ.get("FRIEND_FRAMES") else {}
-        processes.append(friend.start(command, game, {**env, **frames, "LF2_VIRTUAL_PAD": PADS["friend"],
+        processes.append(friend.start(command, game, {**env, **frames("friend"), "LF2_VIRTUAL_PAD": PADS["friend"],
                                                                     "LF2_CONFIG": str(settings["friend"]),
                                                                     "XDG_CONFIG_HOME": str(homes["friend"])},
                                       friend_log))
@@ -251,6 +278,13 @@ def main() -> int:
                 if line.startswith("connected"):
                     print(f"          {line}")
             passed = passed and same and path and not desync
+        for name, log in (("host", host_log), ("friend", friend_log)):
+            xs = player_two_x(log)
+            moved = len(xs) >= 4 and max(xs) - min(xs) >= 40 and max(xs) > xs[0]
+            print(f"  {'ok  ' if moved else 'FAIL'}  {name}: the friend's presses walked player 2"
+                  f" (x {xs[0] if xs else '-'} to {max(xs) if xs else '-'} and back to {xs[-1] if xs else '-'},"
+                  f" {len(xs)} samples)")
+            passed = passed and moved
         host_hashes, friend_hashes = final_hashes(host_log), final_hashes(friend_log)
         common = sorted(set(host_hashes) & set(friend_hashes))
         agree = len(common) >= REPORTS and all(host_hashes[f][0] == friend_hashes[f][0] for f in common)

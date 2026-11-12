@@ -183,6 +183,7 @@ void LobbyList::start_ask(const Lobby &lobby)
         }
     }
     if (!directory) {
+        lf2_log_write(LF2_LOG_WARNING, "lobby", "the game asked for is no longer listed");
         settle(SeatAnswer{Seat::Failed, {}});
         return;
     }
@@ -205,6 +206,7 @@ void LobbyList::poll_ask()
     const auto now = std::chrono::steady_clock::now();
     if (now - asking_->since >= kAnswerWithin) {
         asking_.reset();
+        lf2_log_write(LF2_LOG_WARNING, "lobby", "the host did not answer the ask");
         settle(SeatAnswer{Seat::Unanswered, {}});
         return;
     }

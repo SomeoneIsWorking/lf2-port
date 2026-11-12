@@ -9,6 +9,7 @@
 #include "options.h"
 #include "packet.h"
 #include "rmlui.h"
+#include "script.h"
 #include "session_inputs.h"
 #include "user_paths.h"
 
@@ -622,6 +623,7 @@ class Attempt {
         config.max_rollback = RollbackState::kSlots - 1;
         session_ = std::make_unique<lucent::rollback::Session>(config, *runtime_, 1);
         lf2_log_write(LF2_LOG_INFO, "online", "playing through the rollback engine");
+        script_observe_session();
     }
 
     // The session is over; the game goes on alone from where it is.

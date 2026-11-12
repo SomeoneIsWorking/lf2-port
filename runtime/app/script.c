@@ -29,13 +29,20 @@
  * `charselect` is the following player-selection panel. They share a blit destination and can
  * share a picture, so both anchors come from what the game distinctly draws, not a frame dump or
  * a sampled state word. */
-enum { SCREEN_N = 4 };
-static long screen_first[SCREEN_N] = {-1, -1, -1, -1};
-static const char *const SCREEN_NAME[SCREEN_N] = {"modemenu", "charselect", "overlay", "match"};
+enum { SCREEN_N = 5 };
+static long screen_first[SCREEN_N] = {-1, -1, -1, -1, -1};
+static const char *const SCREEN_NAME[SCREEN_N] = {"modemenu", "charselect", "overlay", "match", "online"};
+static int session_playing;
+
+void script_observe_session(void)
+{
+    session_playing = 1;
+}
 
 void script_observe_screens(long frame)
 {
-    const int up[SCREEN_N] = {panel_modemenu_up(), panel_charselect_up(), panel_overlay_up(), panel_hud_up()};
+    const int up[SCREEN_N] = {panel_modemenu_up(), panel_charselect_up(), panel_overlay_up(), panel_hud_up(),
+                              session_playing};
     for (int i = 0; i < SCREEN_N; i++)
         if (up[i] && screen_first[i] < 0) {
             screen_first[i] = frame;

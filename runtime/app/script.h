@@ -5,6 +5,7 @@
  * ever right for the pad: WHEN an item fires, and whether anyone finds out that it did not.
  *
  *   LF2_VIRTUAL_PAD    "<button>:<frame>"  or  "<button>@<screen>[+n]"      items split by ,
+ *                      (`online` is a screen too: the first frame an online session plays)
  *   LF2_VIRTUAL_PAD2   the same, second pad                                 items split by ,
  *   LF2_VIRTUAL_PAD3/4 the same, third and fourth pads                       items split by ,
  *   LF2_KEY_SCRIPT     "<vk>:<frame>"      or  "<vk>@<screen>[+n]"          items split by ,
@@ -21,11 +22,17 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum { SCRIPT_PAD0, SCRIPT_PAD1, SCRIPT_PAD2, SCRIPT_PAD3, SCRIPT_KEYS, SCRIPT_CLICKS, SCRIPT_STREAMS };
 
 /* Called once per presented frame, before anything asks script_when(). Notices which of the
  * game's screens are being drawn, which is what the @<screen> form resolves against. */
 void script_observe_screens(long frame);
+/* An online session began to play; `@online` is the next observed frame. */
+void script_observe_session(void);
 
 /* Resolve one item's timing spec -- "1200", "@match", "@charselect+58".
  * Returns the frame it fires on, or -1 with *unresolved set when its screen has not appeared
@@ -68,5 +75,9 @@ int input_script_click_configured(void);
 /* The mouse position and button state this frame, or 0 with the outputs untouched when no
  * item's window is open. */
 int input_script_click_state(int *x, int *y);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

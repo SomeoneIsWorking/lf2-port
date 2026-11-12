@@ -209,3 +209,9 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
   hello v3 and a page sync instead of both booting together. `online_meeting_test.py` drives both
   menus by pad from one install against a lab `lucent_lobby_server`, direct and `--zerotier`: equal
   final hashes, host and friend both resimulating.
+- 2026-11-12: a remote press steers a fighter. After the meeting the host starts a VS match, the
+  friend's pad claims player 2 in character select, and its presses run player 2 across the stage
+  on both screens while the host walks player 1; equal final hashes through the match load, direct
+  (host 267, friend 291 frames resimulated) and over ZeroTier. Pad items can be keyed `@online`, the
+  first frame the session plays. Open: issues 0131 (a rerun differs at the match load), 0132 (a
+  friend that never asked), 0133 (the text tile pool fills).
