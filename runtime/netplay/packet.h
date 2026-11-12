@@ -9,16 +9,15 @@ extern "C" {
 #endif
 
 enum {
-    LF2_NETPLAY_HELLO_BYTES = 68,
+    LF2_NETPLAY_HELLO_BYTES = 88,
 };
 
-/* The first message each peer sends: which session, which lf2.exe, and the host's calendar,
- * which the friend's guest adopts so both boot into the same state. */
+/* The first message each peer sends: which session, which lf2.exe and which port build. The
+ * friend's game then takes the host's state, which only an identical build can read. */
 typedef struct {
     uint8_t session_id[16];
     uint8_t executable_sha256[32];
-    int64_t epoch_ns;
-    int32_t utc_offset_s;
+    uint8_t port_sha256[32];
 } Lf2NetplayHello;
 
 /* Wire format is byte-exact and transport-independent. Encode returns the encoded size, or zero

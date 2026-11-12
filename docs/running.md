@@ -111,10 +111,11 @@ performance for the affected region.
 - `LF2_STATE_HASH` logs one `frame-state` line per logic frame with the logic
   and media digests (`runtime/netplay/frame_state.h`); two runs with the same
   inputs must log identical lines.
-- `LF2_ONLINE=host` shows an invite code in the log; `LF2_ONLINE=<invite>` joins
-  it (`runtime/netplay/online_session.h`) before boot; the two then play from boot through
-  the rollback engine, each logging a final state hash every 60 frames. A maintainer path until the
-  Online menu.
+- The port menu's ONLINE page hosts a game, copies its code, pastes a friend's and lists open games
+  (`runtime/ui/online_ui.cpp`). A friend's game takes the host's state, and both then play through
+  the rollback engine, each logging a final state hash every 60 frames. Config `lobby_server <url>`
+  adds a self-hosted lobby server, `nostr_lobbies off` drops the public Nostr relays, and
+  `online_listed on` lists a hosted game.
 - `LF2_ONLINE_ZEROTIER_ONLY` turns off the direct path so a meeting must cross
   the embedded ZeroTier node; `LF2_ZEROTIER_ROOTS=<file>` replaces ZeroTier's
   public roots with a root set file (a lab root;

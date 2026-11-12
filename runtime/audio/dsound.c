@@ -630,6 +630,16 @@ static void obj_Release(uint32_t self)
  * play before the surface arena grows that far. */
 static GuestArena pcm = {GUEST_PCM_BASE, GUEST_PCM_END, 4096};
 
+uint32_t pcm_next(void)
+{
+    return pcm.next;
+}
+
+void pcm_restore(uint32_t next)
+{
+    pcm.next = next;
+}
+
 static void ds_CreateSoundBuffer(uint32_t self)
 {
     (void)self;

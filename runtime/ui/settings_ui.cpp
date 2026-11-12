@@ -36,6 +36,10 @@ extern "C" {
 #include "update.h"
 }
 
+#ifdef LF2_ONLINE
+#include "online_ui.h"
+#endif
+
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
@@ -173,14 +177,15 @@ static const char SETTINGS_RML[] = R"RML(
       <button id="game-tab" data-event-click="show_page('game')">GAME</button>
       <button data-event-click="show_page('graphics')">GRAPHICS</button>
       <button data-event-click="show_page('controls')">CONTROLS</button>
-      <button data-event-click="show_page('cheats')">CHEATS</button>
+      <button data-if="local_play" data-event-click="show_page('cheats')">CHEATS</button>
+      <!-- ONLINE_TAB -->
     </tab-bar>
     <content>
       <pane data-if="page == 'game'">
         <span class="section-heading">PORT MENU</span>
         <button id="continue" data-event-click="close">CONTINUE</button>
-        <button data-if="can_drop" data-event-click="drop_out">DROP OUT</button>
-        <button data-if="in_match" data-event-click="leave_match">LEAVE MATCH</button>
+        <button data-if="can_drop && local_play" data-event-click="drop_out">DROP OUT</button>
+        <button data-if="in_match && local_play" data-event-click="leave_match">LEAVE MATCH</button>
         <button data-if="updates" data-event-click="update">CHECK FOR UPDATES</button>
         <button class="danger" data-if="quit_supported" data-event-click="quit">QUIT GAME</button>
       </pane>
@@ -216,6 +221,7 @@ static const char SETTINGS_RML[] = R"RML(
         <span class="section-heading">CHEATS</span>
         <!-- CHEAT_BUTTONS -->
       </pane>
+      <!-- ONLINE_PANE -->
     </content>
   </window>
 </body>
@@ -235,6 +241,9 @@ static bool g_dispatching_pad;
 static long g_open_count;
 static long g_render_frames;
 static int g_metrics_reported;
+#ifdef LF2_ONLINE
+static lf2::ui::OnlinePage g_online;
+#endif
 
 static std::string settings_document()
 {
@@ -273,6 +282,16 @@ static std::string settings_document()
                 "data-event-click=\"remove_pass('" + n + "')\">REMOVE</button></div>";
     }
     document.replace(document.find(pass_marker), pass_marker.size(), rows);
+
+    const std::string tab_marker = "<!-- ONLINE_TAB -->";
+    const std::string pane_marker = "<!-- ONLINE_PANE -->";
+#ifdef LF2_ONLINE
+    document.replace(document.find(tab_marker), tab_marker.size(), lf2::ui::OnlinePage::tab_markup());
+    document.replace(document.find(pane_marker), pane_marker.size(), lf2::ui::OnlinePage::page_markup());
+#else
+    document.replace(document.find(tab_marker), tab_marker.size(), "");
+    document.replace(document.find(pane_marker), pane_marker.size(), "");
+#endif
     return document;
 }
 
@@ -308,6 +327,7 @@ static struct {
     bool can_drop;
     bool updates;
     bool quit_supported;
+    bool local_play; /* the guest's state is this player's alone: no online session */
     int light_angle;
     int light_height;
     int light_pct; /* key-light strength as a percentage of a flat key (#111) */
@@ -381,6 +401,7 @@ static void model_load(void)
 #else
     M.quit_supported = true;
 #endif
+    M.local_play = hostwin_input_mode() == HOST_INPUT_LIVE;
     hd2d_light_angles(&angle, &height);
     M.light_angle = (int)(angle + (angle < 0.0f ? -0.5f : 0.5f));
     M.light_height = (int)std::lround(height);
@@ -482,6 +503,10 @@ int rmlui_init(SDL_Renderer *r, SDL_Window *w)
     ctor.Bind("can_drop", &M.can_drop);
     ctor.Bind("updates", &M.updates);
     ctor.Bind("quit_supported", &M.quit_supported);
+    ctor.Bind("local_play", &M.local_play);
+#ifdef LF2_ONLINE
+    g_online.bind(ctor);
+#endif
     ctor.Bind("light_angle", &M.light_angle);
     ctor.Bind("light_height", &M.light_height);
     ctor.Bind("light_pct", &M.light_pct);
@@ -668,6 +693,14 @@ void rmlui_render(void)
     /* Values are stored immediately; the game keeps its ordinary update/draw/present path
      * behind this document, so renderer and lighting changes remain live. */
     model_store_live();
+    const bool local_play = hostwin_input_mode() == HOST_INPUT_LIVE;
+    if (M.local_play != local_play) {
+        M.local_play = local_play;
+        data_model().DirtyVariable("local_play");
+    }
+#ifdef LF2_ONLINE
+    g_online.update(data_model(), M.page);
+#endif
 
     /* The context follows the render output, so the panel stays centred however the window
      * is sized or resized. */

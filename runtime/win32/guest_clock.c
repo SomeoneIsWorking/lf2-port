@@ -59,15 +59,10 @@ GuestCalendar guest_clock_calendar(void)
     return calendar;
 }
 
-int guest_clock_adopt_calendar(GuestCalendar shared)
+void guest_clock_take_calendar(GuestCalendar shared)
 {
-    if (calendar_fixed) {
-        lf2_log_writef(LF2_LOG_ERROR, "guest-clock", "the guest already read its calendar; cannot adopt a session's");
-        return 0;
-    }
     calendar = shared;
     calendar_fixed = 1;
-    return 1;
 }
 
 int64_t guest_clock_wall_ns(void)

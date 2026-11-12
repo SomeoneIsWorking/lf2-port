@@ -27,6 +27,7 @@ void hostwin_pump(void);
  * the boundary, and no local key or mouse input reaches the guest, as a session's peer cannot see it. */
 typedef enum { HOST_INPUT_LIVE, HOST_INPUT_AT_BOUNDARY, HOST_INPUT_WITHHELD } HostInputMode;
 void hostwin_set_input_mode(HostInputMode mode);
+HostInputMode hostwin_input_mode(void);
 /* The messages queued for the guest, as a snapshot section. */
 size_t hostwin_messages_size(void);
 void hostwin_messages_save(void *out);

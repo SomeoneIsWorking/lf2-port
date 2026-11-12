@@ -9,19 +9,20 @@
 int main(void)
 {
     uint8_t bytes[LF2_NETPLAY_HELLO_BYTES];
-    Lf2NetplayHello hello = {.epoch_ns = -0x0102030405060708ll, .utc_offset_s = -18000};
+    Lf2NetplayHello hello = {0};
     for (unsigned i = 0; i < 16; ++i) hello.session_id[i] = (uint8_t)i;
     for (unsigned i = 0; i < 32; ++i) hello.executable_sha256[i] = (uint8_t)(i + 16);
+    for (unsigned i = 0; i < 32; ++i) hello.port_sha256[i] = (uint8_t)(i + 48);
     assert(lf2_netplay_hello_encode(&hello, bytes, sizeof bytes) == LF2_NETPLAY_HELLO_BYTES);
     assert(!lf2_netplay_hello_encode(&hello, bytes, LF2_NETPLAY_HELLO_BYTES - 1));
-    const uint8_t header[] = {'L', 'F', '2', 'N', 2, 1, 0, 0};
+    const uint8_t header[] = {'L', 'F', '2', 'N', 3, 1, 0, 0};
     assert(!memcmp(bytes, header, sizeof header));
 
     Lf2NetplayHello decoded = {0};
     assert(lf2_netplay_hello_decode(bytes, sizeof bytes, &decoded));
     assert(!memcmp(decoded.session_id, hello.session_id, 16));
     assert(!memcmp(decoded.executable_sha256, hello.executable_sha256, 32));
-    assert(decoded.epoch_ns == hello.epoch_ns && decoded.utc_offset_s == hello.utc_offset_s);
+    assert(!memcmp(decoded.port_sha256, hello.port_sha256, 32));
 
     /* Each invalid case must leave the caller's previous valid hello untouched. */
     const Lf2NetplayHello previous = decoded;

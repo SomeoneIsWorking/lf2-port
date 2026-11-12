@@ -49,7 +49,8 @@ static void open_menu(void)
     touch_input_cancel(hostwin_inject_key, hostwin_inject_window_pointer);
     opened_in_match = panel_hud_up() != 0;
     opening_device = menu_device();
-    if (opened_in_match) {
+    /* A session's guest state is both players'; the menu does not pause it. */
+    if (opened_in_match && hostwin_input_mode() == HOST_INPUT_LIVE) {
         saved_pause[0] = LD32(GX_PAUSE_EFFECTIVE);
         saved_pause[1] = LD32(GX_PAUSE_NEXT);
         saved_pause[2] = LD32(GX_PAUSE_REQUEST);
@@ -106,7 +107,7 @@ void pause_menu_leave_match(void)
 void pause_tick(void)
 {
     static int was_start;
-    cheats_tick();
+    if (hostwin_input_mode() == HOST_INPUT_LIVE) cheats_tick();
     const int escape_edge = keyboard_take_escape();
     const int start = gamepad_start_held() != 0;
     const int start_edge = edge(&was_start, start);

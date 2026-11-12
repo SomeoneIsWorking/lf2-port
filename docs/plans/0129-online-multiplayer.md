@@ -203,3 +203,9 @@ namespace (`unshare -rn` with a veth pair for LAN; ZeroTier through the real roo
   (SDL drops joystick input to an unfocused app, and a hidden window has none). Two instances from one
   install corrupted each other's object data through `data\temporary.txt` (issue 0130); the test gives
   each its own install. Reports are bounded by Lucent `26004e4`'s `finalized_frame()`.
+- 2026-11-12: the Online menu. Lucent `4a14337`. The ONLINE page hosts, copies and pastes codes and
+  lists open games; a listing carries a contact key, never the invite, and `lobby_list.cpp` answers
+  each ask with the invite through sealed letters. The friend adopts the host's state through
+  hello v3 and a page sync instead of both booting together. `online_meeting_test.py` drives both
+  menus by pad from one install against a lab `lucent_lobby_server`, direct and `--zerotier`: equal
+  final hashes, host and friend both resimulating.

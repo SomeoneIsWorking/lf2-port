@@ -61,6 +61,14 @@ void opt_set_light_intensity(float v);
 const SpriteChain *opt_sprite_chain(void);
 void opt_set_sprite_chain(const SpriteChain *chain);
 
+/* Online games. A self-hosted lobby server lists open games when config key `lobby_server` holds
+ * its http(s) URL; Nostr relays list them unless `nostr_lobbies` is `off`. A hosted game goes on
+ * those lists only while `online_listed` is `on`, since its code carries this machine's addresses. */
+const char *opt_lobby_server(void);
+int opt_nostr_lobbies(void);
+int opt_online_listed(void);
+void opt_set_online_listed(int on);
+
 #ifdef __cplusplus
 }
 #endif

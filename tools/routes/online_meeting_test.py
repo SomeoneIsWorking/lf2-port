@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Two LF2s meet by a pasted code, directly or over ZeroTier alone.
+"""Two LF2s meet through the Online menu, directly or over ZeroTier alone.
 
-The host shows an invite, the friend joins it, both authenticate the path, check that the other
-runs the same lf2.exe, and play through the rollback engine with different scripted pads: each logs
-a final state hash every sixty frames, and the two must agree on every frame both reached. Direct:
-each in its own network namespace joined by one cable that delays and drops packets, so late inputs
-must rewind and resimulate frames. `--zerotier`: the direct path off, both on a lab with only Lucent's lab ZeroTier root
+Both players work the port menu with a pad. The host hosts a game and lists it; the friend finds
+it in the open games, served by a lobby server on the lab, and joins it. The friend's game takes
+the host's state, then both play through the rollback engine with different scripted pads: each
+logs a final state hash every sixty frames, and the two must agree on every frame both reached.
+Direct: each in its own network namespace joined by one cable that delays and drops packets, so
+late inputs must rewind and resimulate frames. `--zerotier`: the direct path off, both on a lab with only Lucent's lab ZeroTier root
 to reach each other through. The namespaces belong to a user namespace of this user's, so nothing
 needs root.
 """
@@ -16,7 +17,6 @@ import argparse
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -40,12 +40,20 @@ NETEM = "delay 60ms 20ms loss 10%"
 
 
 def pad_script(buttons: tuple[str, ...], first: int, every: int) -> str:
-    """Directions only, so no press confirms a menu item such as Quit."""
-    return ",".join(f"{buttons[i % len(buttons)]}:{first + i * every}" for i in range(400))
+    return ",".join(f"{buttons[i % len(buttons)]}@modemenu+{first + i * every}" for i in range(100))
 
 
-PADS = {"host": pad_script(("down", "up", "right", "left"), 20, 11),
-        "friend": pad_script(("left", "down", "right", "up"), 27, 13)}
+# The port menu: open it, up to the ONLINE tab, open the page, then down its rows.
+MENU = ["start@modemenu+60", "up@modemenu+90", "south@modemenu+120"]
+# Host: HOST, then down past Your code and Join by code to the listing switch, turned on.
+HOST_MENU = MENU + ["down@modemenu+150", "south@modemenu+180", "down@modemenu+210", "down@modemenu+240",
+                    "down@modemenu+270", "south@modemenu+300"]
+# Friend: down past Host, Your code, Join by code, the listing switch and Refresh to the first open game.
+FRIEND_MENU = MENU + [f"down@modemenu+{300 + 30 * i}" for i in range(6)] + ["south@modemenu+500"]
+# Then directions only, so no press confirms a menu item such as Quit; the friend's start as it joins.
+PADS = {"host": ",".join(HOST_MENU) + "," + pad_script(("down", "up", "right", "left"), 1500, 11),
+        "friend": ",".join(FRIEND_MENU) + "," + pad_script(("left", "down", "right", "up"), 600, 13)}
+LOBBY_PORT = 8077
 
 
 def in_user_namespace() -> bool:
@@ -112,12 +120,11 @@ def start_root(machine: Machine, build: Path, out: Path) -> tuple[subprocess.Pop
     raise RuntimeError(f"the lab root wrote no root set; see {out / 'root.log'}")
 
 
-def own_install(game: Path, destination: Path) -> Path:
-    """A copy of the install per machine: the game decrypts every .dat through data/temporary.txt
-    in its own directory, so two instances loading at once from one install read each other's."""
-    shutil.copytree(game, destination, dirs_exist_ok=True, symlinks=True,
-                    ignore=shutil.ignore_patterns("scratch", "temporary.txt"))
-    return destination
+def start_lobby_server(machine: Machine, build: Path, out: Path) -> subprocess.Popen[bytes]:
+    subprocess.run(["cmake", "--build", str(build), "--target", "lucent_lobby_server"], check=True,
+                   stdout=subprocess.DEVNULL)
+    return machine.start([str(build / "third_party" / "lucent" / "lucent_lobby_server"), "--port", str(LOBBY_PORT)],
+                         out, os.environ.copy(), out / "lobby.log")
 
 
 def tagged_lines(log: Path, tag: str) -> list[str]:
@@ -172,8 +179,7 @@ def main() -> int:
     out = root / "scratch" / ("online-meeting-zerotier" if options.zerotier else "online-meeting")
     out.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env.update(SDL_AUDIODRIVER="dummy", LF2_WINDOW="hidden", LF2_UNPACED="1", LF2_CONFIG="",
-               LF2_QUIT_AFTER="100000")
+    env.update(SDL_AUDIODRIVER="dummy", LF2_WINDOW="hidden", LF2_QUIT_AFTER="100000")
     command = [str(build / "lf2"), "lf2.exe"]
 
     processes: list[subprocess.Popen[bytes]] = []
@@ -191,16 +197,23 @@ def main() -> int:
             root_process, roots = start_root(host, build, out)
             helpers.append(root_process)
             env.update(LF2_ONLINE_ZEROTIER_ONLY="1", LF2_ZEROTIER_ROOTS=str(roots))
+            lobby_address = LAB_ADDRESS
         else:
             wire(host, friend)
+            lobby_address = HOST_ADDRESS.split("/")[0]
+        helpers.append(start_lobby_server(host, build, out))
         host_log, friend_log = out / "host.log", out / "friend.log"
         # Each machine its own user data, so each has its own ZeroTier identity.
         homes = {name: out / f"{name}-home" for name in ("host", "friend")}
         for home in homes.values():
             home.mkdir(exist_ok=True)
-        installs = {name: own_install(game, out / f"{name}-game") for name in ("host", "friend")}
-        processes.append(host.start(command, installs["host"], {**env, "LF2_ONLINE": "host", "LF2_VIRTUAL_PAD": PADS["host"],
-                                                    "XDG_CONFIG_HOME": str(homes["host"])}, host_log))
+        settings = {}
+        for name in ("host", "friend"):
+            settings[name] = out / f"{name}.cfg"
+            settings[name].write_text(f"lobby_server http://{lobby_address}:{LOBBY_PORT}\nnostr_lobbies off\n")
+        processes.append(host.start(command, game, {**env, "LF2_VIRTUAL_PAD": PADS["host"],
+                                                                "LF2_CONFIG": str(settings["host"]),
+                                                                "XDG_CONFIG_HOME": str(homes["host"])}, host_log))
         deadline = time.monotonic() + DEADLINE_S
         invite = None
         while invite is None and time.monotonic() < deadline and processes[0].poll() is None:
@@ -210,13 +223,22 @@ def main() -> int:
             print(f"  FAIL  the host showed no invite code; see {host_log}")
             return 1
         print("  ok    the host showed an invite code")
-        processes.append(friend.start(command, installs["friend"], {**env, "LF2_ONLINE": invite, "LF2_VIRTUAL_PAD": PADS["friend"],
-                                                      "XDG_CONFIG_HOME": str(homes["friend"])}, friend_log))
+        # FRIEND_FRAMES=<LF2_FRAME_DUMP spec> keeps the friend's frames in <out>/friend-frames.
+        frames = {"LF2_FRAME_DUMP": os.environ["FRIEND_FRAMES"], "LF2_DUMP_DIR": str(out / "friend-frames")} \
+            if os.environ.get("FRIEND_FRAMES") else {}
+        processes.append(friend.start(command, game, {**env, **frames, "LF2_VIRTUAL_PAD": PADS["friend"],
+                                                                    "LF2_CONFIG": str(settings["friend"]),
+                                                                    "XDG_CONFIG_HOME": str(homes["friend"])},
+                                      friend_log))
         while time.monotonic() < deadline and not (played(host_log) and played(friend_log)):
             if any(process.poll() is not None for process in processes):
                 break
             time.sleep(0.2)
-        passed = True
+        asked = "asked a listed game for a seat" in tagged_lines(friend_log, "lobby")
+        answered = "answered a player who asked for a seat" in tagged_lines(host_log, "lobby")
+        joined = asked and answered and "joining the invite" in online_lines(friend_log)
+        print(f"  {'ok  ' if joined else 'FAIL'}  the friend asked a listed game for a seat and joined by its answer")
+        passed = joined
         for name, log in (("host", host_log), ("friend", friend_log)):
             lines = online_lines(log)
             same = "the peer runs the same lf2.exe" in lines

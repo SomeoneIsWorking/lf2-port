@@ -32,6 +32,7 @@ typedef struct {
     int         nmethods;
     ComMethod   method[64];
     const char *mname[64];   /* method names, for the oracle-comparable trace */
+    void      (*destroy)(void *host); /* frees an object's host side when a restore drops it */
 } ComClass;
 
 extern ComClass com_class[IF_COUNT];
@@ -42,8 +43,17 @@ extern int com_cur_iface, com_cur_method;
 
 void     com_init(void);
 uint32_t com_create(int iface, void *host);   /* -> guest object address */
-/* Objects created so far; a snapshot cannot yet roll their host side back. */
+/* Objects created so far. */
 int com_object_count(void);
+/* What a snapshot keeps of the objects: how many, and where the next one goes. */
+typedef struct {
+    int objects;
+    uint32_t arena_next;
+} ComState;
+ComState com_state(void);
+/* Back to `state`: newer objects' host sides are destroyed. Forward to a session host's count,
+ * the missing ones are placeholders without a host side; nothing the guest still uses is one. */
+void com_restore(ComState state);
 void    *com_host(uint32_t self);
 void     com_call(uint32_t sentinel);
 void     com_ret(int nargs, uint32_t hresult);

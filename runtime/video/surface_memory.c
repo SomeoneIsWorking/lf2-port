@@ -11,6 +11,14 @@ uint32_t vram_alloc(uint32_t bytes)
     requested_bytes += bytes;
     return address;
 }
+uint32_t vram_next(void)
+{
+    return surfaces.next;
+}
+void vram_restore(uint32_t next)
+{
+    surfaces.next = next;
+}
 void vram_report(void)
 {
     lf2_log_writef(LF2_LOG_INFO, "surfaces", "vram: %llu allocations, %llu KB requested, %u KB of arena used",

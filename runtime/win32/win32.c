@@ -300,6 +300,11 @@ void hostwin_set_input_mode(HostInputMode mode)
     input_mode = mode;
 }
 
+HostInputMode hostwin_input_mode(void)
+{
+    return input_mode;
+}
+
 static int is_input_message(uint32_t msg)
 {
     return msg == WM_KEYDOWN_FWD || msg == WM_KEYUP_FWD || msg == WM_MOUSEMOVE || msg == WM_LBUTTONDOWN ||

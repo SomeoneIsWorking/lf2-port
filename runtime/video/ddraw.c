@@ -74,11 +74,8 @@ enum { DDCKEY_SRCBLT = 0x8 };
 
 typedef struct {
     int w, h, pitch;
-    int rows;        /* rows the buffer was ALLOCATED for; 0 when h is the allocation.
-                        A window-following surface is allocated once at the maximum and
-                        only moves w/h, because vram_alloc is a bump allocator with no
-                        free and reallocating per resize event exhausts the arena
-                        during a single drag of a window edge (issue #20). */
+    int rows;        /* rows allocated; a window-following surface is allocated once at the
+                        maximum because vram_alloc never frees (issue #20) */
     uint32_t pixels; /* guest address of the pixel buffer */
     int primary;
     int has_key;
@@ -2379,6 +2376,7 @@ void ddraw_register(void)
 
     c = &com_class[IF_SURFACE];
     c->name = "IDirectDrawSurface";
+    c->destroy = SDL_free;
     c->nmethods = 36;
     c->method[0] = obj_QueryInterface;
     c->method[1] = obj_AddRef;
@@ -2420,6 +2418,7 @@ void ddraw_register(void)
     c->method[8] = clip_SetHWnd;
 
     c = &com_class[IF_PALETTE];
+    c->destroy = SDL_free;
     c->name = "IDirectDrawPalette";
     c->nmethods = 7;
     c->method[0] = obj_QueryInterface;

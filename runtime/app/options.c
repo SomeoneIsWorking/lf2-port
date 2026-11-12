@@ -123,3 +123,25 @@ void opt_set_sprite_chain(const SpriteChain *c)
     chain_read = 1;
     chain = *c;
 }
+
+const char *opt_lobby_server(void)
+{
+    return config_get("lobby_server");
+}
+
+int opt_nostr_lobbies(void)
+{
+    const char *configured = config_get("nostr_lobbies");
+    return !configured || strcmp(configured, "off") != 0;
+}
+
+int opt_online_listed(void)
+{
+    const char *configured = config_get("online_listed");
+    return configured && strcmp(configured, "on") == 0;
+}
+
+void opt_set_online_listed(int on)
+{
+    (void)config_set("online_listed", on ? "on" : "off");
+}

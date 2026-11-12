@@ -274,7 +274,8 @@ target_link_libraries(lf2 PRIVATE SDL3::SDL3 lf2_environment lf2_diagnostics luc
 if(TARGET lucent::online)
     target_sources(lf2 PRIVATE runtime/netplay/online_session.cpp runtime/netplay/packet.c
                                runtime/netplay/rollback_state.cpp runtime/netplay/rollback_check.cpp
-                               runtime/netplay/game_runtime.cpp)
+                               runtime/netplay/game_runtime.cpp runtime/netplay/lobby_list.cpp
+                               runtime/ui/online_ui.cpp)
     target_link_libraries(lf2 PRIVATE lucent::online lucent::zerotier)
     target_compile_definitions(lf2 PRIVATE LF2_ONLINE=1)
 endif()

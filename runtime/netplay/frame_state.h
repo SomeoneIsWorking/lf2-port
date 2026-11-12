@@ -23,6 +23,7 @@ void lf2_frame_state_log(uint32_t frame, long presented);
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace lf2::netplay {
@@ -46,6 +47,8 @@ class StateHash {
     // Spans mapped since are hashed in first.
     [[nodiscard]] std::uint64_t logic();
     [[nodiscard]] std::uint64_t media();
+    // Each logic page's address and current hash, in address order.
+    [[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint64_t>> logic_pages();
 
   private:
     void track_spans();

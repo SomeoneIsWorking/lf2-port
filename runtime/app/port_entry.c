@@ -152,14 +152,26 @@ static int run_main_loop(void)
 #endif
     for (uint32_t logic_frame = 0;; logic_frame++) {
 #ifdef LF2_ONLINE
+        while (lf2_online_holding()) {
+            lf2_online_poll();
+            if (hostwin_quit_requested()) break;
+        }
         int ran;
-        if (lf2_online_playing()) ran = lf2_online_advance();
+        if (hostwin_quit_requested()) ran = 0;
+        else if (lf2_online_playing()) ran = lf2_online_advance();
         else if (rollback_check) ran = lf2_rollback_check_frame(logic_frame);
-        else ran = main_loop_advance();
+        else {
+            ran = main_loop_advance();
+            lf2_online_poll();
+        }
+        if (!ran) {
+            lf2_online_shutdown();
+            return 0;
+        }
 #else
         const int ran = main_loop_advance();
-#endif
         if (!ran) return 0;
+#endif
         if (log_state) lf2_frame_state_log(logic_frame, hostwin_frames());
     }
 }
@@ -168,9 +180,6 @@ int port_entry_run(void)
 {
     lf2_log_writef(LF2_LOG_INFO, "port_entry",
                    "startup: entering native port entry (guest PE entry and WinMain bypassed)\n");
-#ifdef LF2_ONLINE
-    lf2_online_start();
-#endif
     construct_guest_globals();
     startup_init_step_begin(STARTUP_INIT_WINDOW, "window");
     const int window_ok = initialise_window();

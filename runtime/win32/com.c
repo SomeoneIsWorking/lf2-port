@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 ComClass com_class[IF_COUNT];
 int com_cur_iface, com_cur_method;
@@ -61,6 +62,33 @@ uint32_t com_create(int iface, void *host)
 int com_object_count(void)
 {
     return nobjects;
+}
+
+ComState com_state(void)
+{
+    return (ComState){.objects = nobjects, .arena_next = objects_arena.next};
+}
+
+void com_restore(ComState state)
+{
+    if (state.objects < 0 || state.objects > MAX_OBJECTS) {
+        lf2_log_writef(LF2_LOG_ERROR, "com", "restore to %d objects, past the table", state.objects);
+        abort();
+    }
+    while (nobjects > state.objects) {
+        --nobjects;
+        void *host = objects[nobjects].host;
+        if (!host) continue;
+        void (*destroy)(void *) = com_class[objects[nobjects].iface].destroy;
+        if (!destroy) {
+            lf2_log_writef(LF2_LOG_ERROR, "com", "a restore drops a %s, whose host side has no destroy",
+                           com_class[objects[nobjects].iface].name);
+            abort();
+        }
+        destroy(host);
+    }
+    for (; nobjects < state.objects; ++nobjects) memset(&objects[nobjects], 0, sizeof objects[nobjects]);
+    objects_arena.next = state.arena_next;
 }
 
 void *com_host(uint32_t self)

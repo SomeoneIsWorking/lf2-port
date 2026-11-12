@@ -31,8 +31,8 @@ typedef struct {
     int32_t utc_offset_s;
 } GuestCalendar;
 GuestCalendar guest_clock_calendar(void);
-/* A session's peers share one calendar; 0, logged, once the guest has read its own. */
-int guest_clock_adopt_calendar(GuestCalendar calendar);
+/* A session's friend takes the host's calendar together with the host's whole guest state. */
+void guest_clock_take_calendar(GuestCalendar calendar);
 /* Unix time in nanoseconds. */
 int64_t guest_clock_wall_ns(void);
 /* The guest's local time for a Unix second, at the calendar's UTC offset. */

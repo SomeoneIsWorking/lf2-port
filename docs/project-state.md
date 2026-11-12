@@ -196,16 +196,16 @@ and sustained performance evidence remain absent.
 Two LF2s meet by a pasted invite code over Lucent's peer-to-peer transport
 (`runtime/netplay/online_session.cpp`, `lucent::online`): the path is
 authenticated, a peer running a different `lf2.exe` is refused, the friend
-adopts the host's calendar, and both play from boot through `lucent::rollback`
-with LF2 as its `Runtime` (`runtime/netplay/game_runtime.cpp`).
-`tools/routes/online_meeting_test.py` shows it with two hidden instances in
-separate rootless network namespaces joined by one veth cable: equal final
-hashes on every reported frame, no desync. Until the Online menu exists,
-`LF2_ONLINE=host` or `LF2_ONLINE=<invite>` starts a meeting.
+takes the host's state (pages and calendar), and both play through `lucent::rollback`
+with LF2 as its `Runtime` (`runtime/netplay/game_runtime.cpp`). Both players work the
+port menu's ONLINE page (`runtime/ui/online_ui.cpp`): the host hosts and lists its game,
+the friend joins it from the open games. `tools/routes/online_meeting_test.py` shows it
+with two hidden instances from one install in separate rootless network namespaces
+joined by one veth cable: equal final hashes on every reported frame, no desync.
 
 Gap: the scripted presses are menu directions, so no remote press has yet
 steered a fighter;
-a session starts at boot only; host keys and mouse are withheld during one.
+a host that played a match before hosting is unproven; host keys and mouse are withheld during one.
 Desktop only: Android needs OpenSSL provisioned for `lucent::online`.
 
 ### S022 — Internet play by ZeroTier code
@@ -215,8 +215,10 @@ invite code over their embedded ZeroTier nodes alone, through Lucent's lab root
 (`tools/routes/online_meeting_test.py --zerotier`).
 
 Gap: no meeting yet through ZeroTier's public roots between two real networks;
-the invite is Lucent's long code, not yet the 10-hex-digit node ID; no Online
-menu and no Lucent discovery (Nostr, a self-hosted lobby, Firebase) listing.
+the invite is Lucent's long code, not yet the 10-hex-digit node ID; open games
+are shown through a lab `lucent_lobby_server` only, not yet through public Nostr
+relays or Firebase. A listed game's invite goes only to a player who asks
+(`runtime/netplay/lobby_list.cpp`), and the page says the address goes with it.
 Play by code needs no discovery. The port embeds a ZeroTier node through the optional Lucent
 component (libzt) on a controller-less ad-hoc network, so nobody installs an
 app, makes an account or grants root or VPN permission; ZeroTier's roots relay

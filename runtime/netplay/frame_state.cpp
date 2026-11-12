@@ -162,6 +162,18 @@ std::uint64_t StateHash::logic()
     return logic.value();
 }
 
+std::vector<std::pair<std::uint32_t, std::uint64_t>> StateHash::logic_pages()
+{
+    track_spans();
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> pages;
+    for (std::uint32_t page = 0; page < kPageCount; ++page) {
+        if (member_[page] && !is_media(page << kPageShift)) {
+            pages.emplace_back(page << kPageShift, pages_[page]);
+        }
+    }
+    return pages;
+}
+
 std::uint64_t StateHash::media()
 {
     if (scope_ != HashScope::LogicAndMedia) {

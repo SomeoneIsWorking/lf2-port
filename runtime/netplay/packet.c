@@ -2,20 +2,7 @@
 
 #include <string.h>
 
-enum { HEADER_BYTES = 8, WIRE_VERSION = 2, TYPE_HELLO = 1 };
-
-static void put_u32(uint8_t *out, uint32_t value)
-{
-    out[0] = (uint8_t)(value >> 24);
-    out[1] = (uint8_t)(value >> 16);
-    out[2] = (uint8_t)(value >> 8);
-    out[3] = (uint8_t)value;
-}
-
-static uint32_t get_u32(const uint8_t *bytes)
-{
-    return ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) | ((uint32_t)bytes[2] << 8) | (uint32_t)bytes[3];
-}
+enum { HEADER_BYTES = 8, WIRE_VERSION = 3, TYPE_HELLO = 1 };
 
 size_t lf2_netplay_hello_encode(const Lf2NetplayHello *hello, uint8_t *out, size_t capacity)
 {
@@ -29,10 +16,7 @@ size_t lf2_netplay_hello_encode(const Lf2NetplayHello *hello, uint8_t *out, size
     out[5] = TYPE_HELLO;
     memcpy(out + HEADER_BYTES, hello->session_id, 16);
     memcpy(out + HEADER_BYTES + 16, hello->executable_sha256, 32);
-    const uint64_t epoch = (uint64_t)hello->epoch_ns;
-    put_u32(out + HEADER_BYTES + 48, (uint32_t)(epoch >> 32));
-    put_u32(out + HEADER_BYTES + 52, (uint32_t)epoch);
-    put_u32(out + HEADER_BYTES + 56, (uint32_t)hello->utc_offset_s);
+    memcpy(out + HEADER_BYTES + 48, hello->port_sha256, 32);
     return LF2_NETPLAY_HELLO_BYTES;
 }
 
@@ -44,10 +28,7 @@ int lf2_netplay_hello_decode(const uint8_t *bytes, size_t size, Lf2NetplayHello 
     Lf2NetplayHello decoded;
     memcpy(decoded.session_id, bytes + HEADER_BYTES, 16);
     memcpy(decoded.executable_sha256, bytes + HEADER_BYTES + 16, 32);
-    const uint64_t epoch =
-        ((uint64_t)get_u32(bytes + HEADER_BYTES + 48) << 32) | get_u32(bytes + HEADER_BYTES + 52);
-    decoded.epoch_ns = (int64_t)epoch;
-    decoded.utc_offset_s = (int32_t)get_u32(bytes + HEADER_BYTES + 56);
+    memcpy(decoded.port_sha256, bytes + HEADER_BYTES + 48, 32);
     *out = decoded;
     return 1;
 }
