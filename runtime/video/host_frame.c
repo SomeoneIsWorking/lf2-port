@@ -152,7 +152,11 @@ void hostwin_set_presenting(int value)
 void hostwin_present(const uint8_t *pixels, int w, int h, int src_pitch)
 {
     guest_clock_frame_presented();
-    if (!presenting) return;
+    if (!presenting) {
+        /* An unshown frame is still consumed, or its draws pile into the next shown one. */
+        render_frame_reset();
+        return;
+    }
     rwatch_frame();
     if (++frames % 60 == 1)
         lf2_log_writef(LF2_LOG_INFO, "host_frame", "present #%ld %dx%d renderer=%p\n", frames, w, h,
