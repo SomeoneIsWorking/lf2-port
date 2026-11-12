@@ -8,6 +8,8 @@
 /* Resolve the game's case-insensitive Windows-style paths against the host game tree. */
 const char *host_path_of(uint32_t guest_string);
 const char *lf2_host_path(const char *guest_style);
+/* The game's data\temporary.txt resolves to a file of this process's own; this deletes it. */
+void lf2_paths_remove_scratch(void);
 
 /* Read with MSVC text-mode CRLF translation. The caller owns the returned buffer. */
 char *lf2_read_text(const char *host_path, size_t *length);

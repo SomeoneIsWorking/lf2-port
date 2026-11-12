@@ -204,7 +204,7 @@ hashes on every reported frame, no desync. Until the Online menu exists,
 `LF2_ONLINE=host` or `LF2_ONLINE=<invite>` starts a meeting.
 
 Gap: the scripted presses are menu directions, so no remote press has yet
-steered a fighter; two instances from one install collide (issue 0130);
+steered a fighter;
 a session starts at boot only; host keys and mouse are withheld during one.
 Desktop only: Android needs OpenSSL provisioned for `lucent::online`.
 

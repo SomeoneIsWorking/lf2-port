@@ -4,6 +4,7 @@
 #include "hostwin.h"
 #include "config.h"
 #include "lf2_log.h"
+#include "paths.h"
 #include "port_entry.h"
 #include "game_data.h"
 #include "game_selection.h"
@@ -133,6 +134,7 @@ int main(int argc, char **argv)
     atexit(mix_dump_close);
     atexit(blt_stack_report);
     atexit(loadprof_report);
+    atexit(lf2_paths_remove_scratch);
 
     return port_entry_run();
 }

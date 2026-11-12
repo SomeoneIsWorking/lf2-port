@@ -53,6 +53,25 @@ static const char *resolve_host_path(char *path, size_t capacity)
     return path;
 }
 
+/* The game decrypts every .dat into this one file and reads it back, so each process gets its own. */
+static const char SHARED_SCRATCH[] = "data/temporary.txt";
+static char scratch_path[64];
+
+static const char *process_scratch(void)
+{
+    if (!scratch_path[0]) {
+        char data[1024] = "data";
+        resolve_host_path(data, sizeof data);
+        snprintf(scratch_path, sizeof scratch_path, "%.40s/temporary.%ld.txt", data, (long)getpid());
+    }
+    return scratch_path;
+}
+
+void lf2_paths_remove_scratch(void)
+{
+    if (scratch_path[0]) remove(scratch_path);
+}
+
 static const char *translate_path(const char *guest_style)
 {
     static char path[1024];
@@ -60,6 +79,7 @@ static const char *translate_path(const char *guest_style)
     for (; guest_style[length] && length + 1 < sizeof path; ++length)
         path[length] = guest_style[length] == '\\' ? '/' : guest_style[length];
     path[length] = 0;
+    if (strcasecmp(path, SHARED_SCRATCH) == 0) return process_scratch();
     return resolve_host_path(path, sizeof path);
 }
 

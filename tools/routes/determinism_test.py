@@ -3,6 +3,7 @@
 
 This is the determinism a rollback session rests on: the same image and the same inputs give
 the same guest state on every frame. The first differing frame names where to start tracing.
+The two runs start together from one install, as two players on one machine would.
 """
 
 from __future__ import annotations
@@ -24,8 +25,7 @@ FRAMES = 300
 STATE = re.compile(r"^frame (\d+) logic=([0-9a-f]{16}) media=([0-9a-f]{16}) presented=(\d+)$")
 
 
-def run_once(build: Path, game: Path, log_path: Path,
-             extra: dict[str, str] | None = None) -> tuple[int, list[tuple[int, str, str, str]]]:
+def start(build: Path, game: Path, log_path: Path, extra: dict[str, str] | None = None) -> subprocess.Popen:
     env = os.environ.copy()
     env.update(
         SDL_AUDIODRIVER="dummy",
@@ -39,13 +39,22 @@ def run_once(build: Path, game: Path, log_path: Path,
     env.update(extra or {})
     command = ["timeout", "-k", "5", "900", str(build / "lf2"), "lf2.exe"]
     with log_path.open("w") as output:
-        result = subprocess.run(command, cwd=game, env=env, stdout=output, stderr=subprocess.STDOUT, check=False)
+        return subprocess.Popen(command, cwd=game, env=env, stdout=output, stderr=subprocess.STDOUT)
+
+
+def frame_states(log_path: Path) -> list[tuple[int, str, str, str]]:
     states = []
     for line in log_path.read_text(errors="replace").splitlines():
         match = STATE.match(payload_line(line))
         if match:
             states.append((int(match.group(1)), match.group(2), match.group(3), match.group(4)))
-    return result.returncode, states
+    return states
+
+
+def run_once(build: Path, game: Path, log_path: Path,
+             extra: dict[str, str] | None = None) -> tuple[int, list[tuple[int, str, str, str]]]:
+    process = start(build, game, log_path, extra)
+    return process.wait(), frame_states(log_path)
 
 
 def first_difference(first: list, second: list, column: int) -> int | None:
@@ -62,9 +71,10 @@ def main() -> int:
     out = root / "scratch" / "determinism"
     out.mkdir(parents=True, exist_ok=True)
 
-    print(f"two runs of {FRAMES} frames with the smoke route's inputs...")
-    first_exit, first = run_once(build, game, out / "run1.log")
-    second_exit, second = run_once(build, game, out / "run2.log")
+    print(f"two runs of {FRAMES} frames at once with the smoke route's inputs...")
+    runs = [start(build, game, out / f"run{n}.log") for n in (1, 2)]
+    first_exit, second_exit = (run.wait() for run in runs)
+    first, second = frame_states(out / "run1.log"), frame_states(out / "run2.log")
     if first_exit or second_exit:
         print(f"  FAIL  a run did not quit at frame {FRAMES} (exit {first_exit}, {second_exit}); see {out}")
         return 1
