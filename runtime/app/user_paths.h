@@ -11,6 +11,8 @@ extern "C" {
 int user_paths_config_file(char *output, size_t capacity, int create_directory, char *error, size_t error_capacity);
 /* Where the embedded ZeroTier node keeps its identity, so a player's code stays the same. */
 int user_paths_zerotier_directory(char *output, size_t capacity, char *error, size_t error_capacity);
+/* Files of this process's own, which nothing keeps once the process is gone. */
+int user_paths_scratch_directory(char *output, size_t capacity, char *error, size_t error_capacity);
 
 #ifdef __cplusplus
 }

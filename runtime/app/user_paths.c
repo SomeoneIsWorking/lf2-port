@@ -2,8 +2,10 @@
 
 #include <lucent/platform_c.h>
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static int join_path(const char *directory, const char *name, char *output, size_t capacity, char *error,
                      size_t error_capacity)
@@ -45,4 +47,14 @@ int user_paths_config_file(char *output, size_t capacity, int create_directory, 
 int user_paths_zerotier_directory(char *output, size_t capacity, char *error, size_t error_capacity)
 {
     return user_path("zerotier", output, capacity, 1, error, error_capacity);
+}
+
+int user_paths_scratch_directory(char *output, size_t capacity, char *error, size_t error_capacity)
+{
+    if (!user_path("scratch", output, capacity, 1, error, error_capacity)) return 0;
+    if (mkdir(output, 0700) != 0 && errno != EEXIST) {
+        snprintf(error, error_capacity, "cannot create %s", output);
+        return 0;
+    }
+    return 1;
 }

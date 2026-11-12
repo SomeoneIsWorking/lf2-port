@@ -6,6 +6,7 @@
 #include "lf2_log.h"
 #include "paths.h"
 #include "port_entry.h"
+#include "user_paths.h"
 #include "game_data.h"
 #include "game_selection.h"
 #include "setup_screen.h"
@@ -115,6 +116,13 @@ int main(int argc, char **argv)
     if (!android_bridge_initialize()) return 2;
 #endif
     config_load();
+    char scratch[1024];
+    char scratch_error[256];
+    if (!user_paths_scratch_directory(scratch, sizeof scratch, scratch_error, sizeof scratch_error) ||
+        !lf2_paths_set_scratch_directory(scratch)) {
+        lf2_log_writef(LF2_LOG_ERROR, "startup", "no scratch directory: %s %s\n", scratch_error, scratch);
+        return 2;
+    }
     GameData game;
     if (!prepare_game_data(argc, argv, &game)) return 2;
     guest_init();

@@ -19,7 +19,9 @@ from one install still collide.
 Cause: `runtime/win32/paths.c:translate_path` resolved the guest's `data\temporary.txt` to the
 one file in the install, so every process decrypted into and parsed back the same bytes.
 
-Fix: `translate_path` resolves that one guest path to `data/temporary.<pid>.txt`, so the decrypt, the
-native parser and the guest's own CRT reads all use a file of the process's own; an `atexit` hook
-deletes it. `tools/routes/determinism_test.py` now starts its two runs together from one install and
-gets identical state on every frame, with the shared `temporary.txt` left untouched.
+Fix: `translate_path` resolves that one guest path to `temporary.<pid>.txt` in the user-data
+directory's `scratch/` (`runtime/app/user_paths.c`), so the decrypt, the native parser and the guest's
+own CRT reads use a file of the process's own and the install may be read-only. The game reopens it by
+name, so it cannot be an unlinked file: an `atexit` hook deletes it, and startup deletes any left by a
+process that is gone. `tools/routes/determinism_test.py` starts its two runs together from one install
+and gets identical state on every frame.

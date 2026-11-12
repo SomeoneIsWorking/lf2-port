@@ -6,6 +6,8 @@
 #include "guest.h"
 
 #include <dirent.h>
+#include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -55,16 +57,32 @@ static const char *resolve_host_path(char *path, size_t capacity)
 
 /* The game decrypts every .dat into this one file and reads it back, so each process gets its own. */
 static const char SHARED_SCRATCH[] = "data/temporary.txt";
-static char scratch_path[64];
+static const char SCRATCH_PREFIX[] = "temporary.";
+static char scratch_path[1024];
 
-static const char *process_scratch(void)
+static int owner_is_gone(const char *name)
 {
-    if (!scratch_path[0]) {
-        char data[1024] = "data";
-        resolve_host_path(data, sizeof data);
-        snprintf(scratch_path, sizeof scratch_path, "%.40s/temporary.%ld.txt", data, (long)getpid());
+    char *end = NULL;
+    const long pid = strtol(name + sizeof SCRATCH_PREFIX - 1, &end, 10);
+    if (end == name + sizeof SCRATCH_PREFIX - 1 || strcmp(end, ".txt") != 0 || pid <= 0) return 0;
+    return kill((pid_t)pid, 0) != 0 && errno == ESRCH;
+}
+
+int lf2_paths_set_scratch_directory(const char *directory)
+{
+    DIR *stream = opendir(directory);
+    if (!stream) return 0;
+    for (struct dirent *entry = readdir(stream); entry; entry = readdir(stream)) {
+        if (strncmp(entry->d_name, SCRATCH_PREFIX, sizeof SCRATCH_PREFIX - 1) != 0) continue;
+        if (!owner_is_gone(entry->d_name)) continue;
+        char stale[1024];
+        snprintf(stale, sizeof stale, "%s/%s", directory, entry->d_name);
+        remove(stale);
     }
-    return scratch_path;
+    closedir(stream);
+    const int written =
+        snprintf(scratch_path, sizeof scratch_path, "%s/%s%ld.txt", directory, SCRATCH_PREFIX, (long)getpid());
+    return written > 0 && (size_t)written < sizeof scratch_path;
 }
 
 void lf2_paths_remove_scratch(void)
@@ -79,7 +97,7 @@ static const char *translate_path(const char *guest_style)
     for (; guest_style[length] && length + 1 < sizeof path; ++length)
         path[length] = guest_style[length] == '\\' ? '/' : guest_style[length];
     path[length] = 0;
-    if (strcasecmp(path, SHARED_SCRATCH) == 0) return process_scratch();
+    if (scratch_path[0] && strcasecmp(path, SHARED_SCRATCH) == 0) return scratch_path;
     return resolve_host_path(path, sizeof path);
 }
 
