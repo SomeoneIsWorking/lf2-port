@@ -15,6 +15,7 @@ enum {
     JIT_CACHE_BLOCKS = 65536,
     JIT_SLICE_STEPS = 1024 * 1024,
     JIT_MAX_SLICES_PER_CALL = 256,
+    JIT_FALLBACK_SITES_REPORTED = 8,
 };
 
 typedef struct {
@@ -72,6 +73,19 @@ static void report_stats(void)
                    (unsigned long long)stats.blocks_entered, (unsigned long long)stats.blocks_translated,
                    (unsigned long long)stats.guest_insns_translated, (unsigned long long)stats.translate_refusals,
                    (unsigned long long)stats.cache_flushes, (unsigned long long)stats.code_bytes_used);
+    for (unsigned reason = 0; reason < kX86pJitFallbackReasonCount; ++reason) {
+        const char *name = x86p_jit_fallback_reason_name((X86pJitFallbackReason)reason);
+        lf2_log_writef(LF2_LOG_INFO, "jit", "fallback %s: blocks=%llu instructions=%llu", name,
+                       (unsigned long long)stats.fallback_blocks[reason],
+                       (unsigned long long)stats.fallback_insns[reason]);
+        X86pJitProfileEntry sites[JIT_FALLBACK_SITES_REPORTED];
+        const uint32_t count = x86p_jit_profile_top(
+            x86p_jit_engine_fallback_sites(engine, (X86pJitFallbackReason)reason), sites, JIT_FALLBACK_SITES_REPORTED);
+        for (uint32_t index = 0; index < count; ++index) {
+            lf2_log_writef(LF2_LOG_INFO, "jit", "fallback %s at guest %08x: entries=%llu", name,
+                           sites[index].guest_eip, (unsigned long long)sites[index].entries);
+        }
+    }
 }
 
 static void destroy_engine(void)

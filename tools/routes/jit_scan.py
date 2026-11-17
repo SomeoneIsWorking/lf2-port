@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run each reachable game state through the JIT and report what x86port refused there.
 
-One hidden, unpaced run per state; the run-end `jit:` stats line and any JIT stop are the
-report. A refusal ends the run (the direct engine has no fallback edge), so a state shows its
-first refusal; the next one appears once x86port covers it.
+One hidden, unpaced run per state; the run-end `jit:` stats and fallback lines and any JIT stop
+are the report. A refused form x86port's semantics can run takes the bounded fallback and is
+counted; one they cannot run ends the run, so a state shows its first such refusal.
 """
 
 from __future__ import annotations
@@ -73,6 +73,7 @@ STATES: dict[str, dict[str, str]] = {
 
 STATS = re.compile(r"blocks entered=\d+ translated=\d+; instructions translated=\d+; "
                    r"translation refusals=\d+; cache flushes=\d+; code bytes=\d+")
+FALLBACK = re.compile(r"fallback [a-z ]+: blocks=\d+ instructions=\d+")
 STOP = re.compile(r"(JIT [^\n]*at guest [0-9a-f]{8}: [^\n]*|unowned interception[^\n]*)")
 SCREENS = re.compile(r"scripted input: screen (\w+) first up at frame (\d+)")
 FIRED = re.compile(r"LF2_VIRTUAL_PAD: \d+ of \d+ items fired")
@@ -89,11 +90,12 @@ def run_state(executable: Path, game: Path, name: str, frames: int) -> str:
                                 stderr=subprocess.STDOUT, timeout=900, check=False)
     text = payload_text(log.read_text(errors="replace"))
     stats = STATS.search(text)
+    fallbacks = "; ".join(FALLBACK.findall(text)) or "no fallback stats"
     stop = STOP.search(text)
     screens = " ".join(f"{screen}@{frame}" for screen, frame in SCREENS.findall(text))
     fired = FIRED.search(text)
     return (f"{name}: exit={result.returncode}; {stats.group(0) if stats else 'no jit stats'}; "
-            f"{stop.group(0) if stop else 'no stop'}; "
+            f"{fallbacks}; {stop.group(0) if stop else 'no stop'}; "
             f"screens {screens or 'none'}; {fired.group(0) if fired else 'no pad'}")
 
 
