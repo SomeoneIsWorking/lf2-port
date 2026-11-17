@@ -61,8 +61,10 @@ player 1 fights a bandit, loses HP to it and reaches the summary screen, with so
 effects and music playing. VS matches run through the same product in the online and
 leave-match routes.
 
-Gap: Championship and Battle modes, Stage Mode past 1-1, and the oracle comparison
-in the migration gate.
+Demo mode's six-AI match also runs through the JIT (`tools/routes/jit_scan.py`, 2026-11-17).
+
+Gap: Championship and Battle matches (the scan reaches their setup screens but no route
+starts a match yet), Stage Mode past 1-1, and the oracle comparison in the migration gate.
 
 ### S002 — High-resolution presentation
 
@@ -106,6 +108,8 @@ then exited normally with 734,144 entered JIT blocks and zero refusals.
 A 3,000-frame Stage Mode run (2026-11-17) fought Stage 1-1 through the JIT: 77.6M
 blocks entered, 3,676 translated (19,553 instructions), zero refusals or cache flushes.
 Issue #128 records the exact discriminator and remaining conformance boundary.
+On x86port `3ca6b03` the state scan (`docs/isa-scope.md`) runs boot, VS, Stage, Demo and the
+Battle and Championship setup screens with zero refusals and zero cache flushes.
 
 Gap: re-establish the complete gameplay frontier and independent conformance.
 
