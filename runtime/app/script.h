@@ -5,6 +5,8 @@
  * ever right for the pad: WHEN an item fires, and whether anyone finds out that it did not.
  *
  *   LF2_VIRTUAL_PAD    "<button>:<frame>"  or  "<button>@<screen>[+n]"      items split by ,
+ *                      (`state<hex>` is a screen too: the first frame the game's screen word
+ *                      0x0044d020 holds that value)
  *                      (`online` is a screen too: the first frame an online session plays,
  *                      `lobbies`: the first frame the ONLINE page shows an open game, and
  *                      `lobbyleft`: the first frame it shows fewer than it had)

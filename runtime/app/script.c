@@ -10,6 +10,7 @@
 #include "script.h"
 #include "environment.h"
 #include "hostwin.h"
+#include "world.h"
 
 #include <SDL3/SDL.h>
 #include <guest.h>
@@ -48,8 +49,22 @@ void script_observe_session(void)
     session_playing = 1;
 }
 
+/* `@state<hex>` keys an item to the first frame the game's own screen word held that value
+ * (SCREEN_WORD: championship 0x14.., battle 0xc8..), for screens the draw anchors cannot name. */
+enum { STATE_VALUES = 512 };
+static long state_first[STATE_VALUES];
+
+static void observe_state(long frame)
+{
+    const uint32_t state = LD32(SCREEN_WORD);
+    if (state >= STATE_VALUES || state_first[state]) return;
+    state_first[state] = frame + 1;
+    lf2_log_writef(LF2_LOG_INFO, "script", "scripted input: screen state 0x%x first at frame %ld\n", state, frame);
+}
+
 void script_observe_screens(long frame)
 {
+    observe_state(frame);
     const int up[SCREEN_N] = {panel_modemenu_up(), panel_charselect_up(), panel_overlay_up(), panel_hud_up(),
                               session_playing,     lobbies_most > 0,      lobby_left};
     for (int i = 0; i < SCREEN_N; i++)
@@ -65,6 +80,16 @@ long script_when(const char *spec, int *unresolved)
     *unresolved = 0;
     if (*spec != '@') return strtol(spec, NULL, 10);
     spec++;
+    if (strncmp(spec, "state", 5) == 0) {
+        char *rest = NULL;
+        const unsigned long state = strtoul(spec + 5, &rest, 16);
+        const long off = (*rest == '+') ? strtol(rest + 1, NULL, 10) : 0;
+        if (rest == spec + 5 || state >= STATE_VALUES || !state_first[state]) {
+            *unresolved = 1;
+            return -1;
+        }
+        return state_first[state] - 1 + off;
+    }
     for (int i = 0; i < SCREEN_N; i++) {
         const size_t n = strlen(SCREEN_NAME[i]);
         if (strncmp(spec, SCREEN_NAME[i], n) != 0) continue;
