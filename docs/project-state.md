@@ -298,7 +298,7 @@ contract.
 
 ### S019 — ARM64 product JIT
 
-The pinned `x86port` at `d2c2cf565d428b4616d89ea44f23afd142d893d8` supplies an
+`x86port` at `d2c2cf565d428b4616d89ea44f23afd142d893d8` (the pin at the time) supplies an
 AArch64 backend and LF2 links it into an Android
 APK. The Cuttlefish ARM64 run reached the retail mode menu through
 `x86p_jit_engine_run`, with the native stack in `SDL_RenderPresent` and no crash;

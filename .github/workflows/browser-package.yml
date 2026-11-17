@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: SomeoneIsWorking/x86port
-          ref: d2c2cf565d428b4616d89ea44f23afd142d893d8
+          ref: 3ca6b031880cb68e49d8dbb249d57bd8d7c3fe66
           path: vendor/shared/x86port
           fetch-depth: 1
           submodules: recursive
@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: SomeoneIsWorking/jit-common
-          ref: d68ccedf47abedc9c8a844400a7c5ba16027d0d0
+          ref: b2218bb51d3f5b877015d06ea8ca6187fc4f2a11
           path: vendor/shared/jit-common
           fetch-depth: 1
           submodules: recursive
