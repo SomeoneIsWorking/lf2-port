@@ -106,3 +106,26 @@ For every LF2 diagnostic, report at minimum:
 
 A run that reports no translated blocks, an omitted corpus, or an unreported
 skip is not evidence.
+
+## State scan
+
+`uv run --frozen python tools/routes/jit_scan.py [state ...]` runs each state hidden and
+unpaced for 3600 frames and prints its `jit:` stats, its first JIT stop and the screens it
+reached (logs in `scratch/jit_scan/`). A refusal stops the run (the direct engine has no
+fallback edge), so each state shows at most its first one.
+
+On x86port `3ca6b03` (2026-11-17), every state ran with zero refusals and zero cache flushes:
+
+| State | Blocks entered | Translated blocks / instructions | Reached |
+| --- | --- | --- | --- |
+| boot (idle mode menu) | 18,344,897 | 1,074 / 6,916 | modemenu |
+| stage | 68,616,881 | 4,279 / 22,337 | Stage 1-1 fight |
+| vs | 78,938,810 | 4,360 / 22,525 | match |
+| demo | 1,195,203,812 | 4,824 / 23,935 | six-AI demo match |
+| battle | 12,976,850 | 1,675 / 9,814 | pre-fight overlay; no match |
+| championship1 / 2 | 9,617,089 / 10,109,031 | 1,199 / 7,545, 1,208 / 7,661 | full bracket at "Shuffle the order?"; no match |
+
+Battle and championship are scan gaps: their setup screens have no screen anchor, the
+bracket's Shuffle dialog ignores the pad's attack, and Battle's overlay Fight! does not start
+a match on this route. They need a title-owned route found by RE of the game's own entry into
+those matches.
