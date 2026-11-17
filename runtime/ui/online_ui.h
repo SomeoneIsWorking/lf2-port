@@ -20,13 +20,15 @@ class OnlinePage {
     [[nodiscard]] static std::string tab_markup();
     [[nodiscard]] static std::string page_markup();
     void bind(Rml::DataModelConstructor &model);
-    // Every frame the menu is up, with the page the menu shows.
-    void update(Rml::DataModelHandle model, const Rml::String &page);
+    // Every frame the menu is up, after its input, with the page the menu shows.
+    void update(Rml::DataModelHandle model, Rml::ElementDocument &document, const Rml::String &page);
 
   private:
     void copy_code();
     void paste_code();
     void join(int row);
+    // Keeps focus on the game a JOIN row showed, or on the row that took its place when it left.
+    void follow_focus(Rml::ElementDocument &document, int row, const std::string &id);
 
     Rml::String status_;
     Rml::String host_label_;

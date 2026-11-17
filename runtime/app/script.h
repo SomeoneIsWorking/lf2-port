@@ -6,7 +6,8 @@
  *
  *   LF2_VIRTUAL_PAD    "<button>:<frame>"  or  "<button>@<screen>[+n]"      items split by ,
  *                      (`online` is a screen too: the first frame an online session plays,
- *                      and `lobbies`: the first frame the ONLINE page shows an open game)
+ *                      `lobbies`: the first frame the ONLINE page shows an open game, and
+ *                      `lobbyleft`: the first frame it shows fewer than it had)
  *   LF2_VIRTUAL_PAD2   the same, second pad                                 items split by ,
  *   LF2_VIRTUAL_PAD3/4 the same, third and fourth pads                       items split by ,
  *   LF2_KEY_SCRIPT     "<vk>:<frame>"      or  "<vk>@<screen>[+n]"          items split by ,
@@ -34,8 +35,9 @@ enum { SCRIPT_PAD0, SCRIPT_PAD1, SCRIPT_PAD2, SCRIPT_PAD3, SCRIPT_KEYS, SCRIPT_C
 void script_observe_screens(long frame);
 /* An online session began to play; `@online` is the next observed frame. */
 void script_observe_session(void);
-/* The ONLINE page shows an open game; `@lobbies` is the next observed frame. */
-void script_observe_lobbies(void);
+/* The ONLINE page shows `count` open games; `@lobbies` follows the first nonzero count and
+ * `@lobbyleft` the first count below the most shown. */
+void script_observe_lobbies(int count);
 
 /* Resolve one item's timing spec -- "1200", "@match", "@charselect+58".
  * Returns the frame it fires on, or -1 with *unresolved set when its screen has not appeared

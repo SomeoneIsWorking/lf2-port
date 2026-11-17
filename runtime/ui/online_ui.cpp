@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <optional>
 #include <string_view>
 
 namespace lf2::ui {
@@ -45,6 +46,33 @@ Rml::String status_text(const OnlineView &view, bool copied)
     return {};
 }
 
+std::string join_row_id(int row)
+{
+    return "online-join-" + std::to_string(row);
+}
+
+// The JOIN row the player's focus is on, if it is one.
+std::optional<int> focused_join_row(Rml::ElementDocument &document)
+{
+    const Rml::Element *focused = document.GetContext() ? document.GetContext()->GetFocusElement() : nullptr;
+    if (!focused) {
+        return std::nullopt;
+    }
+    for (int row = 0; row < OnlinePage::kLobbyRows; ++row) {
+        if (focused->GetId() == join_row_id(row)) {
+            return row;
+        }
+    }
+    return std::nullopt;
+}
+
+void focus(Rml::ElementDocument &document, const std::string &id)
+{
+    if (Rml::Element *element = document.GetElementById(id)) {
+        element->Focus(true);
+    }
+}
+
 } // namespace
 
 std::string OnlinePage::tab_markup()
@@ -58,8 +86,8 @@ std::string OnlinePage::page_markup()
     for (int i = 0; i < kLobbyRows; ++i) {
         const std::string n = std::to_string(i);
         rows += R"RML(<div class="setting-row" data-if="online_lobby_count > )RML" + n +
-                R"RML("><span class="label">{{online_lobby)RML" + n +
-                R"RML(}}</span><button class="setting-value" data-event-click="online_join(')RML" + n +
+                R"RML("><span class="label">{{online_lobby)RML" + n + R"RML(}}</span><button id="online-join-)RML" + n +
+                R"RML(" class="setting-value" data-event-click="online_join(')RML" + n +
                 R"RML(')">JOIN</button></div>)RML";
     }
     return R"RML(<pane data-if="page == 'online'">
@@ -72,7 +100,7 @@ std::string OnlinePage::page_markup()
         <div class="setting-row" data-if="online_listed"><span class="label">Anyone who asks to join a listed game learns your address</span></div>
         <button data-if="online_active" data-event-click="online_leave">LEAVE ONLINE GAME</button>
         <span class="section-heading">OPEN GAMES</span>
-        <div class="setting-row"><span class="label">{{online_lobbies_label}}</span><button class="setting-value" data-event-click="online_refresh">REFRESH</button></div>
+        <div class="setting-row"><span class="label">{{online_lobbies_label}}</span><button id="online-refresh" class="setting-value" data-event-click="online_refresh">REFRESH</button></div>
         )RML" +
            rows +
            R"RML(
@@ -140,6 +168,7 @@ void OnlinePage::paste_code()
 
 void OnlinePage::join(int row)
 {
+    // Input runs before update(), so lobbies_ is the list the pressed row was drawn from.
     if (row < 0 || row >= static_cast<int>(lobbies_.size())) {
         return;
     }
@@ -148,7 +177,23 @@ void OnlinePage::join(int row)
     netplay::online_join(lobbies_[static_cast<std::size_t>(row)]);
 }
 
-void OnlinePage::update(Rml::DataModelHandle model, const Rml::String &page)
+void OnlinePage::follow_focus(Rml::ElementDocument &document, int row, const std::string &id)
+{
+    const int count = std::min(static_cast<int>(lobbies_.size()), kLobbyRows);
+    const auto kept =
+        std::find_if(lobbies_.begin(), lobbies_.end(), [&](const lucent::p2p::Lobby &lobby) { return lobby.id == id; });
+    const int now = kept != lobbies_.end() ? static_cast<int>(kept - lobbies_.begin()) : std::min(row, count - 1);
+    if (now >= kLobbyRows) {
+        return;
+    }
+    if (now < 0) {
+        focus(document, "online-refresh");
+    } else if (now != row) {
+        focus(document, join_row_id(now));
+    }
+}
+
+void OnlinePage::update(Rml::DataModelHandle model, Rml::ElementDocument &document, const Rml::String &page)
 {
     const OnlineView view = netplay::online_view();
     const bool copied = !view.code.empty() && view.code == copied_;
@@ -166,7 +211,13 @@ void OnlinePage::update(Rml::DataModelHandle model, const Rml::String &page)
         refreshed_ = now;
         netplay::online_refresh_lobbies();
     }
+    const std::optional<int> focused = page == "online" ? focused_join_row(document) : std::nullopt;
+    const std::string focused_id =
+        focused && *focused < static_cast<int>(lobbies_.size()) ? lobbies_[static_cast<std::size_t>(*focused)].id : "";
     lobbies_ = netplay::online_lobbies();
+    if (!focused_id.empty()) {
+        follow_focus(document, *focused, focused_id);
+    }
     const int count = std::min(static_cast<int>(lobbies_.size()), kLobbyRows);
     for (int i = 0; i < count; ++i) {
         const lucent::p2p::Lobby &lobby = lobbies_[static_cast<std::size_t>(i)];
@@ -176,8 +227,8 @@ void OnlinePage::update(Rml::DataModelHandle model, const Rml::String &page)
             model.DirtyVariable("online_lobby" + std::to_string(i));
         }
     }
-    if (page == "online" && count > 0) {
-        script_observe_lobbies();
+    if (page == "online") {
+        script_observe_lobbies(count);
     }
     const Rml::String lobbies_label = count == 0 ? "No open games yet" : std::to_string(count) + " open";
 

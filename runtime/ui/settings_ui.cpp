@@ -698,10 +698,6 @@ void rmlui_render(void)
         M.local_play = local_play;
         data_model().DirtyVariable("local_play");
     }
-#ifdef LF2_ONLINE
-    g_online.update(data_model(), M.page);
-#endif
-
     /* The context follows the render output, so the panel stays centred however the window
      * is sized or resized. */
     int ow = 0, oh = 0;
@@ -720,6 +716,9 @@ void rmlui_render(void)
      * invalidates this UI frame: updating or rendering it after Hide() produced the one-frame
      * close glitch from issue #94. */
     if (!rmlui_lifecycle_frame_continues(&g_lifecycle, frame)) return;
+#ifdef LF2_ONLINE
+    if (g_doc) g_online.update(data_model(), *g_doc, M.page);
+#endif
     g_ctx->Update();
     if (!rmlui_lifecycle_frame_continues(&g_lifecycle, frame)) return;
     g_render_frames++;

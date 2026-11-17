@@ -53,6 +53,14 @@ HOST_MENU = MENU + ["down@modemenu+150", "south@modemenu+180", "down@modemenu+21
 # Friend: once its page shows an open game, down past Host, Your code, Join by code, the listing
 # switch and Refresh to that game, and join it.
 FRIEND_MENU = MENU + [f"down@lobbies+{30 + 30 * i}" for i in range(6)] + ["south@lobbies+230"]
+# --leaving-game: a decoy is listed ahead of the host's game and leaves once the friend has
+# focused a row. `other`: one more down, to the host's game, which must keep focus as it moves up.
+# `focused`: the decoy itself, whose row the host's game then takes. Either way the friend joins
+# the host's game once the list has shrunk.
+LEAVING_MENU = {
+    "other": MENU + [f"down@lobbies+{30 + 30 * i}" for i in range(7)] + ["south@lobbyleft+60"],
+    "focused": MENU + [f"down@lobbies+{30 + 30 * i}" for i in range(6)] + ["south@lobbyleft+60"],
+}
 # Once both play, the host starts a VS match as player 1: VS mode, its fighter and team, then the
 # computer players, the stage and the start, as leave_match_test.py does for one player.
 HOST_MATCH = ["south@online+60"] + [f"south@charselect+{t}" for t in (58, 118, 178, 238)] + \
@@ -68,11 +76,13 @@ PADS = {"host": ",".join(HOST_MENU + HOST_MATCH) + "," + HOST_MOVES,
 # The friend's page as it opens and after the time its moves used to end, then as it joins, then
 # player 2 running right while both fighters are in view.
 FRAME_DUMP = "@modemenu+130,@modemenu+460,@lobbies+225,@match+90,@match+110,@match+130"
+# --leaving-game: as the page opens, on the focused row with the decoy listed, after it left.
+LEAVING_FRAME_DUMP = "@modemenu+130,@lobbies+240,@lobbyleft+30,@match+90,@match+110,@match+130"
 # Player 2's fighter, as LF2_COOP_TRACK logs it.
 TRACK = re.compile(r"^coop track: frame (\d+) entry 1 x=(-?\d+) y=-?\d+ z=(-?\d+)")
 LOBBY_PORT = 8077
-# --held-listing: the friend lists through held_lobby_proxy.py, which shows no open game until the
-# friend has dumped its frame after its last move.
+# --held-listing and --leaving-game: the friend lists through held_lobby_proxy.py, which holds back
+# the host's game, or lists the decoy, until the friend has dumped its second frame.
 HELD_PORT = 8078
 HELD_FRAMES = 2
 
@@ -200,6 +210,8 @@ def main() -> int:
     parser.add_argument("--zerotier", action="store_true", help="meet over ZeroTier alone, through a lab root")
     parser.add_argument("--held-listing", action="store_true",
                         help="the host's game reaches the friend's list only after the friend's last move")
+    parser.add_argument("--leaving-game", choices=sorted(LEAVING_MENU),
+                        help="a decoy listed ahead of the host's game leaves while the friend is on a row")
     options = parser.parse_args()
     if not in_user_namespace():
         os.execvp("unshare", ["unshare", "--user", "--map-current-user", "--keep-caps", "--",
@@ -237,10 +249,11 @@ def main() -> int:
         host_log, friend_log = out / "host.log", out / "friend.log"
         friend_log.unlink(missing_ok=True)
         friend_port = LOBBY_PORT
-        if options.held_listing:
+        if options.held_listing or options.leaving_game:
             helpers.append(host.start([sys.executable, str(Path(__file__).with_name("held_lobby_proxy.py")),
                                        "--port", str(HELD_PORT), "--upstream", f"http://{lobby_address}:{LOBBY_PORT}",
-                                       "--log", str(friend_log), "--frames", str(HELD_FRAMES)],
+                                       "--log", str(friend_log), "--frames", str(HELD_FRAMES),
+                                       "--decoy" if options.leaving_game else "--hold"],
                                       out, os.environ.copy(), out / "held.log"))
             friend_port = HELD_PORT
         # Each machine its own user data, so each has its own ZeroTier identity.
@@ -252,12 +265,16 @@ def main() -> int:
         def frames(name: str) -> dict[str, str]:
             """Each player's frames in <out>/<name>-frames, FRAMES=<LF2_FRAME_DUMP spec> or FRAME_DUMP."""
             (out / f"{name}-frames").mkdir(exist_ok=True)
-            return {"LF2_FRAME_DUMP": os.environ.get("FRAMES", FRAME_DUMP), "LF2_DUMP_DIR": str(out / f"{name}-frames")}
+            spec = LEAVING_FRAME_DUMP if options.leaving_game else FRAME_DUMP
+            return {"LF2_FRAME_DUMP": os.environ.get("FRAMES", spec), "LF2_DUMP_DIR": str(out / f"{name}-frames")}
 
         for name in ("host", "friend"):
             settings[name] = out / f"{name}.cfg"
             port = friend_port if name == "friend" else LOBBY_PORT
             settings[name].write_text(f"lobby_server http://{lobby_address}:{port}\nnostr_lobbies off\n")
+        friend_pad = PADS["friend"]
+        if options.leaving_game:
+            friend_pad = ",".join(LEAVING_MENU[options.leaving_game] + FRIEND_MATCH) + "," + FRIEND_MOVES
         processes.append(host.start(command, game, {**env, **frames("host"), "LF2_VIRTUAL_PAD": PADS["host"],
                                                                 "LF2_CONFIG": str(settings["host"]),
                                                                 "XDG_CONFIG_HOME": str(homes["host"])}, host_log))
@@ -270,7 +287,7 @@ def main() -> int:
             print(f"  FAIL  the host showed no invite code; see {host_log}")
             return 1
         print("  ok    the host showed an invite code")
-        processes.append(friend.start(command, game, {**env, **frames("friend"), "LF2_VIRTUAL_PAD": PADS["friend"],
+        processes.append(friend.start(command, game, {**env, **frames("friend"), "LF2_VIRTUAL_PAD": friend_pad,
                                                                     "LF2_CONFIG": str(settings["friend"]),
                                                                     "XDG_CONFIG_HOME": str(homes["friend"])},
                                       friend_log))
@@ -278,10 +295,12 @@ def main() -> int:
             if any(process.poll() is not None for process in processes):
                 break
             time.sleep(0.2)
-        asked = "asked a listed game for a seat" in tagged_lines(friend_log, "lobby")
+        asks = tagged_lines(friend_log, "lobby").count("asked a listed game for a seat")
+        asked = asks == 1
         answered = "answered a player who asked for a seat" in tagged_lines(host_log, "lobby")
         joined = asked and answered and "joining the invite" in online_lines(friend_log)
-        print(f"  {'ok  ' if joined else 'FAIL'}  the friend asked a listed game for a seat and joined by its answer")
+        print(f"  {'ok  ' if joined else 'FAIL'}  the friend asked a listed game for a seat once ({asks}) "
+              "and joined by its answer")
         passed = joined
         for name, log in (("host", host_log), ("friend", friend_log)):
             lines = online_lines(log)

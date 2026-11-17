@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""A lab lobby server's front that lists no open games until a log says enough has happened.
+"""A lab lobby server's front that changes the open games until a log says enough has happened.
 
-online_meeting_test.py --held-listing points the friend at this instead of lucent_lobby_server,
-so the host's game reaches the friend's list only after the friend's page has drawn `frames`
-frame dumps; every other request, and the list after that, goes to the real server unchanged.
+online_meeting_test.py points the friend at this instead of lucent_lobby_server. Until the
+friend's page has drawn `frames` frame dumps, `--hold` lists no open games and `--decoy` lists a
+copy of the first one, under another id, ahead of it. Every other request, and the list after
+that, goes to the real server unchanged.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import urllib.error
@@ -20,7 +22,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--upstream", required=True, help="the lobby server's base URL")
     parser.add_argument("--log", type=Path, required=True, help="the friend's log")
-    parser.add_argument("--frames", type=int, required=True, help="frame dumps before the list shows")
+    parser.add_argument("--frames", type=int, required=True, help="frame dumps before the real list shows")
+    change = parser.add_mutually_exclusive_group(required=True)
+    change.add_argument("--hold", action="store_true", help="list no open games until then")
+    change.add_argument("--decoy", action="store_true", help="list a decoy ahead of the first game until then")
     options = parser.parse_args()
 
     def released() -> bool:
@@ -28,9 +33,19 @@ def main() -> None:
             return False
         return options.log.read_text(errors="replace").count("frame dump: wrote") >= options.frames
 
+    def with_decoy(body: bytes) -> bytes:
+        listed = json.loads(body)
+        if listed["lobbies"]:
+            first = listed["lobbies"][0]
+            # Its contact is the real one reversed: an ask to it reaches nobody.
+            decoy = dict(first, id="decoy", title="Decoy", host="d" * 64, contact=first["contact"][::-1])
+            listed["lobbies"].insert(0, decoy)
+        return json.dumps(listed).encode()
+
     class Handler(BaseHTTPRequestHandler):
         def forward(self) -> None:
-            if self.command == "GET" and self.path.startswith("/v1/lobbies") and not released():
+            listing = self.command == "GET" and self.path.startswith("/v1/lobbies") and not released()
+            if listing and options.hold:
                 self.reply(200, b'{"lobbies":[]}')
                 return
             length = int(self.headers.get("Content-Length") or 0)
@@ -40,7 +55,8 @@ def main() -> None:
                 request.add_header("Content-Type", self.headers["Content-Type"])
             try:
                 with urllib.request.urlopen(request, timeout=10) as answer:
-                    self.reply(answer.status, answer.read())
+                    body = answer.read()
+                    self.reply(answer.status, with_decoy(body) if listing else body)
             except urllib.error.HTTPError as answer:
                 self.reply(answer.code, answer.read())
 
