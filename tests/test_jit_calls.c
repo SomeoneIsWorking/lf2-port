@@ -30,6 +30,23 @@ static uint8_t bytes[65536] = {
     0xc3,
     [0x3000] = 0xcc,
     [0x4000] = 0xcc,
+    /* MOV ECX,1000; loop: PUSH ECX; CALL 0x2000; POP ECX; DEC ECX; JNZ loop; RET. */
+    [0x5000] = 0xb9,
+    0xe8,
+    3,
+    0,
+    0,
+    0x51,
+    0xe8,
+    0xf5,
+    0xcf,
+    0xff,
+    0xff,
+    0x59,
+    0x49,
+    0x75,
+    0xf6,
+    0xc3,
 };
 static unsigned imported_calls;
 static unsigned overridden_calls;
@@ -99,6 +116,14 @@ int main(void)
         printf("FAIL: imported=%u/2 overridden=%u/3\n", imported_calls, overridden_calls);
         return 1;
     }
-    puts("PASS: 3 JIT calls, 2 nested HLE calls, 3 scoped originals; register, stack and return boundaries preserved");
+    /* One guest call that reaches a native override 1000 times, as a text loop does per glyph. */
+    call(0x5000);
+    if (check_call(10)) return 1;
+    if (overridden_calls != 1003) {
+        printf("FAIL: overridden=%u/1003 after the override loop\n", overridden_calls);
+        return 1;
+    }
+    puts("PASS: 4 JIT calls, 2 nested HLE calls, 1003 scoped originals; register, stack and return boundaries "
+         "preserved");
     return 0;
 }

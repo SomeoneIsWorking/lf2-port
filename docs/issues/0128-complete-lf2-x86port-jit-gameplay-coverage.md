@@ -70,6 +70,13 @@ focused item (Reset Random re-rolls a Random fighter), which is the game's own b
 Still open: the oracle comparisons, fallback accounting, and invalidation proof the gate
 requires.
 
+Demo mode aborted 1.5 s into its match with "JIT call budget exhausted at guest 004239f2":
+`jit_executor.c:execute` spent one of its 256 hang-guard slices on every native interception,
+so a guest loop that calls an override more than 256 times in one call (the per-glyph
+`fn_0043f010` call at `0x004239ed`) was taken for a hang. Only slices that run guest code
+now count; `test_jit_calls` drives one call through 1000 override hits. The demo now runs
+its 3600 frames (1,195,203,812 blocks entered, zero refusals) with six AI fighters on screen.
+
 ## Acceptance
 
 `docs/migration.md` owns the complete plan. Resolve this issue only after the

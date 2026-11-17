@@ -164,11 +164,15 @@ static void execute(CallRequest request)
     const CallBoundary *parent_boundary = active_boundary;
     select_boundary(&boundary);
 
-    for (unsigned slice = 0; slice < JIT_MAX_SLICES_PER_CALL; ++slice) {
+    /* Only slices spent running guest code count: a native interception is progress. */
+    for (unsigned slice = 0; slice < JIT_MAX_SLICES_PER_CALL;) {
         reason[0] = '\0';
         const X86pJitRunStatus status =
             x86p_jit_engine_run(engine, &jit_cpu, &boundary, JIT_SLICE_STEPS, reason, sizeof reason);
-        if (status == kX86pRunBudget) continue;
+        if (status == kX86pRunBudget) {
+            ++slice;
+            continue;
+        }
         if (status != kX86pRunIntercept) fail("JIT execution stopped", jit_cpu.eip, status, reason);
         if (jit_cpu.eip == boundary.return_address) {
             view_from_jit();
