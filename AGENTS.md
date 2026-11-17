@@ -70,3 +70,5 @@ The CPU migration adapts the existing product instead of rewriting it.
 
 Source and packaged builds accept player-owned game files and validate the
 exact LF2 v2.0a identity.
+
+- Per-operation cost metering is missing and needs building: Lucent `lucent::perf` scopes (`OperationMeter`) reporting the run-end lines of the re-harness `perf-units` skill.
