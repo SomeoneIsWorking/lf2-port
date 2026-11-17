@@ -55,8 +55,14 @@ preserving the native entry, HLE, override, and host subsystem boundaries.
 The pre-migration product reached boot, menus, character selection, VS matches,
 Stage Mode, sound effects, and WMA background music.
 
-Gap: none of that frontier has been re-established through the intended JIT
-product. Earlier observations are not current product evidence.
+Through the JIT product (2026-11-17, Clang, hidden window): a scripted Stage Mode run
+reaches the mode menu, character selection, the Stage Mode panel and Stage 1-1, where
+player 1 fights a bandit, loses HP to it and reaches the summary screen, with sound
+effects and music playing. VS matches run through the same product in the online and
+leave-match routes.
+
+Gap: Championship and Battle modes, Stage Mode past 1-1, and the oracle comparison
+in the migration gate.
 
 ### S002 — High-resolution presentation
 
@@ -97,6 +103,8 @@ restore the enclosing interception context, with a production-adapter regression
 covering ordinary calls, nested HLE and scoped originals. A ten-frame silent
 Clang run against x86port `e1522b2` completed startup and reached the mode menu,
 then exited normally with 734,144 entered JIT blocks and zero refusals.
+A 3,000-frame Stage Mode run (2026-11-17) fought Stage 1-1 through the JIT: 77.6M
+blocks entered, 3,676 translated (19,553 instructions), zero refusals or cache flushes.
 Issue #128 records the exact discriminator and remaining conformance boundary.
 
 Gap: re-establish the complete gameplay frontier and independent conformance.

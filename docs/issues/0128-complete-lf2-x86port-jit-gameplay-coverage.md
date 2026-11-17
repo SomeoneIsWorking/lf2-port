@@ -6,7 +6,7 @@ symptom: The x86-64 LF2 adapter executes through x86port_runtime, but the first 
 state_items: S005,S015,S016,S017,S018,S019
 tags: migration,jit,x86port,execution
 created: 2026-09-04
-updated: 2026-09-08
+updated: 2026-11-17
 ---
 
 ## Root cause
@@ -55,6 +55,20 @@ blocks and translated 6,848 instructions across 1,068 blocks, with zero refusals
 or cache flushes. The previous `0x0040000C` refusal did not recur in this bounded
 observation. This is startup evidence; representative gameplay and independent
 state/output conformance remain open.
+
+A hidden-window Stage Mode run on 8fdbeeb (x86port as pinned) fights Stage 1-1 through
+the JIT. From `game/` with `SDL_AUDIODRIVER=dummy LF2_WINDOW=hidden LF2_UNPACED=1
+LF2_QUIT_AFTER=3000` and `LF2_VIRTUAL_PAD="down@modemenu+60,south@modemenu+120,
+south@charselect+58,south@charselect+118,south@charselect+178,south@charselect+330,
+up@overlay+99,up@overlay+159,south@overlay+219,right@match+100,south@match+150,..."`
+it reaches charselect at frame 124, the Stage Mode panel at 456 and the fight at 678;
+player 1 is hit from 500 to 300 HP, dies, and the summary shows. 77,609,027 blocks
+entered, 3,676 translated (19,553 instructions), zero refusals and cache flushes,
+156 sound plays and music. Screen anchors count from the screen's first frame: an extra
+Attack timed against the absolute frame lands on the Stage Mode panel and activates its
+focused item (Reset Random re-rolls a Random fighter), which is the game's own behaviour.
+Still open: the oracle comparisons, fallback accounting, and invalidation proof the gate
+requires.
 
 ## Acceptance
 
