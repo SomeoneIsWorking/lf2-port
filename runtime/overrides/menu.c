@@ -84,11 +84,12 @@ static void mode_force_tick(void)
         }
     }
     if (mode_force_want < 0 || mode_force_done) return;
-    /* Once the overlay is up the mode has been chosen and the screen is gone. */
-    if (panel_overlay_up()) {
+    /* The championship screens reuse the selection word, and they show no overlay. */
+    if (!panel_modemenu_up()) {
+        if (!mode_force_frames) return;
         mode_force_done = 1;
         lf2_log_writef(LF2_LOG_INFO, "menu",
-                       "menu: LF2_MODE held the mode menu for %ld frame(s); the overlay is up, "
+                       "menu: LF2_MODE held the mode menu for %ld frame(s); the menu is gone, "
                        "so the mode is chosen and the hold is released\n",
                        mode_force_frames);
         return;
@@ -107,9 +108,9 @@ void mode_force_report(void)
     if (mode_force_frames)
         lf2_log_writef(LF2_LOG_INFO, "menu", "menu: LF2_MODE=%s was held on %ld frame(s)%s\n",
                        MODE_NAME[mode_force_want], mode_force_frames,
-                       mode_force_done ? " and released at the overlay"
+                       mode_force_done ? " and released when the menu closed"
                                        : " and never released -- the "
-                                         "run did not reach the pre-fight overlay");
+                                         "run never left the mode menu");
     else
         lf2_log_writef(LF2_LOG_INFO, "menu",
                        "menu: LF2_MODE=%s was NEVER held -- the mode menu was not reached in "
