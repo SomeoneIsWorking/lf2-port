@@ -15,6 +15,13 @@ host behavior: boot, menus, matches, audio, and host enhancements. Those
 observations identify the frontier the native/JIT product must re-establish
 independently.
 
+## Decomp
+
+RE knowledge lives in [lf2-decomp](https://github.com/SomeoneIsWorking/lf2-decomp), pinned as
+`external/lf2-decomp`: the `lf2.exe` v2.0a image pin, the symbol map
+(`config/symbols/lf2.txt`), the RE frontier, prior art and behaviour notes. Port addresses move to
+constants generated from that map (plan 0135).
+
 ## Current focus
 
 S005 is the current focus: expand `shared/x86port` JIT coverage while

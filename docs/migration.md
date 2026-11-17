@@ -74,7 +74,7 @@ Instruction semantics are fixed in `shared/x86port`, never at one LF2 address.
 - `runtime/app/port_entry.c` as native entry. Guest PE entry `0x00445560` and
   WinMain `0x0043cf40` stay bypassed.
 - Bounded native initialization and every native override grounded in the
-  binary evidence recorded in `docs/re-frontier.md`.
+  binary evidence recorded in `external/lf2-decomp/docs/re-frontier.md`.
 - Win32/CRT/GDI/DirectDraw/DirectShow/DirectSound/input/socket HLE and COM
   callbacks.
 - Renderer, audio, input, UI, configuration, packaging, and platform modules.

@@ -9,7 +9,7 @@ compares the two independent sources:
   runtime   LF2_BG_TABLE=all, which walks the registry and prints EVERY background record,
             not only the loaded one -- VS mode picked the same stage on six consecutive
             headless runs, so re-running and hoping for a different one is not a test.
-  file      tools/re/decrypt_dat.py over every bg.dat under game/bg, decrypted offline with the
+  file      lf2-decomp tools/re/decrypt_dat.py over every bg.dat under game/bg, decrypted offline with the
             game's own cipher.
 
 Each runtime record is matched to a file by its FULL geometry with no assumed ordering, and

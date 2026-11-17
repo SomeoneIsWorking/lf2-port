@@ -361,7 +361,7 @@ int bg_layer_count(void)
     return n < BG_MAX_LAYERS ? (int)n : BG_MAX_LAYERS;
 }
 
-/* One background's record, printed in the form tools/re/decrypt_dat.py --layers prints so the
+/* One background's record, printed in the form lf2-decomp tools/re/decrypt_dat.py --layers prints so the
  * two can be diffed line for line. `which` indexes the registry directly; the loaded stage is
  * LD32(BG_INDEX). */
 static void bg_record_report(uint32_t which)
@@ -403,7 +403,7 @@ static void bg_record_report(uint32_t which)
 
 /* LF2_BG_TABLE=1 prints the loaded stage's layers once; LF2_BG_TABLE=all prints EVERY
  * background the registry holds. It exists to be CHECKED against the files:
- * `tools/re/decrypt_dat.py --layers` over every bg.dat under game/bg prints the same spans,
+ * `lf2-decomp tools/re/decrypt_dat.py --layers` over every bg.dat under game/bg prints the same spans,
  * offsets and loops, and the two agreeing is what makes the address computation an
  * identification rather than arithmetic that happened to land somewhere.
  *

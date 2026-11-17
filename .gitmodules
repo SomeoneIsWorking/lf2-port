@@ -7,3 +7,6 @@
 [submodule "third_party/setup-ui"]
 	path = third_party/setup-ui
 	url = https://github.com/SomeoneIsWorking/setup-ui.git
+[submodule "external/lf2-decomp"]
+	path = external/lf2-decomp
+	url = https://github.com/SomeoneIsWorking/lf2-decomp.git

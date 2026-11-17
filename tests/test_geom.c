@@ -311,7 +311,7 @@ static void test_density(void)
 /* ---- A BACKGROUND LAYER'S DEPTH IS IN THE SHIPPED DATA (issues #49, #62) ----
  *
  * Every number below is a real layer of a real stage, read out of its bg.dat with
- * tools/re/decrypt_dat.py. They are here rather than in a note because the whole value of the
+ * lf2-decomp tools/re/decrypt_dat.py. They are here rather than in a note because the whole value of the
  * derivation is that it agrees with twelve stages it was not fitted to -- a formula over two
  * numbers is cheap, and what makes this an identification is that the depths come out in each
  * stage's own DRAWING ORDER without being asked to.

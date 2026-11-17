@@ -18,9 +18,10 @@ Read `docs/project-state.md`, then `docs/migration.md`, before non-trivial work.
 | `docs/project-state.md` | verified, partial, blocked, and missing capabilities; current focus |
 | `docs/migration.md` | the LF2 native/JIT migration: ownership boundary, first JIT discriminator (constructor `0x004031b0`), representative-gameplay restoration gate |
 | `docs/codemap.md` | subsystem ownership and where new work belongs |
-| `docs/re-frontier.md` | which native replacements are grounded in the binary |
+| `external/lf2-decomp/docs/re-frontier.md` | which native replacements are grounded in the binary |
+| `external/lf2-decomp/config/symbols/lf2.txt` | every named guest address; a new one is named there first (plan 0135) |
 | `docs/issues/` | open atomic work and unfixed defects |
-| `docs/platform-boundary.md` | observed Win32, DirectDraw, DirectSound, GDI, and input surface |
+| `external/lf2-decomp/docs/notes/platform-surface.md` | observed Win32, DirectDraw, DirectSound, GDI, and input surface |
 | `docs/isa-scope.md` | title-specific x86 coverage evidence for the JIT |
 
 ## Ownership

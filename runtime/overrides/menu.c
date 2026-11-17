@@ -230,7 +230,7 @@ void fn_004246b0(void)
             lf2_log_writef(LF2_LOG_INFO, "menu", "menu mode=%u screen=%u updater=%u\n", mode, screen, LD32(0x00458424));
         }
         /* The pre-fight overlay's selection index, located by diffing .data across one
-         * d-pad press (tools/re/diff_data.py) and confirmed against the frame it drew. */
+         * d-pad press (lf2-decomp tools/re/diff_data.py) and confirmed against the frame it drew. */
         static uint32_t last_overlay = 0xfffffffdu;
         const uint32_t overlay = LD32(OVERLAY_SEL);
         if (overlay != last_overlay) {

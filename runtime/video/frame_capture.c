@@ -111,7 +111,7 @@ static int frame_wanted(long frame)
  * data_<frame>.bin in $LF2_DUMP_DIR. Diffing two of them across a single input finds the
  * variable behind an on-screen change when reading the disassembly would mean picking one
  * candidate out of hundreds -- which is how the pre-fight overlay's selection index was
- * located. tools/re/diff_data.py does the comparison.
+ * located. lf2-decomp tools/re/diff_data.py does the comparison.
  *
  * The range is the section's own bounds from the PE header, not a guess: dumping too
  * little would drop the answer and look like "nothing changed". */
@@ -119,7 +119,7 @@ enum { DATA_BASE = 0x0044d000, DATA_SIZE = 0xc724 };
 
 /* LF2_HEAP_DUMP=<frame>[,...] snapshots the guest heap in use, for the same
  * before/after diffing as LF2_MEM_DUMP but over the region .data cannot reach.
- * tools/re/diff_data.py --base 0x20000000 reads it. */
+ * lf2-decomp tools/re/diff_data.py --base 0x20000000 reads it. */
 
 static void dump_heap(long frame)
 {
